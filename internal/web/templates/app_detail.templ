@@ -2,44 +2,77 @@ package templates
 
 import db "github.com/proshik/krill/internal/database/gen"
 
-templ AppDetail(app db.Application, tab string) {
-	@Layout(app.Name) {
-		<h2>{ app.Name } <small style="color:var(--muted)">{ app.Domain }</small></h2>
+// AppCtx несёт путь к приложению для построения URL и крошек.
+type AppCtx struct {
+	Org     db.Organization
+	Role    string
+	Project db.Project
+	Env     db.Environment
+	App     db.Application
+}
+
+func (c AppCtx) base() string {
+	return "/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID) +
+		"/environments/" + itoa(c.Env.ID) + "/apps/" + itoa(c.App.ID)
+}
+
+templ AppDetail(c AppCtx, tab string) {
+	@Layout(c.App.Name, c.Org, c.Role) {
+		<p class="crumbs">
+			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID)) }>{ c.Org.Name }</a> /
+			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID)) }>{ c.Project.Name }</a> /
+			{ c.Env.Name } / { c.App.Name }
+		</p>
 		<div class="tabs card" style="padding:10px 16px;">
-			<a href={ templ.SafeURL("/apps/" + itoa(app.ID)) } class={ templ.KV("active", tab == "general") }>General</a>
-			<a href={ templ.SafeURL("/apps/" + itoa(app.ID) + "?tab=logs") } class={ templ.KV("active", tab == "logs") }>Logs</a>
+			<a href={ templ.SafeURL(c.base()) } class={ templ.KV("active", tab == "general") }>General</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=env") } class={ templ.KV("active", tab == "env") }>Environment</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ templ.KV("active", tab == "logs") }>Logs</a>
 		</div>
-		if tab == "logs" {
-			@logsTab(app)
-		} else {
-			@generalTab(app)
+		switch tab {
+			case "env":
+				@envTab(c)
+			case "logs":
+				@logsTab(c)
+			default:
+				@generalTab(c)
 		}
 	}
 }
 
-templ generalTab(app db.Application) {
+templ generalTab(c AppCtx) {
 	<div class="card">
-		<div hx-get={ "/apps/" + itoa(app.ID) + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML">
-			Статус: @StatusBadge(app.Status)
+		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML">
+			Статус: @StatusBadge(c.App.Status)
 		</div>
-		<form method="post" action={ templ.SafeURL("/apps/" + itoa(app.ID) + "/deploy") } style="margin-top:16px;">
+		<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } style="margin-top:16px;">
 			<label>Образ</label>
-			<input name="image" value={ app.Image }/>
+			<input name="image" value={ c.App.Image }/>
 			<label>Тег</label>
-			<input name="tag" value={ app.Tag }/>
-			<div style="margin-top:14px;">
-				<button type="submit">Deploy</button>
-			</div>
+			<input name="tag" value={ c.App.Tag }/>
+			<button type="submit" style="margin-top:8px;">Deploy</button>
 		</form>
 		<p style="color:var(--muted); margin-top:12px;">
-			Открыть: <a href={ templ.SafeURL("http://" + app.Domain) } target="_blank">http://{ app.Domain }</a>
+			Открыть: <a href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
 		</p>
 	</div>
 }
 
-templ logsTab(app db.Application) {
+templ envTab(c AppCtx) {
 	<div class="card">
-		<div id="terminal" data-ws={ "/ws/apps/" + itoa(app.ID) + "/logs" }></div>
+		<form method="post" action={ templ.SafeURL(c.base() + "/env") }>
+			<label>Переменные окружения (KEY=VALUE, по строке)</label>
+			<textarea name="env" rows="10" style="width:100%;">{ envText(c.App.Env) }</textarea>
+			<div style="margin-top:10px;">
+				<button type="submit">Сохранить</button>
+				<span style="color:var(--muted); margin-left:8px;">Применится после Deploy</span>
+			</div>
+		</form>
+	</div>
+}
+
+templ logsTab(c AppCtx) {
+	<div class="card">
+		<div id="terminal" data-ws={ c.base() + "/logs" }></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 		<script src="/static/app.js"></script>

@@ -1,0 +1,78 @@
+package templates
+
+import db "github.com/proshik/krill/internal/database/gen"
+
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application) {
+	@Layout(project.Name, org, role) {
+		<p class="crumbs">
+			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
+		</p>
+		<div class="tabs card" style="padding:10px 16px;">
+			for _, e := range envs {
+				<a
+					href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(e.ID)) }
+					class={ templ.KV("active", e.ID == active.ID) }
+				>{ e.Name }</a>
+			}
+			if role == "owner" || role == "admin" {
+				<details style="display:inline;">
+					<summary>+ env</summary>
+					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments") }>
+						<input name="name" required placeholder="staging"/>
+						<button type="submit">OK</button>
+					</form>
+				</details>
+			}
+		</div>
+		if active.ID != 0 {
+			<div style="display:flex; justify-content:space-between; align-items:center;">
+				<h3>{ active.Name }</h3>
+				if role == "owner" || role == "admin" {
+					<details>
+						<summary><button type="button">+ Приложение</button></summary>
+						@appCreateForm(org.ID, project.ID, active.ID)
+					</details>
+				}
+			</div>
+			<div class="card">
+				if len(apps) == 0 {
+					<p>Нет приложений в этом окружении.</p>
+				} else {
+					<table>
+						<thead><tr><th>Имя</th><th>Образ</th><th>Домен</th><th>Статус</th></tr></thead>
+						<tbody>
+							for _, a := range apps {
+								<tr>
+									<td><a href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/apps/" + itoa(a.ID)) }>{ a.Name }</a></td>
+									<td>{ a.Image }:{ a.Tag }</td>
+									<td>{ a.Domain }</td>
+									<td>@StatusBadge(a.Status)</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				}
+			</div>
+		} else {
+			<p>Создайте окружение, чтобы добавлять приложения.</p>
+		}
+	}
+}
+
+templ appCreateForm(orgID, projID, envID int64) {
+	<form method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/projects/" + itoa(projID) + "/environments/" + itoa(envID) + "/apps") } class="card" style="margin-top:8px;">
+		<label>Имя (slug)</label>
+		<input name="name" required pattern="[a-z0-9-]+" placeholder="web"/>
+		<label>Образ</label>
+		<input name="image" required placeholder="nginx"/>
+		<label>Тег</label>
+		<input name="tag" value="latest"/>
+		<label>Домен (пусто = авто)</label>
+		<input name="domain" placeholder="(авто)"/>
+		<label>Порт</label>
+		<input name="port" type="number" value="80" required/>
+		<label>ENV (KEY=VALUE)</label>
+		<textarea name="env" rows="3" style="width:100%;"></textarea>
+		<button type="submit" style="margin-top:8px;">Создать</button>
+	</form>
+}

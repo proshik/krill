@@ -1,6 +1,8 @@
 package templates
 
-templ Layout(title string) {
+import db "github.com/proshik/krill/internal/database/gen"
+
+templ Layout(title string, org db.Organization, role string) {
 	<!DOCTYPE html>
 	<html lang="ru">
 		<head>
@@ -14,8 +16,15 @@ templ Layout(title string) {
 		<body>
 			<aside class="sidebar">
 				<h1>🦐 Krill</h1>
+				<div class="org-badge">
+					<a href="/orgs">{ org.Name } ▾</a>
+					<span class="role">{ role }</span>
+				</div>
 				<nav>
-					<a href="/apps">Приложения</a>
+					<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>Проекты</a>
+					if role == "owner" || role == "admin" {
+						<a href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>Члены</a>
+					}
 					<a href="/logout">Выйти</a>
 				</nav>
 			</aside>

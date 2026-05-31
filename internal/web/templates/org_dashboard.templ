@@ -1,0 +1,45 @@
+package templates
+
+import db "github.com/proshik/krill/internal/database/gen"
+
+type ProjectCard struct {
+	Project  db.Project
+	EnvCount int64
+}
+
+templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
+	@Layout("Проекты", org, role) {
+		<div style="display:flex; justify-content:space-between; align-items:center;">
+			<h2>Проекты</h2>
+			if role == "owner" || role == "admin" {
+				<details>
+					<summary><button type="button">+ Проект</button></summary>
+					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") } class="card" style="margin-top:8px;">
+						<label>Имя</label>
+						<input name="name" required placeholder="My App"/>
+						<label>Описание</label>
+						<input name="description" placeholder="(необязательно)"/>
+						<button type="submit" style="margin-top:8px;">Создать</button>
+					</form>
+				</details>
+			}
+		</div>
+		<div class="card">
+			if len(projects) == 0 {
+				<p>Пока нет проектов.</p>
+			} else {
+				<table>
+					<thead><tr><th>Проект</th><th>Окружений</th></tr></thead>
+					<tbody>
+						for _, pc := range projects {
+							<tr>
+								<td><a href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>{ pc.Project.Name }</a></td>
+								<td>{ itoa(pc.EnvCount) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+}
