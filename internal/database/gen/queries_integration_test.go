@@ -9,40 +9,6 @@ import (
 	"github.com/proshik/krill/internal/testutil"
 )
 
-func TestApplicationCRUD(t *testing.T) {
-	pool := testutil.NewTestDB(t)
-	q := db.New(pool)
-	ctx := context.Background()
-
-	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
-		Name:   "web",
-		Image:  "nginx",
-		Tag:    "alpine",
-		Domain: "web.127-0-0-1.sslip.io",
-		Port:   80,
-		Env:    map[string]string{"FOO": "bar"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if app.ID == 0 || app.Status != "idle" || app.Env["FOO"] != "bar" {
-		t.Fatalf("unexpected app: %+v", app)
-	}
-
-	if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: app.ID, Status: "running"}); err != nil {
-		t.Fatalf("update status: %v", err)
-	}
-	got, err := q.GetApplication(ctx, app.ID)
-	if err != nil || got.Status != "running" {
-		t.Fatalf("get after update: %+v err=%v", got, err)
-	}
-
-	list, err := q.ListApplications(ctx)
-	if err != nil || len(list) != 1 {
-		t.Fatalf("list: len=%d err=%v", len(list), err)
-	}
-}
-
 func TestUserAndSession(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)

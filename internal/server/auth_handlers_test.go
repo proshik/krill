@@ -10,11 +10,12 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
 )
 
-func newTestServer(t *testing.T) http.Handler {
+func newTestServer(t *testing.T) (http.Handler, *db.Queries) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -22,21 +23,22 @@ func newTestServer(t *testing.T) http.Handler {
 	if err := authSvc.SeedAdmin(t.Context(), "admin@k.local", "pw"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
-	return server.New(cfg, authSvc, q, nil, nil).Router()
+	return server.New(cfg, authSvc, orgSvc, q, nil, nil).Router(), q
 }
 
 func TestProtectedRedirectsToLogin(t *testing.T) {
-	h := newTestServer(t)
+	h, _ := newTestServer(t)
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/apps", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orgs", nil))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
 		t.Fatalf("want redirect to /login, got %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
 func TestLoginSetsCookieAndGrantsAccess(t *testing.T) {
-	h := newTestServer(t)
+	h, _ := newTestServer(t)
 
 	form := url.Values{"email": {"admin@k.local"}, "password": {"pw"}}
 	rec := httptest.NewRecorder()
@@ -49,14 +51,14 @@ func TestLoginSetsCookieAndGrantsAccess(t *testing.T) {
 	}
 	cookies := rec.Result().Cookies()
 	if len(cookies) == 0 {
-		t.Fatal("no session cookie set")
+		t.Fatal("no session cookie")
 	}
 
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "/apps", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/orgs", nil)
 	req2.AddCookie(cookies[0])
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
-		t.Fatalf("authed /apps want 200, got %d", rec2.Code)
+		t.Fatalf("authed /orgs want 200, got %d", rec2.Code)
 	}
 }

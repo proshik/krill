@@ -18,6 +18,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
 )
@@ -53,6 +54,7 @@ func run() error {
 	if err := authSvc.SeedAdmin(ctx, cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		return err
 	}
+	orgSvc := org.NewService(q)
 
 	// Docker engine + Traefik bootstrap.
 	engine, err := docker.NewEngine(cfg.DockerHost)
@@ -71,7 +73,7 @@ func run() error {
 	// HTTP-сервер.
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: server.New(cfg, authSvc, q, dep, engine).Router(),
+		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine).Router(),
 	}
 
 	errCh := make(chan error, 1)
