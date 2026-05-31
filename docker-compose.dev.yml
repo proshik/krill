@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: krill
+      POSTGRES_PASSWORD: krill
+      POSTGRES_DB: krill
+    ports:
+      - "5432:5432"
+    volumes:
+      - krill_pgdata:/var/lib/postgresql/data
+volumes:
+  krill_pgdata:

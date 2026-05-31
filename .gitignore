@@ -1,0 +1,5 @@
+/krill
+/bin/
+*.out
+.env
+.DS_Store
