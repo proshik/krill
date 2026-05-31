@@ -13,6 +13,9 @@ sql:
         emit_pointers_for_null_types: true
         overrides:
           - column: "applications.env"
-            go_type: "map[string]string"
+            go_type:
+              type: "map[string]string"
           - db_type: "timestamptz"
-            go_type: "time.Time"
+            go_type:
+              import: "time"
+              type: "Time"
