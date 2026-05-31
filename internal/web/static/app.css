@@ -23,3 +23,10 @@ label { display:block; margin:10px 0 4px; color:var(--muted); }
 .tabs a.active { border-bottom:2px solid var(--accent); padding-bottom:4px; }
 #terminal { height:420px; }
 .form-error { color:var(--err); }
+.org-badge { margin:12px 0; padding:8px 10px; background:#11141a; border-radius:6px; }
+.org-badge a { font-weight:600; }
+.org-badge .role { display:block; font-size:11px; color:var(--muted); text-transform:uppercase; }
+.crumbs { color:var(--muted); margin:0 0 12px; }
+.crumbs a { color:var(--accent); }
+details summary { cursor:pointer; }
+details > .card { margin-top:8px; }
