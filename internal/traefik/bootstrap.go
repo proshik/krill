@@ -7,7 +7,10 @@ import (
 )
 
 // TraefikVersion — версия образа Traefik.
-const TraefikVersion = "v3.5.0"
+// v3.6.1+ обязателен: в нём swarm-провайдер авто-негоциирует Docker API
+// (traefik#12253/#12256). Версии ≤3.6.0 хардкодят API 1.24 и Engine 29.x их
+// отвергает ("client version 1.24 is too old"), из-за чего роутеры не строятся.
+const TraefikVersion = "v3.6.1"
 
 // TraefikSpec строит спецификацию Swarm-сервиса Traefik.
 // Конфигурируется CLI-аргументами; монтируется только docker-сокет (без traefik.yml).
@@ -17,10 +20,6 @@ func TraefikSpec(network string) docker.ServiceSpec {
 		Image:    "traefik:" + TraefikVersion,
 		Replicas: 1,
 		Network:  network,
-		// Встроенный docker-клиент Traefik по умолчанию берёт API 1.24, который
-		// Docker Engine 29.x отвергает ("client version 1.24 is too old"). Явно
-		// задаём поддерживаемую версию, иначе swarm-провайдер не видит сервисы.
-		Env: map[string]string{"DOCKER_API_VERSION": "1.44"},
 		Args: []string{
 			"--providers.swarm.endpoint=unix:///var/run/docker.sock",
 			"--providers.swarm.exposedByDefault=false",
