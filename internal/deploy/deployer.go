@@ -105,7 +105,7 @@ func (d *Deployer) deploy(ctx context.Context, appID int64) error {
 }
 
 func (d *Deployer) buildSpec(app App) docker.ServiceSpec {
-	name := docker.ServiceName(app.Name)
+	name := docker.ServiceName(app.ID)
 	return docker.ServiceSpec{
 		Name:     name,
 		Image:    app.Image + ":" + app.Tag,

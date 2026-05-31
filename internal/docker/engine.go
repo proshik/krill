@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"io"
+	"strconv"
 )
 
 // PortSpec — публикуемый порт сервиса.
@@ -51,5 +52,7 @@ type Engine interface {
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 }
 
-// ServiceName строит имя Swarm-сервиса для приложения.
-func ServiceName(appName string) string { return "krill-" + appName }
+// ServiceName строит имя Swarm-сервиса для приложения по его id.
+func ServiceName(appID int64) string {
+	return "krill-" + strconv.FormatInt(appID, 10)
+}

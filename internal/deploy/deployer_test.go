@@ -65,8 +65,8 @@ func sampleApp() App {
 func TestBuildSpec(t *testing.T) {
 	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
 	spec := d.buildSpec(sampleApp())
-	if spec.Name != "krill-web" {
-		t.Errorf("name = %q", spec.Name)
+	if spec.Name != "krill-1" {
+		t.Errorf("name = %q, want krill-1", spec.Name)
 	}
 	if spec.Image != "nginx:alpine" {
 		t.Errorf("image = %q", spec.Image)
