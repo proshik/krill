@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/traefik"
@@ -26,13 +27,18 @@ type AppStore interface {
 	SetStatus(ctx context.Context, id int64, status string) error
 }
 
+// jobTimeout ограничивает время одного деплоя (защита от зависшего pull образа).
+const jobTimeout = 5 * time.Minute
+
 // Deployer обрабатывает задачи деплоя через очередь и воркер.
 type Deployer struct {
-	engine  docker.Engine
-	store   AppStore
-	network string
-	queue   chan int64
-	wg      sync.WaitGroup
+	engine   docker.Engine
+	store    AppStore
+	network  string
+	queue    chan int64
+	done     chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 func New(engine docker.Engine, store AppStore, network string) *Deployer {
@@ -41,34 +47,52 @@ func New(engine docker.Engine, store AppStore, network string) *Deployer {
 		store:   store,
 		network: network,
 		queue:   make(chan int64, 64),
+		done:    make(chan struct{}),
 	}
 }
 
-// Start запускает воркер.
+// Start запускает воркер. Воркер завершается при вызове Stop.
 func (d *Deployer) Start(ctx context.Context) {
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		for id := range d.queue {
-			if err := d.deploy(ctx, id); err != nil {
-				slog.Error("deploy failed", "app", id, "err", err)
-				_ = d.store.SetStatus(ctx, id, StatusError)
-				continue
+		for {
+			select {
+			case <-d.done:
+				return
+			case id := <-d.queue:
+				jobCtx, cancel := context.WithTimeout(ctx, jobTimeout)
+				err := d.deploy(jobCtx, id)
+				cancel()
+				if err != nil {
+					slog.Error("deploy failed", "app", id, "err", err)
+					_ = d.store.SetStatus(ctx, id, StatusError)
+					continue
+				}
+				_ = d.store.SetStatus(ctx, id, StatusRunning)
 			}
-			_ = d.store.SetStatus(ctx, id, StatusRunning)
 		}
 	}()
 }
 
 // Enqueue помечает приложение как deploying и ставит в очередь.
+// Безопасно вызывать после Stop — задача игнорируется (без паники).
 func (d *Deployer) Enqueue(appID int64) {
+	select {
+	case <-d.done:
+		return // идёт остановка — новые задачи не принимаем
+	default:
+	}
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
-	d.queue <- appID
+	select {
+	case d.queue <- appID:
+	case <-d.done:
+	}
 }
 
-// Stop закрывает очередь и дожидается воркера.
+// Stop сигнализирует воркеру об остановке и дожидается его. Идемпотентен.
 func (d *Deployer) Stop() {
-	close(d.queue)
+	d.stopOnce.Do(func() { close(d.done) })
 	d.wg.Wait()
 }
 

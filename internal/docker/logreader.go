@@ -7,6 +7,8 @@ import (
 )
 
 // NewLogReader демультиплексирует Docker-лог-стрим (TTY=false) в чистый поток строк.
+// Вызывающая сторона ОБЯЗАНА закрыть возвращённый io.ReadCloser (Close), иначе
+// фоновая горутина демультиплексинга и исходный лог-стрим утекут.
 func NewLogReader(rc io.ReadCloser) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {

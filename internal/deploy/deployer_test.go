@@ -117,3 +117,19 @@ func TestWorkerSetsErrorOnFailure(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestEnqueueAfterStopNoPanic(t *testing.T) {
+	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
+	d.Start(context.Background())
+	d.Stop()
+	// Должно не паниковать и просто игнорироваться.
+	d.Enqueue(1)
+	d.Enqueue(1)
+}
+
+func TestStopIdempotent(t *testing.T) {
+	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
+	d.Start(context.Background())
+	d.Stop()
+	d.Stop() // повторный Stop не должен паниковать
+}
