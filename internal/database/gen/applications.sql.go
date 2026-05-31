@@ -51,6 +51,15 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 	return i, err
 }
 
+const deleteApplication = `-- name: DeleteApplication :exec
+DELETE FROM applications WHERE id = $1
+`
+
+func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteApplication, id)
+	return err
+}
+
 const getApplication = `-- name: GetApplication :one
 SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE id = $1
 `

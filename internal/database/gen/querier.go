@@ -18,6 +18,7 @@ type Querier interface {
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteApplication(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteMember(ctx context.Context, id int64) error

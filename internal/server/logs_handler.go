@@ -7,29 +7,23 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	"github.com/proshik/krill/internal/docker"
 )
 
 func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
-	app, ok := s.loadApp(w, r)
+	c, ok := s.loadAppCtx(w, r)
 	if !ok {
 		return
 	}
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: []string{"*"}, // локальная разработка; на проде сузить
-	})
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
 		return
 	}
-	defer c.CloseNow()
+	defer conn.CloseNow()
+	ctx := conn.CloseRead(context.Background())
 
-	// Обрабатываем входящие control-фреймы (ping/close), пока сами только пишем.
-	ctx := c.CloseRead(context.Background())
-
-	rc, err := s.engine.ServiceLogs(ctx, docker.ServiceName(app.Name), true)
+	rc, err := s.engine.ServiceLogs(ctx, dockerName(c.App.ID), true)
 	if err != nil {
-		c.Close(websocket.StatusInternalError, "logs unavailable")
+		conn.Close(websocket.StatusInternalError, "logs unavailable")
 		return
 	}
 	defer rc.Close()
@@ -38,11 +32,11 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		writeErr := c.Write(wctx, websocket.MessageText, line)
+		writeErr := conn.Write(wctx, websocket.MessageText, line)
 		cancel()
 		if writeErr != nil {
 			return
 		}
 	}
-	c.Close(websocket.StatusNormalClosure, "")
+	conn.Close(websocket.StatusNormalClosure, "")
 }

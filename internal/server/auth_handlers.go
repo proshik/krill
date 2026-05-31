@@ -28,7 +28,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(auth.SessionTTL.Seconds()),
 	})
-	http.Redirect(w, r, "/apps", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
