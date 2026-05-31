@@ -1,0 +1,96 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/config"
+	"github.com/proshik/krill/internal/database"
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/server"
+	"github.com/proshik/krill/internal/traefik"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Миграции при старте.
+	if err := database.RunMigrations(cfg.DatabaseURL); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	q := db.New(pool)
+
+	// Seed-админ.
+	authSvc := auth.NewService(q)
+	if err := authSvc.SeedAdmin(ctx, cfg.AdminEmail, cfg.AdminPassword); err != nil {
+		return err
+	}
+
+	// Docker engine + Traefik bootstrap.
+	engine, err := docker.NewEngine(cfg.DockerHost)
+	if err != nil {
+		return err
+	}
+	if err := traefik.Bootstrap(ctx, engine, cfg.Network); err != nil {
+		slog.Warn("traefik bootstrap failed (continuing)", "err", err)
+	}
+
+	// Деплойер.
+	dep := deploy.New(engine, deploy.NewDBStore(q), cfg.Network)
+	dep.Start(ctx)
+	defer dep.Stop()
+
+	// HTTP-сервер.
+	srv := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: server.New(cfg, authSvc, q, dep, engine).Router(),
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("krill listening", "addr", cfg.ListenAddr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		slog.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	}
+}
