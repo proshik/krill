@@ -9,16 +9,50 @@ import (
 )
 
 type Application struct {
-	ID        int64             `json:"id"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	Tag       string            `json:"tag"`
-	Domain    string            `json:"domain"`
-	Port      int32             `json:"port"`
-	Env       map[string]string `json:"env"`
-	Status    string            `json:"status"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID            int64             `json:"id"`
+	EnvironmentID int64             `json:"environment_id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Tag           string            `json:"tag"`
+	Domain        string            `json:"domain"`
+	Port          int32             `json:"port"`
+	Env           map[string]string `json:"env"`
+	Status        string            `json:"status"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
+type Environment struct {
+	ID        int64     `json:"id"`
+	ProjectID int64     `json:"project_id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Member struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	UserID         int64     `json:"user_id"`
+	Role           string    `json:"role"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type Organization struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	OwnerID   int64     `json:"owner_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Project struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	Slug           string    `json:"slug"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Session struct {

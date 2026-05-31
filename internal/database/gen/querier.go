@@ -9,19 +9,43 @@ import (
 )
 
 type Querier interface {
+	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
+	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
+	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
+	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
+	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
+	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteMember(ctx context.Context, id int64) error
+	DeleteOrganization(ctx context.Context, id int64) error
+	DeleteProject(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
-	GetApplicationByName(ctx context.Context, name string) (Application, error)
+	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
+	GetEnvironment(ctx context.Context, id int64) (Environment, error)
+	GetMemberByID(ctx context.Context, id int64) (Member, error)
+	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
+	GetOrganization(ctx context.Context, id int64) (Organization, error)
+	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
+	GetProject(ctx context.Context, id int64) (Project, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
-	ListApplications(ctx context.Context) ([]Application, error)
+	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
+	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
+	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
+	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
+	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
+	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
+	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
 }
 
 var _ Querier = (*Queries)(nil)

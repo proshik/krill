@@ -10,21 +10,23 @@ import (
 )
 
 const createApplication = `-- name: CreateApplication :one
-INSERT INTO applications (name, image, tag, domain, port, env)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, image, tag, domain, port, env, status, created_at, updated_at
+INSERT INTO applications (environment_id, name, image, tag, domain, port, env)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at
 `
 
 type CreateApplicationParams struct {
-	Name   string            `json:"name"`
-	Image  string            `json:"image"`
-	Tag    string            `json:"tag"`
-	Domain string            `json:"domain"`
-	Port   int32             `json:"port"`
-	Env    map[string]string `json:"env"`
+	EnvironmentID int64             `json:"environment_id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Tag           string            `json:"tag"`
+	Domain        string            `json:"domain"`
+	Port          int32             `json:"port"`
+	Env           map[string]string `json:"env"`
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
 	row := q.db.QueryRow(ctx, createApplication,
+		arg.EnvironmentID,
 		arg.Name,
 		arg.Image,
 		arg.Tag,
@@ -35,6 +37,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 	var i Application
 	err := row.Scan(
 		&i.ID,
+		&i.EnvironmentID,
 		&i.Name,
 		&i.Image,
 		&i.Tag,
@@ -49,7 +52,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -57,6 +60,7 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 	var i Application
 	err := row.Scan(
 		&i.ID,
+		&i.EnvironmentID,
 		&i.Name,
 		&i.Image,
 		&i.Tag,
@@ -70,34 +74,40 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 	return i, err
 }
 
-const getApplicationByName = `-- name: GetApplicationByName :one
-SELECT id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE name = $1
+const getApplicationChain = `-- name: GetApplicationChain :one
+SELECT a.id AS app_id, e.id AS env_id, p.id AS project_id, o.id AS org_id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN organizations o ON o.id = p.organization_id
+WHERE a.id = $1
 `
 
-func (q *Queries) GetApplicationByName(ctx context.Context, name string) (Application, error) {
-	row := q.db.QueryRow(ctx, getApplicationByName, name)
-	var i Application
+type GetApplicationChainRow struct {
+	AppID     int64 `json:"app_id"`
+	EnvID     int64 `json:"env_id"`
+	ProjectID int64 `json:"project_id"`
+	OrgID     int64 `json:"org_id"`
+}
+
+func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error) {
+	row := q.db.QueryRow(ctx, getApplicationChain, id)
+	var i GetApplicationChainRow
 	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Image,
-		&i.Tag,
-		&i.Domain,
-		&i.Port,
-		&i.Env,
-		&i.Status,
-		&i.CreatedAt,
-		&i.UpdatedAt,
+		&i.AppID,
+		&i.EnvID,
+		&i.ProjectID,
+		&i.OrgID,
 	)
 	return i, err
 }
 
-const listApplications = `-- name: ListApplications :many
-SELECT id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications ORDER BY created_at DESC
+const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListApplications(ctx context.Context) ([]Application, error) {
-	rows, err := q.db.Query(ctx, listApplications)
+func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
+	rows, err := q.db.Query(ctx, listApplicationsByEnvironment, environmentID)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +117,7 @@ func (q *Queries) ListApplications(ctx context.Context) ([]Application, error) {
 		var i Application
 		if err := rows.Scan(
 			&i.ID,
+			&i.EnvironmentID,
 			&i.Name,
 			&i.Image,
 			&i.Tag,
@@ -125,6 +136,56 @@ func (q *Queries) ListApplications(ctx context.Context) ([]Application, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+`
+
+func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
+	rows, err := q.db.Query(ctx, listApplicationsByEnvironmentIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Application
+	for rows.Next() {
+		var i Application
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.Name,
+			&i.Image,
+			&i.Tag,
+			&i.Domain,
+			&i.Port,
+			&i.Env,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateApplicationEnv = `-- name: UpdateApplicationEnv :exec
+UPDATE applications SET env = $2, updated_at = now() WHERE id = $1
+`
+
+type UpdateApplicationEnvParams struct {
+	ID  int64             `json:"id"`
+	Env map[string]string `json:"env"`
+}
+
+func (q *Queries) UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error {
+	_, err := q.db.Exec(ctx, updateApplicationEnv, arg.ID, arg.Env)
+	return err
 }
 
 const updateApplicationImage = `-- name: UpdateApplicationImage :exec
