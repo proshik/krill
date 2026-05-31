@@ -62,20 +62,38 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.q.DeleteSession(ctx, token)
 }
 
-// SeedAdmin создаёт администратора, если пользователя с таким email ещё нет.
+// SeedAdmin создаёт администратора и дефолтную организацию, если их ещё нет.
+// Идемпотентно: повторный старт не дублирует и не перезатирает.
 func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
-	_, err := s.q.GetUserByEmail(ctx, email)
-	if err == nil {
-		return nil // уже существует — не трогаем
+	u, err := s.q.GetUserByEmail(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		hash, herr := HashPassword(password)
+		if herr != nil {
+			return herr
+		}
+		u, err = s.q.CreateUser(ctx, db.CreateUserParams{Email: email, PasswordHash: hash})
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	hash, err := HashPassword(password)
 	if err != nil {
 		return err
 	}
-	_, err = s.q.CreateUser(ctx, db.CreateUserParams{Email: email, PasswordHash: hash})
+
+	// Дефолтная организация: если у админа ещё нет членства нигде — создаём.
+	orgs, err := s.q.ListOrganizationsForUser(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	if len(orgs) > 0 {
+		return nil
+	}
+	o, err := s.q.CreateOrganization(ctx, db.CreateOrganizationParams{
+		Name: "Default", Slug: "default", OwnerID: u.ID,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.q.CreateMember(ctx, db.CreateMemberParams{
+		OrganizationID: o.ID, UserID: u.ID, Role: "owner",
+	})
 	return err
 }
 

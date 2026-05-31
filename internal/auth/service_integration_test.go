@@ -43,3 +43,30 @@ func TestSeedAuthenticateValidate(t *testing.T) {
 		t.Error("token must be invalid after logout")
 	}
 }
+
+func TestSeedAdminBootstrapsOrg(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	svc := auth.NewService(q)
+	ctx := context.Background()
+
+	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// повторный seed идемпотентен
+	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
+		t.Fatalf("seed twice: %v", err)
+	}
+
+	u, err := q.GetUserByEmail(ctx, "admin@k.local")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	orgs, err := q.ListOrganizationsForUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("list orgs: %v", err)
+	}
+	if len(orgs) != 1 || orgs[0].Slug != "default" {
+		t.Fatalf("expected exactly 1 default org, got %+v", orgs)
+	}
+}
