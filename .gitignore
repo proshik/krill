@@ -7,3 +7,4 @@
 *.iml
 /colima_docs.html
 .claude/
+internal/database/schema.sql
