@@ -6,3 +6,4 @@
 .idea/
 *.iml
 /colima_docs.html
+.claude/
