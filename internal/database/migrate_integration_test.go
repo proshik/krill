@@ -13,12 +13,13 @@ func TestMigrationsApply(t *testing.T) {
 	var n int
 	err := pool.QueryRow(context.Background(),
 		`SELECT count(*) FROM information_schema.tables
-		 WHERE table_schema='public' AND table_name IN ('users','sessions','applications')`,
+		 WHERE table_schema='public'
+		 AND table_name IN ('users','sessions','organizations','members','projects','environments','applications')`,
 	).Scan(&n)
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if n != 3 {
-		t.Fatalf("expected 3 tables, got %d", n)
+	if n != 7 {
+		t.Fatalf("expected 7 tables, got %d", n)
 	}
 }
