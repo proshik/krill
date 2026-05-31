@@ -1,0 +1,43 @@
+package templates
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="ru">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title } — Krill</title>
+			<link rel="stylesheet" href="/static/xterm.css"/>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<script src="/static/htmx.min.js"></script>
+		</head>
+		<body>
+			<aside class="sidebar">
+				<h1>🦐 Krill</h1>
+				<nav>
+					<a href="/apps">Приложения</a>
+					<a href="/logout">Выйти</a>
+				</nav>
+			</aside>
+			<main class="content">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
+
+templ Bare(title string) {
+	<!DOCTYPE html>
+	<html lang="ru">
+		<head>
+			<meta charset="utf-8"/>
+			<title>{ title } — Krill</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+		</head>
+		<body style="align-items:center; justify-content:center;">
+			<main style="width:320px;">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}

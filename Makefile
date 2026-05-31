@@ -10,8 +10,11 @@ build: generate
 run: generate
 	go run ./cmd/krill
 
+# testcontainers on Colima needs the host docker socket + the in-VM socket path for Ryuk
+TC_ENV = DOCKER_HOST=unix://$(HOME)/.colima/default/docker.sock TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+
 test:
-	go test ./...
+	$(TC_ENV) go test ./...
 
 test-integration:
 	go test -tags=integration ./...

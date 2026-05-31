@@ -1,0 +1,50 @@
+package templates
+
+import db "github.com/proshik/krill/internal/database/gen"
+
+templ AppDetail(app db.Application, tab string) {
+	@Layout(app.Name) {
+		<h2>{ app.Name } <small style="color:var(--muted)">{ app.Domain }</small></h2>
+		<div class="tabs card" style="padding:10px 16px;">
+			<a href={ templ.SafeURL("/apps/" + itoa(app.ID)) } class={ templ.KV("active", tab == "general") }>General</a>
+			<a href={ templ.SafeURL("/apps/" + itoa(app.ID) + "?tab=logs") } class={ templ.KV("active", tab == "logs") }>Logs</a>
+		</div>
+		if tab == "logs" {
+			@logsTab(app)
+		} else {
+			@generalTab(app)
+		}
+	}
+}
+
+templ generalTab(app db.Application) {
+	<div class="card">
+		<div hx-get={ "/apps/" + itoa(app.ID) + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML">
+			Статус: @StatusBadge(app.Status)
+		</div>
+		<form method="post" action={ templ.SafeURL("/apps/" + itoa(app.ID) + "/deploy") } style="margin-top:16px;">
+			<label>Образ</label>
+			<input name="image" value={ app.Image }/>
+			<label>Тег</label>
+			<input name="tag" value={ app.Tag }/>
+			<div style="margin-top:14px;">
+				<button type="submit">Deploy</button>
+			</div>
+		</form>
+		<p style="color:var(--muted); margin-top:12px;">
+			Открыть: <a href={ templ.SafeURL("http://" + app.Domain) } target="_blank">http://{ app.Domain }</a>
+		</p>
+	</div>
+}
+
+templ logsTab(app db.Application) {
+	<div class="card">
+		<div id="terminal" data-ws={ "/ws/apps/" + itoa(app.ID) + "/logs" }></div>
+		<script src="/static/xterm.js"></script>
+		<script src="/static/addon-fit.js"></script>
+		<script src="/static/app.js"></script>
+		<script>
+			mountLogTerminal(document.getElementById('terminal').dataset.ws);
+		</script>
+	</div>
+}
