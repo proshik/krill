@@ -51,9 +51,9 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 			Order:         swarm.UpdateOrderStartFirst,       // zero-downtime
 			FailureAction: swarm.UpdateFailureActionRollback,
 		},
-		RollbackConfig: &swarm.RollbackConfig{
+		RollbackConfig: &swarm.UpdateConfig{
 			Parallelism:   1,
-			FailureAction: swarm.RollbackFailureActionPause,
+			FailureAction: swarm.UpdateFailureActionPause,
 		},
 	}
 

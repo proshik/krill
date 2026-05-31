@@ -6,15 +6,13 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// DBStore — адаптер AppStore над sqlc-запросами.
+// DBStore реализует AppStore поверх sqlc-запросов.
 type DBStore struct {
 	q *db.Queries
 }
 
-// NewDBStore создаёт DBStore.
 func NewDBStore(q *db.Queries) *DBStore { return &DBStore{q: q} }
 
-// GetApplication читает приложение и конвертирует в App.
 func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	a, err := s.q.GetApplication(ctx, id)
 	if err != nil {
@@ -31,10 +29,6 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	}, nil
 }
 
-// SetStatus обновляет статус приложения.
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {
-	return s.q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{
-		ID:     id,
-		Status: status,
-	})
+	return s.q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: id, Status: status})
 }

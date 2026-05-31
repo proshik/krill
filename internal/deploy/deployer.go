@@ -9,7 +9,7 @@ import (
 	"github.com/proshik/krill/internal/traefik"
 )
 
-// App — данные приложения, нужные деплою.
+// App — представление приложения для деплоя.
 type App struct {
 	ID     int64
 	Name   string
@@ -20,88 +20,74 @@ type App struct {
 	Env    map[string]string
 }
 
-// AppStore — то, что деплою нужно от хранилища.
+// AppStore — то, что нужно деплойеру от хранилища.
 type AppStore interface {
 	GetApplication(ctx context.Context, id int64) (App, error)
 	SetStatus(ctx context.Context, id int64, status string) error
 }
 
-// Deployer — очередь деплоев + воркеры.
+// Deployer обрабатывает задачи деплоя через очередь и воркер.
 type Deployer struct {
-	engine     docker.Engine
-	store      AppStore
-	network    string
-	baseDomain string
-	queue      chan int64
-	wg         sync.WaitGroup
+	engine  docker.Engine
+	store   AppStore
+	network string
+	queue   chan int64
+	wg      sync.WaitGroup
 }
 
-// New создаёт Deployer.
-func New(engine docker.Engine, store AppStore, network, baseDomain string) *Deployer {
+func New(engine docker.Engine, store AppStore, network string) *Deployer {
 	return &Deployer{
-		engine:     engine,
-		store:      store,
-		network:    network,
-		baseDomain: baseDomain,
-		queue:      make(chan int64, 64),
+		engine:  engine,
+		store:   store,
+		network: network,
+		queue:   make(chan int64, 64),
 	}
 }
 
-// Start запускает n воркеров.
-func (d *Deployer) Start(n int) {
-	for i := 0; i < n; i++ {
-		d.wg.Add(1)
-		go d.worker()
-	}
+// Start запускает воркер.
+func (d *Deployer) Start(ctx context.Context) {
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		for id := range d.queue {
+			if err := d.deploy(ctx, id); err != nil {
+				slog.Error("deploy failed", "app", id, "err", err)
+				_ = d.store.SetStatus(ctx, id, StatusError)
+				continue
+			}
+			_ = d.store.SetStatus(ctx, id, StatusRunning)
+		}
+	}()
 }
 
-// Enqueue ставит приложение в очередь на деплой.
+// Enqueue помечает приложение как deploying и ставит в очередь.
 func (d *Deployer) Enqueue(appID int64) {
+	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.queue <- appID
 }
 
-// Stop закрывает очередь и ждёт завершения воркеров.
+// Stop закрывает очередь и дожидается воркера.
 func (d *Deployer) Stop() {
 	close(d.queue)
 	d.wg.Wait()
 }
 
-func (d *Deployer) worker() {
-	defer d.wg.Done()
-	for appID := range d.queue {
-		d.deploy(appID)
-	}
-}
-
-func (d *Deployer) deploy(appID int64) {
-	ctx := context.Background()
+func (d *Deployer) deploy(ctx context.Context, appID int64) error {
 	app, err := d.store.GetApplication(ctx, appID)
 	if err != nil {
-		slog.Error("deploy: get application", "id", appID, "err", err)
-		return
+		return err
 	}
-	_ = d.store.SetStatus(ctx, appID, StatusDeploying)
-
-	spec := d.buildSpec(app)
-	if err := d.engine.ServiceDeploy(ctx, spec); err != nil {
-		slog.Error("deploy: service deploy", "id", appID, "err", err)
-		_ = d.store.SetStatus(ctx, appID, StatusError)
-		return
-	}
-	_ = d.store.SetStatus(ctx, appID, StatusRunning)
+	return d.engine.ServiceDeploy(ctx, d.buildSpec(app))
 }
 
 func (d *Deployer) buildSpec(app App) docker.ServiceSpec {
 	name := docker.ServiceName(app.Name)
-	image := app.Image + ":" + app.Tag
-	labels := traefik.AppLabels(name, app.Domain, app.Port, d.network)
 	return docker.ServiceSpec{
 		Name:     name,
-		Image:    image,
+		Image:    app.Image + ":" + app.Tag,
 		Env:      app.Env,
-		Labels:   labels,
+		Labels:   traefik.AppLabels(name, app.Domain, app.Port, d.network),
 		Replicas: 1,
 		Network:  d.network,
-		Ports:    nil,
 	}
 }
