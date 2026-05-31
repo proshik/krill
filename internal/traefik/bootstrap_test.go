@@ -32,4 +32,7 @@ func TestTraefikSpec(t *testing.T) {
 	if len(s.Constraints) == 0 {
 		t.Error("expected manager constraint")
 	}
+	if s.Env["DOCKER_API_VERSION"] == "" {
+		t.Error("DOCKER_API_VERSION must be set so Traefik's docker client negotiates a supported API")
+	}
 }
