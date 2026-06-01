@@ -3,7 +3,7 @@ package templates
 import db "github.com/proshik/krill/internal/database/gen"
 
 templ Deployments(c AppCtx, deps []db.Deployment) {
-	<div class="card">
+	<div class="k-card">
 		<div hx-get={ c.base() + "/deployments-list" } hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
 			@DeploymentsList(c, deps)
 		</div>
@@ -11,19 +11,19 @@ templ Deployments(c AppCtx, deps []db.Deployment) {
 }
 
 templ DeploymentsList(c AppCtx, deps []db.Deployment) {
-	<table id="deployments-list">
+	<table id="deployments-list" class="k-table">
 		<thead><tr><th>Время</th><th>Статус</th><th>Триггер</th><th>Образ</th><th>Лог</th></tr></thead>
 		<tbody>
 			if len(deps) == 0 {
-				<tr><td colspan="5">Деплоев ещё не было.</td></tr>
+				<tr><td colspan="5" class="k-mono">Деплоев ещё не было.</td></tr>
 			} else {
 				for _, dp := range deps {
 					<tr>
-						<td>{ dp.StartedAt.Format("2006-01-02 15:04:05") }</td>
+						<td class="k-mono">{ dp.StartedAt.Format("2006-01-02 15:04:05") }</td>
 						<td>@StatusBadge(dp.Status)</td>
-						<td>{ dp.Trigger }</td>
-						<td>{ dp.ImageTag }</td>
-						<td><a href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>открыть</a></td>
+						<td class="k-mono">{ dp.Trigger }</td>
+						<td class="k-mono">{ dp.ImageTag }</td>
+						<td><a class="text-[color:var(--color-accent)]" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>открыть</a></td>
 					</tr>
 				}
 			}
@@ -33,10 +33,10 @@ templ DeploymentsList(c AppCtx, deps []db.Deployment) {
 
 templ DeploymentLog(c AppCtx, dep db.Deployment) {
 	@Layout("Деплой #"+itoa(dep.ID), c.Org, c.Role) {
-		<p class="crumbs">
+		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL(c.base()) }>{ c.App.Name }</a> / Деплой #{ itoa(dep.ID) } — @StatusBadge(dep.Status)
 		</p>
-		<div class="card">
+		<div class="k-card">
 			<div id="terminal" data-ws={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
 			<script src="/static/xterm.js"></script>
 			<script src="/static/addon-fit.js"></script>
