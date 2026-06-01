@@ -32,6 +32,9 @@ cleanup() {
   # снимаем все krill-* сервисы кроме traefik, чтобы не утёк e2e-app.
   docker service ls --filter name=krill- -q 2>/dev/null \
     | xargs -r -I{} sh -c 'n=$(docker service inspect --format "{{.Spec.Name}}" {} 2>/dev/null); [ "$n" = "krill-traefik" ] || docker service rm {} >/dev/null 2>&1' || true
+  # Локально собранные образы dockerfile-деплоя (krill-<appID>:<deployID>); ID2 неизвестен в trap'е — wildcard.
+  imgs=$(docker image ls --filter reference='krill-*' -q 2>/dev/null | sort -u)
+  [ -n "$imgs" ] && docker image rm -f $imgs >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -139,6 +142,40 @@ echo "env_applied=$(docker service inspect krill-$ID --format '{{json .Spec.Task
 out2=$(curl -s -m 5 -H "Host: $DOM" -o /dev/null -w '%{http_code}' "http://127.0.0.1:80/")
 echo "traefik_after_update_http=$out2 (expect 200, no downtime)"
 
-echo "### 14. krill log tail"
+echo "### 15. dockerfile-приложение"
+APP2=e2ebuild
+# небольшой публичный репозиторий с Dockerfile в корне (EXPOSE 8080)
+GITREPO="https://github.com/dockersamples/helloworld-demo-node.git"
+GITBRANCH="main"
+echo "df_create=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" \
+  --data-urlencode "name=$APP2" --data-urlencode "source_type=dockerfile" \
+  --data-urlencode "git_url=$GITREPO" --data-urlencode "git_branch=$GITBRANCH" \
+  --data-urlencode "dockerfile_path=Dockerfile" \
+  --data-urlencode "domain=" --data-urlencode "port=8080" --data-urlencode "env=" \
+  "$APPBASE/apps") (expect 303)"
+ID2=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT id FROM applications WHERE name='$APP2'")
+echo "df_app_id=$ID2"
+echo "df_deploy=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST \
+  --data-urlencode "git_url=$GITREPO" --data-urlencode "git_branch=$GITBRANCH" --data-urlencode "dockerfile_path=Dockerfile" \
+  "$APPBASE/apps/$ID2/deploy") (expect 303)"
+
+echo "### 16. ждём сборку+деплой (до 6 мин)"
+df_run=0
+for i in $(seq 1 180); do
+  st=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT status FROM deployments WHERE application_id=$ID2 ORDER BY started_at DESC LIMIT 1")
+  if [ "$st" = "done" ]; then df_run=1; break; fi
+  if [ "$st" = "error" ]; then echo "deploy ERROR; log:"; docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT log FROM deployments WHERE application_id=$ID2 ORDER BY started_at DESC LIMIT 1" | tail -30; break; fi
+  sleep 2
+done
+echo "df_deployment_done=$df_run"
+echo "df_built_image=$(docker image ls --filter reference="krill-$ID2" --format '{{.Repository}}:{{.Tag}}' | head -1)"
+# дождаться, что собранный образ реально запустился (1/1), а не только создан сервис
+df_replicas=0
+for i in $(seq 1 60); do [ "$(docker service ls --filter name=krill-$ID2 --format '{{.Replicas}}')" = "1/1" ] && { df_replicas=1; break; }; sleep 2; done
+echo "df_service=$(docker service ls --filter name=krill-$ID2 --format '{{.Image}} {{.Replicas}}')"
+echo "df_service_running=$df_replicas"
+if [ "$df_replicas" != 1 ]; then echo "df_tasks:"; docker service ps krill-$ID2 --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | head -5; fi
+
+echo "### 17. krill log tail"
 tail -12 "$LOG"
 echo "### DONE"
