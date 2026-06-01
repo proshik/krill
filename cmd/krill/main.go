@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/builder"
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -56,7 +57,12 @@ func run() error {
 	}
 	orgSvc := org.NewService(q)
 
-	// Docker engine + Traefik bootstrap.
+	hub := deploy.NewLogHub()
+	b := builder.New(cfg.DockerHost)
+	if err := builder.Available(); err != nil {
+		slog.Warn("build dependencies missing (dockerfile builds disabled)", "err", err)
+	}
+
 	engine, err := docker.NewEngine(cfg.DockerHost)
 	if err != nil {
 		return err
@@ -65,15 +71,18 @@ func run() error {
 		slog.Warn("traefik bootstrap failed (continuing)", "err", err)
 	}
 
-	// Деплойер.
-	dep := deploy.New(engine, deploy.NewDBStore(q), cfg.Network)
+	store := deploy.NewDBStore(q)
+	dep := deploy.New(engine, b, store, hub, cfg.Network)
 	dep.Start(ctx)
 	defer dep.Stop()
+
+	stopCleanup := deploy.StartLogCleanup(ctx, store, 10*time.Minute)
+	defer stopCleanup()
 
 	// HTTP-сервер.
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine).Router(),
+		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine, hub).Router(),
 	}
 
 	errCh := make(chan error, 1)

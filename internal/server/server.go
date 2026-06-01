@@ -23,10 +23,11 @@ type Server struct {
 	q        *db.Queries
 	deployer *deploy.Deployer
 	engine   docker.Engine
+	logHub   *deploy.DeployLogHub
 }
 
-func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine) *Server {
-	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e}
+func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub) *Server {
+	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub}
 }
 
 // Router собирает chi-роутер.
@@ -76,6 +77,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/deploy", s.deployApp)
 				r.Post("/env", s.saveEnv)
 				r.Get("/logs", s.appLogs)
+				r.Get("/deployments-list", s.listDeployments)
+				r.Get("/deployments/{deployID}", s.deploymentLogPage)
+				r.Get("/deployments/{deployID}/logs", s.deploymentLogWS)
 			})
 		})
 	})

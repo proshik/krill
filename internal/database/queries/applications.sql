@@ -17,6 +17,9 @@ UPDATE applications SET env = $2, updated_at = now() WHERE id = $1;
 -- name: UpdateApplicationStatus :exec
 UPDATE applications SET status = $2, updated_at = now() WHERE id = $1;
 
+-- name: UpdateApplicationSource :exec
+UPDATE applications SET git_url = $2, git_branch = $3, dockerfile_path = $4, updated_at = now() WHERE id = $1;
+
 -- name: ListApplicationsByEnvironmentIDs :many
 SELECT * FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC;
 

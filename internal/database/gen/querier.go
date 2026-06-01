@@ -50,6 +50,7 @@ type Querier interface {
 	ListUsers(ctx context.Context) ([]User, error)
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
+	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
 }

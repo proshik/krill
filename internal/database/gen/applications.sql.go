@@ -236,6 +236,27 @@ func (q *Queries) UpdateApplicationImage(ctx context.Context, arg UpdateApplicat
 	return err
 }
 
+const updateApplicationSource = `-- name: UpdateApplicationSource :exec
+UPDATE applications SET git_url = $2, git_branch = $3, dockerfile_path = $4, updated_at = now() WHERE id = $1
+`
+
+type UpdateApplicationSourceParams struct {
+	ID             int64  `json:"id"`
+	GitUrl         string `json:"git_url"`
+	GitBranch      string `json:"git_branch"`
+	DockerfilePath string `json:"dockerfile_path"`
+}
+
+func (q *Queries) UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error {
+	_, err := q.db.Exec(ctx, updateApplicationSource,
+		arg.ID,
+		arg.GitUrl,
+		arg.GitBranch,
+		arg.DockerfilePath,
+	)
+	return err
+}
+
 const updateApplicationStatus = `-- name: UpdateApplicationStatus :exec
 UPDATE applications SET status = $2, updated_at = now() WHERE id = $1
 `

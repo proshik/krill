@@ -28,23 +28,45 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
+	sourceType := r.FormValue("source_type")
+	if sourceType != "dockerfile" {
+		sourceType = "image"
+	}
 	image := strings.TrimSpace(r.FormValue("image"))
 	tag := strings.TrimSpace(r.FormValue("tag"))
 	if tag == "" {
 		tag = "latest"
+	}
+	gitURL := strings.TrimSpace(r.FormValue("git_url"))
+	gitBranch := strings.TrimSpace(r.FormValue("git_branch"))
+	if gitBranch == "" {
+		gitBranch = "main"
+	}
+	dockerfilePath := strings.TrimSpace(r.FormValue("dockerfile_path"))
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
 	}
 	domain := strings.TrimSpace(r.FormValue("domain"))
 	if domain == "" {
 		domain = name + "." + s.cfg.BaseDomain
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
-	if err != nil || port <= 0 || !isSlug(name) || image == "" {
-		http.Error(w, "проверь поля: имя (slug), образ, порт", http.StatusBadRequest)
+	if err != nil || port <= 0 || !isSlug(name) {
+		http.Error(w, "проверь поля: имя (slug), порт", http.StatusBadRequest)
+		return
+	}
+	if sourceType == "image" && image == "" {
+		http.Error(w, "для источника 'образ' укажи image", http.StatusBadRequest)
+		return
+	}
+	if sourceType == "dockerfile" && gitURL == "" {
+		http.Error(w, "для источника 'Dockerfile' укажи git URL", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
-		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag,
-		Domain: domain, Port: int32(port), Env: parseEnv(r.FormValue("env")),
+		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag, Domain: domain, Port: int32(port),
+		Env: parseEnv(r.FormValue("env")), SourceType: sourceType,
+		GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 	}); err != nil {
 		http.Error(w, "не удалось создать (имя/домен занят?): "+err.Error(), http.StatusBadRequest)
 		return
@@ -58,8 +80,16 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" {
+	if tab != "env" && tab != "logs" && tab != "deployments" {
 		tab = "general"
+	}
+	if tab == "deployments" {
+		deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		c.Deps = deps
 	}
 	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
 }
@@ -83,13 +113,24 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	image := strings.TrimSpace(r.FormValue("image"))
-	tag := strings.TrimSpace(r.FormValue("tag"))
-	if image != "" && tag != "" {
-		_ = s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag})
+	if c.App.SourceType == "dockerfile" {
+		gitURL := strings.TrimSpace(r.FormValue("git_url"))
+		gitBranch := strings.TrimSpace(r.FormValue("git_branch"))
+		dockerfilePath := strings.TrimSpace(r.FormValue("dockerfile_path"))
+		if gitURL != "" {
+			_ = s.q.UpdateApplicationSource(r.Context(), db.UpdateApplicationSourceParams{
+				ID: c.App.ID, GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
+			})
+		}
+	} else {
+		image := strings.TrimSpace(r.FormValue("image"))
+		tag := strings.TrimSpace(r.FormValue("tag"))
+		if image != "" && tag != "" {
+			_ = s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag})
+		}
 	}
-	s.deployer.Enqueue(c.App.ID)
-	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+	s.deployer.Enqueue(c.App.ID, "manual")
+	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
 func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
