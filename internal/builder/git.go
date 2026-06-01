@@ -18,6 +18,10 @@ type gitBuilder struct {
 func New(dockerHost string) Builder { return &gitBuilder{dockerHost: dockerHost} }
 
 func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer) error {
+	if err := ValidateBuildRequest(req); err != nil {
+		fmt.Fprintf(out, "❌ invalid build request: %v\n", err)
+		return err
+	}
 	dir, err := os.MkdirTemp("", fmt.Sprintf("krill-build-%d-%d-", req.AppID, req.DeployID))
 	if err != nil {
 		return err
@@ -34,7 +38,8 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 	}
 
 	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", req.GitURL, branch)
-	if err := b.run(ctx, out, "git", cloneArgs(req.GitURL, branch, dir), nil); err != nil {
+	gitEnv := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=http:https")
+	if err := b.run(ctx, out, "git", cloneArgs(req.GitURL, branch, dir), gitEnv); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 
