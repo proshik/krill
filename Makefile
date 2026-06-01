@@ -1,8 +1,17 @@
-.PHONY: generate build run test test-integration tidy db-up db-down
+.PHONY: generate build run test test-integration tidy db-up db-down css css-watch
+
+TAILWIND = ./tools/tailwindcss
 
 generate:
 	go tool templ generate
 	go tool sqlc generate
+	$(TAILWIND) -i internal/web/styles/input.css -o internal/web/static/app.css --minify
+
+css:
+	$(TAILWIND) -i internal/web/styles/input.css -o internal/web/static/app.css --minify
+
+css-watch:
+	$(TAILWIND) -i internal/web/styles/input.css -o internal/web/static/app.css --watch
 
 build: generate
 	go build -o bin/krill ./cmd/krill
