@@ -109,7 +109,8 @@
   .k-panel-body { padding:1.5rem; border-top:1px solid var(--color-border); }
 
   /* нативная модалка <dialog> (центр, max-w-lg, backdrop) — как shadcn Dialog */
-  .k-modal { width:100%; max-width:32rem; border:1px solid var(--color-border-strong); border-radius:12px;
+  /* margin:auto возвращает центрирование — Tailwind preflight обнуляет margin у <dialog> */
+  .k-modal { width:100%; max-width:32rem; margin:auto; border:1px solid var(--color-border-strong); border-radius:12px;
     background:var(--color-surface); color:var(--color-fg); padding:0; box-shadow:0 20px 60px -10px rgba(0,0,0,.7); }
   .k-modal::backdrop { background:rgba(0,0,0,.8); backdrop-filter:blur(2px); }
   .k-modal-head { padding:1.25rem 1.5rem .75rem; }
