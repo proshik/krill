@@ -10,18 +10,22 @@ import (
 )
 
 const createApplication = `-- name: CreateApplication :one
-INSERT INTO applications (environment_id, name, image, tag, domain, port, env)
-VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at
+INSERT INTO applications (environment_id, name, image, tag, domain, port, env, source_type, git_url, git_branch, dockerfile_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path
 `
 
 type CreateApplicationParams struct {
-	EnvironmentID int64             `json:"environment_id"`
-	Name          string            `json:"name"`
-	Image         string            `json:"image"`
-	Tag           string            `json:"tag"`
-	Domain        string            `json:"domain"`
-	Port          int32             `json:"port"`
-	Env           map[string]string `json:"env"`
+	EnvironmentID  int64             `json:"environment_id"`
+	Name           string            `json:"name"`
+	Image          string            `json:"image"`
+	Tag            string            `json:"tag"`
+	Domain         string            `json:"domain"`
+	Port           int32             `json:"port"`
+	Env            map[string]string `json:"env"`
+	SourceType     string            `json:"source_type"`
+	GitUrl         string            `json:"git_url"`
+	GitBranch      string            `json:"git_branch"`
+	DockerfilePath string            `json:"dockerfile_path"`
 }
 
 func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error) {
@@ -33,6 +37,10 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		arg.Domain,
 		arg.Port,
 		arg.Env,
+		arg.SourceType,
+		arg.GitUrl,
+		arg.GitBranch,
+		arg.DockerfilePath,
 	)
 	var i Application
 	err := row.Scan(
@@ -47,6 +55,10 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceType,
+		&i.GitUrl,
+		&i.GitBranch,
+		&i.DockerfilePath,
 	)
 	return i, err
 }
@@ -61,7 +73,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -79,6 +91,10 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceType,
+		&i.GitUrl,
+		&i.GitBranch,
+		&i.DockerfilePath,
 	)
 	return i, err
 }
@@ -112,7 +128,7 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -136,6 +152,10 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceType,
+			&i.GitUrl,
+			&i.GitBranch,
+			&i.DockerfilePath,
 		); err != nil {
 			return nil, err
 		}
@@ -148,7 +168,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -172,6 +192,10 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceType,
+			&i.GitUrl,
+			&i.GitBranch,
+			&i.DockerfilePath,
 		); err != nil {
 			return nil, err
 		}

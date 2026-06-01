@@ -6,20 +6,38 @@ package db
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Application struct {
-	ID            int64             `json:"id"`
-	EnvironmentID int64             `json:"environment_id"`
-	Name          string            `json:"name"`
-	Image         string            `json:"image"`
-	Tag           string            `json:"tag"`
-	Domain        string            `json:"domain"`
-	Port          int32             `json:"port"`
-	Env           map[string]string `json:"env"`
-	Status        string            `json:"status"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID             int64             `json:"id"`
+	EnvironmentID  int64             `json:"environment_id"`
+	Name           string            `json:"name"`
+	Image          string            `json:"image"`
+	Tag            string            `json:"tag"`
+	Domain         string            `json:"domain"`
+	Port           int32             `json:"port"`
+	Env            map[string]string `json:"env"`
+	Status         string            `json:"status"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	SourceType     string            `json:"source_type"`
+	GitUrl         string            `json:"git_url"`
+	GitBranch      string            `json:"git_branch"`
+	DockerfilePath string            `json:"dockerfile_path"`
+}
+
+type Deployment struct {
+	ID            int64              `json:"id"`
+	ApplicationID int64              `json:"application_id"`
+	Status        string             `json:"status"`
+	Trigger       string             `json:"trigger"`
+	ImageTag      string             `json:"image_tag"`
+	Log           string             `json:"log"`
+	ErrorMessage  string             `json:"error_message"`
+	StartedAt     time.Time          `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
 }
 
 type Environment struct {

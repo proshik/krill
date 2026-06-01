@@ -1,6 +1,6 @@
 -- name: CreateApplication :one
-INSERT INTO applications (environment_id, name, image, tag, domain, port, env)
-VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+INSERT INTO applications (environment_id, name, image, tag, domain, port, env, source_type, git_url, git_branch, dockerfile_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
 
 -- name: GetApplication :one
 SELECT * FROM applications WHERE id = $1;
