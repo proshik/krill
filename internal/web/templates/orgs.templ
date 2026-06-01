@@ -4,23 +4,23 @@ import db "github.com/proshik/krill/internal/database/gen"
 
 templ Orgs(orgs []db.Organization) {
 	@Bare("Организации") {
-		<div class="card" style="width:420px;">
-			<h2>Ваши организации</h2>
+		<div class="k-card w-[420px]">
+			<h2 class="text-2xl mb-4">Ваши организации</h2>
 			if len(orgs) == 0 {
-				<p>Нет организаций.</p>
+				<p class="k-mono mb-3">Нет организаций.</p>
 			} else {
-				<ul style="list-style:none; padding:0;">
+				<ul class="list-none p-0 m-0 mb-3">
 					for _, o := range orgs {
-						<li style="margin:8px 0;">
-							<a href={ templ.SafeURL("/orgs/" + itoa(o.ID)) }>{ o.Name }</a>
+						<li class="py-2 border-b border-[color:var(--color-border)]">
+							<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("/orgs/" + itoa(o.ID)) }>{ o.Name }</a>
 						</li>
 					}
 				</ul>
 			}
-			<form method="post" action="/orgs" style="margin-top:16px;">
-				<label>Новая организация</label>
-				<input name="name" required placeholder="My Company"/>
-				<button type="submit" style="margin-top:8px;">Создать</button>
+			<form method="post" action="/orgs" class="mt-4">
+				<label class="k-label">Новая организация</label>
+				<input class="k-input" name="name" required placeholder="My Company"/>
+				<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">Создать</button></div>
 			</form>
 		</div>
 	}

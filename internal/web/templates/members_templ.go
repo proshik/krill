@@ -43,19 +43,19 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<h2>Члены организации</h2>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<h2 class=\"text-2xl mb-4\">Члены организации</h2>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if tempPassword != "" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"card\" style=\"border-color:var(--ok);\">Пользователь создан. Временный пароль (показывается один раз): <b>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"k-toast k-toast-ok mb-3\">Пользователь создан. Временный пароль (показывается один раз): <b class=\"k-mono\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var3 string
 				templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(tempPassword)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 10, Col: 136}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 9, Col: 187}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 				if templ_7745c5c3_Err != nil {
@@ -66,19 +66,19 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, " <div class=\"card\"><table><thead><tr><th>Email</th><th>Роль</th><th></th></tr></thead> <tbody>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, " <div class=\"k-card mb-4\"><table class=\"k-table\"><thead><tr><th>Email</th><th>Роль</th><th></th></tr></thead> <tbody>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			for _, m := range members {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<tr><td>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<tr><td class=\"k-mono\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var4 string
 				templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(m.Email)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 19, Col: 20}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 17, Col: 35}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 				if templ_7745c5c3_Err != nil {
@@ -91,7 +91,7 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 				var templ_7745c5c3_Var5 string
 				templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(m.Role)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 20, Col: 19}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 18, Col: 19}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 				if templ_7745c5c3_Err != nil {
@@ -109,13 +109,13 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 					var templ_7745c5c3_Var6 templ.SafeURL
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 23, Col: 115}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 21, Col: 115}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" style=\"display:inline;\"><button type=\"submit\" class=\"secondary\">Удалить</button></form>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "\" class=\"inline\"><button type=\"submit\" class=\"k-btn k-btn-danger\">Удалить</button></form>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -130,20 +130,20 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 				return templ_7745c5c3_Err
 			}
 			if role == "owner" || role == "admin" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<div class=\"card\"><h3>Добавить пользователя</h3><form method=\"post\" action=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "<div class=\"k-card\"><h3 class=\"text-lg mb-2\">Добавить пользователя</h3><form method=\"post\" action=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var7 templ.SafeURL
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/orgs/" + itoa(org.ID) + "/members"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 36, Col: 84}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 34, Col: 84}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><label>Email</label> <input name=\"email\" type=\"email\" required> <label>Роль</label> <select name=\"role\"><option value=\"member\">member</option> <option value=\"admin\">admin</option></select> <button type=\"submit\" style=\"margin-top:8px;\">Создать</button></form></div>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "\"><label class=\"k-label\">Email</label> <input class=\"k-input\" name=\"email\" type=\"email\" required> <label class=\"k-label\">Роль</label> <select class=\"k-select\" name=\"role\"><option value=\"member\">member</option> <option value=\"admin\">admin</option></select><div class=\"mt-2\"><button type=\"submit\" class=\"k-btn k-btn-primary\">Создать</button></div></form></div>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

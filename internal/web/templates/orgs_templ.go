@@ -43,29 +43,29 @@ func Orgs(orgs []db.Organization) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"card\" style=\"width:420px;\"><h2>Ваши организации</h2>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"k-card w-[420px]\"><h2 class=\"text-2xl mb-4\">Ваши организации</h2>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if len(orgs) == 0 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<p>Нет организаций.</p>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<p class=\"k-mono mb-3\">Нет организаций.</p>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<ul style=\"list-style:none; padding:0;\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<ul class=\"list-none p-0 m-0 mb-3\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				for _, o := range orgs {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<li style=\"margin:8px 0;\"><a href=\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<li class=\"py-2 border-b border-[color:var(--color-border)]\"><a class=\"text-[color:var(--color-accent)]\" href=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var3 templ.SafeURL
 					templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/orgs/" + itoa(o.ID)))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/orgs.templ`, Line: 15, Col: 53}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/orgs.templ`, Line: 15, Col: 94}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 					if templ_7745c5c3_Err != nil {
@@ -78,7 +78,7 @@ func Orgs(orgs []db.Organization) templ.Component {
 					var templ_7745c5c3_Var4 string
 					templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(o.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/orgs.templ`, Line: 15, Col: 64}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/orgs.templ`, Line: 15, Col: 105}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 					if templ_7745c5c3_Err != nil {
@@ -94,7 +94,7 @@ func Orgs(orgs []db.Organization) templ.Component {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<form method=\"post\" action=\"/orgs\" style=\"margin-top:16px;\"><label>Новая организация</label> <input name=\"name\" required placeholder=\"My Company\"> <button type=\"submit\" style=\"margin-top:8px;\">Создать</button></form></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<form method=\"post\" action=\"/orgs\" class=\"mt-4\"><label class=\"k-label\">Новая организация</label> <input class=\"k-input\" name=\"name\" required placeholder=\"My Company\"><div class=\"mt-2\"><button type=\"submit\" class=\"k-btn k-btn-primary\">Создать</button></div></form></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

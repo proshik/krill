@@ -9,37 +9,32 @@ type ProjectCard struct {
 
 templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
 	@Layout("Проекты", org, role) {
-		<div style="display:flex; justify-content:space-between; align-items:center;">
-			<h2>Проекты</h2>
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl">Проекты</h2>
 			if role == "owner" || role == "admin" {
 				<details>
-					<summary><button type="button">+ Проект</button></summary>
-					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") } class="card" style="margin-top:8px;">
-						<label>Имя</label>
-						<input name="name" required placeholder="My App"/>
-						<label>Описание</label>
-						<input name="description" placeholder="(необязательно)"/>
-						<button type="submit" style="margin-top:8px;">Создать</button>
+					<summary class="cursor-pointer"><span class="k-btn k-btn-primary">+ Проект</span></summary>
+					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") } class="k-card mt-2">
+						<label class="k-label">Имя</label>
+						<input class="k-input" name="name" required placeholder="My App"/>
+						<label class="k-label">Описание</label>
+						<input class="k-input" name="description" placeholder="(необязательно)"/>
+						<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">Создать</button></div>
 					</form>
 				</details>
 			}
 		</div>
-		<div class="card">
-			if len(projects) == 0 {
-				<p>Пока нет проектов.</p>
-			} else {
-				<table>
-					<thead><tr><th>Проект</th><th>Окружений</th></tr></thead>
-					<tbody>
-						for _, pc := range projects {
-							<tr>
-								<td><a href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>{ pc.Project.Name }</a></td>
-								<td>{ itoa(pc.EnvCount) }</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			}
-		</div>
+		if len(projects) == 0 {
+			<div class="k-card"><p class="k-mono">Пока нет проектов.</p></div>
+		} else {
+			<div class="grid grid-cols-2 gap-3">
+				for _, pc := range projects {
+					<a class="k-card hover:border-[color:var(--color-border-strong)]" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>
+						<div class="font-semibold text-base mb-1">{ pc.Project.Name }</div>
+						<div class="k-mono text-xs">{ itoa(pc.EnvCount) } окружений</div>
+					</a>
+				}
+			</div>
+		}
 	}
 }
