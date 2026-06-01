@@ -9,3 +9,4 @@
 .claude/
 internal/database/schema.sql
 .superpowers/
+/tools/tailwindcss
