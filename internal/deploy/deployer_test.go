@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/proshik/krill/internal/builder"
 	"github.com/proshik/krill/internal/docker"
 )
 
@@ -35,14 +37,38 @@ func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, 
 	return nil, nil
 }
 
-type fakeStore struct {
+type mockBuilder struct {
 	mu     sync.Mutex
-	app    App
-	status map[int64]string
+	called bool
+	fail   bool
 }
 
-func newFakeStore(a App) *fakeStore { return &fakeStore{app: a, status: map[int64]string{}} }
-func (f *fakeStore) GetApplication(_ context.Context, id int64) (App, error) {
+func (b *mockBuilder) Build(_ context.Context, req builder.BuildRequest, out io.Writer) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.called = true
+	out.Write([]byte("building " + req.ImageTag + "\n"))
+	if b.fail {
+		return errors.New("build boom")
+	}
+	return nil
+}
+func (b *mockBuilder) wasCalled() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.called }
+
+type fakeStore struct {
+	mu      sync.Mutex
+	app     App
+	status  map[int64]string
+	deploys map[int64]string // deployID -> final status
+	nextID  int64
+	depApp  map[int64]int64 // deployID -> appID
+}
+
+func newFakeStore(a App) *fakeStore {
+	return &fakeStore{app: a, status: map[int64]string{}, deploys: map[int64]string{}, depApp: map[int64]int64{}, nextID: 100}
+}
+func (f *fakeStore) GetApplication(_ context.Context, id int64) (App, error) { return f.app, nil }
+func (f *fakeStore) GetDeploymentApp(_ context.Context, deployID int64) (App, error) {
 	return f.app, nil
 }
 func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error {
@@ -51,85 +77,127 @@ func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error 
 	f.status[id] = status
 	return nil
 }
-func (f *fakeStore) get(id int64) string {
+func (f *fakeStore) CreateDeployment(_ context.Context, appID int64, trigger string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.status[id]
+	f.nextID++
+	f.depApp[f.nextID] = appID
+	return f.nextID, nil
 }
+func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, imageTag, errMsg, log string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deploys[deployID] = status
+	return nil
+}
+func (f *fakeStore) appStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.status[id] }
+func (f *fakeStore) depStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.deploys[id] }
 
-func sampleApp() App {
+func imageApp() App {
 	return App{ID: 1, Name: "web", Image: "nginx", Tag: "alpine",
-		Domain: "web.127-0-0-1.sslip.io", Port: 80, Env: map[string]string{"K": "V"}}
+		Domain: "web.127-0-0-1.sslip.io", Port: 80, Env: map[string]string{"K": "V"}, SourceType: "image"}
+}
+func dockerfileApp() App {
+	return App{ID: 2, Name: "api", Domain: "api.x", Port: 3000, Env: map[string]string{},
+		SourceType: "dockerfile", GitURL: "https://github.com/x/y.git", GitBranch: "main", DockerfilePath: "Dockerfile"}
 }
 
-func TestBuildSpec(t *testing.T) {
-	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
-	spec := d.buildSpec(sampleApp())
-	if spec.Name != "krill-1" {
-		t.Errorf("name = %q, want krill-1", spec.Name)
+func newDeployer(eng docker.Engine, b builder.Builder, st Store) *Deployer {
+	return New(eng, b, st, NewLogHub(), "krill-net")
+}
+
+func TestBuildSpecImage(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	spec := d.buildSpec(imageApp(), "nginx:alpine")
+	if spec.Name != "krill-1" || spec.Image != "nginx:alpine" {
+		t.Errorf("spec = %+v", spec)
 	}
-	if spec.Image != "nginx:alpine" {
-		t.Errorf("image = %q", spec.Image)
-	}
-	if spec.Labels["traefik.enable"] != "true" {
-		t.Error("missing traefik labels")
-	}
-	if spec.Network != "krill-net" || spec.Replicas != 1 {
-		t.Error("network/replicas wrong")
+	if spec.Labels["traefik.enable"] != "true" || spec.Network != "krill-net" {
+		t.Error("labels/network wrong")
 	}
 }
 
-func TestWorkerSetsRunning(t *testing.T) {
+func TestImageDeployNoBuild(t *testing.T) {
 	eng := &mockEngine{}
-	st := newFakeStore(sampleApp())
-	d := New(eng, st, "krill-net")
+	b := &mockBuilder{}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, b, st)
 	d.Start(context.Background())
 	defer d.Stop()
 
-	d.Enqueue(1)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for st.get(1) != StatusRunning {
-		if time.Now().After(deadline) {
-			t.Fatalf("status never became running: %q", st.get(1))
-		}
-		time.Sleep(10 * time.Millisecond)
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	if b.wasCalled() {
+		t.Error("builder must NOT be called for image source")
 	}
-	if len(eng.deployed) != 1 {
-		t.Fatalf("expected 1 deploy, got %d", len(eng.deployed))
+	if len(eng.deployed) != 1 || eng.deployed[0].Image != "nginx:alpine" {
+		t.Fatalf("deployed = %+v", eng.deployed)
+	}
+	if st.appStatus(1) != StatusRunning {
+		t.Errorf("app status = %q", st.appStatus(1))
 	}
 }
 
-func TestWorkerSetsErrorOnFailure(t *testing.T) {
-	eng := &mockEngine{failNext: true}
-	st := newFakeStore(sampleApp())
-	d := New(eng, st, "krill-net")
+func TestDockerfileDeployBuilds(t *testing.T) {
+	eng := &mockEngine{}
+	b := &mockBuilder{}
+	st := newFakeStore(dockerfileApp())
+	d := newDeployer(eng, b, st)
 	d.Start(context.Background())
 	defer d.Stop()
 
-	d.Enqueue(1)
+	id := d.Enqueue(2, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	if !b.wasCalled() {
+		t.Error("builder MUST be called for dockerfile source")
+	}
+	want := "krill-2:" + strconv.FormatInt(id, 10)
+	if len(eng.deployed) != 1 || eng.deployed[0].Image != want {
+		t.Fatalf("deployed image = %+v (want %s)", eng.deployed, want)
+	}
+}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for st.get(1) != StatusError {
-		if time.Now().After(deadline) {
-			t.Fatalf("status never became error: %q", st.get(1))
-		}
-		time.Sleep(10 * time.Millisecond)
+func TestBuildFailureMarksError(t *testing.T) {
+	eng := &mockEngine{}
+	b := &mockBuilder{fail: true}
+	st := newFakeStore(dockerfileApp())
+	d := newDeployer(eng, b, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(2, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	if len(eng.deployed) != 0 {
+		t.Error("must NOT deploy when build fails")
+	}
+	if st.appStatus(2) != StatusError {
+		t.Errorf("app status = %q", st.appStatus(2))
 	}
 }
 
 func TestEnqueueAfterStopNoPanic(t *testing.T) {
-	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
 	d.Start(context.Background())
 	d.Stop()
-	// Должно не паниковать и просто игнорироваться.
-	d.Enqueue(1)
-	d.Enqueue(1)
+	if id := d.Enqueue(1, "manual"); id != 0 {
+		t.Errorf("Enqueue after Stop must return 0, got %d", id)
+	}
 }
 
 func TestStopIdempotent(t *testing.T) {
-	d := New(&mockEngine{}, newFakeStore(sampleApp()), "krill-net")
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
 	d.Start(context.Background())
 	d.Stop()
-	d.Stop() // повторный Stop не должен паниковать
+	d.Stop()
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not met in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
