@@ -17,3 +17,10 @@ window.mountLogTerminal = function (wsPath) {
   ws.onclose = () => term.writeln("\x1b[90m[log stream closed]\x1b[0m");
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 };
+
+// Переключение полей источника в форме создания приложения.
+window.krillToggleSource = function (val) {
+  document.querySelectorAll('[data-src]').forEach(function (el) {
+    el.style.display = (el.getAttribute('data-src') === val) ? '' : 'none';
+  });
+};

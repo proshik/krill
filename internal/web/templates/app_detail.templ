@@ -9,6 +9,7 @@ type AppCtx struct {
 	Project db.Project
 	Env     db.Environment
 	App     db.Application
+	Deps    []db.Deployment
 }
 
 func (c AppCtx) base() string {
@@ -26,11 +27,14 @@ templ AppDetail(c AppCtx, tab string) {
 		<div class="tabs card" style="padding:10px 16px;">
 			<a href={ templ.SafeURL(c.base()) } class={ templ.KV("active", tab == "general") }>General</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=env") } class={ templ.KV("active", tab == "env") }>Environment</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=deployments") } class={ templ.KV("active", tab == "deployments") }>Deployments</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ templ.KV("active", tab == "logs") }>Logs</a>
 		</div>
 		switch tab {
 			case "env":
 				@envTab(c)
+			case "deployments":
+				@DeploymentsList(c, c.Deps)
 			case "logs":
 				@logsTab(c)
 			default:
@@ -44,13 +48,26 @@ templ generalTab(c AppCtx) {
 		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML">
 			Статус: @StatusBadge(c.App.Status)
 		</div>
-		<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } style="margin-top:16px;">
-			<label>Образ</label>
-			<input name="image" value={ c.App.Image }/>
-			<label>Тег</label>
-			<input name="tag" value={ c.App.Tag }/>
-			<button type="submit" style="margin-top:8px;">Deploy</button>
-		</form>
+		if c.App.SourceType == "dockerfile" {
+			<p style="color:var(--muted)">Источник: Dockerfile</p>
+			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } style="margin-top:8px;">
+				<label>Git URL</label>
+				<input name="git_url" value={ c.App.GitUrl }/>
+				<label>Ветка</label>
+				<input name="git_branch" value={ c.App.GitBranch }/>
+				<label>Путь к Dockerfile</label>
+				<input name="dockerfile_path" value={ c.App.DockerfilePath }/>
+				<button type="submit" style="margin-top:8px;">Deploy</button>
+			</form>
+		} else {
+			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } style="margin-top:16px;">
+				<label>Образ</label>
+				<input name="image" value={ c.App.Image }/>
+				<label>Тег</label>
+				<input name="tag" value={ c.App.Tag }/>
+				<button type="submit" style="margin-top:8px;">Deploy</button>
+			</form>
+		}
 		<p style="color:var(--muted); margin-top:12px;">
 			Открыть: <a href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
 		</p>
