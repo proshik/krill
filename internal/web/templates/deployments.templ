@@ -33,8 +33,10 @@ templ DeploymentsList(c AppCtx, deps []db.Deployment) {
 
 templ DeploymentLog(c AppCtx, dep db.Deployment) {
 	@Layout("Деплой #"+itoa(dep.ID), c.Org, c.Role) {
-		<p class="k-crumbs mb-3">
-			<a href={ templ.SafeURL(c.base()) }>{ c.App.Name }</a> / Деплой #{ itoa(dep.ID) } — @StatusBadge(dep.Status)
+		<p class="k-crumbs mb-3 flex items-center gap-2">
+			<a href={ templ.SafeURL(c.base()) }>{ c.App.Name }</a>
+			<span>/ Деплой #{ itoa(dep.ID) }</span>
+			@StatusBadge(dep.Status)
 		</p>
 		<div class="k-card">
 			<div id="terminal" data-ws={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>

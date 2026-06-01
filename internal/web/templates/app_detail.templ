@@ -44,8 +44,9 @@ templ AppDetail(c AppCtx, tab string) {
 
 templ generalTab(c AppCtx) {
 	<div class="k-card">
-		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML" class="mb-4">
-			Статус: @StatusBadge(c.App.Status)
+		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML" class="mb-4 flex items-center gap-2">
+			<span class="k-mono text-xs">Статус:</span>
+			@StatusBadge(c.App.Status)
 		</div>
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">Источник: Dockerfile</p>
