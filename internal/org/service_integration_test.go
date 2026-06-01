@@ -50,6 +50,7 @@ func TestChainIsolation(t *testing.T) {
 	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
 		Domain: "web.x", Port: 80, Env: map[string]string{},
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
