@@ -4,7 +4,7 @@ import db "github.com/proshik/krill/internal/database/gen"
 
 templ Layout(title string, org db.Organization, role string) {
 	<!DOCTYPE html>
-	<html lang="ru">
+	<html lang="ru" class="dark">
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -13,22 +13,22 @@ templ Layout(title string, org db.Organization, role string) {
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
-		<body>
-			<aside class="sidebar">
-				<h1>🦐 Krill</h1>
-				<div class="org-badge">
+		<body class="flex">
+			<aside class="k-side">
+				<div class="k-side-brand">🦐 Krill</div>
+				<div class="k-org-badge">
 					<a href="/orgs">{ org.Name } ▾</a>
 					<span class="role">{ role }</span>
 				</div>
 				<nav>
-					<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>Проекты</a>
+					<a class={ "k-nav", "k-nav-active" } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>Проекты</a>
 					if role == "owner" || role == "admin" {
-						<a href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>Члены</a>
+						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>Члены</a>
 					}
-					<a href="/logout">Выйти</a>
+					<a class="k-nav" href="/logout">Выйти</a>
 				</nav>
 			</aside>
-			<main class="content">
+			<main class="flex-1 p-8 max-w-5xl">
 				{ children... }
 			</main>
 		</body>
@@ -37,14 +37,14 @@ templ Layout(title string, org db.Organization, role string) {
 
 templ Bare(title string) {
 	<!DOCTYPE html>
-	<html lang="ru">
+	<html lang="ru" class="dark">
 		<head>
 			<meta charset="utf-8"/>
 			<title>{ title } — Krill</title>
 			<link rel="stylesheet" href="/static/app.css"/>
 		</head>
-		<body style="align-items:center; justify-content:center;">
-			<main style="width:320px;">
+		<body class="flex items-center justify-center min-h-screen">
+			<main class="w-[340px]">
 				{ children... }
 			</main>
 		</body>

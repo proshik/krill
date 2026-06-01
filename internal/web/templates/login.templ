@@ -2,18 +2,18 @@ package templates
 
 templ Login(errMsg string) {
 	@Bare("Вход") {
-		<div class="card">
-			<h2>Вход в Krill</h2>
+		<div class="k-card">
+			<h2 class="text-2xl mb-4">Вход в Krill</h2>
 			if errMsg != "" {
-				<p class="form-error">{ errMsg }</p>
+				<div class="k-toast k-toast-err mb-3">{ errMsg }</div>
 			}
 			<form method="post" action="/login">
-				<label>Email</label>
-				<input name="email" type="email" required autofocus/>
-				<label>Пароль</label>
-				<input name="password" type="password" required/>
-				<div style="margin-top:14px;">
-					<button type="submit">Войти</button>
+				<label class="k-label">Email</label>
+				<input class="k-input" name="email" type="email" required autofocus/>
+				<label class="k-label">Пароль</label>
+				<input class="k-input" name="password" type="password" required/>
+				<div class="mt-4">
+					<button type="submit" class="k-btn k-btn-primary">Войти</button>
 				</div>
 			</form>
 		</div>
