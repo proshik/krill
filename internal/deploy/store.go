@@ -58,3 +58,7 @@ func (s *DBStore) GetDeploymentApp(ctx context.Context, deployID int64) (App, er
 	}
 	return s.GetApplication(ctx, dep.ApplicationID)
 }
+
+func (s *DBStore) ClearOldDeploymentLogs(ctx context.Context) error {
+	return s.q.ClearOldDeploymentLogs(ctx)
+}
