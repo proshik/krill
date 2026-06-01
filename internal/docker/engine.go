@@ -56,3 +56,8 @@ type Engine interface {
 func ServiceName(appID int64) string {
 	return "krill-" + strconv.FormatInt(appID, 10)
 }
+
+// BuildImageTag — имя локально собираемого образа приложения для конкретного деплоя.
+func BuildImageTag(appID, deployID int64) string {
+	return "krill-" + strconv.FormatInt(appID, 10) + ":" + strconv.FormatInt(deployID, 10)
+}
