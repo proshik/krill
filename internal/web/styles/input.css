@@ -98,4 +98,28 @@
   .k-org-badge { margin:10px 0 16px; padding:8px 10px; background:var(--color-surface); border-radius:8px; }
   .k-org-badge a { font-weight:600; color:var(--color-fg); }
   .k-org-badge .role { display:block; font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--color-faint); margin-top:2px; }
+
+  /* контент-оболочка (full-width, двойная карта-рамка как у Dokploy) */
+  .k-content { width:100%; padding:1.25rem; }
+  .k-frame { background:#0c0c0c; border:1px solid var(--color-border); border-radius:14px; padding:10px; }
+  .k-panel { background:var(--color-surface); border-radius:12px; }
+  .k-panel-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; padding:1.25rem 1.5rem; }
+  .k-panel-title { font-size:20px; font-weight:700; letter-spacing:-.02em; }
+  .k-panel-desc { font-size:13px; color:var(--color-muted); margin-top:2px; }
+  .k-panel-body { padding:1.5rem; border-top:1px solid var(--color-border); }
+
+  /* нативная модалка <dialog> (центр, max-w-lg, backdrop) — как shadcn Dialog */
+  .k-modal { width:100%; max-width:32rem; border:1px solid var(--color-border-strong); border-radius:12px;
+    background:var(--color-surface); color:var(--color-fg); padding:0; box-shadow:0 20px 60px -10px rgba(0,0,0,.7); }
+  .k-modal::backdrop { background:rgba(0,0,0,.8); backdrop-filter:blur(2px); }
+  .k-modal-head { padding:1.25rem 1.5rem .75rem; }
+  .k-modal-title { font-size:18px; font-weight:700; letter-spacing:-.01em; }
+  .k-modal-desc { font-size:13px; color:var(--color-muted); margin-top:4px; }
+  .k-modal-body { padding:0 1.5rem 1rem; display:grid; gap:.75rem; }
+  .k-modal-foot { display:flex; justify-content:flex-end; gap:.5rem; padding:1rem 1.5rem; border-top:1px solid var(--color-border); }
+
+  /* блок-редактор env «Environment Settings» (моно, фикс. высота, тёмный) */
+  .k-code { width:100%; min-height:24rem; background:#0b0d10; color:#e6e6ea; border:1px solid var(--color-border-strong);
+    border-radius:10px; padding:.85rem 1rem; font-family:var(--font-mono); font-size:13px; line-height:1.6; resize:vertical; tab-size:2; }
+  .k-code:focus { outline:2px solid var(--color-accent); outline-offset:1px; box-shadow:0 0 16px -4px rgba(190,242,100,.4); }
 }

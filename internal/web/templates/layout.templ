@@ -28,8 +28,11 @@ templ Layout(title string, org db.Organization, role string) {
 					<a class="k-nav" href="/logout">Выйти</a>
 				</nav>
 			</aside>
-			<main class="flex-1 p-8 max-w-5xl">
-				{ children... }
+			<main class="flex-1 min-w-0">
+				<div class="k-content">
+					{ children... }
+				</div>
+				<script src="/static/app.js"></script>
 			</main>
 		</body>
 	</html>

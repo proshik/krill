@@ -9,32 +9,64 @@ type ProjectCard struct {
 
 templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
 	@Layout("Проекты", org, role) {
-		<div class="flex justify-between items-center mb-4">
-			<h2 class="text-2xl">Проекты</h2>
-			if role == "owner" || role == "admin" {
-				<details>
-					<summary class="cursor-pointer"><span class="k-btn k-btn-primary">+ Проект</span></summary>
-					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") } class="k-card mt-2">
-						<label class="k-label">Имя</label>
-						<input class="k-input" name="name" required placeholder="My App"/>
-						<label class="k-label">Описание</label>
-						<input class="k-input" name="description" placeholder="(необязательно)"/>
-						<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">Создать</button></div>
-					</form>
-				</details>
-			}
-		</div>
-		if len(projects) == 0 {
-			<div class="k-card"><p class="k-mono">Пока нет проектов.</p></div>
-		} else {
-			<div class="grid grid-cols-2 gap-3">
-				for _, pc := range projects {
-					<a class="k-card hover:border-[color:var(--color-border-strong)]" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>
-						<div class="font-semibold text-base mb-1">{ pc.Project.Name }</div>
-						<div class="k-mono text-xs">{ itoa(pc.EnvCount) } окружений</div>
-					</a>
-				}
+		<div class="k-frame">
+			<div class="k-panel">
+				<div class="k-panel-head">
+					<div>
+						<div class="k-panel-title">Проекты</div>
+						<div class="k-panel-desc">Создавайте проекты и управляйте ими</div>
+					</div>
+					if role == "owner" || role == "admin" {
+						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-project')">+ Проект</button>
+					}
+				</div>
+				<div class="k-panel-body">
+					if len(projects) == 0 {
+						<div class="flex flex-col items-center justify-center min-h-[40vh] gap-3">
+							<p class="k-mono">Пока нет проектов.</p>
+							if role == "owner" || role == "admin" {
+								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-project')">Создать первый проект</button>
+							}
+						</div>
+					} else {
+						<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+							for _, pc := range projects {
+								<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>
+									<div class="font-semibold text-base mb-1">{ pc.Project.Name }</div>
+									if pc.Project.Description != "" {
+										<div class="text-sm text-[color:var(--color-muted)] mb-2">{ pc.Project.Description }</div>
+									}
+									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } окружений</div>
+								</a>
+							}
+						</div>
+					}
+				</div>
 			</div>
+		</div>
+		if role == "owner" || role == "admin" {
+			<dialog id="new-project" class="k-modal">
+				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") }>
+					<div class="k-modal-head">
+						<div class="k-modal-title">Новый проект</div>
+						<div class="k-modal-desc">Начало чего-то большого.</div>
+					</div>
+					<div class="k-modal-body">
+						<div>
+							<label class="k-label">Имя</label>
+							<input class="k-input" name="name" required placeholder="Vandelay Industries"/>
+						</div>
+						<div>
+							<label class="k-label">Описание</label>
+							<textarea class="k-textarea" name="description" rows="2" placeholder="(необязательно)"></textarea>
+						</div>
+					</div>
+					<div class="k-modal-foot">
+						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-project')">Отмена</button>
+						<button type="submit" class="k-btn k-btn-primary">Создать</button>
+					</div>
+				</form>
+			</dialog>
 		}
 	}
 }

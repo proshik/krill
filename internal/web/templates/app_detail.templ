@@ -72,15 +72,21 @@ templ generalTab(c AppCtx) {
 }
 
 templ envTab(c AppCtx) {
-	<div class="k-card">
-		<form method="post" action={ templ.SafeURL(c.base() + "/env") }>
-			<label class="k-label">Переменные окружения (KEY=VALUE, по строке)</label>
-			<textarea class="k-textarea" name="env" rows="10">{ envText(c.App.Env) }</textarea>
-			<div class="mt-3 flex items-center gap-2">
-				<button type="submit" class="k-btn k-btn-primary">Сохранить</button>
-				<span class="k-mono text-xs">Применится после Deploy</span>
+	<div class="k-panel">
+		<div class="k-panel-head">
+			<div>
+				<div class="k-panel-title">Environment Settings</div>
+				<div class="k-panel-desc">Переменные окружения приложения. Применятся после Deploy.</div>
 			</div>
-		</form>
+		</div>
+		<div class="k-panel-body">
+			<form method="post" action={ templ.SafeURL(c.base() + "/env") }>
+				<textarea class="k-code" name="env" spellcheck="false" placeholder="NODE_ENV=production&#10;PORT=3000">{ envText(c.App.Env) }</textarea>
+				<div class="mt-4 flex justify-end">
+					<button type="submit" class="k-btn k-btn-primary">Сохранить</button>
+				</div>
+			</form>
+		</div>
 	</div>
 }
 

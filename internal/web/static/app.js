@@ -24,3 +24,19 @@ window.krillToggleSource = function (val) {
     el.style.display = (el.getAttribute('data-src') === val) ? '' : 'none';
   });
 };
+
+// Открыть/закрыть нативную модалку <dialog> по id.
+window.krillOpenModal = function (id) {
+  const d = document.getElementById(id);
+  if (d && typeof d.showModal === "function") d.showModal();
+};
+window.krillCloseModal = function (id) {
+  const d = document.getElementById(id);
+  if (d && typeof d.close === "function") d.close();
+};
+// Клик по подложке (вне содержимого) закрывает модалку.
+document.addEventListener("click", function (e) {
+  if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
+    e.target.close();
+  }
+});
