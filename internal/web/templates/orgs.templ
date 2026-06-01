@@ -1,13 +1,16 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 templ Orgs(orgs []db.Organization) {
-	@Bare("Организации") {
+	@Bare(i18n.T(ctx, "orgs.page_title")) {
 		<div class="k-card w-[420px]">
-			<h2 class="text-2xl mb-4">Ваши организации</h2>
+			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "orgs.title") }</h2>
 			if len(orgs) == 0 {
-				<p class="k-mono mb-3">Нет организаций.</p>
+				<p class="k-mono mb-3">{ i18n.T(ctx, "orgs.empty") }</p>
 			} else {
 				<ul class="list-none p-0 m-0 mb-3">
 					for _, o := range orgs {
@@ -18,9 +21,9 @@ templ Orgs(orgs []db.Organization) {
 				</ul>
 			}
 			<form method="post" action="/orgs" class="mt-4">
-				<label class="k-label">Новая организация</label>
+				<label class="k-label">{ i18n.T(ctx, "orgs.new_label") }</label>
 				<input class="k-input" name="name" required placeholder="My Company"/>
-				<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">Создать</button></div>
+				<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button></div>
 			</form>
 		</div>
 	}

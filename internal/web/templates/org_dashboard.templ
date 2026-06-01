@@ -1,6 +1,9 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 type ProjectCard struct {
 	Project  db.Project
@@ -8,24 +11,24 @@ type ProjectCard struct {
 }
 
 templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
-	@Layout("Проекты", org, role) {
+	@Layout(i18n.T(ctx, "projects.page_title"), org, role) {
 		<div class="k-frame">
 			<div class="k-panel">
 				<div class="k-panel-head">
 					<div>
-						<div class="k-panel-title">Проекты</div>
-						<div class="k-panel-desc">Создавайте проекты и управляйте ими</div>
+						<div class="k-panel-title">{ i18n.T(ctx, "projects.title") }</div>
+						<div class="k-panel-desc">{ i18n.T(ctx, "projects.desc") }</div>
 					</div>
 					if role == "owner" || role == "admin" {
-						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-project')">+ Проект</button>
+						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-project')">+ { i18n.T(ctx, "projects.new") }</button>
 					}
 				</div>
 				<div class="k-panel-body">
 					if len(projects) == 0 {
 						<div class="flex flex-col items-center justify-center min-h-[40vh] gap-3">
-							<p class="k-mono">Пока нет проектов.</p>
+							<p class="k-mono">{ i18n.T(ctx, "projects.empty") }</p>
 							if role == "owner" || role == "admin" {
-								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-project')">Создать первый проект</button>
+								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-project')">{ i18n.T(ctx, "projects.create_first") }</button>
 							}
 						</div>
 					} else {
@@ -36,7 +39,7 @@ templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
 									if pc.Project.Description != "" {
 										<div class="text-sm text-[color:var(--color-muted)] mb-2">{ pc.Project.Description }</div>
 									}
-									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } окружений</div>
+									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } { i18n.T(ctx, "projects.env_count_suffix") }</div>
 								</a>
 							}
 						</div>
@@ -48,22 +51,22 @@ templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
 			<dialog id="new-project" class="k-modal">
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") }>
 					<div class="k-modal-head">
-						<div class="k-modal-title">Новый проект</div>
-						<div class="k-modal-desc">Начало чего-то большого.</div>
+						<div class="k-modal-title">{ i18n.T(ctx, "project.new_modal_title") }</div>
+						<div class="k-modal-desc">{ i18n.T(ctx, "project.new_modal_desc") }</div>
 					</div>
 					<div class="k-modal-body">
 						<div>
-							<label class="k-label">Имя</label>
+							<label class="k-label">{ i18n.T(ctx, "common.name") }</label>
 							<input class="k-input" name="name" required placeholder="Vandelay Industries"/>
 						</div>
 						<div>
-							<label class="k-label">Описание</label>
-							<textarea class="k-textarea" name="description" rows="2" placeholder="(необязательно)"></textarea>
+							<label class="k-label">{ i18n.T(ctx, "common.description") }</label>
+							<textarea class="k-textarea" name="description" rows="2" placeholder={ i18n.T(ctx, "common.optional") }></textarea>
 						</div>
 					</div>
 					<div class="k-modal-foot">
-						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-project')">Отмена</button>
-						<button type="submit" class="k-btn k-btn-primary">Создать</button>
+						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-project')">{ i18n.T(ctx, "common.cancel") }</button>
+						<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
 					</div>
 				</form>
 			</dialog>

@@ -1,6 +1,9 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 templ Deployments(c AppCtx, deps []db.Deployment) {
 	<div class="k-card">
@@ -12,10 +15,10 @@ templ Deployments(c AppCtx, deps []db.Deployment) {
 
 templ DeploymentsList(c AppCtx, deps []db.Deployment) {
 	<table id="deployments-list" class="k-table">
-		<thead><tr><th>Время</th><th>Статус</th><th>Триггер</th><th>Образ</th><th>Лог</th></tr></thead>
+		<thead><tr><th>{ i18n.T(ctx, "deploy.col_time") }</th><th>{ i18n.T(ctx, "deploy.col_status") }</th><th>{ i18n.T(ctx, "deploy.col_trigger") }</th><th>{ i18n.T(ctx, "deploy.col_image") }</th><th>{ i18n.T(ctx, "deploy.col_log") }</th></tr></thead>
 		<tbody>
 			if len(deps) == 0 {
-				<tr><td colspan="5" class="k-mono">Деплоев ещё не было.</td></tr>
+				<tr><td colspan="5" class="k-mono">{ i18n.T(ctx, "deploy.none") }</td></tr>
 			} else {
 				for _, dp := range deps {
 					<tr>
@@ -23,7 +26,7 @@ templ DeploymentsList(c AppCtx, deps []db.Deployment) {
 						<td>@StatusBadge(dp.Status)</td>
 						<td class="k-mono">{ dp.Trigger }</td>
 						<td class="k-mono">{ dp.ImageTag }</td>
-						<td><a class="text-[color:var(--color-accent)]" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>открыть</a></td>
+						<td><a class="text-[color:var(--color-accent)]" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>{ i18n.T(ctx, "deploy.open") }</a></td>
 					</tr>
 				}
 			}
@@ -32,10 +35,10 @@ templ DeploymentsList(c AppCtx, deps []db.Deployment) {
 }
 
 templ DeploymentLog(c AppCtx, dep db.Deployment) {
-	@Layout("Деплой #"+itoa(dep.ID), c.Org, c.Role) {
+	@Layout(i18n.T(ctx, "deploy.crumb_prefix")+itoa(dep.ID), c.Org, c.Role) {
 		<p class="k-crumbs mb-3 flex items-center gap-2">
 			<a href={ templ.SafeURL(c.base()) }>{ c.App.Name }</a>
-			<span>/ Деплой #{ itoa(dep.ID) }</span>
+			<span>{ i18n.T(ctx, "deploy.crumb_prefix") }{ itoa(dep.ID) }</span>
 			@StatusBadge(dep.Status)
 		</p>
 		<div class="k-card">

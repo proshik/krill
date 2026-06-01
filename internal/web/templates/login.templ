@@ -1,19 +1,21 @@
 package templates
 
+import "github.com/proshik/krill/internal/web/i18n"
+
 templ Login(errMsg string) {
-	@Bare("Вход") {
+	@Bare(i18n.T(ctx, "login.page_title")) {
 		<div class="k-card">
-			<h2 class="text-2xl mb-4">Вход в Krill</h2>
+			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "login.title") }</h2>
 			if errMsg != "" {
 				<div class="k-toast k-toast-err mb-3">{ errMsg }</div>
 			}
 			<form method="post" action="/login">
-				<label class="k-label">Email</label>
+				<label class="k-label">{ i18n.T(ctx, "login.email") }</label>
 				<input class="k-input" name="email" type="email" required autofocus/>
-				<label class="k-label">Пароль</label>
+				<label class="k-label">{ i18n.T(ctx, "login.password") }</label>
 				<input class="k-input" name="password" type="password" required/>
 				<div class="mt-4">
-					<button type="submit" class="k-btn k-btn-primary">Войти</button>
+					<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "login.submit") }</button>
 				</div>
 			</form>
 		</div>

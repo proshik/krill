@@ -13,6 +13,7 @@ import (
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/web"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 // Server держит зависимости HTTP-слоя.
@@ -36,6 +37,15 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
+	// locale middleware: кладёт локаль по умолчанию в контекст запроса.
+	// Сейчас no-op (всегда en); точка расширения для cookie/Accept-Language.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := i18n.WithLocale(req.Context(), i18n.DefaultLocale)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(web.Static())))
 

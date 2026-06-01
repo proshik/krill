@@ -1,6 +1,9 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application) {
 	@Layout(project.Name, org, role) {
@@ -22,16 +25,16 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						}
 					</div>
 					if active.ID != 0 && (role == "owner" || role == "admin") {
-						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-app')">+ Приложение</button>
+						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-app')">+ { i18n.T(ctx, "project.new_app") }</button>
 					}
 				</div>
 				<div class="k-panel-body">
 					if active.ID != 0 {
 						if len(apps) == 0 {
 							<div class="flex flex-col items-center justify-center min-h-[36vh] gap-3">
-								<p class="k-mono">Нет приложений в окружении «{ active.Name }».</p>
+								<p class="k-mono">{ i18n.T(ctx, "project.no_apps") }</p>
 								if role == "owner" || role == "admin" {
-									<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-app')">Создать приложение</button>
+									<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-app')">{ i18n.T(ctx, "project.create_app") }</button>
 								}
 							</div>
 						} else {
@@ -49,9 +52,9 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						}
 					} else {
 						<div class="flex flex-col items-center justify-center min-h-[36vh] gap-3">
-							<p class="k-mono">Создайте окружение, чтобы добавлять приложения.</p>
+							<p class="k-mono">{ i18n.T(ctx, "project.create_env_hint") }</p>
 							if role == "owner" || role == "admin" {
-								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-env')">Создать окружение</button>
+								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-env')">{ i18n.T(ctx, "project.create_env") }</button>
 							}
 						</div>
 					}
@@ -62,18 +65,18 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 			<dialog id="new-env" class="k-modal">
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments") }>
 					<div class="k-modal-head">
-						<div class="k-modal-title">Новое окружение</div>
-						<div class="k-modal-desc">Например: production, staging.</div>
+						<div class="k-modal-title">{ i18n.T(ctx, "env.new_modal_title") }</div>
+						<div class="k-modal-desc">{ i18n.T(ctx, "env.new_modal_desc") }</div>
 					</div>
 					<div class="k-modal-body">
 						<div>
-							<label class="k-label">Имя</label>
+							<label class="k-label">{ i18n.T(ctx, "common.name") }</label>
 							<input class="k-input" name="name" required placeholder="staging"/>
 						</div>
 					</div>
 					<div class="k-modal-foot">
-						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-env')">Отмена</button>
-						<button type="submit" class="k-btn k-btn-primary">Создать</button>
+						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-env')">{ i18n.T(ctx, "common.cancel") }</button>
+						<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
 					</div>
 				</form>
 			</dialog>
@@ -88,57 +91,57 @@ templ appCreateModal(orgID, projID, envID int64) {
 	<dialog id="new-app" class="k-modal">
 		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/projects/" + itoa(projID) + "/environments/" + itoa(envID) + "/apps") }>
 			<div class="k-modal-head">
-				<div class="k-modal-title">Новое приложение</div>
-				<div class="k-modal-desc">Готовый образ из registry или сборка из Dockerfile.</div>
+				<div class="k-modal-title">{ i18n.T(ctx, "app.new_modal_title") }</div>
+				<div class="k-modal-desc">{ i18n.T(ctx, "app.new_modal_desc") }</div>
 			</div>
 			<div class="k-modal-body">
 				<div>
-					<label class="k-label">Имя (slug)</label>
+					<label class="k-label">{ i18n.T(ctx, "app.name_slug") }</label>
 					<input class="k-input" name="name" required pattern="[a-z0-9-]+" placeholder="web"/>
 				</div>
 				<div>
-					<label class="k-label">Источник</label>
+					<label class="k-label">{ i18n.T(ctx, "app.source") }</label>
 					<select class="k-select" name="source_type" onchange="krillToggleSource(this.value)">
-						<option value="image">Готовый образ</option>
-						<option value="dockerfile">Сборка из Dockerfile</option>
+						<option value="image">{ i18n.T(ctx, "app.source_image") }</option>
+						<option value="dockerfile">{ i18n.T(ctx, "app.source_dockerfile") }</option>
 					</select>
 				</div>
 				<div data-src="image" class="grid gap-3">
 					<div>
-						<label class="k-label">Образ</label>
+						<label class="k-label">{ i18n.T(ctx, "app.image") }</label>
 						<input class="k-input" name="image" placeholder="nginx"/>
 					</div>
 					<div>
-						<label class="k-label">Тег</label>
+						<label class="k-label">{ i18n.T(ctx, "app.tag") }</label>
 						<input class="k-input" name="tag" value="latest"/>
 					</div>
 				</div>
 				<div data-src="dockerfile" class="grid gap-3" style="display:none;">
 					<div>
-						<label class="k-label">Git URL (публичный)</label>
+						<label class="k-label">{ i18n.T(ctx, "app.git_url") }</label>
 						<input class="k-input" name="git_url" placeholder="https://github.com/user/repo.git"/>
 					</div>
 					<div>
-						<label class="k-label">Ветка</label>
+						<label class="k-label">{ i18n.T(ctx, "app.git_branch") }</label>
 						<input class="k-input" name="git_branch" value="main"/>
 					</div>
 					<div>
-						<label class="k-label">Путь к Dockerfile</label>
+						<label class="k-label">{ i18n.T(ctx, "app.dockerfile_path") }</label>
 						<input class="k-input" name="dockerfile_path" value="Dockerfile"/>
 					</div>
 				</div>
 				<div>
-					<label class="k-label">Домен (пусто = авто)</label>
-					<input class="k-input" name="domain" placeholder="(авто)"/>
+					<label class="k-label">{ i18n.T(ctx, "app.domain") }</label>
+					<input class="k-input" name="domain" placeholder={ i18n.T(ctx, "app.domain_auto") }/>
 				</div>
 				<div>
-					<label class="k-label">Порт</label>
+					<label class="k-label">{ i18n.T(ctx, "app.port") }</label>
 					<input class="k-input" name="port" type="number" value="80" required/>
 				</div>
 			</div>
 			<div class="k-modal-foot">
-				<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-app')">Отмена</button>
-				<button type="submit" class="k-btn k-btn-primary">Создать</button>
+				<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-app')">{ i18n.T(ctx, "common.cancel") }</button>
+				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
 			</div>
 		</form>
 		<script>krillToggleSource('image');</script>

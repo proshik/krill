@@ -1,16 +1,19 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 templ Members(org db.Organization, role string, members []db.ListMembersRow, tempPassword string) {
-	@Layout("Члены", org, role) {
-		<h2 class="text-2xl mb-4">Члены организации</h2>
+	@Layout(i18n.T(ctx, "members.page_title"), org, role) {
+		<h2 class="text-2xl mb-4">{ i18n.T(ctx, "members.title") }</h2>
 		if tempPassword != "" {
-			<div class="k-toast k-toast-ok mb-3">Пользователь создан. Временный пароль (показывается один раз): <b class="k-mono">{ tempPassword }</b></div>
+			<div class="k-toast k-toast-ok mb-3">{ i18n.T(ctx, "members.temp_password") } <b class="k-mono">{ tempPassword }</b></div>
 		}
 		<div class="k-card mb-4">
 			<table class="k-table">
-				<thead><tr><th>Email</th><th>Роль</th><th></th></tr></thead>
+				<thead><tr><th>Email</th><th>{ i18n.T(ctx, "common.role") }</th><th></th></tr></thead>
 				<tbody>
 					for _, m := range members {
 						<tr>
@@ -19,7 +22,7 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 							<td>
 								if (role == "owner" || role == "admin") && m.Role != "owner" {
 									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline">
-										<button type="submit" class="k-btn k-btn-danger">Удалить</button>
+										<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "common.delete") }</button>
 									</form>
 								}
 							</td>
@@ -30,16 +33,16 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 		</div>
 		if role == "owner" || role == "admin" {
 			<div class="k-card">
-				<h3 class="text-lg mb-2">Добавить пользователя</h3>
+				<h3 class="text-lg mb-2">{ i18n.T(ctx, "members.add_title") }</h3>
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>
 					<label class="k-label">Email</label>
 					<input class="k-input" name="email" type="email" required/>
-					<label class="k-label">Роль</label>
+					<label class="k-label">{ i18n.T(ctx, "common.role") }</label>
 					<select class="k-select" name="role">
 						<option value="member">member</option>
 						<option value="admin">admin</option>
 					</select>
-					<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">Создать</button></div>
+					<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button></div>
 				</form>
 			</div>
 		}
