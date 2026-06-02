@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -30,11 +31,21 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// снять Swarm-сервисы всех приложений проекта
-	envs, _ := s.q.ListEnvironments(r.Context(), p.ID)
+	envs, err := s.q.ListEnvironments(r.Context(), p.ID)
+	if err != nil {
+		slog.Error("deleteProject: list environments", "project", p.ID, "err", err)
+	}
 	for _, e := range envs {
-		apps, _ := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
+		apps, err := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
+		if err != nil {
+			slog.Error("deleteProject: list apps", "env", e.ID, "err", err)
+		}
 		for _, a := range apps {
-			_ = s.engine.ServiceRemove(r.Context(), dockerName(a.ID))
+			if s.engine != nil {
+				if err := s.engine.ServiceRemove(r.Context(), dockerName(a.ID)); err != nil {
+					slog.Error("deleteProject: service remove", "app", a.ID, "err", err)
+				}
+			}
 		}
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
@@ -73,9 +84,16 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	apps, _ := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
+	apps, err := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
+	if err != nil {
+		slog.Error("deleteEnvironment: list apps", "env", e.ID, "err", err)
+	}
 	for _, a := range apps {
-		_ = s.engine.ServiceRemove(r.Context(), dockerName(a.ID))
+		if s.engine != nil {
+			if err := s.engine.ServiceRemove(r.Context(), dockerName(a.ID)); err != nil {
+				slog.Error("deleteEnvironment: service remove", "app", a.ID, "err", err)
+			}
+		}
 	}
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

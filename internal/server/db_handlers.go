@@ -127,10 +127,15 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	image := strings.TrimSpace(r.FormValue("image"))
 	if image != "" {
+		var err error
 		if eng == "postgres" {
-			_ = s.q.UpdatePostgresImage(r.Context(), db.UpdatePostgresImageParams{ID: id, Image: image})
+			err = s.q.UpdatePostgresImage(r.Context(), db.UpdatePostgresImageParams{ID: id, Image: image})
 		} else {
-			_ = s.q.UpdateRedisImage(r.Context(), db.UpdateRedisImageParams{ID: id, Image: image})
+			err = s.q.UpdateRedisImage(r.Context(), db.UpdateRedisImageParams{ID: id, Image: image})
+		}
+		if err != nil {
+			http.Error(w, "failed to update image", http.StatusInternalServerError)
+			return
 		}
 	}
 	if eng == "postgres" {

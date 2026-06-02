@@ -118,15 +118,21 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 		gitBranch := strings.TrimSpace(r.FormValue("git_branch"))
 		dockerfilePath := strings.TrimSpace(r.FormValue("dockerfile_path"))
 		if gitURL != "" {
-			_ = s.q.UpdateApplicationSource(r.Context(), db.UpdateApplicationSourceParams{
+			if err := s.q.UpdateApplicationSource(r.Context(), db.UpdateApplicationSourceParams{
 				ID: c.App.ID, GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
-			})
+			}); err != nil {
+				http.Error(w, "failed to update source", http.StatusInternalServerError)
+				return
+			}
 		}
 	} else {
 		image := strings.TrimSpace(r.FormValue("image"))
 		tag := strings.TrimSpace(r.FormValue("tag"))
 		if image != "" && tag != "" {
-			_ = s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag})
+			if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag}); err != nil {
+				http.Error(w, "failed to update image", http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 	s.deployer.Enqueue(c.App.ID, "manual")
