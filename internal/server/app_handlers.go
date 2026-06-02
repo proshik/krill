@@ -76,6 +76,13 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create (name/domain already taken?): "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
+		ApplicationID: a.ID, Host: a.Domain, Tls: false, IsPrimary: true,
+	}); err != nil {
+		logFrom(r).Error("createApp: create primary domain failed", "err", err, "app_id", a.ID, "host", a.Domain)
+		http.Error(w, "failed to create domain", http.StatusInternalServerError)
+		return
+	}
 	logFrom(r).Info("application created", "app_id", a.ID, "environment_id", e.ID, "name", name)
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID), http.StatusSeeOther)
 }

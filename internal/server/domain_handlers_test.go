@@ -48,6 +48,62 @@ func postForm(t *testing.T, h http.Handler, target string, cookie *http.Cookie, 
 	return rec
 }
 
+// TestCreateAppCreatesPrimaryDomain verifies that a successful POST to createApp
+// inserts exactly one primary domain row with IsPrimary=true, Tls=false, and
+// Host = <name>.<BaseDomain>.
+func TestCreateAppCreatesPrimaryDomain(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "owner-a@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+
+	appsURL := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps"
+	cookie := loginAs(t, q, "owner-a@k.local")
+
+	rec := postForm(t, h, appsURL, cookie, url.Values{
+		"name":  {"myapp"},
+		"image": {"nginx"},
+		"tag":   {"latest"},
+		"port":  {"8080"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("createApp want 303, got %d body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Fetch the created application.
+	apps, err := q.ListApplicationsByEnvironment(ctx, e.ID)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("expected 1 application, got %d err=%v", len(apps), err)
+	}
+	appID := apps[0].ID
+
+	// Assert exactly one primary domain row.
+	doms, err := q.ListDomainsByApplication(ctx, appID)
+	if err != nil {
+		t.Fatalf("ListDomainsByApplication: %v", err)
+	}
+	if len(doms) != 1 {
+		t.Fatalf("expected exactly 1 domain, got %d: %+v", len(doms), doms)
+	}
+	d := doms[0]
+	wantHost := "myapp.127-0-0-1.sslip.io"
+	if d.Host != wantHost {
+		t.Errorf("domain Host want %q, got %q", wantHost, d.Host)
+	}
+	if !d.IsPrimary {
+		t.Errorf("domain IsPrimary want true, got false")
+	}
+	if d.Tls {
+		t.Errorf("domain Tls want false, got true")
+	}
+	if d.ApplicationID != appID {
+		t.Errorf("domain ApplicationID want %d, got %d", appID, d.ApplicationID)
+	}
+}
+
 func TestAddDomain(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
