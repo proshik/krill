@@ -4,6 +4,7 @@ import (
 	"context"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/traefik"
 )
 
 // DBStore implements Store on top of sqlc queries.
@@ -18,7 +19,11 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
-	return App{
+	doms, derr := s.q.ListDomainsByApplication(ctx, a.ID)
+	if derr != nil {
+		return App{}, derr
+	}
+	out := App{
 		ID:             a.ID,
 		Name:           a.Name,
 		Image:          a.Image,
@@ -30,7 +35,11 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		GitURL:         a.GitUrl,
 		GitBranch:      a.GitBranch,
 		DockerfilePath: a.DockerfilePath,
-	}, nil
+	}
+	for _, d := range doms {
+		out.Domains = append(out.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls})
+	}
+	return out, nil
 }
 
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {
