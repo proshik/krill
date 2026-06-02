@@ -50,6 +50,9 @@ type Deployer struct {
 	done     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
+
+	mu        sync.Mutex
+	cancelJob context.CancelFunc
 }
 
 func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub, network string) *Deployer {
@@ -74,8 +77,14 @@ func (d *Deployer) Start(ctx context.Context) {
 				return
 			case deployID := <-d.queue:
 				jobCtx, cancel := context.WithTimeout(ctx, jobTimeout)
+				d.mu.Lock()
+				d.cancelJob = cancel
+				d.mu.Unlock()
 				d.run(jobCtx, deployID)
 				cancel()
+				d.mu.Lock()
+				d.cancelJob = nil
+				d.mu.Unlock()
 			}
 		}
 	}()
@@ -103,7 +112,14 @@ func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
 }
 
 func (d *Deployer) Stop() {
-	d.stopOnce.Do(func() { close(d.done) })
+	d.stopOnce.Do(func() {
+		close(d.done)
+		d.mu.Lock()
+		if d.cancelJob != nil {
+			d.cancelJob()
+		}
+		d.mu.Unlock()
+	})
 	d.wg.Wait()
 }
 

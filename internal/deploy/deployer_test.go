@@ -193,6 +193,30 @@ func TestStopIdempotent(t *testing.T) {
 	d.Stop()
 }
 
+type blockingBuilder struct{ started chan struct{} }
+
+func (b *blockingBuilder) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) error {
+	close(b.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestStopCancelsInFlightBuild(t *testing.T) {
+	bb := &blockingBuilder{started: make(chan struct{})}
+	st := newFakeStore(dockerfileApp())
+	d := newDeployer(&mockEngine{}, bb, st)
+	d.Start(context.Background())
+	d.Enqueue(2, "manual")
+	<-bb.started // build is now in flight
+	done := make(chan struct{})
+	go func() { d.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not cancel the in-flight build promptly")
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
