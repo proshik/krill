@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,7 +45,11 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 			extPort = &x
 		}
 	}
-	pw := genPassword()
+	pw, err := genPassword()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	switch engine {
 	case "postgres":
 		if version == "" {
@@ -188,6 +193,10 @@ func (s *Server) databaseStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 	eng, id, ok := s.loadDBChain(w, r)
 	if !ok {
+		return
+	}
+	if s.engine == nil {
+		http.Error(w, "engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	var appName string
@@ -342,10 +351,13 @@ func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.Da
 	return c, true
 }
 
-func genPassword() string {
-	t, _ := auth.NewToken()
-	if len(t) > 16 {
-		return t[:16]
+func genPassword() (string, error) {
+	t, err := auth.NewToken()
+	if err != nil {
+		return "", err
 	}
-	return t
+	if len(t) < 16 {
+		return "", fmt.Errorf("generated password too short")
+	}
+	return t[:16], nil
 }
