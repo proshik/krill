@@ -3,9 +3,9 @@ package org
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -122,8 +122,8 @@ func mapUniqueErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	// 23505 — unique_violation в Postgres
-	if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate key") {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return ErrSlugTaken
 	}
 	return err
