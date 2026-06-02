@@ -39,6 +39,11 @@ type Store interface {
 
 const jobTimeout = 10 * time.Minute // сборка может быть дольше pull'а
 
+var (
+	convergeTimeout      = 90 * time.Second
+	convergePollInterval = 1 * time.Second
+)
+
 // Deployer обрабатывает деплои через очередь и воркер.
 type Deployer struct {
 	engine   docker.Engine
@@ -153,6 +158,28 @@ func (d *Deployer) run(ctx context.Context, deployID int64) {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		slog.Error("deploy failed", "deploy", deployID, "err", err)
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, err.Error())
+		return
+	}
+	fmt.Fprintf(out, "→ waiting for service to converge...\n")
+	cctx, ccancel := context.WithTimeout(ctx, convergeTimeout)
+	defer ccancel()
+	converged := false
+	for {
+		st, serr := d.engine.ServiceState(cctx, docker.ServiceName(app.ID))
+		if serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired {
+			converged = true
+			break
+		}
+		select {
+		case <-cctx.Done():
+		case <-time.After(convergePollInterval):
+			continue
+		}
+		break
+	}
+	if !converged {
+		fmt.Fprintf(out, "❌ service did not become healthy in time\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service did not converge")
 		return
 	}
 	fmt.Fprintf(out, "✅ deployed %s\n", imageTag)

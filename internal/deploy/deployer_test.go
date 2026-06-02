@@ -14,9 +14,10 @@ import (
 )
 
 type mockEngine struct {
-	mu       sync.Mutex
-	deployed []docker.ServiceSpec
-	failNext bool
+	mu            sync.Mutex
+	deployed      []docker.ServiceSpec
+	failNext      bool
+	neverConverge bool
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
@@ -31,6 +32,9 @@ func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) erro
 }
 func (m *mockEngine) ServiceRemove(context.Context, string) error { return nil }
 func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	if m.neverConverge {
+		return docker.ServiceState{Found: true, Running: 0, Desired: 1}, nil
+	}
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
@@ -214,6 +218,24 @@ func TestStopCancelsInFlightBuild(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop did not cancel the in-flight build promptly")
+	}
+}
+
+func TestDeployConvergeTimeoutMarksError(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{neverConverge: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	if st.appStatus(1) != StatusError {
+		t.Errorf("app status = %q, want error", st.appStatus(1))
 	}
 }
 
