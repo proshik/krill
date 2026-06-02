@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS redis_dbs;
+DROP TABLE IF EXISTS postgres_dbs;
