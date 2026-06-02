@@ -12,6 +12,8 @@ type Querier interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
+	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
+	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)

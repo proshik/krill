@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countRedisByExternalPort = `-- name: CountRedisByExternalPort :one
+SELECT count(*) FROM redis_dbs WHERE external_port = $1
+`
+
+func (q *Queries) CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error) {
+	row := q.db.QueryRow(ctx, countRedisByExternalPort, externalPort)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRedis = `-- name: CreateRedis :one
 INSERT INTO redis_dbs (environment_id, name, app_name, password, image, external_port)
 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at

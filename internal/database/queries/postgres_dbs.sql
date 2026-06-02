@@ -27,3 +27,6 @@ JOIN environments e ON e.id = pd.environment_id
 JOIN projects p ON p.id = e.project_id
 JOIN organizations o ON o.id = p.organization_id
 WHERE pd.id = $1;
+
+-- name: CountPostgresByExternalPort :one
+SELECT count(*) FROM postgres_dbs WHERE external_port = $1;

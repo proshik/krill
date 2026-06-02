@@ -40,10 +40,19 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	var extPort *int32
 	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
-			x := int32(n)
-			extPort = &x
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 65535 {
+			http.Error(w, "invalid external_port", http.StatusBadRequest)
+			return
 		}
+		x := int32(n)
+		pgN, _ := s.q.CountPostgresByExternalPort(r.Context(), &x)
+		rdN, _ := s.q.CountRedisByExternalPort(r.Context(), &x)
+		if pgN+rdN > 0 {
+			http.Error(w, "external port already in use", http.StatusBadRequest)
+			return
+		}
+		extPort = &x
 	}
 	pw, err := genPassword()
 	if err != nil {

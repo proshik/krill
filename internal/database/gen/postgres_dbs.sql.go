@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countPostgresByExternalPort = `-- name: CountPostgresByExternalPort :one
+SELECT count(*) FROM postgres_dbs WHERE external_port = $1
+`
+
+func (q *Queries) CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error) {
+	row := q.db.QueryRow(ctx, countPostgresByExternalPort, externalPort)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPostgres = `-- name: CreatePostgres :one
 INSERT INTO postgres_dbs (environment_id, name, app_name, database_name, database_user, database_password, image, external_port)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at

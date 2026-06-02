@@ -27,3 +27,6 @@ JOIN environments e ON e.id = rd.environment_id
 JOIN projects p ON p.id = e.project_id
 JOIN organizations o ON o.id = p.organization_id
 WHERE rd.id = $1;
+
+-- name: CountRedisByExternalPort :one
+SELECT count(*) FROM redis_dbs WHERE external_port = $1;
