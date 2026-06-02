@@ -61,7 +61,8 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, templates.Members(o, role, members, r.URL.Query().Get("temp")))
+	temp := s.takeFlashPw(w, r)
+	render(w, r, http.StatusOK, templates.Members(o, role, members, temp))
 }
 
 func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
@@ -102,11 +103,10 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "пользователь уже в организации?", http.StatusBadRequest)
 		return
 	}
-	dest := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/members"
 	if tempPw != "" {
-		dest += "?temp=" + tempPw
+		s.setFlashPw(w, tempPw)
 	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
 }
 
 func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
