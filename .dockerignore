@@ -1,0 +1,41 @@
+# VCS / CI / editor / agent metadata
+.git
+.gitignore
+.github
+.idea/
+*.iml
+.claude/
+.superpowers/
+
+# Docs and markdown (none are needed for the build)
+docs/
+*.md
+
+# Local environment files (must never leak into the image).
+# .env.example is tracked but is only a sample and is not consumed by the build.
+.env
+.env.*
+
+# Gitignored Tailwind CLI binary (downloaded locally to generate app.css).
+# app.css itself is committed and IS kept in the build context.
+tools/tailwindcss
+
+# Build outputs / test artifacts
+bin/
+/krill
+*.out
+.DS_Store
+
+# Local dev / scratch artifacts not needed for the build
+docker-compose.dev.yml
+colima_docs.html
+
+# Docker files themselves (no need to send them into the build context)
+Dockerfile
+.dockerignore
+
+# NOTE: go.mod, go.sum, all of cmd/ and internal/ — INCLUDING the COMMITTED
+# generated files (internal/web/templates/*_templ.go, internal/database/gen/*.go,
+# internal/web/static/app.css, internal/database/migrations/*.sql) — are
+# intentionally NOT excluded, so `go mod download` + `go build ./cmd/krill`
+# works without running `make generate`.

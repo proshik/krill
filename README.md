@@ -226,6 +226,38 @@ make test-integration
 
 An end-to-end smoke test lives at `scripts/e2e.sh`. It spins up an isolated Postgres (`:55432`), Krill (`:18080`), and Traefik (host `:80`), then exercises login, RBAC, image- and Dockerfile-based deploys, rolling updates, Traefik routing, and a managed Postgres with an external-port `SELECT 1`. It self-cleans on exit (via an EXIT trap) and returns a nonzero exit code if any assertion fails.
 
+## Docker & CI
+
+### Container image
+
+The control plane ships as a single static Go binary on a [distroless](https://github.com/GoogleContainerTools/distroless) base — about **25 MB**. SQL migrations and web assets are embedded via `//go:embed`, so the runtime image carries nothing but the binary; it needs only a reachable PostgreSQL and access to a Swarm-enabled Docker daemon.
+
+```bash
+# Build (uses the committed generated files; does NOT run `make generate`)
+docker build -t krill:local .
+
+# Run (point at your Postgres + Docker socket; serves on :8080)
+docker run --rm -p 8080:8080 \
+  -e KRILL_DATABASE_URL='postgres://krill:krill@db-host:5432/krill?sslmode=disable' \
+  -e KRILL_ADMIN_EMAIL=admin@krill.local \
+  -e KRILL_ADMIN_PASSWORD=changeme \
+  -e KRILL_DOCKER_HOST=unix:///var/run/docker.sock \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  krill:local
+```
+
+### GitHub Actions
+
+- **`.github/workflows/ci.yml`** — every push (feature branches **and** `master`) and PR: `go build` / `go vet` / `go test` (testcontainers runs against the runner's native Docker — no socket override needed), a no-push image build that validates the `Dockerfile`, and a "generated up to date" check (`make generate` then `git diff --exit-code`).
+- **`.github/workflows/release.yml`** — on a `v*.*.*` tag push (or manual `workflow_dispatch`): builds a multi-arch image (`linux/amd64` + `linux/arm64`), pushes it to `ghcr.io/<owner>/krill`, and (for tag pushes) creates a GitHub Release.
+
+```bash
+# Cut a release
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The workflows use the built-in `GITHUB_TOKEN` (no extra secrets). The GHCR package is created **private** on first push — change it to public in the package settings if you want anonymous pulls.
+
 ## Data model
 
 State is stored in PostgreSQL across ten tables, created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`).

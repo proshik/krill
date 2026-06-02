@@ -1,0 +1,114 @@
+# CI: validates every push (feature branches AND master) plus PRs.
+# - "test" runs build / vet / test; testcontainers works natively against the
+#   Docker daemon that ubuntu-latest runners ship with.
+# - "docker-build" builds the image WITHOUT pushing, so every branch/PR
+#   validates the root Dockerfile.
+# - "generated-up-to-date" regenerates templ/sqlc/tailwind output and fails on
+#   drift in the committed generated files.
+name: ci
+
+on:
+  push:
+    branches:
+      - "**" # all branches: feature branches AND master
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref (branch/PR); keep only the latest.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Pins to the exact Go version declared in go.mod (1.26.1).
+          go-version-file: go.mod
+          cache: true # build + module cache, keyed off go.sum
+
+      # ubuntu-latest ships a working Docker daemon; testcontainers needs no
+      # socket override here (the Makefile's Colima TC_ENV is local-only and is
+      # deliberately NOT replicated in CI). Cheap sanity check below.
+      - name: Docker sanity check
+        run: docker info
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Default suite only. Integration tests are behind the `integration` build
+      # tag (-tags=integration) and are intentionally NOT run here.
+      # testcontainers spins up Postgres on demand against the native daemon.
+      - name: Test
+        run: go test ./...
+
+  docker-build:
+    name: docker image build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Builds from ./Dockerfile but neither pushes nor loads the image.
+      # This validates the Dockerfile on every branch / PR.
+      - name: Build image (validate Dockerfile)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  generated-up-to-date:
+    name: generated code is up to date
+    runs-on: ubuntu-latest
+    # Generated files (templ *_templ.go, sqlc internal/database/gen,
+    # tailwind internal/web/static/app.css) are committed. This job regenerates
+    # them with the pinned tool versions and fails if the working tree drifts.
+    #
+    # templ (v0.3.1020) and sqlc (v1.30.0) are pinned via the go.mod `tool`
+    # directive, so `make generate`'s `go tool templ` / `go tool sqlc` already
+    # use the exact pinned versions — no separate `go install` is needed.
+    #
+    # Flakiness note: this step downloads the Tailwind v4.3.0 standalone binary
+    # from GitHub releases via tools/get-tailwind.sh. If that download ever
+    # rate-limits or 404s the job can fail; if that becomes a problem, drop the
+    # tailwind/`make generate` step and instead run only
+    # `go tool templ generate` + `go tool sqlc generate`.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download Tailwind CLI (v4.3.0)
+        run: ./tools/get-tailwind.sh
+
+      - name: Generate
+        run: make generate
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Run 'make generate' and commit the result."
+            exit 1
+          fi

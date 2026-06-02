@@ -135,3 +135,10 @@ Brainstorm → spec (`docs/superpowers/specs/`, date-prefixed) → plan (`docs/s
 - [`docs/superpowers/specs/`](./docs/superpowers/specs/) and [`docs/superpowers/plans/`](./docs/superpowers/plans/) — date-prefixed design + implementation docs (latest: Phase 3 managed databases and tech-debt cleanup, both 2026-06-02).
 - **Phase 5 (domains/TLS/Let's Encrypt) is what the bot needs** (HTTPS webhook URL). Phase 4 (S3 backups) is the immediate next sequential item.
 - [`scripts/e2e.sh`](./scripts/e2e.sh) — the authoritative end-to-end scenario covering every major feature; read it to understand expected behavior.
+
+## 10. Docker & CI
+
+- **`Dockerfile`** — multi-stage: `golang:1.26.1-alpine` builder → `CGO_ENABLED=0` static binary → `gcr.io/distroless/static-debian12:nonroot` (~25 MB, runs as UID 65532). It relies on the COMMITTED generated files (no `make generate` in-image); migrations (`//go:embed migrations/*.sql`) and static assets (`//go:embed all:static`) are embedded, so the final image is binary-only. Build locally: `docker build -t krill:local .`.
+- **`.github/workflows/ci.yml`** — push (all branches) + PR: build/vet/test (testcontainers works on the runner's native Docker — do NOT add the Colima socket override here), a no-push Docker build, and a generated-drift check (`make generate` + `git diff --exit-code`).
+- **`.github/workflows/release.yml`** — `v*.*.*` tag (or `workflow_dispatch`): multi-arch buildx → push to `ghcr.io/${{ github.repository_owner }}/krill` → GitHub Release on tag pushes. Uses `GITHUB_TOKEN`; needs `permissions: packages: write` + `contents: write`. First GHCR push is private — make the package public if anonymous pulls are wanted.
+- After changing the build/embed setup, re-verify by actually building the image (`docker build .`) and confirming it still runs (`docker run --rm krill:local` should fail fast on the missing `KRILL_DATABASE_URL`).
