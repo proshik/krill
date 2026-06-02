@@ -110,7 +110,7 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
-	o, _, ok := s.loadOrg(w, r)
+	o, actorRole, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
@@ -127,6 +127,13 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 	role := r.FormValue("role")
 	if role != "owner" && role != "admin" && role != "member" {
 		http.Error(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+	// Only an owner may grant the owner role (mirrors createMember, which
+	// never lets a non-owner mint an owner). Prevents admins escalating
+	// members — or themselves — beyond admin level.
+	if role == "owner" && actorRole != "owner" {
+		http.Error(w, "only an owner can grant the owner role", http.StatusForbidden)
 		return
 	}
 	if m.Role == "owner" && role != "owner" {

@@ -219,6 +219,37 @@ func TestMemberCannotChangeRole(t *testing.T) {
 	}
 }
 
+func TestAdminCannotGrantOwner(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	adminID := mkUser(t, q, "admin@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: adminID, Role: "admin"}); err != nil {
+		t.Fatalf("add admin: %v", err)
+	}
+	memberID := mkUser(t, q, "member@k.local")
+	mem, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"})
+	if err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	// An admin (not owner) tries to promote the member to owner.
+	form := url.Values{"role": {"owner"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(mem.ID, 10)+"/role", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(loginAs(t, q, "admin@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("admin granting owner want 403, got %d", rec.Code)
+	}
+	got, _ := q.GetMemberByID(ctx, mem.ID)
+	if got.Role != "member" {
+		t.Fatalf("want role member unchanged, got %q", got.Role)
+	}
+}
+
 func TestAdminCanCreateProject(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
