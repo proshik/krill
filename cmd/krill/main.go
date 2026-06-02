@@ -17,6 +17,7 @@ import (
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/org"
@@ -79,10 +80,13 @@ func run() error {
 	stopCleanup := deploy.StartLogCleanup(ctx, store, 10*time.Minute)
 	defer stopCleanup()
 
+	dbStore := dbservice.NewDBStore(q)
+	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
+
 	// HTTP-сервер.
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine, hub).Router(),
+		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc).Router(),
 	}
 
 	errCh := make(chan error, 1)

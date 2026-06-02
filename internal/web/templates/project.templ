@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application) {
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
 	@Layout(project.Name, org, role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
@@ -50,6 +50,28 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 								}
 							</div>
 						}
+						<h3 class="text-xl mt-8 mb-3">{ i18n.T(ctx, "db.section") }</h3>
+						if active.ID != 0 && (role == "owner" || role == "admin") {
+							<div class="mb-3"><button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-db')">+ { i18n.T(ctx, "db.new") }</button></div>
+						}
+						if len(pgs) == 0 && len(redises) == 0 {
+							<div class="k-card"><p class="k-mono">{ i18n.T(ctx, "db.empty") }</p></div>
+						} else {
+							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+								for _, pg := range pgs {
+									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/postgres/" + itoa(pg.ID)) }>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base">🐘 { pg.Name }</div>@StatusBadge(pg.Status)</div>
+										<div class="k-mono text-xs">{ pg.Image }</div>
+									</a>
+								}
+								for _, rd := range redises {
+									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/redis/" + itoa(rd.ID)) }>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base">🟥 { rd.Name }</div>@StatusBadge(rd.Status)</div>
+										<div class="k-mono text-xs">{ rd.Image }</div>
+									</a>
+								}
+							</div>
+						}
 					} else {
 						<div class="flex flex-col items-center justify-center min-h-[36vh] gap-3">
 							<p class="k-mono">{ i18n.T(ctx, "project.create_env_hint") }</p>
@@ -82,6 +104,30 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 			</dialog>
 			if active.ID != 0 {
 				@appCreateModal(org.ID, project.ID, active.ID)
+				<dialog id="new-db" class="k-modal">
+					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases") }>
+						<div class="k-modal-head"><div class="k-modal-title">{ i18n.T(ctx, "db.new") }</div></div>
+						<div class="k-modal-body">
+							<div>
+								<label class="k-label">{ i18n.T(ctx, "db.engine") }</label>
+								<select class="k-select" name="engine" onchange="krillDbVersion(this.value)">
+									<option value="postgres">PostgreSQL</option>
+									<option value="redis">Redis</option>
+								</select>
+							</div>
+							<div><label class="k-label">{ i18n.T(ctx, "common.name") }</label><input class="k-input" name="name" required placeholder="db"/></div>
+							<div><label class="k-label">{ i18n.T(ctx, "db.version") }</label><input class="k-input" name="version" id="db-version" value="postgres:17"/></div>
+							<div><label class="k-label">{ i18n.T(ctx, "db.external_port") }</label><input class="k-input" name="external_port" type="number" placeholder=""/></div>
+						</div>
+						<div class="k-modal-foot">
+							<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-db')">{ i18n.T(ctx, "common.cancel") }</button>
+							<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+						</div>
+					</form>
+					<script>
+						window.krillDbVersion = function(eng){ document.getElementById('db-version').value = eng === 'redis' ? 'redis:7' : 'postgres:17'; };
+					</script>
+				</dialog>
 			}
 		}
 	}

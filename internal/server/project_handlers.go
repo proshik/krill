@@ -114,10 +114,14 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		active = envs[0]
 	}
 	var apps []db.Application
+	var pgs []db.PostgresDb
+	var redises []db.RedisDb
 	if active.ID != 0 {
 		apps, _ = s.q.ListApplicationsByEnvironment(r.Context(), active.ID)
+		pgs, _ = s.q.ListPostgresByEnvironment(r.Context(), active.ID)
+		redises, _ = s.q.ListRedisByEnvironment(r.Context(), active.ID)
 	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps))
+	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, pgs, redises))
 }
 
 func projURL(orgID, projID int64) string {

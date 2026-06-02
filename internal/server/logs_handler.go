@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -28,13 +29,19 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rc.Close()
 
-	scanner := bufio.NewScanner(rc)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
+	streamReaderToWS(ctx, conn, rc)
+}
+
+// streamReaderToWS читает строки из rc и шлёт их в WS как text-фреймы, пока reader не иссякнет
+// или запись не упадёт. На завершение reader закрывает соединение нормально.
+func streamReaderToWS(ctx context.Context, conn *websocket.Conn, rc io.Reader) {
+	sc := bufio.NewScanner(rc)
+	for sc.Scan() {
+		line := append([]byte(nil), sc.Bytes()...)
 		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		writeErr := conn.Write(wctx, websocket.MessageText, line)
+		err := conn.Write(wctx, websocket.MessageText, line)
 		cancel()
-		if writeErr != nil {
+		if err != nil {
 			return
 		}
 	}

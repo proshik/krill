@@ -9,6 +9,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/org"
@@ -25,10 +26,11 @@ type Server struct {
 	deployer *deploy.Deployer
 	engine   docker.Engine
 	logHub   *deploy.DeployLogHub
+	dbsvc    *dbservice.Service
 }
 
-func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub) *Server {
-	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub}
+func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
+	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc}
 }
 
 // Router собирает chi-роутер.
@@ -76,6 +78,12 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/delete", s.deleteEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/delete", s.deleteApp)
+				r.Post("/projects/{projID}/environments/{envID}/databases", s.createDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/deploy", s.deployDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/start", s.startDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/stop", s.stopDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/version", s.versionDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/delete", s.deleteDatabase)
 			})
 
 			r.Get("/projects/{projID}", s.projectPage)
@@ -91,6 +99,11 @@ func (s *Server) Router() http.Handler {
 				r.Get("/deployments/{deployID}", s.deploymentLogPage)
 				r.Get("/deployments/{deployID}/logs", s.deploymentLogWS)
 			})
+
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}", s.databaseDetail)
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/status", s.databaseStatus)
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/logs", s.databaseLogs)
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/deploy-logs", s.databaseDeployLogs)
 		})
 	})
 
