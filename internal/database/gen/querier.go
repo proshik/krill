@@ -10,12 +10,15 @@ import (
 
 type Querier interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
+	CountDomainsByHost(ctx context.Context, host string) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
+	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
@@ -25,6 +28,7 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteApplication(ctx context.Context, id int64) error
+	DeleteDomain(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteMember(ctx context.Context, id int64) error
@@ -37,6 +41,7 @@ type Querier interface {
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
+	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
@@ -53,6 +58,7 @@ type Querier interface {
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
+	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
@@ -60,6 +66,7 @@ type Querier interface {
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error

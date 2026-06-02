@@ -40,6 +40,15 @@ type Deployment struct {
 	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
 }
 
+type Domain struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	Host          string    `json:"host"`
+	Tls           bool      `json:"tls"`
+	IsPrimary     bool      `json:"is_primary"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Environment struct {
 	ID        int64     `json:"id"`
 	ProjectID int64     `json:"project_id"`
