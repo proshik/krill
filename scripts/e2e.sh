@@ -30,8 +30,19 @@ cleanup() {
   docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
   # Имя сервиса приложения теперь krill-<appID> и неизвестно на момент trap'а —
   # снимаем все krill-* сервисы кроме traefik, чтобы не утёк e2e-app.
+  # Это покрывает и managed-DB сервис krill-postgres-* (см. секцию managed Postgres).
   docker service ls --filter name=krill- -q 2>/dev/null \
     | xargs -r -I{} sh -c 'n=$(docker service inspect --format "{{.Spec.Name}}" {} 2>/dev/null); [ "$n" = "krill-traefik" ] || docker service rm {} >/dev/null 2>&1' || true
+  # Named volume управляемой БД (krill-postgres-...-data). APPNAME известен на момент trap'а,
+  # если managed-Postgres секция успела создать БД. Удаление сервиса асинхронно — повторяем,
+  # пока volume не освободится (иначе rm гонится с teardown'ом задачи).
+  if [ -n "${APPNAME:-}" ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      docker volume rm "${APPNAME}-data" >/dev/null 2>&1 && break
+      docker volume ls --filter name="${APPNAME}-data" -q 2>/dev/null | grep -q . || break
+      sleep 1
+    done
+  fi
   # Локально собранные образы dockerfile-деплоя (krill-<appID>:<deployID>); ID2 неизвестен в trap'е — wildcard.
   imgs=$(docker image ls --filter reference='krill-*' -q 2>/dev/null | sort -u)
   [ -n "$imgs" ] && docker image rm -f $imgs >/dev/null 2>&1 || true
@@ -176,6 +187,41 @@ echo "df_service=$(docker service ls --filter name=krill-$ID2 --format '{{.Image
 echo "df_service_running=$df_replicas"
 if [ "$df_replicas" != 1 ]; then echo "df_tasks:"; docker service ps krill-$ID2 --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | head -5; fi
 
-echo "### 17. krill log tail"
+echo "### 17. managed Postgres (Phase 3)"
+PGPORT=54330
+echo "db_create=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" \
+  --data-urlencode "engine=postgres" --data-urlencode "name=maindb" \
+  --data-urlencode "version=postgres:17" --data-urlencode "external_port=$PGPORT" \
+  "$APPBASE/databases") (expect 303)"
+PGID=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT id FROM postgres_dbs WHERE name='maindb'")
+APPNAME=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT app_name FROM postgres_dbs WHERE id=$PGID")
+echo "db_id=$PGID app_name=$APPNAME external_port=$PGPORT"
+echo "db_deploy=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST \
+  "$APPBASE/databases/postgres/$PGID/deploy") (expect 303)"
+
+echo "### 18. wait DB running (до 120s; первый прогон тянет образ postgres:17)"
+dbrun=0
+for i in $(seq 1 60); do [ "$(docker service ls --filter name=$APPNAME --format '{{.Replicas}}')" = "1/1" ] && { dbrun=1; break; }; sleep 2; done
+docker service ls --filter name=$APPNAME --format 'DBSERVICE: {{.Name}} {{.Image}} {{.Replicas}}'
+echo "db_service_running=$dbrun"
+if [ "$dbrun" != 1 ]; then echo "db_tasks:"; docker service ps $APPNAME --format '{{.CurrentState}} {{.Error}}' 2>/dev/null | head -5; fi
+
+echo "### 19. named volume"
+echo "db_volume=$(docker volume ls --filter name=${APPNAME}-data --format '{{.Name}}')"
+
+echo "### 20. connect via external port (Postgres ждёт инициализацию)"
+DBPW=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT database_password FROM postgres_dbs WHERE id=$PGID")
+# На Colima --network host = сеть Linux-VM, где host-mode порт опубликован → 127.0.0.1:$PGPORT внутри VM.
+# host.docker.internal на Colima не резолвится из обычного контейнера, поэтому используем --network host.
+db_select1=""
+for i in $(seq 1 30); do
+  db_select1=$(docker run --rm --network host postgres:17 \
+    psql "postgresql://postgres:$DBPW@127.0.0.1:$PGPORT/app" -t -A -c 'SELECT 1' 2>&1 | tr -d '[:space:]')
+  [ "$db_select1" = "1" ] && break
+  sleep 2
+done
+echo "db_select1=$db_select1 (expect 1; иначе зафиксировать ограничение Colima при running+volume)"
+
+echo "### 21. krill log tail"
 tail -12 "$LOG"
 echo "### DONE"
