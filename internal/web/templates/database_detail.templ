@@ -41,7 +41,10 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<form method="post" action={ templ.SafeURL(c.Base + "/deploy") }><button class="k-btn k-btn-primary">{ i18n.T(ctx, "db.deploy") }</button></form>
 						<form method="post" action={ templ.SafeURL(c.Base + "/start") }><button class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.start") }</button></form>
 						<form method="post" action={ templ.SafeURL(c.Base + "/stop") }><button class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/delete") } onsubmit="return confirm('Delete database?')"><button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button></form>
+						<form method="post" action={ templ.SafeURL(c.Base + "/delete") } onsubmit="return confirm('Delete database?')" class="flex items-center gap-2">
+							<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
+							<label class="k-label"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
+						</form>
 					</div>
 					<form method="post" action={ templ.SafeURL(c.Base + "/version") } class="flex items-end gap-2">
 						<div class="flex-1"><label class="k-label">{ i18n.T(ctx, "db.change_version") }</label><input class="k-input" name="image" value={ c.Image }/></div>

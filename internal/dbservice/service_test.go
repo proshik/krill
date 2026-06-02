@@ -12,12 +12,13 @@ import (
 )
 
 type mockEngine struct {
-	mu       sync.Mutex
-	pulled   []string
-	deployed []docker.ServiceSpec
-	scaled   map[string]uint64
-	removed  []string
-	failPull bool
+	mu             sync.Mutex
+	pulled         []string
+	deployed       []docker.ServiceSpec
+	scaled         map[string]uint64
+	removed        []string
+	removedVolumes []string
+	failPull       bool
 }
 
 func newMockEngine() *mockEngine { return &mockEngine{scaled: map[string]uint64{}} }
@@ -46,6 +47,12 @@ func (m *mockEngine) ServiceScale(_ context.Context, n string, r uint64) error {
 	m.scaled[n] = r
 	return nil
 }
+func (m *mockEngine) VolumeRemove(_ context.Context, n string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removedVolumes = append(m.removedVolumes, n)
+	return nil
+}
 func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -60,13 +67,17 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 type fakeStore struct {
 	mu     sync.Mutex
 	pg     PostgresDB
+	redis  RedisDB
 	status map[int64]string
 }
 
 func newFakeStore(pg PostgresDB) *fakeStore { return &fakeStore{pg: pg, status: map[int64]string{}} }
 func (f *fakeStore) GetPostgres(_ context.Context, id int64) (PostgresDB, error) { return f.pg, nil }
 func (f *fakeStore) GetRedis(_ context.Context, id int64) (RedisDB, error) {
-	return RedisDB{}, errors.New("n/a")
+	if f.redis.AppName == "" {
+		return RedisDB{}, errors.New("n/a")
+	}
+	return f.redis, nil
 }
 func (f *fakeStore) SetPostgresStatus(_ context.Context, id int64, s string) error {
 	f.mu.Lock()
@@ -145,11 +156,73 @@ func TestDeletePostgresRemovesService(t *testing.T) {
 	eng := newMockEngine()
 	st := newFakeStore(samplePG())
 	svc := newSvc(eng, st)
-	if err := svc.DeletePostgres(context.Background(), 1); err != nil {
+	if err := svc.DeletePostgres(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
 		t.Errorf("removed = %+v", eng.removed)
+	}
+}
+
+func TestDeletePostgresKeepsVolumeByDefault(t *testing.T) {
+	eng := newMockEngine()
+	st := newFakeStore(samplePG())
+	svc := newSvc(eng, st)
+	if err := svc.DeletePostgres(context.Background(), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
+		t.Errorf("removed = %+v", eng.removed)
+	}
+	if len(eng.removedVolumes) != 0 {
+		t.Errorf("removedVolumes must be empty by default, got %+v", eng.removedVolumes)
+	}
+}
+
+func TestDeletePostgresDestroysVolume(t *testing.T) {
+	eng := newMockEngine()
+	st := newFakeStore(samplePG())
+	svc := newSvc(eng, st)
+	if err := svc.DeletePostgres(context.Background(), 1, true); err != nil {
+		t.Fatal(err)
+	}
+	want := volumeName("krill-pg-x")
+	if len(eng.removedVolumes) != 1 || eng.removedVolumes[0] != want {
+		t.Errorf("removedVolumes = %+v, want [%s]", eng.removedVolumes, want)
+	}
+}
+
+func sampleRedis() RedisDB {
+	return RedisDB{ID: 1, AppName: "krill-redis-x", Password: "p", Image: "redis:7"}
+}
+
+func TestDeleteRedisKeepsVolumeByDefault(t *testing.T) {
+	eng := newMockEngine()
+	st := newFakeStore(samplePG())
+	st.redis = sampleRedis()
+	svc := newSvc(eng, st)
+	if err := svc.DeleteRedis(context.Background(), 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.removed) != 1 || eng.removed[0] != "krill-redis-x" {
+		t.Errorf("removed = %+v", eng.removed)
+	}
+	if len(eng.removedVolumes) != 0 {
+		t.Errorf("removedVolumes must be empty by default, got %+v", eng.removedVolumes)
+	}
+}
+
+func TestDeleteRedisDestroysVolume(t *testing.T) {
+	eng := newMockEngine()
+	st := newFakeStore(samplePG())
+	st.redis = sampleRedis()
+	svc := newSvc(eng, st)
+	if err := svc.DeleteRedis(context.Background(), 1, true); err != nil {
+		t.Fatal(err)
+	}
+	want := volumeName("krill-redis-x")
+	if len(eng.removedVolumes) != 1 || eng.removedVolumes[0] != want {
+		t.Errorf("removedVolumes = %+v, want [%s]", eng.removedVolumes, want)
 	}
 }
 

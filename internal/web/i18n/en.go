@@ -89,6 +89,7 @@ var en = map[string]string{
 	"db.start":                  "Start",
 	"db.stop":                   "Stop",
 	"db.delete":                 "Delete",
+	"db.delete.destroyData":      "Also destroy data (delete volume)",
 	"db.connection":             "Connection",
 	"db.internal":               "Internal",
 	"db.external":               "External",

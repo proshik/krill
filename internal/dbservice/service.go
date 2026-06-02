@@ -91,12 +91,17 @@ func (s *Service) StopPostgres(ctx context.Context, id int64) error {
 	return s.store.SetPostgresStatus(ctx, id, "idle")
 }
 
-func (s *Service) DeletePostgres(ctx context.Context, id int64) error {
+func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool) error {
 	pg, err := s.store.GetPostgres(ctx, id)
 	if err != nil {
 		return err
 	}
-	_ = s.engine.ServiceRemove(ctx, pg.AppName) // volume сохраняется
+	_ = s.engine.ServiceRemove(ctx, pg.AppName) // volume сохраняется по умолчанию
+	if destroyData {
+		if err := s.engine.VolumeRemove(ctx, volumeName(pg.AppName)); err != nil {
+			slog.Error("volume remove", "vol", volumeName(pg.AppName), "err", err)
+		}
+	}
 	return s.store.DeletePostgresRow(ctx, id)
 }
 
@@ -154,12 +159,17 @@ func (s *Service) StopRedis(ctx context.Context, id int64) error {
 	return s.store.SetRedisStatus(ctx, id, "idle")
 }
 
-func (s *Service) DeleteRedis(ctx context.Context, id int64) error {
+func (s *Service) DeleteRedis(ctx context.Context, id int64, destroyData bool) error {
 	r, err := s.store.GetRedis(ctx, id)
 	if err != nil {
 		return err
 	}
 	_ = s.engine.ServiceRemove(ctx, r.AppName)
+	if destroyData {
+		if err := s.engine.VolumeRemove(ctx, volumeName(r.AppName)); err != nil {
+			slog.Error("volume remove", "vol", volumeName(r.AppName), "err", err)
+		}
+	}
 	return s.store.DeleteRedisRow(ctx, id)
 }
 

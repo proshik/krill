@@ -163,10 +163,11 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 	o, _, _ := s.loadOrg(w, r)
 	p, _ := s.loadProject(w, r)
 	e, _ := s.loadEnvironment(w, r, p.ID)
+	destroy := r.FormValue("destroy_data") == "on"
 	if eng == "postgres" {
-		_ = s.dbsvc.DeletePostgres(r.Context(), id)
+		_ = s.dbsvc.DeletePostgres(r.Context(), id, destroy)
 	} else {
-		_ = s.dbsvc.DeleteRedis(r.Context(), id)
+		_ = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
 	}
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }

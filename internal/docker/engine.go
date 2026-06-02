@@ -54,6 +54,7 @@ type Engine interface {
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
 	ImagePull(ctx context.Context, ref string, out io.Writer) error
+	VolumeRemove(ctx context.Context, name string) error
 }
 
 // ServiceName строит имя Swarm-сервиса для приложения по его id.

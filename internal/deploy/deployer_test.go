@@ -41,6 +41,7 @@ func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, 
 	return nil, nil
 }
 func (m *mockEngine) ServiceScale(context.Context, string, uint64) error      { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error              { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error { return nil }
 
 type mockBuilder struct {

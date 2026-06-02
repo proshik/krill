@@ -134,6 +134,10 @@ func (e *dockerEngine) ImagePull(ctx context.Context, ref string, out io.Writer)
 	return err
 }
 
+func (e *dockerEngine) VolumeRemove(ctx context.Context, name string) error {
+	return e.cli.VolumeRemove(ctx, name, true) // force
+}
+
 func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas uint64) error {
 	cur, found, err := e.findService(ctx, name)
 	if err != nil {
