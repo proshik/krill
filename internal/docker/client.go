@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
@@ -121,4 +122,31 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 		return nil, err
 	}
 	return NewLogReader(rc), nil
+}
+
+func (e *dockerEngine) ImagePull(ctx context.Context, ref string, out io.Writer) error {
+	rc, err := e.cli.ImagePull(ctx, ref, image.PullOptions{})
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	_, err = io.Copy(out, rc)
+	return err
+}
+
+func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas uint64) error {
+	cur, found, err := e.findService(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil // нечего масштабировать
+	}
+	spec := cur.Spec
+	if spec.Mode.Replicated == nil {
+		spec.Mode.Replicated = &swarm.ReplicatedService{}
+	}
+	spec.Mode.Replicated.Replicas = &replicas
+	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
+	return err
 }

@@ -64,3 +64,41 @@ func TestBuildSwarmSpecHostPortAndMounts(t *testing.T) {
 		t.Error("args missing")
 	}
 }
+
+func TestBuildSwarmSpecVolumeAndDNSRR(t *testing.T) {
+	spec := ServiceSpec{
+		Name:    "krill-pg-x",
+		Image:   "postgres:17",
+		Network: "krill-net",
+		DNSRR:   true,
+		Mounts:  []MountSpec{{Type: "volume", Source: "krill-pg-x-data", Target: "/var/lib/postgresql/data"}},
+	}
+	sw := buildSwarmSpec(spec)
+	if len(sw.TaskTemplate.ContainerSpec.Mounts) != 1 {
+		t.Fatalf("mounts: %d", len(sw.TaskTemplate.ContainerSpec.Mounts))
+	}
+	m := sw.TaskTemplate.ContainerSpec.Mounts[0]
+	if string(m.Type) != "volume" || m.Source != "krill-pg-x-data" || m.Target != "/var/lib/postgresql/data" {
+		t.Errorf("volume mount wrong: %+v", m)
+	}
+	if sw.EndpointSpec == nil || string(sw.EndpointSpec.Mode) != "dnsrr" {
+		t.Errorf("expected dnsrr endpoint mode, got %+v", sw.EndpointSpec)
+	}
+}
+
+func TestBuildSwarmSpecBindStillDefault(t *testing.T) {
+	// регрессия Phase 0/2: пустой Type => bind
+	spec := ServiceSpec{
+		Name:   "krill-traefik",
+		Image:  "traefik:v3.6.1",
+		Mounts: []MountSpec{{Source: "/var/run/docker.sock", Target: "/var/run/docker.sock"}},
+	}
+	sw := buildSwarmSpec(spec)
+	if string(sw.TaskTemplate.ContainerSpec.Mounts[0].Type) != "bind" {
+		t.Errorf("empty Type must map to bind, got %q", sw.TaskTemplate.ContainerSpec.Mounts[0].Type)
+	}
+	// без DNSRR — VIP
+	if spec.Ports == nil && sw.EndpointSpec != nil && string(sw.EndpointSpec.Mode) == "dnsrr" {
+		t.Error("non-DNSRR spec should not be dnsrr")
+	}
+}

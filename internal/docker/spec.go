@@ -25,8 +25,12 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		cs.Args = s.Args
 	}
 	for _, m := range s.Mounts {
+		mt := mount.TypeBind
+		if m.Type == "volume" {
+			mt = mount.TypeVolume
+		}
 		cs.Mounts = append(cs.Mounts, mount.Mount{
-			Type:     mount.TypeBind,
+			Type:     mt,
 			Source:   m.Source,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
@@ -57,8 +61,12 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		},
 	}
 
-	if len(s.Ports) > 0 {
-		ports := make([]swarm.PortConfig, 0, len(s.Ports))
+	mode := swarm.ResolutionModeVIP
+	if s.DNSRR {
+		mode = swarm.ResolutionModeDNSRR
+	}
+	if s.DNSRR || len(s.Ports) > 0 {
+		ep := &swarm.EndpointSpec{Mode: mode}
 		for _, p := range s.Ports {
 			proto := swarm.PortConfigProtocolTCP
 			if p.UDP {
@@ -68,14 +76,11 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 			if p.Mode == "host" {
 				pm = swarm.PortConfigPublishModeHost
 			}
-			ports = append(ports, swarm.PortConfig{
-				Protocol:      proto,
-				TargetPort:    p.Target,
-				PublishedPort: p.Published,
-				PublishMode:   pm,
+			ep.Ports = append(ep.Ports, swarm.PortConfig{
+				Protocol: proto, TargetPort: p.Target, PublishedPort: p.Published, PublishMode: pm,
 			})
 		}
-		spec.EndpointSpec = &swarm.EndpointSpec{Mode: swarm.ResolutionModeVIP, Ports: ports}
+		spec.EndpointSpec = ep
 	}
 	return spec
 }

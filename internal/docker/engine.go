@@ -14,8 +14,9 @@ type PortSpec struct {
 	UDP       bool
 }
 
-// MountSpec — bind-монтирование.
+// MountSpec — монтирование (bind-путь хоста или named volume).
 type MountSpec struct {
+	Type     string // "bind" | "volume"; пусто => "bind"
 	Source   string
 	Target   string
 	ReadOnly bool
@@ -34,6 +35,7 @@ type ServiceSpec struct {
 	Ports       []PortSpec
 	Mounts      []MountSpec
 	Constraints []string // напр. node.role==manager
+	DNSRR       bool     // true => EndpointSpec.Mode=dnsrr (для БД), иначе vip
 }
 
 // ServiceState — текущее состояние сервиса в Swarm.
@@ -50,6 +52,8 @@ type Engine interface {
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
+	ServiceScale(ctx context.Context, name string, replicas uint64) error
+	ImagePull(ctx context.Context, ref string, out io.Writer) error
 }
 
 // ServiceName строит имя Swarm-сервиса для приложения по его id.
