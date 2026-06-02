@@ -23,6 +23,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.CookieSecure {
 		t.Errorf("CookieSecure default = true, want false")
 	}
+	if cfg.Host != "localhost" {
+		t.Errorf("Host default = %q, want localhost", cfg.Host)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {

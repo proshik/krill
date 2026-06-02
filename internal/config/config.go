@@ -11,6 +11,7 @@ type Config struct {
 	DockerHost    string `env:"KRILL_DOCKER_HOST"`
 	BaseDomain    string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
 	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
+	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
 }
 
