@@ -5,31 +5,53 @@ import (
 	"testing"
 )
 
-func TestTraefikSpec(t *testing.T) {
-	s := TraefikSpec("krill-net")
-	if s.Name != "krill-traefik" {
-		t.Errorf("name = %q", s.Name)
-	}
-	if !strings.HasPrefix(s.Image, "traefik:") {
-		t.Errorf("image = %q", s.Image)
-	}
-	if len(s.Ports) == 0 || s.Ports[0].Mode != "host" {
-		t.Error("port 80 must be host-mode")
-	}
-	var hasSock bool
-	for _, m := range s.Mounts {
-		if m.Source == "/var/run/docker.sock" {
-			hasSock = true
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
 		}
 	}
-	if !hasSock {
-		t.Error("docker socket must be mounted")
+	return false
+}
+
+func TestTraefikSpecTLS(t *testing.T) {
+	s := TraefikSpec("krill-net", AcmeConfig{Email: "a@b.c", Staging: false})
+	if !hasArg(s.Args, "--entrypoints.websecure.address=:443") {
+		t.Error("missing websecure entrypoint")
 	}
-	joined := strings.Join(s.Args, " ")
-	if !strings.Contains(joined, "--providers.swarm.network=krill-net") {
-		t.Errorf("provider network arg missing: %v", s.Args)
+	if !hasArg(s.Args, "--certificatesresolvers.le.acme.email=a@b.c") {
+		t.Error("missing acme email")
 	}
-	if len(s.Constraints) == 0 {
-		t.Error("expected manager constraint")
+	if !hasArg(s.Args, "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web") {
+		t.Error("missing http challenge entrypoint")
+	}
+	if !hasArg(s.Args, "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json") {
+		t.Error("missing acme storage")
+	}
+	var has443, hasVol bool
+	for _, p := range s.Ports {
+		if p.Target == 443 && p.Published == 443 {
+			has443 = true
+		}
+	}
+	for _, m := range s.Mounts {
+		if m.Type == "volume" && m.Target == "/letsencrypt" {
+			hasVol = true
+		}
+	}
+	if !has443 || !hasVol {
+		t.Errorf("443 port=%v acme volume=%v", has443, hasVol)
+	}
+	for _, a := range s.Args {
+		if strings.Contains(a, "caserver") {
+			t.Error("prod must not set a staging caserver")
+		}
+	}
+}
+
+func TestTraefikSpecStaging(t *testing.T) {
+	s := TraefikSpec("krill-net", AcmeConfig{Email: "a@b.c", Staging: true})
+	if !hasArg(s.Args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory") {
+		t.Error("staging caserver missing")
 	}
 }

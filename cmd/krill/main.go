@@ -94,7 +94,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := traefik.Bootstrap(ctx, engine, cfg.Network); err != nil {
+	acme := traefik.AcmeConfig{Email: cfg.AcmeEmail, Staging: cfg.AcmeStaging}
+	if acme.Email == "" {
+		acme.Email = cfg.AdminEmail // fallback contact for Let's Encrypt
+	}
+	if err := traefik.Bootstrap(ctx, engine, cfg.Network, acme); err != nil {
 		slog.Warn("traefik bootstrap failed (continuing)", "err", err)
 	}
 
