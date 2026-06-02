@@ -17,6 +17,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
+		logFrom(r).Info("appLogs: websocket accept failed", "err", err, "app_id", c.App.ID)
 		return
 	}
 	defer conn.CloseNow()
@@ -24,6 +25,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 
 	rc, err := s.engine.ServiceLogs(ctx, dockerName(c.App.ID), true)
 	if err != nil {
+		logFrom(r).Error("appLogs: service logs unavailable", "err", err, "app_id", c.App.ID)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
 		return
 	}

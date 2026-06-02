@@ -23,6 +23,7 @@ func pathID(r *http.Request, key string) (int64, bool) {
 func (s *Server) loadOrg(w http.ResponseWriter, r *http.Request) (db.Organization, string, bool) {
 	o, err := s.q.GetOrganization(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
+		logFrom(r).Info("organization not found", "org_id", auth.OrgID(r.Context()))
 		http.NotFound(w, r)
 		return db.Organization{}, "", false
 	}
@@ -38,6 +39,7 @@ func (s *Server) loadProject(w http.ResponseWriter, r *http.Request) (db.Project
 	}
 	p, err := s.org.ProjectInOrg(r.Context(), auth.OrgID(r.Context()), pid)
 	if err != nil {
+		logFrom(r).Info("project not found in org", "project_id", pid)
 		http.NotFound(w, r)
 		return db.Project{}, false
 	}
@@ -53,6 +55,7 @@ func (s *Server) loadEnvironment(w http.ResponseWriter, r *http.Request, projID 
 	}
 	e, err := s.org.EnvironmentInProject(r.Context(), projID, eid)
 	if err != nil {
+		logFrom(r).Info("environment not found in project", "project_id", projID, "environment_id", eid)
 		http.NotFound(w, r)
 		return db.Environment{}, false
 	}
@@ -68,6 +71,7 @@ func (s *Server) loadApp(w http.ResponseWriter, r *http.Request, projID, envID i
 	}
 	a, err := s.org.AppInChain(r.Context(), auth.OrgID(r.Context()), projID, envID, aid)
 	if err != nil {
+		logFrom(r).Info("app not found in chain", "project_id", projID, "environment_id", envID, "app_id", aid)
 		http.NotFound(w, r)
 		return db.Application{}, false
 	}

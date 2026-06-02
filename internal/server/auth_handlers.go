@@ -16,6 +16,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	token, err := s.auth.Authenticate(r.Context(), email, password)
 	if err != nil {
+		logFrom(r).Warn("login failed", "email", email, "remote", r.RemoteAddr)
 		render(w, r, http.StatusUnauthorized, templates.Login("Invalid email or password"))
 		return
 	}
@@ -28,6 +29,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(auth.SessionTTL.Seconds()),
 	})
+	logFrom(r).Info("login succeeded", "email", email)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -36,5 +38,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		_ = s.auth.Logout(r.Context(), c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: auth.CookieName, Path: "/", MaxAge: -1, HttpOnly: true})
+	logFrom(r).Info("logout")
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

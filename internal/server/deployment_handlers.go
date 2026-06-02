@@ -21,6 +21,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
 	if err != nil {
+		logFrom(r).Error("listDeployments: query deployments failed", "err", err, "app_id", c.App.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -44,6 +45,7 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
+		logFrom(r).Error("deploymentLogWS: websocket accept failed", "err", err, "deploy_id", dep.ID)
 		return
 	}
 	defer conn.CloseNow()
@@ -66,6 +68,7 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 				err := conn.Write(wctx, websocket.MessageText, []byte(line))
 				cancel()
 				if err != nil {
+					logFrom(r).Info("deploymentLogWS: live log write failed", "err", err, "deploy_id", dep.ID)
 					return
 				}
 			}
@@ -96,6 +99,9 @@ func (s *Server) loadDeployment(w http.ResponseWriter, r *http.Request) (templat
 	}
 	dep, err := s.q.GetDeployment(r.Context(), id)
 	if err != nil || dep.ApplicationID != c.App.ID {
+		if err == nil && dep.ApplicationID != c.App.ID {
+			logFrom(r).Info("loadDeployment: deployment does not belong to application", "deploy_id", id, "app_id", c.App.ID)
+		}
 		http.NotFound(w, r)
 		return templates.AppCtx{}, db.Deployment{}, false
 	}

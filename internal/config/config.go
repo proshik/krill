@@ -13,6 +13,8 @@ type Config struct {
 	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
 	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
+	LogLevel      string `env:"KRILL_LOG_LEVEL" envDefault:"info"`   // debug | info | warn | error
+	LogFormat     string `env:"KRILL_LOG_FORMAT" envDefault:"text"`  // text | json
 }
 
 // Load reads the configuration from the environment.

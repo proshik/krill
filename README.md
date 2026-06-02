@@ -147,6 +147,8 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_NETWORK` | `krill-net` | No | Swarm overlay network name. |
 | `KRILL_HOST` | `localhost` | No | Public hostname used in generated external DB connection strings. |
 | `KRILL_COOKIE_SECURE` | `false` | No | Set the `Secure` flag on session cookies. |
+| `KRILL_LOG_LEVEL` | `info` | No | Log level: `debug` / `info` / `warn` / `error`. |
+| `KRILL_LOG_FORMAT` | `text` | No | Log handler format: `text` or `json`. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 

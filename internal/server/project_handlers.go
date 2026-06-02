@@ -14,10 +14,13 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := s.org.CreateProject(r.Context(), o.ID, r.FormValue("name"), r.FormValue("description")); err != nil {
+	p, err := s.org.CreateProject(r.Context(), o.ID, r.FormValue("name"), r.FormValue("description"))
+	if err != nil {
+		logFrom(r).Info("createProject: rejected", "err", err, "org_id", o.ID)
 		http.Error(w, "failed to create project: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	logFrom(r).Info("project created", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -49,9 +52,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
+		logFrom(r).Error("deleteProject: delete project", "err", err, "project_id", p.ID, "org_id", o.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	logFrom(r).Info("project deleted", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -64,10 +69,13 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := s.org.CreateEnvironment(r.Context(), p.ID, r.FormValue("name")); err != nil {
+	e, err := s.org.CreateEnvironment(r.Context(), p.ID, r.FormValue("name"))
+	if err != nil {
+		logFrom(r).Info("createEnvironment: rejected", "err", err, "project_id", p.ID, "org_id", o.ID)
 		http.Error(w, "failed to create environment: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	logFrom(r).Info("environment created", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 
@@ -96,9 +104,11 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
+		logFrom(r).Error("deleteEnvironment: delete environment", "err", err, "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	logFrom(r).Info("environment deleted", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 
@@ -114,6 +124,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 	}
 	envs, err := s.q.ListEnvironments(r.Context(), p.ID)
 	if err != nil {
+		logFrom(r).Error("projectPage: list environments", "err", err, "project_id", p.ID, "org_id", o.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -37,7 +37,7 @@ func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Qu
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 
 	// locale middleware: puts the default locale into the request context.

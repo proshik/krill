@@ -35,6 +35,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	version := strings.TrimSpace(r.FormValue("version"))
 	if name == "" || (engine != "postgres" && engine != "redis") {
+		logFrom(r).Info("createDatabase: engine and name are required", "environment_id", e.ID, "engine", engine)
 		http.Error(w, "engine and name are required", http.StatusBadRequest)
 		return
 	}
@@ -42,6 +43,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 65535 {
+			logFrom(r).Info("createDatabase: invalid external_port", "environment_id", e.ID, "engine", engine, "name", name)
 			http.Error(w, "invalid external_port", http.StatusBadRequest)
 			return
 		}
@@ -49,6 +51,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		pgN, _ := s.q.CountPostgresByExternalPort(r.Context(), &x)
 		rdN, _ := s.q.CountRedisByExternalPort(r.Context(), &x)
 		if pgN+rdN > 0 {
+			logFrom(r).Warn("createDatabase: external port already in use", "environment_id", e.ID, "engine", engine, "name", name)
 			http.Error(w, "external port already in use", http.StatusBadRequest)
 			return
 		}
@@ -56,6 +59,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	pw, err := genPassword()
 	if err != nil {
+		logFrom(r).Error("createDatabase: failed to generate password", "err", err, "environment_id", e.ID, "engine", engine, "name", name)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -71,9 +75,11 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 			Image: version, ExternalPort: extPort,
 		})
 		if err != nil {
+			logFrom(r).Error("createDatabase: failed to create postgres", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
 			http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
 	case "redis":
 		if version == "" {
 			version = "redis:7"
@@ -83,9 +89,11 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 			EnvironmentID: e.ID, Name: name, AppName: app, Password: pw, Image: version, ExternalPort: extPort,
 		})
 		if err != nil {
+			logFrom(r).Error("createDatabase: failed to create redis", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
 			http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
 	}
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
@@ -100,6 +108,7 @@ func (s *Server) deployDatabase(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.dbsvc.DeployRedis(r.Context(), id)
 	}
+	logFrom(r).Info("database deploy requested", "db_id", id, "engine", eng)
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -113,6 +122,7 @@ func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = s.dbsvc.StartRedis(r.Context(), id)
 	}
+	logFrom(r).Info("database started", "db_id", id, "engine", eng)
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -126,6 +136,7 @@ func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = s.dbsvc.StopRedis(r.Context(), id)
 	}
+	logFrom(r).Info("database stopped", "db_id", id, "engine", eng)
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -143,9 +154,11 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 			err = s.q.UpdateRedisImage(r.Context(), db.UpdateRedisImageParams{ID: id, Image: image})
 		}
 		if err != nil {
+			logFrom(r).Error("versionDatabase: failed to update image", "err", err, "db_id", id, "engine", eng, "image", image)
 			http.Error(w, "failed to update image", http.StatusInternalServerError)
 			return
 		}
+		logFrom(r).Info("database version updated", "db_id", id, "engine", eng, "image", image)
 	}
 	if eng == "postgres" {
 		s.dbsvc.DeployPostgres(r.Context(), id)
@@ -169,6 +182,7 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
 	}
+	logFrom(r).Info("database deleted", "db_id", id, "engine", eng, "destroy_data", destroy)
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
 
@@ -200,6 +214,8 @@ func (s *Server) databaseStatus(w http.ResponseWriter, r *http.Request) {
 			if st.Running >= st.Desired && st.Desired > 0 {
 				status = "running"
 			}
+		} else if err != nil {
+			logFrom(r).Error("databaseStatus: engine service state failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
 		}
 	}
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
@@ -211,6 +227,7 @@ func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.engine == nil {
+		logFrom(r).Error("databaseLogs: engine unavailable", "db_id", id, "engine", eng)
 		http.Error(w, "engine unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -224,12 +241,14 @@ func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
+		logFrom(r).Error("databaseLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
 		return
 	}
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
 	rc, err := s.engine.ServiceLogs(ctx, appName, true)
 	if err != nil {
+		logFrom(r).Error("databaseLogs: engine service logs failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
 		return
 	}
@@ -248,6 +267,7 @@ func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
+		logFrom(r).Error("databaseDeployLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng)
 		return
 	}
 	defer conn.CloseNow()
@@ -302,6 +322,7 @@ func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, in
 	if engine == "postgres" {
 		row, err := s.q.GetPostgres(r.Context(), id)
 		if err != nil {
+			logFrom(r).Info("loadDBChain: database not found", "db_id", id, "engine", engine, "environment_id", e.ID)
 			http.NotFound(w, r)
 			return "", 0, false
 		}
@@ -309,12 +330,14 @@ func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, in
 	} else {
 		row, err := s.q.GetRedis(r.Context(), id)
 		if err != nil {
+			logFrom(r).Info("loadDBChain: database not found", "db_id", id, "engine", engine, "environment_id", e.ID)
 			http.NotFound(w, r)
 			return "", 0, false
 		}
 		envID = row.EnvironmentID
 	}
 	if envID != e.ID {
+		logFrom(r).Info("loadDBChain: environment mismatch", "db_id", id, "engine", engine, "environment_id", e.ID, "db_environment_id", envID)
 		http.NotFound(w, r)
 		return "", 0, false
 	}

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -61,6 +62,7 @@ func RequireOrgMember(m MemberResolver) func(http.Handler) http.Handler {
 			}
 			role, ok := m.Membership(r.Context(), UserID(r.Context()), orgID)
 			if !ok {
+				slog.Info("org access denied (not a member)", "user_id", UserID(r.Context()), "org_id", orgID, "path", r.URL.Path)
 				http.NotFound(w, r)
 				return
 			}
@@ -76,6 +78,8 @@ func RequireRole(min Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !RoleOf(r.Context()).AtLeast(min) {
+				slog.Warn("rbac denied", "user_id", UserID(r.Context()), "org_id", OrgID(r.Context()),
+					"have", RoleOf(r.Context()).String(), "required", min.String(), "method", r.Method, "path", r.URL.Path)
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}

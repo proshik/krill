@@ -48,7 +48,9 @@ Local ports: app on `:18080`, Postgres on `55432` (the `.env` config used when t
 
 Prereqs: Go 1.26.1, Docker/Colima running, Swarm initialized (`docker swarm init`), Tailwind v4.3.0 standalone binary at `./tools/tailwindcss` (no Node/npm). On startup `cmd/krill/main.go` runs embedded migrations, seeds the admin user + default org, bootstraps Traefik + the overlay network, then serves on `KRILL_LISTEN_ADDR`.
 
-Required env vars: `KRILL_DATABASE_URL`, `KRILL_ADMIN_EMAIL`, `KRILL_ADMIN_PASSWORD`. Optional (with defaults): `KRILL_LISTEN_ADDR` (`:8080`), `KRILL_DOCKER_HOST`, `KRILL_BASE_DOMAIN` (`127-0-0-1.sslip.io`), `KRILL_NETWORK` (`krill-net`), `KRILL_HOST` (`localhost`), `KRILL_COOKIE_SECURE` (`false`).
+Required env vars: `KRILL_DATABASE_URL`, `KRILL_ADMIN_EMAIL`, `KRILL_ADMIN_PASSWORD`. Optional (with defaults): `KRILL_LISTEN_ADDR` (`:8080`), `KRILL_DOCKER_HOST`, `KRILL_BASE_DOMAIN` (`127-0-0-1.sslip.io`), `KRILL_NETWORK` (`krill-net`), `KRILL_HOST` (`localhost`), `KRILL_COOKIE_SECURE` (`false`), `KRILL_LOG_LEVEL` (`info`: debug/info/warn/error), `KRILL_LOG_FORMAT` (`text`: text/json).
+
+**Logging:** structured `slog`, configured in `cmd/krill/main.go` (`setupLogging`). One access-log line per request comes from the `requestLogger` middleware (`internal/server/logging.go`); 5xx logs at error level. In handlers use `logFrom(r)` — a `*slog.Logger` pre-tagged with `request_id`/`user_id`/`org_id` — for error logs (before any 5xx response) and INFO audit logs (before the success redirect). Never log secrets (passwords, temp passwords, tokens, connection strings).
 
 ## 3. Critical facts that bite
 
