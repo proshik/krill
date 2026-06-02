@@ -52,3 +52,16 @@ func TestLoadRequiresDatabaseURL(t *testing.T) {
 		t.Fatal("expected error when KRILL_DATABASE_URL is missing")
 	}
 }
+
+func TestAcmeDefaults(t *testing.T) {
+	t.Setenv("KRILL_DATABASE_URL", "postgres://x")
+	t.Setenv("KRILL_ADMIN_EMAIL", "a@b.c")
+	t.Setenv("KRILL_ADMIN_PASSWORD", "pw")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AcmeStaging != false || c.AcmeEmail != "" {
+		t.Errorf("acme defaults wrong: staging=%v email=%q", c.AcmeStaging, c.AcmeEmail)
+	}
+}

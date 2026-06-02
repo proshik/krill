@@ -15,6 +15,8 @@ type Config struct {
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
 	LogLevel      string `env:"KRILL_LOG_LEVEL" envDefault:"info"`   // debug | info | warn | error
 	LogFormat     string `env:"KRILL_LOG_FORMAT" envDefault:"text"`  // text | json
+	AcmeEmail     string `env:"KRILL_ACME_EMAIL"`
+	AcmeStaging   bool   `env:"KRILL_ACME_STAGING" envDefault:"false"`
 }
 
 // Load reads the configuration from the environment.
