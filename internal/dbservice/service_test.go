@@ -63,6 +63,7 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 	out.Write([]byte("pulling " + ref + "\n"))
 	return nil
 }
+func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error { return nil }
 
 type fakeStore struct {
 	mu     sync.Mutex

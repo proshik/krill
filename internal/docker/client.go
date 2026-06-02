@@ -138,6 +138,20 @@ func (e *dockerEngine) VolumeRemove(ctx context.Context, name string) error {
 	return e.cli.VolumeRemove(ctx, name, true) // force
 }
 
+func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error {
+	cur, found, err := e.findService(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil // not deployed yet; labels apply on next deploy
+	}
+	spec := cur.Spec
+	spec.Annotations.Labels = labels
+	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
+	return err
+}
+
 func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas uint64) error {
 	cur, found, err := e.findService(ctx, name)
 	if err != nil {
