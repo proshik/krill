@@ -88,6 +88,137 @@ func TestMemberCannotCreateProject(t *testing.T) {
 	}
 }
 
+func TestOwnerChangesMemberRole(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	memberID := mkUser(t, q, "member@k.local")
+	mem, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"})
+	if err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	form := url.Values{"role": {"admin"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(mem.ID, 10)+"/role", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(loginAs(t, q, "owner@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("owner change role want 303, got %d", rec.Code)
+	}
+	got, err := q.GetMemberByID(ctx, mem.ID)
+	if err != nil {
+		t.Fatalf("get member: %v", err)
+	}
+	if got.Role != "admin" {
+		t.Fatalf("want role admin, got %q", got.Role)
+	}
+}
+
+func TestCannotDemoteLastOwner(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	ownerMem, err := q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: o.ID, UserID: ownerID})
+	if err != nil {
+		t.Fatalf("get owner membership: %v", err)
+	}
+
+	form := url.Values{"role": {"member"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(ownerMem.ID, 10)+"/role", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(loginAs(t, q, "owner@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("demote last owner want 403, got %d", rec.Code)
+	}
+	got, _ := q.GetMemberByID(ctx, ownerMem.ID)
+	if got.Role != "owner" {
+		t.Fatalf("want role owner unchanged, got %q", got.Role)
+	}
+}
+
+func TestCannotRemoveLastOwner(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	ownerMem, err := q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: o.ID, UserID: ownerID})
+	if err != nil {
+		t.Fatalf("get owner membership: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(ownerMem.ID, 10)+"/remove", nil)
+	req.AddCookie(loginAs(t, q, "owner@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("remove last owner want 403, got %d", rec.Code)
+	}
+	if _, err := q.GetMemberByID(ctx, ownerMem.ID); err != nil {
+		t.Fatalf("owner should still exist: %v", err)
+	}
+}
+
+func TestCanRemoveNonLastOwner(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	owner2ID := mkUser(t, q, "owner2@k.local")
+	owner2Mem, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: owner2ID, Role: "owner"})
+	if err != nil {
+		t.Fatalf("add second owner: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(owner2Mem.ID, 10)+"/remove", nil)
+	req.AddCookie(loginAs(t, q, "owner@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("remove non-last owner want 303, got %d", rec.Code)
+	}
+	if _, err := q.GetMemberByID(ctx, owner2Mem.ID); err == nil {
+		t.Fatalf("second owner should be removed")
+	}
+	n, err := q.CountOwners(ctx, o.ID)
+	if err != nil {
+		t.Fatalf("count owners: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("want 1 owner remaining, got %d", n)
+	}
+}
+
+func TestMemberCannotChangeRole(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	ownerMem, err := q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: o.ID, UserID: ownerID})
+	if err != nil {
+		t.Fatalf("get owner membership: %v", err)
+	}
+	memberID := mkUser(t, q, "member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	form := url.Values{"role": {"admin"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members/"+strconv.FormatInt(ownerMem.ID, 10)+"/role", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(loginAs(t, q, "member@k.local"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("member change role want 403, got %d", rec.Code)
+	}
+}
+
 func TestAdminCanCreateProject(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()

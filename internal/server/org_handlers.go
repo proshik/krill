@@ -109,6 +109,44 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
+func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	mID, ok := pathID(r, "mID")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	m, err := s.q.GetMemberByID(r.Context(), mID)
+	if err != nil || m.OrganizationID != o.ID {
+		http.NotFound(w, r)
+		return
+	}
+	role := r.FormValue("role")
+	if role != "owner" && role != "admin" && role != "member" {
+		http.Error(w, "invalid role", http.StatusBadRequest)
+		return
+	}
+	if m.Role == "owner" && role != "owner" {
+		n, err := s.q.CountOwners(r.Context(), o.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if n <= 1 {
+			http.Error(w, "cannot demote the last owner", http.StatusForbidden)
+			return
+		}
+	}
+	if err := s.q.UpdateMemberRole(r.Context(), db.UpdateMemberRoleParams{ID: mID, Role: role}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
+}
+
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -125,8 +163,15 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m.Role == "owner" {
-		http.Error(w, "нельзя удалить owner", http.StatusForbidden)
-		return
+		n, err := s.q.CountOwners(r.Context(), o.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if n <= 1 {
+			http.Error(w, "cannot remove the last owner", http.StatusForbidden)
+			return
+		}
 	}
 	if err := s.q.DeleteMember(r.Context(), mID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
