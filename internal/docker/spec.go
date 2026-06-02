@@ -7,7 +7,7 @@ import (
 	"github.com/docker/docker/api/types/swarm"
 )
 
-// buildSwarmSpec конвертирует ServiceSpec в swarm.ServiceSpec.
+// buildSwarmSpec converts a ServiceSpec into a swarm.ServiceSpec.
 func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 	replicas := s.Replicas
 
@@ -15,7 +15,7 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 	for k, v := range s.Env {
 		envs = append(envs, k+"="+v)
 	}
-	sort.Strings(envs) // детерминизм для тестов и диффов
+	sort.Strings(envs) // determinism for tests and diffs
 
 	cs := &swarm.ContainerSpec{Image: s.Image, Env: envs}
 	if len(s.Command) > 0 {

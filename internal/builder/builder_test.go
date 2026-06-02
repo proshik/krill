@@ -22,11 +22,11 @@ func TestBuildArgs(t *testing.T) {
 }
 
 func TestContextDir(t *testing.T) {
-	// Dockerfile в корне репо → контекст = корень
+	// Dockerfile at the repo root → context = root
 	if d := contextDir("/tmp/ctx", "Dockerfile"); d != "/tmp/ctx" {
 		t.Errorf("contextDir root = %q", d)
 	}
-	// Dockerfile в подкаталоге → контекст = этот подкаталог
+	// Dockerfile in a subdirectory → context = that subdirectory
 	if d := contextDir("/tmp/ctx", "sub/Dockerfile"); d != "/tmp/ctx/sub" {
 		t.Errorf("contextDir sub = %q", d)
 	}

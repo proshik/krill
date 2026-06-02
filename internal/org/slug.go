@@ -2,9 +2,9 @@ package org
 
 import "strings"
 
-// Slugify приводит человекочитаемое имя к slug: lowercase, [a-z0-9-],
-// последовательности разделителей схлопываются в один дефис, края тримятся.
-// Возвращает "" если валидных символов нет (вызывающая сторона должна это проверить).
+// Slugify converts a human-readable name into a slug: lowercase, [a-z0-9-],
+// sequences of separators collapse into a single dash, edges are trimmed.
+// Returns "" if there are no valid characters (the caller must check for this).
 func Slugify(name string) string {
 	var b strings.Builder
 	prevDash := false
@@ -19,7 +19,7 @@ func Slugify(name string) string {
 				prevDash = true
 			}
 		default:
-			// не-ascii и спецсимволы игнорируются
+			// non-ascii and special characters are ignored
 		}
 	}
 	return strings.TrimRight(b.String(), "-")

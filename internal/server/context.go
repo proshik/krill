@@ -10,7 +10,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// pathID парсит числовой параметр пути; 0,false если некорректен.
+// pathID parses a numeric path parameter; returns 0,false if invalid.
 func pathID(r *http.Request, key string) (int64, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, key), 10, 64)
 	if err != nil {
@@ -19,7 +19,7 @@ func pathID(r *http.Request, key string) (int64, bool) {
 	return id, true
 }
 
-// loadOrg грузит активную org (из контекста middleware) и роль.
+// loadOrg loads the active org (from the middleware context) and the role.
 func (s *Server) loadOrg(w http.ResponseWriter, r *http.Request) (db.Organization, string, bool) {
 	o, err := s.q.GetOrganization(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
@@ -29,7 +29,7 @@ func (s *Server) loadOrg(w http.ResponseWriter, r *http.Request) (db.Organizatio
 	return o, auth.RoleOf(r.Context()).String(), true
 }
 
-// loadProject грузит проект, проверяя принадлежность активной org.
+// loadProject loads the project, verifying it belongs to the active org.
 func (s *Server) loadProject(w http.ResponseWriter, r *http.Request) (db.Project, bool) {
 	pid, ok := pathID(r, "projID")
 	if !ok {
@@ -44,7 +44,7 @@ func (s *Server) loadProject(w http.ResponseWriter, r *http.Request) (db.Project
 	return p, true
 }
 
-// loadEnvironment грузит окружение, проверяя принадлежность проекту.
+// loadEnvironment loads the environment, verifying it belongs to the project.
 func (s *Server) loadEnvironment(w http.ResponseWriter, r *http.Request, projID int64) (db.Environment, bool) {
 	eid, ok := pathID(r, "envID")
 	if !ok {
@@ -59,7 +59,7 @@ func (s *Server) loadEnvironment(w http.ResponseWriter, r *http.Request, projID 
 	return e, true
 }
 
-// loadApp грузит приложение, проверяя всю цепочку org→proj→env→app.
+// loadApp loads the application, verifying the whole org→proj→env→app chain.
 func (s *Server) loadApp(w http.ResponseWriter, r *http.Request, projID, envID int64) (db.Application, bool) {
 	aid, ok := pathID(r, "appID")
 	if !ok {

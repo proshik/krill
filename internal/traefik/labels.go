@@ -5,8 +5,8 @@ import (
 	"strconv"
 )
 
-// AppLabels строит service-level Traefik-лейблы для приложения.
-// serviceName — имя Swarm-сервиса (оно же id роутера/сервиса в Traefik).
+// AppLabels builds the service-level Traefik labels for the application.
+// serviceName is the Swarm service name (also the router/service id in Traefik).
 func AppLabels(serviceName, domain string, port int32, network string) map[string]string {
 	rp := "traefik.http.routers." + serviceName + "."
 	sp := "traefik.http.services." + serviceName + ".loadbalancer.server.port"

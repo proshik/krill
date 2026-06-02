@@ -17,7 +17,7 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// createDatabase создаёт Postgres или Redis (form: engine, name, version, external_port?).
+// createDatabase creates Postgres or Redis (form: engine, name, version, external_port?).
 func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -35,7 +35,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	version := strings.TrimSpace(r.FormValue("version"))
 	if name == "" || (engine != "postgres" && engine != "redis") {
-		http.Error(w, "engine и name обязательны", http.StatusBadRequest)
+		http.Error(w, "engine and name are required", http.StatusBadRequest)
 		return
 	}
 	var extPort *int32
@@ -277,7 +277,7 @@ func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {
 	conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// loadDBChain парсит {engine}/{dbID} и проверяет принадлежность цепочке org→proj→env.
+// loadDBChain parses {engine}/{dbID} and verifies it belongs to the org→proj→env chain.
 func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, int64, bool) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -297,7 +297,7 @@ func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, in
 		http.NotFound(w, r)
 		return "", 0, false
 	}
-	// проверка принадлежности окружению
+	// verify it belongs to the environment
 	var envID int64
 	if engine == "postgres" {
 		row, err := s.q.GetPostgres(r.Context(), id)
@@ -322,7 +322,7 @@ func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, in
 	return engine, id, true
 }
 
-// loadDBCtx грузит цепочку + строку БД и собирает DatabaseCtx (connection strings).
+// loadDBCtx loads the chain + the DB row and assembles DatabaseCtx (connection strings).
 func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.DatabaseCtx, bool) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {

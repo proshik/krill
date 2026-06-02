@@ -10,17 +10,17 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// SessionTTL — срок жизни сессии.
+// SessionTTL — session lifetime.
 const SessionTTL = 7 * 24 * time.Hour
 
-// Service инкапсулирует операции аутентификации поверх sqlc-запросов.
+// Service encapsulates authentication operations on top of sqlc queries.
 type Service struct {
 	q *db.Queries
 }
 
 func NewService(q *db.Queries) *Service { return &Service{q: q} }
 
-// Authenticate проверяет email+пароль и при успехе создаёт сессию, возвращая токен.
+// Authenticate verifies email+password and on success creates a session, returning a token.
 func (s *Service) Authenticate(ctx context.Context, email, password string) (string, error) {
 	u, err := s.q.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -44,7 +44,7 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (str
 	return token, nil
 }
 
-// Validate возвращает userID, если токен валиден и не истёк.
+// Validate returns userID if the token is valid and has not expired.
 func (s *Service) Validate(ctx context.Context, token string) (int64, bool) {
 	sess, err := s.q.GetSession(ctx, token)
 	if err != nil {
@@ -57,13 +57,13 @@ func (s *Service) Validate(ctx context.Context, token string) (int64, bool) {
 	return sess.UserID, true
 }
 
-// Logout удаляет сессию.
+// Logout removes the session.
 func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.q.DeleteSession(ctx, token)
 }
 
-// SeedAdmin создаёт администратора и дефолтную организацию, если их ещё нет.
-// Идемпотентно: повторный старт не дублирует и не перезатирает.
+// SeedAdmin creates the admin user and the default organization if they do not exist yet.
+// Idempotent: a repeated start does not duplicate or overwrite anything.
 func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 	u, err := s.q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -77,7 +77,7 @@ func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 		return err
 	}
 
-	// Дефолтная организация: если у админа ещё нет членства нигде — создаём.
+	// Default organization: if the admin has no membership anywhere yet, create it.
 	orgs, err := s.q.ListOrganizationsForUser(ctx, u.ID)
 	if err != nil {
 		return err
@@ -97,5 +97,5 @@ func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 	return err
 }
 
-// ErrInvalidCredentials — неверный email или пароль.
+// ErrInvalidCredentials — invalid email or password.
 var ErrInvalidCredentials = errors.New("invalid credentials")

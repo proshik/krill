@@ -9,8 +9,8 @@ func TestSlugify(t *testing.T) {
 		"Staging 2!":       "staging-2",
 		"  trim  me  ":     "trim-me",
 		"a__b--c":          "a-b-c",
-		"Прод":             "",   // не-ascii выкидывается
-		"Web Прод":         "web",
+		"日本語":              "",   // non-ascii is dropped
+		"Web 日本語":          "web",
 		"UPPER":            "upper",
 	}
 	for in, want := range cases {

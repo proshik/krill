@@ -6,14 +6,14 @@ import (
 	"github.com/proshik/krill/internal/docker"
 )
 
-// TraefikVersion — версия образа Traefik.
-// v3.6.1+ обязателен: в нём swarm-провайдер авто-негоциирует Docker API
-// (traefik#12253/#12256). Версии ≤3.6.0 хардкодят API 1.24 и Engine 29.x их
-// отвергает ("client version 1.24 is too old"), из-за чего роутеры не строятся.
+// TraefikVersion is the Traefik image version.
+// v3.6.1+ is required: in it the swarm provider auto-negotiates the Docker API
+// (traefik#12253/#12256). Versions ≤3.6.0 hardcode API 1.24 and Engine 29.x
+// rejects them ("client version 1.24 is too old"), so routers are not built.
 const TraefikVersion = "v3.6.1"
 
-// TraefikSpec строит спецификацию Swarm-сервиса Traefik.
-// Конфигурируется CLI-аргументами; монтируется только docker-сокет (без traefik.yml).
+// TraefikSpec builds the spec for the Traefik Swarm service.
+// Configured via CLI arguments; only the docker socket is mounted (no traefik.yml).
 func TraefikSpec(network string) docker.ServiceSpec {
 	return docker.ServiceSpec{
 		Name:     "krill-traefik",
@@ -36,7 +36,7 @@ func TraefikSpec(network string) docker.ServiceSpec {
 	}
 }
 
-// Bootstrap гарантирует overlay-сеть и сервис Traefik (идемпотентно).
+// Bootstrap ensures the overlay network and the Traefik service (idempotent).
 func Bootstrap(ctx context.Context, eng docker.Engine, network string) error {
 	if err := eng.NetworkEnsure(ctx, network); err != nil {
 		return err

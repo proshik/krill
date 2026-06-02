@@ -6,7 +6,7 @@ import (
 	"github.com/proshik/krill/internal/docker"
 )
 
-// PostgresDB / RedisDB — доменные представления для построения спеков (маппятся из sqlc-строк в store.go).
+// PostgresDB / RedisDB — domain representations for building specs (mapped from sqlc rows in store.go).
 type PostgresDB struct {
 	ID               int64
 	EnvironmentID    int64
@@ -76,7 +76,7 @@ func redisSpec(r RedisDB, network string) docker.ServiceSpec {
 	return spec
 }
 
-// PostgresInternalURL — строка подключения по overlay (хост = имя сервиса).
+// PostgresInternalURL — connection string over the overlay network (host = service name).
 func PostgresInternalURL(pg PostgresDB) string {
 	return "postgresql://" + pg.DatabaseUser + ":" + pg.DatabasePassword + "@" + pg.AppName + ":5432/" + pg.DatabaseName
 }

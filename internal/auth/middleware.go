@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// CookieName — имя cookie сессии.
+// CookieName — name of the session cookie.
 const CookieName = "krill_session"
 
 type ctxKey int
@@ -19,17 +19,17 @@ const (
 	roleKey
 )
 
-// Validator проверяет токен сессии.
+// Validator validates a session token.
 type Validator interface {
 	Validate(ctx context.Context, token string) (int64, bool)
 }
 
-// MemberResolver сообщает роль пользователя в организации.
+// MemberResolver reports a user's role in an organization.
 type MemberResolver interface {
 	Membership(ctx context.Context, userID, orgID int64) (Role, bool)
 }
 
-// RequireAuth пропускает запрос только при валидной сессии, иначе → /login.
+// RequireAuth allows the request through only with a valid session, otherwise → /login.
 func RequireAuth(v Validator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,8 +49,8 @@ func RequireAuth(v Validator) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireOrgMember проверяет членство пользователя в org из пути {orgID}.
-// Не член (или org нет) → 404. Кладёт orgID и роль в контекст.
+// RequireOrgMember checks the user's membership in the org from the {orgID} path.
+// Not a member (or org missing) → 404. Puts orgID and role into the context.
 func RequireOrgMember(m MemberResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func RequireOrgMember(m MemberResolver) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireRole требует роль не ниже min, иначе 403.
+// RequireRole requires a role no lower than min, otherwise 403.
 func RequireRole(min Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func RequireRole(min Role) func(http.Handler) http.Handler {
 	}
 }
 
-// UserID достаёт id пользователя из контекста (0, если нет).
+// UserID extracts the user id from the context (0 if absent).
 func UserID(ctx context.Context) int64 {
 	if v, ok := ctx.Value(userIDKey).(int64); ok {
 		return v
@@ -92,7 +92,7 @@ func UserID(ctx context.Context) int64 {
 	return 0
 }
 
-// OrgID достаёт id активной организации из контекста (0, если нет).
+// OrgID extracts the active organization id from the context (0 if absent).
 func OrgID(ctx context.Context) int64 {
 	if v, ok := ctx.Value(orgIDKey).(int64); ok {
 		return v
@@ -100,7 +100,7 @@ func OrgID(ctx context.Context) int64 {
 	return 0
 }
 
-// RoleOf достаёт роль пользователя в активной org из контекста (RoleMember по умолчанию).
+// RoleOf extracts the user's role in the active org from the context (RoleMember by default).
 func RoleOf(ctx context.Context) Role {
 	if v, ok := ctx.Value(roleKey).(Role); ok {
 		return v

@@ -38,7 +38,7 @@ func run() error {
 		return err
 	}
 
-	// Миграции при старте.
+	// Migrations on startup.
 	if err := database.RunMigrations(cfg.DatabaseURL); err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func run() error {
 	defer pool.Close()
 	q := db.New(pool)
 
-	// Seed-админ.
+	// Seed admin.
 	authSvc := auth.NewService(q)
 	if err := authSvc.SeedAdmin(ctx, cfg.AdminEmail, cfg.AdminPassword); err != nil {
 		return err
@@ -83,7 +83,7 @@ func run() error {
 	dbStore := dbservice.NewDBStore(q)
 	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
 
-	// HTTP-сервер.
+	// HTTP server.
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc).Router(),

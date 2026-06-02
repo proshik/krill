@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Отладка маршрутизации Traefik: поднять стек, осмотреть лейблы сервиса и логи Traefik.
+# Debug Traefik routing: bring up the stack, inspect the service labels and Traefik logs.
 set -uo pipefail
 R=.
 cd "$R"

@@ -1,16 +1,16 @@
 package ui
 
-// Badge рендерит статус-бейдж со статус-точкой.
+// Badge renders a status badge with a status dot.
 templ Badge(status string) {
 	<span class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
 }
 
-// PrimaryButton — основная кнопка (submit по умолчанию).
+// PrimaryButton is the primary button (submit by default).
 templ PrimaryButton(label string) {
 	<button type="submit" class="k-btn k-btn-primary">{ label }</button>
 }
 
-// Toast — баннер успеха/ошибки/инфо. kind: "ok" | "err".
+// Toast is a success/error/info banner. kind: "ok" | "err".
 templ Toast(kind, msg string) {
 	<div class={ "k-toast", "k-toast-" + kind }>{ msg }</div>
 }

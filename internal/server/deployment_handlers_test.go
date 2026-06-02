@@ -22,7 +22,7 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 	q := db.New(pool)
 	ctx := context.Background()
 
-	// owner + org + проект + окружение + приложение + деплой
+	// owner + org + project + environment + application + deployment
 	hash, _ := auth.HashPassword("pw")
 	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "o@k", PasswordHash: hash})
 	orgSvc := org.NewService(q)
@@ -43,7 +43,7 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
 
-	// список деплоев
+	// deployment list
 	req := httptest.NewRequest(http.MethodGet, base+"?tab=deployments", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
 	rec := httptest.NewRecorder()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Скачивает standalone Tailwind CSS v4 CLI под текущую платформу в tools/tailwindcss. Без npm/Node.
+# Downloads the standalone Tailwind CSS v4 CLI for the current platform into tools/tailwindcss. No npm/Node.
 set -euo pipefail
 VERSION="v4.3.0"
 DIR="$(cd "$(dirname "$0")" && pwd)"

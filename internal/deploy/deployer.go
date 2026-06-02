@@ -13,7 +13,7 @@ import (
 	"github.com/proshik/krill/internal/traefik"
 )
 
-// App — представление приложения для деплоя.
+// App — application representation for deployment.
 type App struct {
 	ID             int64
 	Name           string
@@ -28,7 +28,7 @@ type App struct {
 	DockerfilePath string
 }
 
-// Store — то, что нужно деплойеру от хранилища.
+// Store — what the deployer needs from the store.
 type Store interface {
 	GetApplication(ctx context.Context, id int64) (App, error)
 	GetDeploymentApp(ctx context.Context, deployID int64) (App, error)
@@ -37,14 +37,14 @@ type Store interface {
 	FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error
 }
 
-const jobTimeout = 10 * time.Minute // сборка может быть дольше pull'а
+const jobTimeout = 10 * time.Minute // a build can take longer than a pull
 
 var (
 	convergeTimeout      = 90 * time.Second
 	convergePollInterval = 1 * time.Second
 )
 
-// Deployer обрабатывает деплои через очередь и воркер.
+// Deployer handles deployments through a queue and a worker.
 type Deployer struct {
 	engine   docker.Engine
 	builder  builder.Builder
@@ -95,7 +95,7 @@ func (d *Deployer) Start(ctx context.Context) {
 	}()
 }
 
-// Enqueue создаёт deployment-запись и ставит её в очередь. Возвращает deployID (0 при ошибке/после Stop).
+// Enqueue creates a deployment record and puts it in the queue. Returns deployID (0 on error/after Stop).
 func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
 	select {
 	case <-d.done:
@@ -186,7 +186,7 @@ func (d *Deployer) run(ctx context.Context, deployID int64) {
 	d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 }
 
-// finish закрывает лог-хаб, сохраняет лог в deployments и обновляет статусы.
+// finish closes the log hub, saves the log to deployments, and updates statuses.
 func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, imageTag, errMsg string) {
 	full := d.hub.Close(deployID)
 	depStatus := "done"

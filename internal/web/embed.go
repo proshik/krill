@@ -8,7 +8,7 @@ import (
 //go:embed all:static
 var staticEmbed embed.FS
 
-// Static возвращает поддерево со статикой (без префикса "static").
+// Static returns the static assets subtree (without the "static" prefix).
 func Static() fs.FS {
 	sub, err := fs.Sub(staticEmbed, "static")
 	if err != nil {

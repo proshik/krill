@@ -8,13 +8,13 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/jackc/pgx/v5/stdlib" // регистрирует драйверы "pgx" и "pgx/v5" для database/sql
+	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" and "pgx/v5" drivers for database/sql
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// RunMigrations применяет все up-миграции. Идемпотентно (ErrNoChange = успех).
+// RunMigrations applies all up-migrations. Idempotent (ErrNoChange = success).
 func RunMigrations(dsn string) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {

@@ -17,7 +17,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// Server держит зависимости HTTP-слоя.
+// Server holds the HTTP layer dependencies.
 type Server struct {
 	cfg      config.Config
 	auth     *auth.Service
@@ -33,15 +33,15 @@ func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Qu
 	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc}
 }
 
-// Router собирает chi-роутер.
+// Router assembles the chi router.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// locale middleware: кладёт локаль по умолчанию в контекст запроса.
-	// Сейчас no-op (всегда en); точка расширения для cookie/Accept-Language.
+	// locale middleware: puts the default locale into the request context.
+	// Currently a no-op (always en); an extension point for cookie/Accept-Language.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			ctx := i18n.WithLocale(req.Context(), i18n.DefaultLocale)

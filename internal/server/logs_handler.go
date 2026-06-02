@@ -32,8 +32,8 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	streamReaderToWS(ctx, conn, rc)
 }
 
-// streamReaderToWS читает строки из rc и шлёт их в WS как text-фреймы, пока reader не иссякнет
-// или запись не упадёт. На завершение reader закрывает соединение нормально.
+// streamReaderToWS reads lines from rc and sends them to the WS as text frames until the reader
+// is exhausted or a write fails. On reader completion it closes the connection normally.
 func streamReaderToWS(ctx context.Context, conn *websocket.Conn, rc io.Reader) {
 	sc := bufio.NewScanner(rc)
 	for sc.Scan() {

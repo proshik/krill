@@ -38,7 +38,7 @@ func TestEngineLifecycle(t *testing.T) {
 		t.Fatalf("deploy: %v", err)
 	}
 
-	// Дождаться running (до ~60с).
+	// Wait for running (up to ~60s).
 	deadline := time.Now().Add(60 * time.Second)
 	for {
 		st, err := e.ServiceState(ctx, name)
@@ -54,12 +54,12 @@ func TestEngineLifecycle(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 
-	// Логи доступны.
+	// Logs are available.
 	rc, err := e.ServiceLogs(ctx, name, false)
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}
 	defer rc.Close()
 	sc := bufio.NewScanner(rc)
-	sc.Scan() // достаточно, что поток читается без паники
+	sc.Scan() // it's enough that the stream reads without panicking
 }

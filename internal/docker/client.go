@@ -16,7 +16,7 @@ type dockerEngine struct {
 	cli *client.Client
 }
 
-// NewEngine создаёт реальный Engine. host пустой → берётся DOCKER_HOST/дефолтный сокет.
+// NewEngine creates a real Engine. If host is empty → DOCKER_HOST/the default socket is used.
 func NewEngine(host string) (Engine, error) {
 	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
 	if host != "" {
@@ -37,7 +37,7 @@ func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
 		return err
 	}
 	for _, n := range list {
-		if n.Name == name { // фильтр по имени — подстрочный, сверяем точно
+		if n.Name == name { // the name filter is a substring match, so compare exactly
 			return nil
 		}
 	}
@@ -45,7 +45,7 @@ func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
 	return err
 }
 
-// findService находит сервис по точному имени.
+// findService finds a service by its exact name.
 func (e *dockerEngine) findService(ctx context.Context, name string) (swarm.Service, bool, error) {
 	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
@@ -71,7 +71,7 @@ func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) erro
 		_, err = e.cli.ServiceCreate(ctx, sw, swarm.ServiceCreateOptions{})
 		return err
 	}
-	// ForceUpdate+1 — чтобы даже неизменный тег вызвал rolling-update (redeploy).
+	// ForceUpdate+1 — so that even an unchanged tag triggers a rolling-update (redeploy).
 	sw.TaskTemplate.ForceUpdate = cur.Spec.TaskTemplate.ForceUpdate + 1
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, sw, swarm.ServiceUpdateOptions{})
 	return err
@@ -144,7 +144,7 @@ func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas u
 		return err
 	}
 	if !found {
-		return nil // нечего масштабировать
+		return nil // nothing to scale
 	}
 	spec := cur.Spec
 	if spec.Mode.Replicated == nil {

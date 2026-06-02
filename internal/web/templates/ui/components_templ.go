@@ -8,7 +8,7 @@ package ui
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-// Badge рендерит статус-бейдж со статус-точкой.
+// Badge renders a status badge with a status dot.
 func Badge(status string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -69,7 +69,7 @@ func Badge(status string) templ.Component {
 	})
 }
 
-// PrimaryButton — основная кнопка (submit по умолчанию).
+// PrimaryButton is the primary button (submit by default).
 func PrimaryButton(label string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
@@ -112,7 +112,7 @@ func PrimaryButton(label string) templ.Component {
 	})
 }
 
-// Toast — баннер успеха/ошибки/инфо. kind: "ok" | "err".
+// Toast is a success/error/info banner. kind: "ok" | "err".
 func Toast(kind, msg string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context

@@ -11,7 +11,7 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// dockerName — имя Swarm-сервиса приложения (дублирует docker.ServiceName для краткости).
+// dockerName — Swarm service name of the application (duplicates docker.ServiceName for brevity).
 func dockerName(appID int64) string { return docker.ServiceName(appID) }
 
 func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
@@ -52,15 +52,15 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	}
 	port, err := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
 	if err != nil || port <= 0 || !isSlug(name) {
-		http.Error(w, "проверь поля: имя (slug), порт", http.StatusBadRequest)
+		http.Error(w, "check the fields: name (slug), port", http.StatusBadRequest)
 		return
 	}
 	if sourceType == "image" && image == "" {
-		http.Error(w, "для источника 'образ' укажи image", http.StatusBadRequest)
+		http.Error(w, "specify image for the 'image' source", http.StatusBadRequest)
 		return
 	}
 	if sourceType == "dockerfile" && gitURL == "" {
-		http.Error(w, "для источника 'Dockerfile' укажи git URL", http.StatusBadRequest)
+		http.Error(w, "specify git URL for the 'Dockerfile' source", http.StatusBadRequest)
 		return
 	}
 	if _, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
@@ -68,7 +68,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		Env: parseEnv(r.FormValue("env")), SourceType: sourceType,
 		GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 	}); err != nil {
-		http.Error(w, "не удалось создать (имя/домен занят?): "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to create (name/domain already taken?): "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID), http.StatusSeeOther)
@@ -166,7 +166,7 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)
 }
 
-// loadAppCtx грузит полную цепочку org→proj→env→app для рендера/URL.
+// loadAppCtx loads the full org→proj→env→app chain for rendering/URLs.
 func (s *Server) loadAppCtx(w http.ResponseWriter, r *http.Request) (templates.AppCtx, bool) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {

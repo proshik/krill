@@ -13,7 +13,7 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// listDeployments — таблица истории (используется и для hx-refresh).
+// listDeployments — history table (also used for hx-refresh).
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
@@ -27,7 +27,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.DeploymentsList(c, deps))
 }
 
-// deploymentLogPage — страница с xterm для конкретного деплоя.
+// deploymentLogPage — xterm page for a specific deployment.
 func (s *Server) deploymentLogPage(w http.ResponseWriter, r *http.Request) {
 	c, dep, ok := s.loadDeployment(w, r)
 	if !ok {
@@ -36,7 +36,7 @@ func (s *Server) deploymentLogPage(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.DeploymentLog(c, dep))
 }
 
-// deploymentLogWS — WS-стрим лога деплоя (live для running / сохранённый для завершённого).
+// deploymentLogWS — WS stream of the deployment log (live for running / saved for finished).
 func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 	_, dep, ok := s.loadDeployment(w, r)
 	if !ok {
@@ -50,7 +50,7 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 	ctx := conn.CloseRead(context.Background())
 
 	if s.logHub != nil && s.logHub.Active(dep.ID) {
-		// живой деплой: подписка на хаб (буфер + хвост)
+		// live deployment: subscribe to the hub (buffer + tail)
 		sub := s.logHub.Subscribe(dep.ID)
 		defer s.logHub.Unsubscribe(dep.ID, sub)
 		for {
@@ -72,10 +72,10 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// завершённый деплой: отдать сохранённый лог (или сообщение об очистке) и закрыть
+	// finished deployment: serve the saved log (or a cleanup message) and close
 	body := dep.Log
 	if body == "" {
-		body = "(лог очищен — хранится 1 час)\n"
+		body = "(log cleared — retained for 1 hour)\n"
 	}
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	_ = conn.Write(wctx, websocket.MessageText, []byte(body))
@@ -83,7 +83,7 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 	conn.Close(websocket.StatusNormalClosure, "")
 }
 
-// loadDeployment грузит деплой и проверяет принадлежность приложению из цепочки.
+// loadDeployment loads the deployment and verifies it belongs to the application in the chain.
 func (s *Server) loadDeployment(w http.ResponseWriter, r *http.Request) (templates.AppCtx, db.Deployment, bool) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {

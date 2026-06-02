@@ -16,7 +16,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	token, err := s.auth.Authenticate(r.Context(), email, password)
 	if err != nil {
-		render(w, r, http.StatusUnauthorized, templates.Login("Неверный email или пароль"))
+		render(w, r, http.StatusUnauthorized, templates.Login("Invalid email or password"))
 		return
 	}
 	http.SetCookie(w, &http.Cookie{

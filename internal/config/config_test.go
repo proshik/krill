@@ -47,7 +47,7 @@ func TestLoadOverrides(t *testing.T) {
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	t.Setenv("KRILL_ADMIN_EMAIL", "a@b.c")
 	t.Setenv("KRILL_ADMIN_PASSWORD", "pw")
-	// KRILL_DATABASE_URL не задан
+	// KRILL_DATABASE_URL is not set
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error when KRILL_DATABASE_URL is missing")
 	}

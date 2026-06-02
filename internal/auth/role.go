@@ -1,6 +1,6 @@
 package auth
 
-// Role — роль участника организации, упорядочена: member < admin < owner.
+// Role — an organization member's role, ordered: member < admin < owner.
 type Role int
 
 const (
@@ -9,10 +9,10 @@ const (
 	RoleOwner
 )
 
-// AtLeast сообщает, что роль не ниже требуемой.
+// AtLeast reports whether the role is no lower than the required one.
 func (r Role) AtLeast(min Role) bool { return r >= min }
 
-// String возвращает строковое представление для БД.
+// String returns the string representation for the DB.
 func (r Role) String() string {
 	switch r {
 	case RoleOwner:
@@ -24,7 +24,7 @@ func (r Role) String() string {
 	}
 }
 
-// ParseRole разбирает строку из БД в Role.
+// ParseRole parses a string from the DB into a Role.
 func ParseRole(s string) (Role, bool) {
 	switch s {
 	case "owner":

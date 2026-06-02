@@ -13,21 +13,21 @@ func TestLogHubBufferThenLive(t *testing.T) {
 	w := h.Writer(1)
 	w.Write([]byte("line1\n"))
 
-	// Поздний подписчик получает накопленный буфер.
+	// A late subscriber receives the accumulated buffer.
 	sub := h.Subscribe(1)
 	got := readWithTimeout(t, sub) // "line1\n"
 	if got != "line1\n" {
 		t.Fatalf("buffer replay = %q", got)
 	}
 
-	// Живая строка приходит подписчику.
+	// A live line reaches the subscriber.
 	w.Write([]byte("line2\n"))
 	got = readWithTimeout(t, sub)
 	if got != "line2\n" {
 		t.Fatalf("live = %q", got)
 	}
 
-	// Close отдаёт полный лог и закрывает канал.
+	// Close returns the full log and closes the channel.
 	full := h.Close(1)
 	if full != "line1\nline2\n" {
 		t.Fatalf("full log = %q", full)
@@ -46,7 +46,7 @@ func TestLogHubConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() { defer wg.Done(); w.Write([]byte("x")) }()
 	}
-	// Подписчики приходят и уходят конкурентно.
+	// Subscribers come and go concurrently.
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() { defer wg.Done(); s := h.Subscribe(2); h.Unsubscribe(2, s) }()

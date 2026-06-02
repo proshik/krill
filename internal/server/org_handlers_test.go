@@ -19,7 +19,7 @@ import (
 	"github.com/proshik/krill/internal/testutil"
 )
 
-// loginAs создаёт юзера, сессию и возвращает cookie.
+// loginAs creates a user and a session, and returns a cookie.
 func loginAs(t *testing.T, q *db.Queries, email string) *http.Cookie {
 	t.Helper()
 	authSvc := auth.NewService(q)

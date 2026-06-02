@@ -298,6 +298,7 @@ Later phases cover GitHub auto-deploy (Phase 6), container logs / web terminal /
 
 ## Conventions
 
+- **Language:** all code — comments, log messages, error strings — is written in English. Only the planning docs (`PLAN.md`, `ROADMAP.md`, `docs/superpowers/**`) are kept in Russian.
 - **Commits:** Conventional Commits (`feat(scope): …`, `fix(scope): …`). No `Co-Authored-By` / attribution trailers.
 - **i18n:** all user-facing strings go through `i18n.T(ctx, "key")`; add a locale by adding a translation map, not by editing templates.
 - **Errors:** never swallow errors in handlers — log and/or return 500.

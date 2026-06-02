@@ -9,7 +9,7 @@ import (
 	"github.com/proshik/krill/internal/docker"
 )
 
-// Store — то, что нужно Service от хранилища.
+// Store — what Service needs from the store.
 type Store interface {
 	GetPostgres(ctx context.Context, id int64) (PostgresDB, error)
 	GetRedis(ctx context.Context, id int64) (RedisDB, error)
@@ -19,7 +19,7 @@ type Store interface {
 	DeleteRedisRow(ctx context.Context, id int64) error
 }
 
-// Service — lifecycle БД поверх Engine + Store, с live-логом через DeployLogHub.
+// Service — DB lifecycle on top of Engine + Store, with a live log via DeployLogHub.
 type Service struct {
 	engine  docker.Engine
 	store   Store
@@ -31,11 +31,11 @@ func New(engine docker.Engine, store Store, hub *deploy.DeployLogHub, network st
 	return &Service{engine: engine, store: store, hub: hub, network: network}
 }
 
-// deployFeedID — отдельное пространство id для лог-хаба БД (negative, чтобы не пересекаться с deployment-id приложений).
+// deployFeedID — separate id space for the DB log hub (negative, so it does not collide with application deployment ids).
 func pgFeedID(id int64) int64    { return -(id*2 + 1) }
 func redisFeedID(id int64) int64 { return -(id*2 + 2) }
 
-// DeployPostgres: pull → deploy, в горутине; лог в hub под pgFeedID(id).
+// DeployPostgres: pull → deploy, in a goroutine; logs to hub under pgFeedID(id).
 func (s *Service) DeployPostgres(ctx context.Context, id int64) {
 	go s.deployPG(context.Background(), id)
 }
@@ -96,7 +96,7 @@ func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool
 	if err != nil {
 		return err
 	}
-	_ = s.engine.ServiceRemove(ctx, pg.AppName) // volume сохраняется по умолчанию
+	_ = s.engine.ServiceRemove(ctx, pg.AppName) // volume is preserved by default
 	if destroyData {
 		if err := s.engine.VolumeRemove(ctx, volumeName(pg.AppName)); err != nil {
 			slog.Error("volume remove", "vol", volumeName(pg.AppName), "err", err)
@@ -105,7 +105,7 @@ func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool
 	return s.store.DeletePostgresRow(ctx, id)
 }
 
-// --- Redis (зеркально) ---
+// --- Redis (mirrored) ---
 func (s *Service) DeployRedis(ctx context.Context, id int64) { go s.deployRedis(context.Background(), id) }
 
 func (s *Service) deployRedis(ctx context.Context, id int64) {
@@ -173,7 +173,7 @@ func (s *Service) DeleteRedis(ctx context.Context, id int64, destroyData bool) e
 	return s.store.DeleteRedisRow(ctx, id)
 }
 
-// PgFeedID/RedisFeedID — экспортируемые для WS-хендлера лога деплоя.
+// PgFeedID/RedisFeedID — exported for the deploy log WS handler.
 func PgFeedID(id int64) int64    { return pgFeedID(id) }
 func RedisFeedID(id int64) int64 { return redisFeedID(id) }
 

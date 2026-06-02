@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Минимальная проверка: реально ли DOCKER_API_VERSION попадает в ContainerSpec.Env Traefik,
-# и помогает ли это. Полностью свежий traefik (ждём удаления старого).
+# Minimal check: whether DOCKER_API_VERSION actually lands in Traefik's ContainerSpec.Env,
+# and whether it helps. Completely fresh traefik (we wait for the old one to be removed).
 set -uo pipefail
 R=.
 cd "$R"

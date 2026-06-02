@@ -15,7 +15,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.org.CreateProject(r.Context(), o.ID, r.FormValue("name"), r.FormValue("description")); err != nil {
-		http.Error(w, "не удалось создать проект: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to create project: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -30,7 +30,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// снять Swarm-сервисы всех приложений проекта
+	// remove Swarm services of all applications in the project
 	envs, err := s.q.ListEnvironments(r.Context(), p.ID)
 	if err != nil {
 		slog.Error("deleteProject: list environments", "project", p.ID, "err", err)
@@ -65,7 +65,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.org.CreateEnvironment(r.Context(), p.ID, r.FormValue("name")); err != nil {
-		http.Error(w, "не удалось создать окружение: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to create environment: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
@@ -102,7 +102,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 
-// projectPage отображает проект с выбранным (или первым) окружением.
+// projectPage displays the project with the selected (or first) environment.
 func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {

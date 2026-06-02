@@ -10,7 +10,7 @@ const (
 	logTailCap = 128 * 1024
 )
 
-// DeployLogHub держит логи идущих деплоев: буфер + живые подписчики.
+// DeployLogHub holds logs of in-progress deployments: buffer + live subscribers.
 type DeployLogHub struct {
 	mu    sync.Mutex
 	feeds map[int64]*feed
@@ -55,7 +55,7 @@ func NewLogHub() *DeployLogHub {
 	return &DeployLogHub{feeds: map[int64]*feed{}}
 }
 
-// Open регистрирует деплой.
+// Open registers a deployment.
 func (h *DeployLogHub) Open(deployID int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -64,7 +64,7 @@ func (h *DeployLogHub) Open(deployID int64) {
 	}
 }
 
-// Writer возвращает io.Writer для деплоя (пишет в буфер и рассылает подписчикам).
+// Writer returns an io.Writer for the deployment (writes to the buffer and broadcasts to subscribers).
 func (h *DeployLogHub) Writer(deployID int64) *hubWriter {
 	return &hubWriter{hub: h, deployID: deployID}
 }
@@ -79,27 +79,27 @@ func (w *hubWriter) Write(p []byte) (int, error) {
 	defer w.hub.mu.Unlock()
 	f := w.hub.feeds[w.deployID]
 	if f == nil {
-		return len(p), nil // деплой уже закрыт — молча игнорируем
+		return len(p), nil // deployment already closed — silently ignore
 	}
 	s := string(p)
 	f.append(p)
 	for ch := range f.subs {
 		select {
 		case ch <- s:
-		default: // медленный подписчик — не блокируем воркер
+		default: // slow subscriber — don't block the worker
 		}
 	}
 	return len(p), nil
 }
 
-// Subscribe подписывается; сразу получает накопленный буфер первой строкой.
+// Subscribe subscribes; immediately receives the accumulated buffer as the first message.
 func (h *DeployLogHub) Subscribe(deployID int64) chan string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ch := make(chan string, 256)
 	f := h.feeds[deployID]
 	if f == nil {
-		close(ch) // деплой не идёт
+		close(ch) // deployment not in progress
 		return ch
 	}
 	if f.hasContent() {
@@ -109,7 +109,7 @@ func (h *DeployLogHub) Subscribe(deployID int64) chan string {
 	return ch
 }
 
-// Unsubscribe удаляет подписчика.
+// Unsubscribe removes a subscriber.
 func (h *DeployLogHub) Unsubscribe(deployID int64, ch chan string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -121,7 +121,7 @@ func (h *DeployLogHub) Unsubscribe(deployID int64, ch chan string) {
 	}
 }
 
-// Close закрывает деплой: возвращает полный лог, закрывает подписчиков и удаляет фид.
+// Close closes the deployment: returns the full log, closes subscribers, and removes the feed.
 func (h *DeployLogHub) Close(deployID int64) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -137,7 +137,7 @@ func (h *DeployLogHub) Close(deployID int64) string {
 	return full
 }
 
-// Active сообщает, идёт ли деплой (есть фид).
+// Active reports whether a deployment is in progress (feed exists).
 func (h *DeployLogHub) Active(deployID int64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

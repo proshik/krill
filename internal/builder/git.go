@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 )
 
-// gitBuilder собирает образ: git clone → docker build, через CLI.
+// gitBuilder builds the image: git clone → docker build, via the CLI.
 type gitBuilder struct {
-	dockerHost string // значение для DOCKER_HOST дочернего docker; "" = наследовать
+	dockerHost string // value for the child docker's DOCKER_HOST; "" = inherit
 }
 
-// New создаёт Builder. dockerHost прокидывается в docker build (для Colima-сокета).
+// New creates a Builder. dockerHost is passed into docker build (for the Colima socket).
 func New(dockerHost string) Builder { return &gitBuilder{dockerHost: dockerHost} }
 
 func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer) error {
@@ -67,7 +67,7 @@ func (b *gitBuilder) run(ctx context.Context, out io.Writer, name string, args [
 	return cmd.Run()
 }
 
-// Available проверяет наличие git и docker в PATH.
+// Available checks that git and docker are present in PATH.
 func Available() error {
 	for _, bin := range []string{"git", "docker"} {
 		if _, err := exec.LookPath(bin); err != nil {

@@ -2,7 +2,7 @@ package config
 
 import "github.com/caarlos0/env/v11"
 
-// Config — конфигурация Krill из переменных окружения.
+// Config holds the Krill configuration from environment variables.
 type Config struct {
 	ListenAddr    string `env:"KRILL_LISTEN_ADDR" envDefault:":8080"`
 	DatabaseURL   string `env:"KRILL_DATABASE_URL,required"`
@@ -15,7 +15,7 @@ type Config struct {
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
 }
 
-// Load читает конфигурацию из окружения.
+// Load reads the configuration from the environment.
 func Load() (Config, error) {
 	var c Config
 	if err := env.Parse(&c); err != nil {

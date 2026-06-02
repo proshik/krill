@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// LogCleaner — то, что нужно для очистки старых логов.
+// LogCleaner — what is needed to clean up old logs.
 type LogCleaner interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
 }
 
-// StartLogCleanup раз в interval обнуляет логи деплоев старше часа.
-// Возвращает функцию остановки.
+// StartLogCleanup clears the logs of deployments older than an hour every interval.
+// Returns a stop function.
 func StartLogCleanup(ctx context.Context, c LogCleaner, interval time.Duration) (stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {

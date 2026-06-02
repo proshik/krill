@@ -9,7 +9,7 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// home редиректит на список org.
+// home redirects to the org list.
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/orgs", http.StatusSeeOther)
 }
@@ -27,7 +27,7 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	o, err := s.org.CreateOrg(r.Context(), auth.UserID(r.Context()), name)
 	if err != nil {
-		http.Error(w, "не удалось создать организацию: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "failed to create organization: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -75,7 +75,7 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 	if role != "admin" && role != "member" {
 		role = "member"
 	}
-	// создать пользователя с временным паролем (или найти существующего)
+	// create a user with a temporary password (or find an existing one)
 	tempPw, err := auth.NewToken()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -91,16 +91,16 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 		}
 		u, err = s.q.CreateUser(r.Context(), db.CreateUserParams{Email: email, PasswordHash: hash})
 		if err != nil {
-			http.Error(w, "не удалось создать пользователя: "+err.Error(), http.StatusBadRequest)
+			http.Error(w, "failed to create user: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	} else {
-		tempPw = "" // существующий юзер — пароль не показываем
+		tempPw = "" // existing user — don't show the password
 	}
 	if _, err := s.q.CreateMember(r.Context(), db.CreateMemberParams{
 		OrganizationID: o.ID, UserID: u.ID, Role: role,
 	}); err != nil {
-		http.Error(w, "пользователь уже в организации?", http.StatusBadRequest)
+		http.Error(w, "user already in the organization?", http.StatusBadRequest)
 		return
 	}
 	if tempPw != "" {

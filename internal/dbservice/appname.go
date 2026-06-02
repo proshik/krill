@@ -6,13 +6,13 @@ import (
 	"strings"
 )
 
-// GenerateAppName строит уникальное имя БД-сервиса: krill-<engine>-<slug>-<rand6>.
-// Это имя = имя Swarm-сервиса = DNS-хост = префикс volume <appName>-data.
+// GenerateAppName builds a unique DB service name: krill-<engine>-<slug>-<rand6>.
+// This name = Swarm service name = DNS host = volume prefix <appName>-data.
 func GenerateAppName(engine, name string) string {
 	slug := slugify(name)
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
-	suffix := hex.EncodeToString(b) // 6 hex-символов
+	suffix := hex.EncodeToString(b) // 6 hex characters
 	if slug == "" {
 		return "krill-" + engine + "-" + suffix
 	}

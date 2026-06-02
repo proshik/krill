@@ -44,7 +44,7 @@ func TestPostgresDeployAndConnect(t *testing.T) {
 		t.Fatalf("deploy: %v", err)
 	}
 
-	// дождаться готовности и подключиться по external port
+	// wait until ready and connect via the external port
 	dsn := "postgres://u:p@127.0.0.1:54329/app?sslmode=disable"
 	var conn *sql.DB
 	deadline := time.Now().Add(90 * time.Second)

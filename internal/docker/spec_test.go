@@ -22,7 +22,7 @@ func TestBuildSwarmSpec(t *testing.T) {
 	if sw.TaskTemplate.ContainerSpec.Image != "nginx:alpine" {
 		t.Error("image not set")
 	}
-	// Env детерминирован (отсортирован).
+	// Env is deterministic (sorted).
 	got := sw.TaskTemplate.ContainerSpec.Env
 	if len(got) != 2 || got[0] != "A=1" || got[1] != "B=2" {
 		t.Errorf("env = %v, want [A=1 B=2]", got)
@@ -87,7 +87,7 @@ func TestBuildSwarmSpecVolumeAndDNSRR(t *testing.T) {
 }
 
 func TestBuildSwarmSpecBindStillDefault(t *testing.T) {
-	// регрессия Phase 0/2: пустой Type => bind
+	// Phase 0/2 regression: empty Type => bind
 	spec := ServiceSpec{
 		Name:   "krill-traefik",
 		Image:  "traefik:v3.6.1",
@@ -97,7 +97,7 @@ func TestBuildSwarmSpecBindStillDefault(t *testing.T) {
 	if string(sw.TaskTemplate.ContainerSpec.Mounts[0].Type) != "bind" {
 		t.Errorf("empty Type must map to bind, got %q", sw.TaskTemplate.ContainerSpec.Mounts[0].Type)
 	}
-	// без DNSRR — VIP
+	// without DNSRR — VIP
 	if spec.Ports == nil && sw.EndpointSpec != nil && string(sw.EndpointSpec.Mode) == "dnsrr" {
 		t.Error("non-DNSRR spec should not be dnsrr")
 	}

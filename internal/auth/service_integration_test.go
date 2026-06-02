@@ -14,7 +14,7 @@ func TestSeedAuthenticateValidate(t *testing.T) {
 	svc := auth.NewService(db.New(pool))
 	ctx := context.Background()
 
-	// Идемпотентность seed.
+	// Seed idempotency.
 	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -22,11 +22,11 @@ func TestSeedAuthenticateValidate(t *testing.T) {
 		t.Fatalf("seed second: %v", err)
 	}
 
-	// Неверный пароль.
+	// Wrong password.
 	if _, err := svc.Authenticate(ctx, "admin@k.local", "different"); err == nil {
 		t.Error("second seed must NOT overwrite password")
 	}
-	// Верный пароль → токен.
+	// Correct password → token.
 	token, err := svc.Authenticate(ctx, "admin@k.local", "pw")
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
@@ -35,7 +35,7 @@ func TestSeedAuthenticateValidate(t *testing.T) {
 	if !ok || uid == 0 {
 		t.Fatalf("validate failed: uid=%d ok=%v", uid, ok)
 	}
-	// Logout инвалидирует.
+	// Logout invalidates it.
 	if err := svc.Logout(ctx, token); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestSeedAdminBootstrapsOrg(t *testing.T) {
 	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// повторный seed идемпотентен
+	// repeated seed is idempotent
 	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
 		t.Fatalf("seed twice: %v", err)
 	}

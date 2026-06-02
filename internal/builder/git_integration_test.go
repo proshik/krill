@@ -13,7 +13,7 @@ import (
 	"github.com/proshik/krill/internal/builder"
 )
 
-// Небольшой публичный репозиторий с Dockerfile в корне.
+// A small public repository with a Dockerfile at the root.
 const testRepo = "https://github.com/dockersamples/helloworld-demo-node.git"
 
 func TestGitBuilderBuildsImage(t *testing.T) {
@@ -38,7 +38,7 @@ func TestGitBuilderBuildsImage(t *testing.T) {
 	if !strings.Contains(buf.String(), "build complete") {
 		t.Errorf("log missing completion marker:\n%s", buf.String())
 	}
-	// образ существует
+	// image exists
 	if out, err := exec.Command("docker", "image", "inspect", tag).CombinedOutput(); err != nil {
 		t.Fatalf("image not found: %v\n%s", err, out)
 	}

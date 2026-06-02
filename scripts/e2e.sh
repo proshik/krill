@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Krill PHASE 1 — автоматический e2e прогон (Task 14).
-# Полностью изолирован: свой Postgres на 55432, Krill на 18080, Traefik на host :80.
-# Не зависит от занятых на машине портов 5432/8080.
-# Флоу: login → resolve default org → project → environment → app → deploy →
-#       Traefik-роутинг → save env → rolling-update (tag 1.27-alpine).
+# Krill PHASE 1 — automated e2e run (Task 14).
+# Fully isolated: dedicated Postgres on 55432, Krill on 18080, Traefik on host :80.
+# Does not depend on the machine's busy ports 5432/8080.
+# Flow: login → resolve default org → project → environment → app → deploy →
+#       Traefik routing → save env → rolling-update (tag 1.27-alpine).
 set -uo pipefail
 R=.
 cd "$R"
@@ -28,14 +28,14 @@ export KRILL_COOKIE_SECURE=false
 cleanup() {
   kill "${KPID:-0}" >/dev/null 2>&1 || true
   docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
-  # Имя сервиса приложения теперь krill-<appID> и неизвестно на момент trap'а —
-  # снимаем все krill-* сервисы кроме traefik, чтобы не утёк e2e-app.
-  # Это покрывает и managed-DB сервис krill-postgres-* (см. секцию managed Postgres).
+  # The application service name is now krill-<appID> and unknown at trap time —
+  # remove all krill-* services except traefik so the e2e-app does not leak.
+  # This also covers the managed-DB service krill-postgres-* (see managed Postgres section).
   docker service ls --filter name=krill- -q 2>/dev/null \
     | xargs -r -I{} sh -c 'n=$(docker service inspect --format "{{.Spec.Name}}" {} 2>/dev/null); [ "$n" = "krill-traefik" ] || docker service rm {} >/dev/null 2>&1' || true
-  # Named volume управляемой БД (krill-postgres-...-data). APPNAME известен на момент trap'а,
-  # если managed-Postgres секция успела создать БД. Удаление сервиса асинхронно — повторяем,
-  # пока volume не освободится (иначе rm гонится с teardown'ом задачи).
+  # Named volume of the managed DB (krill-postgres-...-data). APPNAME is known at trap time
+  # if the managed-Postgres section managed to create the DB. Service removal is async — we retry
+  # until the volume is freed (otherwise rm races with the task teardown).
   if [ -n "${APPNAME:-}" ]; then
     for _ in 1 2 3 4 5 6 7 8 9 10; do
       docker volume rm "${APPNAME}-data" >/dev/null 2>&1 && break
@@ -43,7 +43,7 @@ cleanup() {
       sleep 1
     done
   fi
-  # Локально собранные образы dockerfile-деплоя (krill-<appID>:<deployID>); ID2 неизвестен в trap'е — wildcard.
+  # Locally built dockerfile-deploy images (krill-<appID>:<deployID>); ID2 is unknown in the trap — wildcard.
   imgs=$(docker image ls --filter reference='krill-*' -q 2>/dev/null | sort -u)
   [ -n "$imgs" ] && docker image rm -f $imgs >/dev/null 2>&1 || true
 }
@@ -153,9 +153,9 @@ echo "env_applied=$(docker service inspect krill-$ID --format '{{json .Spec.Task
 out2=$(curl -s -m 5 -H "Host: $DOM" -o /dev/null -w '%{http_code}' "http://127.0.0.1:80/")
 echo "traefik_after_update_http=$out2 (expect 200, no downtime)"
 
-echo "### 15. dockerfile-приложение"
+echo "### 15. dockerfile application"
 APP2=e2ebuild
-# небольшой публичный репозиторий с Dockerfile в корне (EXPOSE 8080)
+# small public repository with a Dockerfile at the root (EXPOSE 8080)
 GITREPO="https://github.com/dockersamples/helloworld-demo-node.git"
 GITBRANCH="main"
 echo "df_create=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" \
@@ -170,7 +170,7 @@ echo "df_deploy=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST \
   --data-urlencode "git_url=$GITREPO" --data-urlencode "git_branch=$GITBRANCH" --data-urlencode "dockerfile_path=Dockerfile" \
   "$APPBASE/apps/$ID2/deploy") (expect 303)"
 
-echo "### 16. ждём сборку+деплой (до 6 мин)"
+echo "### 16. wait for build+deploy (up to 6 min)"
 df_run=0
 for i in $(seq 1 180); do
   st=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT status FROM deployments WHERE application_id=$ID2 ORDER BY started_at DESC LIMIT 1")
@@ -180,7 +180,7 @@ for i in $(seq 1 180); do
 done
 echo "df_deployment_done=$df_run"
 echo "df_built_image=$(docker image ls --filter reference="krill-$ID2" --format '{{.Repository}}:{{.Tag}}' | head -1)"
-# дождаться, что собранный образ реально запустился (1/1), а не только создан сервис
+# wait until the built image actually started (1/1), not just that the service was created
 df_replicas=0
 for i in $(seq 1 60); do [ "$(docker service ls --filter name=krill-$ID2 --format '{{.Replicas}}')" = "1/1" ] && { df_replicas=1; break; }; sleep 2; done
 echo "df_service=$(docker service ls --filter name=krill-$ID2 --format '{{.Image}} {{.Replicas}}')"
@@ -199,7 +199,7 @@ echo "db_id=$PGID app_name=$APPNAME external_port=$PGPORT"
 echo "db_deploy=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -X POST \
   "$APPBASE/databases/postgres/$PGID/deploy") (expect 303)"
 
-echo "### 18. wait DB running (до 120s; первый прогон тянет образ postgres:17)"
+echo "### 18. wait DB running (up to 120s; first run pulls the postgres:17 image)"
 dbrun=0
 for i in $(seq 1 60); do [ "$(docker service ls --filter name=$APPNAME --format '{{.Replicas}}')" = "1/1" ] && { dbrun=1; break; }; sleep 2; done
 docker service ls --filter name=$APPNAME --format 'DBSERVICE: {{.Name}} {{.Image}} {{.Replicas}}'
@@ -209,10 +209,10 @@ if [ "$dbrun" != 1 ]; then echo "db_tasks:"; docker service ps $APPNAME --format
 echo "### 19. named volume"
 echo "db_volume=$(docker volume ls --filter name=${APPNAME}-data --format '{{.Name}}')"
 
-echo "### 20. connect via external port (Postgres ждёт инициализацию)"
+echo "### 20. connect via external port (Postgres waits for initialization)"
 DBPW=$(docker exec "$PG_NAME" psql -U krill -d krill -t -A -c "SELECT database_password FROM postgres_dbs WHERE id=$PGID")
-# На Colima --network host = сеть Linux-VM, где host-mode порт опубликован → 127.0.0.1:$PGPORT внутри VM.
-# host.docker.internal на Colima не резолвится из обычного контейнера, поэтому используем --network host.
+# On Colima --network host = the Linux VM network, where the host-mode port is published → 127.0.0.1:$PGPORT inside the VM.
+# host.docker.internal does not resolve from a regular container on Colima, so we use --network host.
 db_select1=""
 for i in $(seq 1 30); do
   db_select1=$(docker run --rm --network host postgres:17 \
@@ -220,7 +220,7 @@ for i in $(seq 1 30); do
   [ "$db_select1" = "1" ] && break
   sleep 2
 done
-echo "db_select1=$db_select1 (expect 1; иначе зафиксировать ограничение Colima при running+volume)"
+echo "db_select1=$db_select1 (expect 1; otherwise record the Colima limitation when running+volume)"
 
 echo "### 21. krill log tail"
 tail -12 "$LOG"

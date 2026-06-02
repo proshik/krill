@@ -2,7 +2,7 @@ package deploy
 
 import "github.com/proshik/krill/internal/docker"
 
-// Статусы приложения.
+// Application statuses.
 const (
 	StatusIdle      = "idle"
 	StatusDeploying = "deploying"
@@ -10,7 +10,7 @@ const (
 	StatusError     = "error"
 )
 
-// DeriveStatus вычисляет «живой» статус по состоянию Swarm, с откатом на статус из БД.
+// DeriveStatus computes the "live" status from the Swarm state, falling back to the DB status.
 func DeriveStatus(s docker.ServiceState, dbStatus string) string {
 	if !s.Found || s.Desired == 0 {
 		return dbStatus

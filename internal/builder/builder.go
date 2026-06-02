@@ -9,22 +9,22 @@ import (
 	"strings"
 )
 
-// BuildRequest — параметры сборки образа из git+Dockerfile.
+// BuildRequest — parameters for building an image from git+Dockerfile.
 type BuildRequest struct {
 	AppID          int64
 	DeployID       int64
 	GitURL         string
 	GitBranch      string
-	DockerfilePath string // относительно корня репо
-	ImageTag       string // напр. krill-7:42
+	DockerfilePath string // relative to the repo root
+	ImageTag       string // e.g. krill-7:42
 }
 
-// Builder клонирует репозиторий и собирает образ, стримя вывод в out.
+// Builder clones the repository and builds the image, streaming output to out.
 type Builder interface {
 	Build(ctx context.Context, req BuildRequest, out io.Writer) error
 }
 
-// ValidateBuildRequest проверяет пользовательский ввод перед запуском git/docker.
+// ValidateBuildRequest validates user input before running git/docker.
 func ValidateBuildRequest(req BuildRequest) error {
 	u, err := url.Parse(req.GitURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -47,17 +47,17 @@ func ValidateBuildRequest(req BuildRequest) error {
 	return nil
 }
 
-// cloneArgs — argv для git clone (мелкий клон одной ветки).
+// cloneArgs — argv for git clone (shallow clone of a single branch).
 func cloneArgs(gitURL, branch, dir string) []string {
 	return []string{"clone", "--branch", branch, "--depth", "1", "--", gitURL, dir}
 }
 
-// buildArgs — argv для docker build.
+// buildArgs — argv for docker build.
 func buildArgs(tag, dockerfile, context string) []string {
 	return []string{"build", "-t", tag, "-f", dockerfile, context}
 }
 
-// contextDir — каталог сборки: директория, где лежит Dockerfile.
+// contextDir — the build context: the directory containing the Dockerfile.
 func contextDir(repoDir, dockerfilePath string) string {
 	return filepath.Join(repoDir, filepath.Dir(dockerfilePath))
 }

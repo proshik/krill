@@ -6,7 +6,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// DBStore реализует Store поверх sqlc-запросов.
+// DBStore implements Store on top of sqlc queries.
 type DBStore struct {
 	q *db.Queries
 }

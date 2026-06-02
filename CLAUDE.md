@@ -68,6 +68,7 @@ Required env vars: `KRILL_DATABASE_URL`, `KRILL_ADMIN_EMAIL`, `KRILL_ADMIN_PASSW
 
 - **Commit messages:** conventional-commits style (`feat(scope): ...`, `fix(scope): ...`, `test(...)`, `docs(...)`). HARD RULE: NO `Co-Authored-By` / Claude attribution trailers of any kind.
 - **All UI strings go through `i18n.T(ctx, "key")`** with keys in the English catalog (`internal/web/i18n/en.go`). No raw user-facing literals in templates or handlers. The locale middleware (`WithLocale`) is currently a no-op (`en`); a second locale = a second map, no template changes.
+- **Write everything in code in ENGLISH** — comments, `slog`/log messages, `fmt.Errorf`/`errors.New` strings, and `http.Error` messages. The codebase is English-only. The ONLY Russian that stays is the planning docs: `PLAN.md`, `ROADMAP.md`, and `docs/superpowers/**`. Do not introduce Russian in `.go`, `.templ`, `.sql`, `.sh`, `.css`, or config files.
 - **Every app/db route must chain-check tenant ownership and 404 on mismatch.** Load org → project → environment (and db) and verify each FK matches its parent (`loadOrg` → `loadProject` → `loadEnvironment` → `loadApp`/`loadDBChain`). Mismatch returns `http.NotFound`. There are IDOR regression tests; keep them green.
 - **Handlers must NOT swallow errors** — log via `slog.Error("context", "err", err)` or return 500. No silent ignores in delete/deploy/version handlers.
 - **Only an owner may grant the owner role** (`updateMemberRole` in `internal/server/org_handlers.go`) — prevents admin self-escalation.

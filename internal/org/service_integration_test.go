@@ -35,7 +35,7 @@ func TestCreateOrgAndMembership(t *testing.T) {
 	if !ok || role.String() != "owner" {
 		t.Errorf("membership = %v %v", role, ok)
 	}
-	// чужой пользователь — не член
+	// a stranger is not a member
 	if _, ok := svc.Membership(ctx, uid+999, o.ID); ok {
 		t.Error("stranger must not be a member")
 	}
@@ -56,15 +56,15 @@ func TestChainIsolation(t *testing.T) {
 		t.Fatalf("create app: %v", err)
 	}
 
-	// правильная цепочка
+	// valid chain
 	if _, err := svc.AppInChain(ctx, o.ID, p.ID, e.ID, a.ID); err != nil {
 		t.Fatalf("valid chain rejected: %v", err)
 	}
-	// подменённый orgID
+	// tampered orgID
 	if _, err := svc.AppInChain(ctx, o.ID+999, p.ID, e.ID, a.ID); err == nil {
 		t.Error("wrong orgID must be rejected")
 	}
-	// подменённый projID
+	// tampered projID
 	if _, err := svc.AppInChain(ctx, o.ID, p.ID+999, e.ID, a.ID); err == nil {
 		t.Error("wrong projID must be rejected")
 	}

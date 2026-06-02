@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// DatabaseCtx — данные detail-страницы БД (engine + одна из строк + connection strings + база URL).
+// DatabaseCtx holds the database detail-page data (engine + one of the rows + connection strings + base URL).
 type DatabaseCtx struct {
 	Org      db.Organization
 	Role     string
@@ -18,7 +18,7 @@ type DatabaseCtx struct {
 	Status   string
 	Internal string
 	External string
-	Base     string // путь до /databases/{engine}/{id}
+	Base     string // path to /databases/{engine}/{id}
 	Tab      string
 }
 

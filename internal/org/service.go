@@ -11,20 +11,20 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// ErrNotFound — ресурс не найден или не принадлежит контексту.
+// ErrNotFound — resource not found or does not belong to the context.
 var ErrNotFound = errors.New("not found")
 
-// ErrSlugTaken — slug уже занят в рамках родителя.
+// ErrSlugTaken — slug already taken within the parent.
 var ErrSlugTaken = errors.New("slug already taken")
 
-// Service — бизнес-логика организаций и вложенных ресурсов поверх sqlc.
+// Service — business logic for organizations and nested resources on top of sqlc.
 type Service struct {
 	q *db.Queries
 }
 
 func NewService(q *db.Queries) *Service { return &Service{q: q} }
 
-// Membership возвращает роль пользователя в организации (ok=false если не член).
+// Membership returns the user's role in the organization (ok=false if not a member).
 func (s *Service) Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool) {
 	m, err := s.q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: orgID, UserID: userID})
 	if err != nil {
@@ -34,7 +34,7 @@ func (s *Service) Membership(ctx context.Context, userID, orgID int64) (auth.Rol
 	return r, ok
 }
 
-// CreateOrg создаёт организацию и делает создателя owner.
+// CreateOrg creates an organization and makes the creator the owner.
 func (s *Service) CreateOrg(ctx context.Context, ownerID int64, name string) (db.Organization, error) {
 	slug := Slugify(name)
 	if slug == "" {
@@ -56,7 +56,7 @@ func (s *Service) CreateOrg(ctx context.Context, ownerID int64, name string) (db
 	return o, nil
 }
 
-// CreateProject создаёт проект в организации.
+// CreateProject creates a project in the organization.
 func (s *Service) CreateProject(ctx context.Context, orgID int64, name, description string) (db.Project, error) {
 	slug := Slugify(name)
 	if slug == "" {
@@ -71,7 +71,7 @@ func (s *Service) CreateProject(ctx context.Context, orgID int64, name, descript
 	return p, nil
 }
 
-// CreateEnvironment создаёт окружение в проекте.
+// CreateEnvironment creates an environment in the project.
 func (s *Service) CreateEnvironment(ctx context.Context, projID int64, name string) (db.Environment, error) {
 	slug := Slugify(name)
 	if slug == "" {
@@ -84,7 +84,7 @@ func (s *Service) CreateEnvironment(ctx context.Context, projID int64, name stri
 	return e, nil
 }
 
-// ProjectInOrg возвращает проект, только если он принадлежит orgID.
+// ProjectInOrg returns the project only if it belongs to orgID.
 func (s *Service) ProjectInOrg(ctx context.Context, orgID, projID int64) (db.Project, error) {
 	p, err := s.q.GetProject(ctx, projID)
 	if err != nil || p.OrganizationID != orgID {
@@ -93,7 +93,7 @@ func (s *Service) ProjectInOrg(ctx context.Context, orgID, projID int64) (db.Pro
 	return p, nil
 }
 
-// EnvironmentInProject возвращает окружение, только если оно принадлежит projID.
+// EnvironmentInProject returns the environment only if it belongs to projID.
 func (s *Service) EnvironmentInProject(ctx context.Context, projID, envID int64) (db.Environment, error) {
 	e, err := s.q.GetEnvironment(ctx, envID)
 	if err != nil || e.ProjectID != projID {
@@ -102,7 +102,7 @@ func (s *Service) EnvironmentInProject(ctx context.Context, projID, envID int64)
 	return e, nil
 }
 
-// AppInChain проверяет, что приложение принадлежит цепочке org→proj→env.
+// AppInChain verifies that the application belongs to the org→proj→env chain.
 func (s *Service) AppInChain(ctx context.Context, orgID, projID, envID, appID int64) (db.Application, error) {
 	chain, err := s.q.GetApplicationChain(ctx, appID)
 	if err != nil {

@@ -13,8 +13,8 @@ import (
 	"github.com/proshik/krill/internal/database"
 )
 
-// NewTestDB поднимает одноразовый Postgres-контейнер, применяет миграции и
-// возвращает готовый пул. Контейнер и пул закрываются по завершении теста.
+// NewTestDB spins up a disposable Postgres container, applies migrations and
+// returns a ready-to-use pool. The container and pool are closed when the test finishes.
 func NewTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := context.Background()

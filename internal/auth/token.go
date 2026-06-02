@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 )
 
-// NewToken генерирует случайный opaque-токен сессии (64 hex-символа).
+// NewToken generates a random opaque session token (64 hex characters).
 func NewToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

@@ -1,4 +1,4 @@
-// Монтирует xterm в #terminal и стримит логи по WebSocket.
+// Mounts xterm into #terminal and streams logs over WebSocket.
 window.mountLogTerminal = function (wsPath) {
   const el = document.getElementById("terminal");
   if (!el || el.dataset.mounted) return;
@@ -18,14 +18,14 @@ window.mountLogTerminal = function (wsPath) {
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 };
 
-// Переключение полей источника в форме создания приложения.
+// Toggles the source fields in the application creation form.
 window.krillToggleSource = function (val) {
   document.querySelectorAll('[data-src]').forEach(function (el) {
     el.style.display = (el.getAttribute('data-src') === val) ? '' : 'none';
   });
 };
 
-// Открыть/закрыть нативную модалку <dialog> по id.
+// Open/close the native <dialog> modal by id.
 window.krillOpenModal = function (id) {
   const d = document.getElementById(id);
   if (d && typeof d.showModal === "function") d.showModal();
@@ -34,7 +34,7 @@ window.krillCloseModal = function (id) {
   const d = document.getElementById(id);
   if (d && typeof d.close === "function") d.close();
 };
-// Клик по подложке (вне содержимого) закрывает модалку.
+// Clicking the backdrop (outside the content) closes the modal.
 document.addEventListener("click", function (e) {
   if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
     e.target.close();
