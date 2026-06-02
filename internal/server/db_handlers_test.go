@@ -174,3 +174,74 @@ func TestCreateDatabaseDuplicatePort400(t *testing.T) {
 }
 
 func i64(v int64) string { return strconv.FormatInt(v, 10) }
+
+func TestDatabaseCrossTenantIsolation(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	// --- Org-A: owner userA, project, environment, postgres DB ---
+	userAID := mkUser(t, q, "usera@k.local")
+	orgA, _ := orgSvc.CreateOrg(ctx, userAID, "OrgA")
+	projA, _ := orgSvc.CreateProject(ctx, orgA.ID, "ProjA", "")
+	envA, _ := orgSvc.CreateEnvironment(ctx, projA.ID, "prod-a")
+
+	pgA, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
+		EnvironmentID:    envA.ID,
+		Name:             "db-a",
+		AppName:          "krill-postgres-db-a",
+		DatabaseName:     "app",
+		DatabaseUser:     "postgres",
+		DatabasePassword: "secret",
+		Image:            "postgres:17",
+	})
+	if err != nil {
+		t.Fatalf("create org-A postgres: %v", err)
+	}
+	aDBID := pgA.ID
+
+	// --- Org-B: owner userB, project, environment ---
+	userBID := mkUser(t, q, "userb@k.local")
+	orgB, _ := orgSvc.CreateOrg(ctx, userBID, "OrgB")
+	projB, _ := orgSvc.CreateProject(ctx, orgB.ID, "ProjB", "")
+	envB, _ := orgSvc.CreateEnvironment(ctx, projB.ID, "prod-b")
+
+	cookieB := loginAs(t, q, "userb@k.local")
+
+	// Base path: org-B's chain but with org-A's dbID
+	basePath := "/orgs/" + i64(orgB.ID) +
+		"/projects/" + i64(projB.ID) +
+		"/environments/" + i64(envB.ID) +
+		"/databases/postgres/" + i64(aDBID)
+
+	cases := []struct {
+		method string
+		suffix string
+	}{
+		{http.MethodGet, ""},
+		{http.MethodGet, "/status"},
+		{http.MethodPost, "/deploy"},
+		{http.MethodPost, "/start"},
+		{http.MethodPost, "/stop"},
+		{http.MethodPost, "/version"},
+		{http.MethodPost, "/delete"},
+	}
+
+	for _, tc := range cases {
+		target := basePath + tc.suffix
+		req := httptest.NewRequest(tc.method, target, strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookieB)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			// Any non-404 is a security finding — report loudly.
+			t.Errorf("SECURITY FINDING: %s %s — expected 404 (cross-tenant isolation), got %d", tc.method, target, rec.Code)
+		}
+	}
+
+	// After all attempts (including delete), the org-A DB row must still exist.
+	if _, err := q.GetPostgres(ctx, aDBID); err != nil {
+		t.Fatalf("SECURITY FINDING: org-A postgres row (id=%d) was deleted by cross-tenant request: %v", aDBID, err)
+	}
+}
