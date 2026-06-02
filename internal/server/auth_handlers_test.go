@@ -10,6 +10,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
@@ -27,7 +28,8 @@ func newTestServer(t *testing.T) (http.Handler, *db.Queries) {
 	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
 	hub := deploy.NewLogHub()
-	return server.New(cfg, authSvc, orgSvc, q, nil, nil, hub).Router(), q
+	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
+	return server.New(cfg, authSvc, orgSvc, q, nil, nil, hub, dbSvc).Router(), q
 }
 
 func TestProtectedRedirectsToLogin(t *testing.T) {

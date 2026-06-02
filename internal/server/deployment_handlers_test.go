@@ -4,13 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
@@ -39,7 +39,7 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 	authSvc := auth.NewService(q)
 	tok, _ := authSvc.Authenticate(ctx, "o@k", "pw")
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
-	h := server.New(cfg, authSvc, orgSvc, q, nil, nil, deploy.NewLogHub()).Router()
+	h := server.New(cfg, authSvc, orgSvc, q, nil, nil, deploy.NewLogHub(), dbservice.New(nil, dbservice.NewDBStore(q), deploy.NewLogHub(), "krill-net")).Router()
 
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
 
@@ -55,5 +55,3 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 		t.Errorf("deployments table missing image tag; body:\n%s", body)
 	}
 }
-
-func i64(v int64) string { return strconv.FormatInt(v, 10) }

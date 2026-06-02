@@ -12,6 +12,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
@@ -46,7 +47,8 @@ func newServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
 	hub := deploy.NewLogHub()
-	return server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub).Router(), q, orgSvc
+	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
+	return server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc).Router(), q, orgSvc
 }
 
 func TestNonMemberGets404(t *testing.T) {
