@@ -64,6 +64,21 @@ type Organization struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PostgresDb struct {
+	ID               int64     `json:"id"`
+	EnvironmentID    int64     `json:"environment_id"`
+	Name             string    `json:"name"`
+	AppName          string    `json:"app_name"`
+	DatabaseName     string    `json:"database_name"`
+	DatabaseUser     string    `json:"database_user"`
+	DatabasePassword string    `json:"database_password"`
+	Image            string    `json:"image"`
+	ExternalPort     *int32    `json:"external_port"`
+	Status           string    `json:"status"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 type Project struct {
 	ID             int64     `json:"id"`
 	OrganizationID int64     `json:"organization_id"`
@@ -71,6 +86,19 @@ type Project struct {
 	Slug           string    `json:"slug"`
 	Description    string    `json:"description"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+type RedisDb struct {
+	ID            int64     `json:"id"`
+	EnvironmentID int64     `json:"environment_id"`
+	Name          string    `json:"name"`
+	AppName       string    `json:"app_name"`
+	Password      string    `json:"password"`
+	Image         string    `json:"image"`
+	ExternalPort  *int32    `json:"external_port"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type Session struct {

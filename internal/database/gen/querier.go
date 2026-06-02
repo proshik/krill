@@ -17,7 +17,9 @@ type Querier interface {
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
+	CreatePostgres(ctx context.Context, arg CreatePostgresParams) (PostgresDb, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
+	CreateRedis(ctx context.Context, arg CreateRedisParams) (RedisDb, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteApplication(ctx context.Context, id int64) error
@@ -25,7 +27,9 @@ type Querier interface {
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteMember(ctx context.Context, id int64) error
 	DeleteOrganization(ctx context.Context, id int64) error
+	DeletePostgres(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
+	DeleteRedis(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
@@ -36,7 +40,11 @@ type Querier interface {
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
+	GetPostgres(ctx context.Context, id int64) (PostgresDb, error)
+	GetPostgresChain(ctx context.Context, id int64) (GetPostgresChainRow, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
+	GetRedis(ctx context.Context, id int64) (RedisDb, error)
+	GetRedisChain(ctx context.Context, id int64) (GetRedisChainRow, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
@@ -46,13 +54,21 @@ type Querier interface {
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
+	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
+	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
+	UpdatePostgresExternalPort(ctx context.Context, arg UpdatePostgresExternalPortParams) error
+	UpdatePostgresImage(ctx context.Context, arg UpdatePostgresImageParams) error
+	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
+	UpdateRedisExternalPort(ctx context.Context, arg UpdateRedisExternalPortParams) error
+	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
+	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
 }
 
 var _ Querier = (*Queries)(nil)
