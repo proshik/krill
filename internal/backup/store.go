@@ -68,3 +68,15 @@ func (s *DBStore) SetBackupResult(ctx context.Context, id int64, at time.Time, s
 		ID: id, LastRunAt: pgtype.Timestamptz{Time: at, Valid: true}, LastStatus: status, LastError: errMsg,
 	})
 }
+
+func (s *DBStore) ListEnabledBackups(ctx context.Context) ([]SchedBackup, error) {
+	rows, err := s.q.ListEnabledBackups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SchedBackup, 0, len(rows))
+	for _, b := range rows {
+		out = append(out, SchedBackup{ID: b.ID, Schedule: b.Schedule})
+	}
+	return out, nil
+}
