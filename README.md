@@ -149,6 +149,8 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_COOKIE_SECURE` | `false` | No | Set the `Secure` flag on session cookies. |
 | `KRILL_LOG_LEVEL` | `info` | No | Log level: `debug` / `info` / `warn` / `error`. |
 | `KRILL_LOG_FORMAT` | `text` | No | Log handler format: `text` or `json`. |
+| `KRILL_ACME_EMAIL` | `` | No | Let's Encrypt contact email (falls back to `KRILL_ADMIN_EMAIL`). |
+| `KRILL_ACME_STAGING` | `false` | No | Use the Let's Encrypt staging CA (for testing without rate limits). |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 
@@ -259,6 +261,16 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The workflows use the built-in `GITHUB_TOKEN` (no extra secrets). The GHCR package is created **private** on first push — change it to public in the package settings if you want anonymous pulls.
+
+## Domains & HTTPS
+
+Each app starts with one auto-generated domain (`<name>.<KRILL_BASE_DOMAIN>`). On the app's **Domains** tab you can add custom domains and toggle HTTPS per domain:
+
+1. Add the domain (e.g. `bot.example.com`).
+2. Point an `A`/`AAAA` DNS record for it at the server's public IP.
+3. Enable **HTTPS** on that domain.
+
+Traefik then obtains a Let's Encrypt certificate via the HTTP-01 challenge and serves the domain on `:443`, redirecting `http://` → `https://`. Certificates are stored in the persistent `krill-traefik-acme` volume (so restarts don't re-request them and risk rate limits). Issuance is asynchronous — if a cert doesn't appear, check the `krill-traefik` service logs and verify DNS + that ports 80/443 are reachable. Set `KRILL_ACME_STAGING=true` while testing to use the staging CA. Domains without HTTPS enabled (e.g. the local sslip.io one) keep working over plain HTTP — ACME is never attempted for them.
 
 ## Data model
 
