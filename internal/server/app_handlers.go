@@ -93,7 +93,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" && tab != "deployments" {
+	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" {
 		tab = "general"
 	}
 	if tab == "deployments" {
@@ -104,6 +104,15 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Deps = deps
+	}
+	if tab == "domains" {
+		doms, err := s.q.ListDomainsByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: failed to list domains", "err", err, "app_id", c.App.ID)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		c.Domains = doms
 	}
 	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
 }

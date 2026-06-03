@@ -12,6 +12,7 @@ type AppCtx struct {
 	Env     db.Environment
 	App     db.Application
 	Deps    []db.Deployment
+	Domains []db.Domain
 }
 
 func (c AppCtx) base() string {
@@ -31,6 +32,7 @@ templ AppDetail(c AppCtx, tab string) {
 			<a href={ templ.SafeURL(c.base() + "?tab=env") } class={ "k-tab", templ.KV("k-tab-active", tab == "env") }>{ i18n.T(ctx, "tab.environment") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=deployments") } class={ "k-tab", templ.KV("k-tab-active", tab == "deployments") }>{ i18n.T(ctx, "tab.deployments") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ "k-tab", templ.KV("k-tab-active", tab == "logs") }>{ i18n.T(ctx, "tab.logs") }</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>
 		</div>
 		switch tab {
 			case "env":
@@ -39,6 +41,8 @@ templ AppDetail(c AppCtx, tab string) {
 				@DeploymentsList(c, c.Deps)
 			case "logs":
 				@logsTab(c)
+			case "domains":
+				@domainsTab(c)
 			default:
 				@generalTab(c)
 		}
@@ -103,5 +107,55 @@ templ logsTab(c AppCtx) {
 		<script>
 			mountLogTerminal(document.getElementById('terminal').dataset.ws);
 		</script>
+	</div>
+}
+
+templ domainsTab(c AppCtx) {
+	<div class="k-card">
+		<table class="k-table mb-4">
+			<thead>
+				<tr>
+					<th>{ i18n.T(ctx, "domains.host") }</th>
+					<th></th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, d := range c.Domains {
+					<tr>
+						<td class="k-mono">{ d.Host }</td>
+						<td>
+							if d.IsPrimary {
+								<span class="k-badge">{ i18n.T(ctx, "domains.primary") }</span>
+							}
+							if d.Tls {
+								<span class="k-badge k-badge-running">{ i18n.T(ctx, "domains.tls_on") }</span>
+							} else {
+								<span class="k-badge">{ i18n.T(ctx, "domains.tls_off") }</span>
+							}
+						</td>
+						<td>
+							<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
+								<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
+							</form>
+							if !d.IsPrimary {
+								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" onsubmit="return confirm('Delete domain?')">
+									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
+								</form>
+							}
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+		<form method="post" action={ templ.SafeURL(c.base() + "/domains") } class="flex items-end gap-2">
+			<div class="flex-1">
+				<label class="k-label">{ i18n.T(ctx, "domains.host") }</label>
+				<input class="k-input" name="host" placeholder="app.example.com"/>
+			</div>
+			<label class="k-label flex items-center gap-2"><input type="checkbox" name="tls"/> { i18n.T(ctx, "domains.enable_https") }</label>
+			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.add") }</button>
+		</form>
+		<p class="k-mono text-xs mt-3">{ i18n.T(ctx, "domains.dns_help") }</p>
 	</div>
 }
