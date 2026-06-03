@@ -154,3 +154,70 @@ func TestDeleteBackupRemovesIt(t *testing.T) {
 		t.Fatalf("backup should be deleted")
 	}
 }
+
+// TestBackupCrossTenantIsolation verifies that loadBackupChain rejects an
+// attempt by org-B to act on org-A's backup via org-B's DB chain.
+// Each mutation route must return 404 and org-A's backup row must survive.
+func TestBackupCrossTenantIsolation(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	// --- Org-A: owner userA, project, environment, postgres DB, destination, backup ---
+	orgA, projA, envA, pgA, destA, _ := backupFixture(t, q, orgSvc)
+	aBackup, err := q.CreateBackup(ctx, db.CreateBackupParams{
+		PostgresDbID:  pgA,
+		DestinationID: destA,
+		Schedule:      "0 2 * * *",
+		Prefix:        "daily",
+		Retention:     7,
+		Enabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("create org-A backup: %v", err)
+	}
+	aBackupID := aBackup.ID
+	_ = orgA
+	_ = projA
+	_ = envA
+
+	// --- Org-B: owner userB, project, environment, postgres DB ---
+	userBID := mkUser(t, q, "userb-ct@k.local")
+	orgB, _ := orgSvc.CreateOrg(ctx, userBID, "OrgB-CT")
+	projB, _ := orgSvc.CreateProject(ctx, orgB.ID, "ProjB", "")
+	envB, _ := orgSvc.CreateEnvironment(ctx, projB.ID, "prod-b")
+	pgB, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
+		EnvironmentID:    envB.ID,
+		Name:             "db-b",
+		AppName:          "krill-postgres-db-b",
+		DatabaseName:     "app",
+		DatabaseUser:     "postgres",
+		DatabasePassword: "secret",
+		Image:            "postgres:17",
+	})
+	if err != nil {
+		t.Fatalf("create org-B postgres: %v", err)
+	}
+	cookieB := loginAs(t, q, "userb-ct@k.local")
+
+	// Base path: org-B's full DB chain but with org-A's backup ID.
+	base := backupsBase(orgB.ID, projB.ID, envB.ID, pgB.ID)
+
+	routes := []string{
+		"/" + i64(aBackupID) + "/toggle",
+		"/" + i64(aBackupID) + "/delete",
+		"/" + i64(aBackupID) + "/run",
+	}
+
+	for _, suffix := range routes {
+		target := base + suffix
+		rec := postForm(t, h, target, cookieB, url.Values{})
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("SECURITY FINDING: POST %s — expected 404 (cross-tenant isolation), got %d", target, rec.Code)
+		}
+	}
+
+	// Org-A's backup row must still exist after all cross-tenant attempts.
+	if _, err := q.GetBackup(ctx, aBackupID); err != nil {
+		t.Fatalf("SECURITY FINDING: org-A backup row (id=%d) was mutated/deleted by cross-tenant request: %v", aBackupID, err)
+	}
+}
