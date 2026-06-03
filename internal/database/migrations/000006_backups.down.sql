@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS backups;
+DROP TABLE IF EXISTS destinations;

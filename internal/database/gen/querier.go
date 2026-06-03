@@ -10,6 +10,8 @@ import (
 
 type Querier interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
+	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountDomainsByHost(ctx context.Context, host string) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
@@ -17,7 +19,9 @@ type Querier interface {
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
+	CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
+	CreateDestination(ctx context.Context, arg CreateDestinationParams) (Destination, error)
 	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
@@ -28,6 +32,8 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteApplication(ctx context.Context, id int64) error
+	DeleteBackup(ctx context.Context, id int64) error
+	DeleteDestination(ctx context.Context, id int64) error
 	DeleteDomain(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
@@ -40,7 +46,9 @@ type Querier interface {
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
+	GetBackup(ctx context.Context, id int64) (Backup, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
+	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
@@ -57,8 +65,11 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
+	ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
+	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)
+	ListEnabledBackups(ctx context.Context) ([]Backup, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
@@ -66,6 +77,8 @@ type Querier interface {
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
+	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error

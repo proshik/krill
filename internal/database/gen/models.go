@@ -28,6 +28,20 @@ type Application struct {
 	DockerfilePath string            `json:"dockerfile_path"`
 }
 
+type Backup struct {
+	ID            int64              `json:"id"`
+	PostgresDbID  int64              `json:"postgres_db_id"`
+	DestinationID int64              `json:"destination_id"`
+	Schedule      string             `json:"schedule"`
+	Prefix        string             `json:"prefix"`
+	Retention     int32              `json:"retention"`
+	Enabled       bool               `json:"enabled"`
+	LastRunAt     pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus    string             `json:"last_status"`
+	LastError     string             `json:"last_error"`
+	CreatedAt     time.Time          `json:"created_at"`
+}
+
 type Deployment struct {
 	ID            int64              `json:"id"`
 	ApplicationID int64              `json:"application_id"`
@@ -38,6 +52,18 @@ type Deployment struct {
 	ErrorMessage  string             `json:"error_message"`
 	StartedAt     time.Time          `json:"started_at"`
 	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+}
+
+type Destination struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	Endpoint       string    `json:"endpoint"`
+	Bucket         string    `json:"bucket"`
+	Region         string    `json:"region"`
+	AccessKey      string    `json:"access_key"`
+	SecretKey      string    `json:"secret_key"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Domain struct {
