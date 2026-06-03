@@ -245,3 +245,103 @@ func TestCannotDeleteLastDomain(t *testing.T) {
 		t.Errorf("last domain %d was deleted: %v", last.ID, err)
 	}
 }
+
+// TestDomainCrossTenantIsolation verifies that a user authenticated under
+// org-B cannot mutate (toggle TLS or delete) a domain that belongs to org-A's
+// application by injecting org-A's domainID into the org-B URL path.
+// Any non-404 response is treated as a security finding and fails the test.
+func TestDomainCrossTenantIsolation(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	// --- Org-A: owner userA, project, environment, application, extra domain ---
+	userAID := mkUser(t, q, "usera-dom@k.local")
+	orgA, _ := orgSvc.CreateOrg(ctx, userAID, "OrgA-Dom")
+	projA, _ := orgSvc.CreateProject(ctx, orgA.ID, "ProjA-Dom", "")
+	envA, _ := orgSvc.CreateEnvironment(ctx, projA.ID, "prod-a-dom")
+	appA, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID:  envA.ID,
+		Name:           "web-a",
+		Image:          "nginx",
+		Tag:            "alpine",
+		Domain:         "web-a.primary.example.com",
+		Port:           80,
+		Env:            map[string]string{},
+		SourceType:     "image",
+		GitUrl:         "",
+		GitBranch:      "",
+		DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create org-A application: %v", err)
+	}
+	// primary domain for app-A (required for the app to be valid)
+	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: appA.ID, Host: "web-a.primary.example.com", Tls: false, IsPrimary: true,
+	}); err != nil {
+		t.Fatalf("create org-A primary domain: %v", err)
+	}
+	// extra non-primary domain — this is the one we will try to steal
+	extraDom, err := q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: appA.ID, Host: "a-extra.example.com", Tls: false, IsPrimary: false,
+	})
+	if err != nil {
+		t.Fatalf("create org-A extra domain: %v", err)
+	}
+	aDomainID := extraDom.ID
+
+	// --- Org-B: owner userB, project, environment, application ---
+	userBID := mkUser(t, q, "userb-dom@k.local")
+	orgB, _ := orgSvc.CreateOrg(ctx, userBID, "OrgB-Dom")
+	projB, _ := orgSvc.CreateProject(ctx, orgB.ID, "ProjB-Dom", "")
+	envB, _ := orgSvc.CreateEnvironment(ctx, projB.ID, "prod-b-dom")
+	appB, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID:  envB.ID,
+		Name:           "web-b",
+		Image:          "nginx",
+		Tag:            "alpine",
+		Domain:         "web-b.primary.example.com",
+		Port:           80,
+		Env:            map[string]string{},
+		SourceType:     "image",
+		GitUrl:         "",
+		GitBranch:      "",
+		DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create org-B application: %v", err)
+	}
+
+	cookieB := loginAs(t, q, "userb-dom@k.local")
+
+	// Org-B's app path, but with org-A's domainID injected.
+	bAppBase := "/orgs/" + i64(orgB.ID) +
+		"/projects/" + i64(projB.ID) +
+		"/environments/" + i64(envB.ID) +
+		"/apps/" + i64(appB.ID)
+
+	routes := []struct {
+		suffix string
+	}{
+		{"/domains/" + i64(aDomainID) + "/tls"},
+		{"/domains/" + i64(aDomainID) + "/delete"},
+	}
+
+	for _, tc := range routes {
+		target := bAppBase + tc.suffix
+		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookieB)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("SECURITY FINDING: POST %s — expected 404 (cross-tenant isolation), got %d", target, rec.Code)
+		}
+	}
+
+	// After both attempts org-A's extra domain must still exist.
+	if _, err := q.GetDomain(ctx, aDomainID); err != nil {
+		t.Fatalf("SECURITY FINDING: org-A domain (id=%d) was deleted by cross-tenant request: %v", aDomainID, err)
+	}
+}
