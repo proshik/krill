@@ -67,12 +67,15 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/", s.orgDashboard)
 			r.Get("/members", s.listMembers)
+			r.Get("/destinations", s.listDestinations)
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(auth.RoleAdmin))
 				r.Post("/members", s.createMember)
 				r.Post("/members/{mID}/role", s.updateMemberRole)
 				r.Post("/members/{mID}/remove", s.removeMember)
+					r.Post("/destinations", s.createDestination)
+					r.Post("/destinations/{destID}/delete", s.deleteDestination)
 				r.Post("/projects", s.createProject)
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)
