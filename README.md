@@ -272,6 +272,17 @@ Each app starts with one auto-generated domain (`<name>.<KRILL_BASE_DOMAIN>`). O
 
 Traefik then obtains a Let's Encrypt certificate via the HTTP-01 challenge and serves the domain on `:443`, redirecting `http://` → `https://`. Certificates are stored in the persistent `krill-traefik-acme` volume (so restarts don't re-request them and risk rate limits). Issuance is asynchronous — if a cert doesn't appear, check the `krill-traefik` service logs and verify DNS + that ports 80/443 are reachable. Set `KRILL_ACME_STAGING=true` while testing to use the staging CA. Domains without HTTPS enabled (e.g. the local sslip.io one) keep working over plain HTTP — ACME is never attempted for them.
 
+## Backups
+
+Managed **Postgres** databases can be backed up to S3-compatible storage (AWS S3 or MinIO).
+
+1. On the org, open **Destinations** and add an S3 target (name, endpoint — blank for AWS, a URL for MinIO — bucket, region, access/secret keys). The credentials are validated against the bucket on save.
+2. On a Postgres database's detail page, open the **Backups** section and add a backup: pick a destination, a cron `schedule` (e.g. `0 3 * * *`), a `retention` count (keep the newest N), and an optional key `prefix`.
+3. Backups run on schedule (in-process cron) and on demand via **Backup now**. Each run streams `pg_dump --clean --if-exists` from inside the DB container → gzip → `s3://<bucket>/<prefix>/<app_name>/<timestamp>.sql.gz`, then prunes to the newest N.
+4. **Restore** any stored backup from the list (streams it back through `psql`). Restore **overwrites** the database, so it asks for confirmation. **Download** streams the dump through Krill.
+
+Notes: S3 keys are stored in plaintext (like DB passwords); restore requires the database to be running; the local sslip.io setup needs no backups config. Backups need no environment variables — everything is configured in the UI. The full `pg_dump`/restore roundtrip is verified on a real host (it needs a running DB container + reachable S3); the S3 paths and config are covered by tests.
+
 ## Data model
 
 State is stored in PostgreSQL across ten tables, created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`).
