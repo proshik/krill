@@ -283,6 +283,16 @@ Managed **Postgres** databases can be backed up to S3-compatible storage (AWS S3
 
 Notes: S3 keys are stored in plaintext (like DB passwords); restore requires the database to be running; the local sslip.io setup needs no backups config. Backups need no environment variables — everything is configured in the UI. The full `pg_dump`/restore roundtrip is verified on a real host (it needs a running DB container + reachable S3); the S3 paths and config are covered by tests.
 
+## Private images (registries)
+
+To deploy from a **private** registry image, add registry credentials and select them on the app:
+
+1. On the org, open **Registries** (admin) and add one: a name, the registry URL (e.g. `ghcr.io`, `registry-1.docker.io` for Docker Hub, `registry.gitlab.com`), a username, and a password/token. The credentials are validated against the registry on save.
+2. On the app — in the create dialog or the **General** tab — pick that registry (default is "Public (no auth)").
+3. Deploy: Krill passes the encoded auth to Swarm (`--with-registry-auth`), so the private image is pulled with your credentials.
+
+Notes: credentials are stored plaintext (like other secrets); a single registry per app; token-only registries that need dynamic credentials (AWS ECR, GCP Artifact Registry) are not yet supported — use a static username + password/token (covers GHCR PATs, Docker Hub, GitLab). The live private pull is verified on a real host.
+
 ## Data model
 
 State is stored in PostgreSQL across ten tables, created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`).
