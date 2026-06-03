@@ -18,7 +18,7 @@ func EncodeRegistryAuth(username, password, serverAddr string) (string, error) {
 	b, err := json.Marshal(registry.AuthConfig{
 		Username:      username,
 		Password:      password,
-		ServerAddress: serverAddr,
+		ServerAddress: registryHost(serverAddr),
 	})
 	if err != nil {
 		return "", err
@@ -37,8 +37,13 @@ func parseBearerChallenge(h string) map[string]string {
 	return out
 }
 
+// registryHost normalizes a registry value to a bare host: strips a scheme and
+// any path the user may have pasted (e.g. "https://ghcr.io/proshik/x" -> "ghcr.io").
 func registryHost(registryURL string) string {
 	h := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(registryURL, "https://"), "http://"), "/")
+	if i := strings.IndexByte(h, '/'); i >= 0 {
+		h = h[:i]
+	}
 	return h
 }
 

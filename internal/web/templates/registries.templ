@@ -40,7 +40,7 @@ templ Registries(org db.Organization, role string, regs []db.Registry) {
 					</div>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "reg.url") }</label>
-						<input class="k-input" name="registry_url"/>
+						<input class="k-input" name="registry_url" placeholder="ghcr.io (host only — not the image path)"/>
 					</div>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "reg.username") }</label>

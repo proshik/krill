@@ -70,7 +70,7 @@ templ generalTab(c AppCtx) {
 		} else {
 			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
 				<label class="k-label">{ i18n.T(ctx, "app.image") }</label>
-				<input class="k-input" name="image" value={ c.App.Image }/>
+				<input class="k-input" name="image" value={ c.App.Image } placeholder="ghcr.io/owner/name (full ref)"/>
 				<label class="k-label">{ i18n.T(ctx, "app.tag") }</label>
 				<div id="tag-field">
 					<input class="k-input" name="tag" value={ c.App.Tag }/>
@@ -190,4 +190,9 @@ templ TagOptions(tags []string, current string) {
 			<option value={ t } selected?={ t == current }>{ t }</option>
 		}
 	</select>
+}
+
+templ TagError(current, msg string) {
+	<input class="k-input" name="tag" value={ current }/>
+	<p class="k-mono text-xs mt-1" style="color:var(--color-err)">{ msg }</p>
 }

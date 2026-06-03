@@ -219,7 +219,10 @@ func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, reg.Password, repo)
 	if err != nil {
 		logFrom(r).Info("appTags: list tags failed", "err", err, "app_id", c.App.ID, "image", c.App.Image)
-		http.Error(w, "could not load tags from the registry", http.StatusBadGateway)
+		// Return 200 with a visible message: htmx does not swap on 4xx/5xx, so the
+		// button would otherwise look dead. Keep the manual tag input usable.
+		render(w, r, http.StatusOK, templates.TagError(c.App.Tag,
+			"Could not load tags. The image must be a full ref (e.g. ghcr.io/owner/name) and the registry must have valid credentials."))
 		return
 	}
 	render(w, r, http.StatusOK, templates.TagOptions(tags, c.App.Tag))

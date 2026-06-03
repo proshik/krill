@@ -155,7 +155,7 @@ templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 				<div data-src="image" class="grid gap-3">
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.image") }</label>
-						<input class="k-input" name="image" placeholder="nginx"/>
+						<input class="k-input" name="image" placeholder="ghcr.io/owner/name (full ref) or nginx"/>
 					</div>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.tag") }</label>

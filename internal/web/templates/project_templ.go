@@ -856,7 +856,7 @@ func appCreateModal(orgID, projID, envID int64, registries []db.Registry) templ.
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, "</label> <input class=\"k-input\" name=\"image\" placeholder=\"nginx\"></div><div><label class=\"k-label\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 77, "</label> <input class=\"k-input\" name=\"image\" placeholder=\"ghcr.io/owner/name (full ref) or nginx\"></div><div><label class=\"k-label\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
