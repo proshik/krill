@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -71,13 +72,19 @@ func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) erro
 	if err != nil {
 		return err
 	}
+	createOpts := swarm.ServiceCreateOptions{}
+	updateOpts := swarm.ServiceUpdateOptions{}
+	if spec.RegistryAuth != "" {
+		createOpts.EncodedRegistryAuth = spec.RegistryAuth
+		updateOpts.EncodedRegistryAuth = spec.RegistryAuth
+	}
 	if !found {
-		_, err = e.cli.ServiceCreate(ctx, sw, swarm.ServiceCreateOptions{})
+		_, err = e.cli.ServiceCreate(ctx, sw, createOpts)
 		return err
 	}
 	// ForceUpdate+1 — so that even an unchanged tag triggers a rolling-update (redeploy).
 	sw.TaskTemplate.ForceUpdate = cur.Spec.TaskTemplate.ForceUpdate + 1
-	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, sw, swarm.ServiceUpdateOptions{})
+	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, sw, updateOpts)
 	return err
 }
 
@@ -209,6 +216,11 @@ func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []strin
 		return fmt.Errorf("exec %v exited %d: %s", cmd, insp.ExitCode, strings.TrimSpace(stderr.String()))
 	}
 	return nil
+}
+
+func (e *dockerEngine) RegistryCheck(ctx context.Context, serverAddr, username, password string) error {
+	_, err := e.cli.RegistryLogin(ctx, registry.AuthConfig{Username: username, Password: password, ServerAddress: serverAddr})
+	return err
 }
 
 func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas uint64) error {

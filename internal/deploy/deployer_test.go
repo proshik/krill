@@ -48,6 +48,7 @@ func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]str
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }
+func (m *mockEngine) RegistryCheck(context.Context, string, string, string) error { return nil }
 
 type mockBuilder struct {
 	mu     sync.Mutex

@@ -34,8 +34,9 @@ type ServiceSpec struct {
 	Network     string
 	Ports       []PortSpec
 	Mounts      []MountSpec
-	Constraints []string // e.g. node.role==manager
-	DNSRR       bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
+	Constraints  []string // e.g. node.role==manager
+	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
+	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
 }
 
 // ServiceState — the current state of a service in Swarm.
@@ -57,6 +58,7 @@ type Engine interface {
 	VolumeRemove(ctx context.Context, name string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
+	RegistryCheck(ctx context.Context, serverAddr, username, password string) error
 }
 
 // ServiceName builds the Swarm service name for an application from its id.
