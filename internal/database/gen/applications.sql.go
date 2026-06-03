@@ -11,7 +11,7 @@ import (
 
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id
 `
 
 type CreateApplicationParams struct {
@@ -59,6 +59,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.GitUrl,
 		&i.GitBranch,
 		&i.DockerfilePath,
+		&i.RegistryID,
 	)
 	return i, err
 }
@@ -73,7 +74,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -95,6 +96,7 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.GitUrl,
 		&i.GitBranch,
 		&i.DockerfilePath,
+		&i.RegistryID,
 	)
 	return i, err
 }
@@ -128,7 +130,7 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -156,6 +158,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.GitUrl,
 			&i.GitBranch,
 			&i.DockerfilePath,
+			&i.RegistryID,
 		); err != nil {
 			return nil, err
 		}
@@ -168,7 +171,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -196,6 +199,7 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.GitUrl,
 			&i.GitBranch,
 			&i.DockerfilePath,
+			&i.RegistryID,
 		); err != nil {
 			return nil, err
 		}
@@ -205,6 +209,20 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 		return nil, err
 	}
 	return items, nil
+}
+
+const setApplicationRegistry = `-- name: SetApplicationRegistry :exec
+UPDATE applications SET registry_id = $2, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationRegistryParams struct {
+	ID         int64  `json:"id"`
+	RegistryID *int64 `json:"registry_id"`
+}
+
+func (q *Queries) SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error {
+	_, err := q.db.Exec(ctx, setApplicationRegistry, arg.ID, arg.RegistryID)
+	return err
 }
 
 const updateApplicationEnv = `-- name: UpdateApplicationEnv :exec

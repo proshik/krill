@@ -10,6 +10,7 @@ import (
 
 type Querier interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
@@ -18,6 +19,7 @@ type Querier interface {
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
+	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
@@ -29,6 +31,7 @@ type Querier interface {
 	CreatePostgres(ctx context.Context, arg CreatePostgresParams) (PostgresDb, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateRedis(ctx context.Context, arg CreateRedisParams) (RedisDb, error)
+	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteApplication(ctx context.Context, id int64) error
@@ -42,6 +45,7 @@ type Querier interface {
 	DeletePostgres(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
 	DeleteRedis(ctx context.Context, id int64) error
+	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
@@ -60,6 +64,7 @@ type Querier interface {
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetRedis(ctx context.Context, id int64) (RedisDb, error)
 	GetRedisChain(ctx context.Context, id int64) (GetRedisChainRow, error)
+	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
@@ -76,7 +81,9 @@ type Querier interface {
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
+	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error

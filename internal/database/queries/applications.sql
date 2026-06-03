@@ -33,3 +33,6 @@ WHERE a.id = $1;
 
 -- name: DeleteApplication :exec
 DELETE FROM applications WHERE id = $1;
+
+-- name: SetApplicationRegistry :exec
+UPDATE applications SET registry_id = $2, updated_at = now() WHERE id = $1;

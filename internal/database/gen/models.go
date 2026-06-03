@@ -26,6 +26,7 @@ type Application struct {
 	GitUrl         string            `json:"git_url"`
 	GitBranch      string            `json:"git_branch"`
 	DockerfilePath string            `json:"dockerfile_path"`
+	RegistryID     *int64            `json:"registry_id"`
 }
 
 type Backup struct {
@@ -134,6 +135,16 @@ type RedisDb struct {
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type Registry struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	RegistryUrl    string    `json:"registry_url"`
+	Username       string    `json:"username"`
+	Password       string    `json:"password"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Session struct {
