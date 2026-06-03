@@ -3,10 +3,16 @@ package backup
 import (
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 )
+
+// ErrKeyOutsideBackup is returned when a requested object key is not within the
+// backup's own prefix — prevents downloading/restoring arbitrary bucket objects.
+var ErrKeyOutsideBackup = errors.New("object key is outside this backup's prefix")
 
 // Execer runs a command inside a managed DB's container (docker.Engine satisfies it).
 type Execer interface {
@@ -121,6 +127,9 @@ func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) e
 	if err != nil {
 		return err
 	}
+	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName)) {
+		return ErrKeyOutsideBackup
+	}
 	dst, err := s.store.GetDestination(ctx, b.DestinationID)
 	if err != nil {
 		return err
@@ -133,6 +142,13 @@ func (s *Service) OpenObject(ctx context.Context, backupID int64, key string) (i
 	b, err := s.store.GetBackup(ctx, backupID)
 	if err != nil {
 		return nil, err
+	}
+	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName)) {
+		return nil, ErrKeyOutsideBackup
 	}
 	dst, err := s.store.GetDestination(ctx, b.DestinationID)
 	if err != nil {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"path"
@@ -152,7 +153,8 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backups unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := s.backupSvc.RunBackup(r.Context(), b.ID, time.Now()); err != nil {
+	// Detached context: a manual backup should finish even if the client disconnects.
+	if err := s.backupSvc.RunBackup(context.Background(), b.ID, time.Now()); err != nil {
 		logFrom(r).Error("runBackupNow: backup run failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID)
 	} else {
 		logFrom(r).Info("backup run completed", "backup_id", b.ID, "db_id", b.PostgresDbID)
