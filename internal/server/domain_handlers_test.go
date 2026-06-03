@@ -104,6 +104,54 @@ func TestCreateAppCreatesPrimaryDomain(t *testing.T) {
 	}
 }
 
+func TestCreateAppCustomDomainValidation(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "owner-a@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	appsURL := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps"
+	cookie := loginAs(t, q, "owner-a@k.local")
+
+	base := url.Values{"image": {"nginx"}, "tag": {"latest"}, "port": {"8080"}}
+
+	// Invalid custom domain (would otherwise be injected unescaped into a Traefik rule) -> 400.
+	bad := url.Values{"name": {"app1"}, "domain": {"x.com`)||PathPrefix(`/"}}
+	for k, v := range base {
+		bad[k] = v
+	}
+	if rec := postForm(t, h, appsURL, cookie, bad); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid custom domain want 400, got %d", rec.Code)
+	}
+
+	// First app claims a custom domain.
+	ok1 := url.Values{"name": {"app2"}, "domain": {"taken.example.com"}}
+	for k, v := range base {
+		ok1[k] = v
+	}
+	if rec := postForm(t, h, appsURL, cookie, ok1); rec.Code != http.StatusSeeOther {
+		t.Fatalf("first custom domain want 303, got %d body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Second app reusing the same host -> 400, and no orphan app is created.
+	dup := url.Values{"name": {"app3"}, "domain": {"taken.example.com"}}
+	for k, v := range base {
+		dup[k] = v
+	}
+	if rec := postForm(t, h, appsURL, cookie, dup); rec.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate custom domain want 400, got %d", rec.Code)
+	}
+	apps, err := q.ListApplicationsByEnvironment(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("list apps: %v", err)
+	}
+	if len(apps) != 1 {
+		t.Fatalf("expected exactly 1 app (no orphan), got %d", len(apps))
+	}
+}
+
 func TestAddDomain(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()

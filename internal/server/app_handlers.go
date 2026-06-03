@@ -46,7 +46,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
-	domain := strings.TrimSpace(r.FormValue("domain"))
+	domain := strings.ToLower(strings.TrimSpace(r.FormValue("domain")))
 	if domain == "" {
 		domain = name + "." + s.cfg.BaseDomain
 	}
@@ -54,6 +54,16 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	if err != nil || port <= 0 || !isSlug(name) {
 		logFrom(r).Info("createApp: invalid fields", "environment_id", e.ID, "name", name)
 		http.Error(w, "check the fields: name (slug), port", http.StatusBadRequest)
+		return
+	}
+	if !validHost(domain) {
+		logFrom(r).Info("createApp: invalid domain", "environment_id", e.ID, "name", name, "domain", domain)
+		http.Error(w, "invalid domain", http.StatusBadRequest)
+		return
+	}
+	if n, _ := s.q.CountDomainsByHost(r.Context(), domain); n > 0 {
+		logFrom(r).Info("createApp: domain already in use", "environment_id", e.ID, "name", name, "domain", domain)
+		http.Error(w, "domain already in use", http.StatusBadRequest)
 		return
 	}
 	if sourceType == "image" && image == "" {
@@ -79,6 +89,10 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
 		ApplicationID: a.ID, Host: a.Domain, Tls: false, IsPrimary: true,
 	}); err != nil {
+		// Roll back the orphaned application so it does not linger without a domain.
+		if derr := s.q.DeleteApplication(r.Context(), a.ID); derr != nil {
+			logFrom(r).Error("createApp: rollback delete application failed", "err", derr, "app_id", a.ID)
+		}
 		logFrom(r).Error("createApp: create primary domain failed", "err", err, "app_id", a.ID, "host", a.Domain)
 		http.Error(w, "failed to create domain", http.StatusInternalServerError)
 		return
