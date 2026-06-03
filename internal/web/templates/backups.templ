@@ -1,0 +1,34 @@
+package templates
+
+import "github.com/proshik/krill/internal/backup"
+
+// BackupObjects renders the list of stored backup objects for one backup config.
+// base is the DB detail URL (e.g. .../databases/postgres/42); backupID scopes the
+// restore/download actions to this config.
+templ BackupObjects(base string, backupID int64, objs []backup.Object) {
+	<div id="backup-objects">
+		if len(objs) == 0 {
+			<p class="k-muted">No backups stored yet.</p>
+		} else {
+			<table class="k-table">
+				<thead><tr><th>Key</th><th>Size</th><th>Date</th><th></th></tr></thead>
+				<tbody>
+					for _, o := range objs {
+						<tr>
+							<td class="k-mono">{ o.Key }</td>
+							<td>{ humanSize(o.Size) }</td>
+							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
+							<td>
+								<a class="k-btn" href={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/download?key=" + o.Key) }>Download</a>
+								<form method="post" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } onsubmit="return confirm('Restore this backup? This overwrites the current database.')" style="display:inline">
+									<input type="hidden" name="key" value={ o.Key }/>
+									<button class="k-btn k-btn-danger">Restore</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</div>
+}

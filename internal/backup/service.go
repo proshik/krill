@@ -94,6 +94,53 @@ func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) 
 	return err
 }
 
+// ListObjects lists the stored backups for a backup config (its destination + prefix dir).
+func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, error) {
+	b, err := s.store.GetBackup(ctx, backupID)
+	if err != nil {
+		return nil, err
+	}
+	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	if err != nil {
+		return nil, err
+	}
+	dst, err := s.store.GetDestination(ctx, b.DestinationID)
+	if err != nil {
+		return nil, err
+	}
+	return List(ctx, dst, prefixDir(b.Prefix, pg.AppName))
+}
+
+// RestoreByID restores object `key` of a backup config into its DB.
+func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) error {
+	b, err := s.store.GetBackup(ctx, backupID)
+	if err != nil {
+		return err
+	}
+	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	if err != nil {
+		return err
+	}
+	dst, err := s.store.GetDestination(ctx, b.DestinationID)
+	if err != nil {
+		return err
+	}
+	return s.Restore(ctx, dst, pg, key)
+}
+
+// OpenObject opens a stored backup object for streaming download.
+func (s *Service) OpenObject(ctx context.Context, backupID int64, key string) (io.ReadCloser, error) {
+	b, err := s.store.GetBackup(ctx, backupID)
+	if err != nil {
+		return nil, err
+	}
+	dst, err := s.store.GetDestination(ctx, b.DestinationID)
+	if err != nil {
+		return nil, err
+	}
+	return Download(ctx, dst, key)
+}
+
 // Restore streams a stored backup from S3 through gunzip into psql.
 func (s *Service) Restore(ctx context.Context, dst Destination, pg PGTarget, key string) error {
 	rc, err := Download(ctx, dst, key)

@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
@@ -27,10 +28,20 @@ type Server struct {
 	engine   docker.Engine
 	logHub   *deploy.DeployLogHub
 	dbsvc    *dbservice.Service
+
+	backupSvc     *backup.Service
+	reloadBackups func()
 }
 
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
 	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc}
+}
+
+// SetBackups wires the backup service and a reload hook (re-reads the cron
+// schedule) into the server without changing New's signature.
+func (s *Server) SetBackups(svc *backup.Service, reload func()) {
+	s.backupSvc = svc
+	s.reloadBackups = reload
 }
 
 // Router assembles the chi router.
@@ -91,6 +102,11 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/stop", s.stopDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/version", s.versionDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/delete", s.deleteDatabase)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups", s.addBackup)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/delete", s.deleteBackup)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/toggle", s.toggleBackup)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/run", s.runBackupNow)
+				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/restore", s.restoreBackup)
 			})
 
 			r.Get("/projects/{projID}", s.projectPage)
@@ -111,6 +127,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/status", s.databaseStatus)
 			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/logs", s.databaseLogs)
 			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/deploy-logs", s.databaseDeployLogs)
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/objects", s.backupObjects)
+			r.Get("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/backups/{backupID}/download", s.downloadBackup)
 		})
 	})
 
