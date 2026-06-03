@@ -44,6 +44,7 @@ var en = map[string]string{
 	"project.create_app":        "Create app",
 	"project.create_env_hint":   "Create an environment to add apps.",
 	"project.create_env":        "Create environment",
+	"project.add_env":           "Add environment",
 	"env.new_modal_title":       "New environment",
 	"env.new_modal_desc":        "For example: production, staging.",
 	"app.new_modal_title":       "New application",

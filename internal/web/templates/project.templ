@@ -21,7 +21,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 							>{ e.Name }</a>
 						}
 						if role == "owner" || role == "admin" {
-							<button type="button" class="k-mono text-xs ml-2 text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]" onclick="krillOpenModal('new-env')">+ env</button>
+							<button type="button" class="k-mono text-xs ml-2 text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]" onclick="krillOpenModal('new-env')">{ i18n.T(ctx, "project.add_env") }</button>
 						}
 					</div>
 					if active.ID != 0 && (role == "owner" || role == "admin") {
