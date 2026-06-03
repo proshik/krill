@@ -56,6 +56,7 @@ type Engine interface {
 	ImagePull(ctx context.Context, ref string, out io.Writer) error
 	VolumeRemove(ctx context.Context, name string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
+	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 }
 
 // ServiceName builds the Swarm service name for an application from its id.

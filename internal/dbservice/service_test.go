@@ -64,6 +64,9 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 	return nil
 }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error { return nil }
+func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
+	return nil
+}
 
 type fakeStore struct {
 	mu     sync.Mutex

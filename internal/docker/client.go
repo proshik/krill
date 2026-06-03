@@ -1,8 +1,11 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -10,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 type dockerEngine struct {
@@ -150,6 +154,61 @@ func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, lab
 	spec.Annotations.Labels = labels
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
+}
+
+func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error {
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("service", serviceName),
+			filters.Arg("desired-state", "running"),
+		),
+	})
+	if err != nil {
+		return err
+	}
+	var containerID string
+	for _, t := range tasks {
+		if t.Status.ContainerStatus != nil && t.Status.ContainerStatus.ContainerID != "" {
+			containerID = t.Status.ContainerStatus.ContainerID
+			break
+		}
+	}
+	if containerID == "" {
+		return fmt.Errorf("no running container for service %s", serviceName)
+	}
+	idResp, err := e.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          cmd,
+		Env:          env,
+		AttachStdout: true,
+		AttachStderr: true,
+		AttachStdin:  stdin != nil,
+	})
+	if err != nil {
+		return err
+	}
+	att, err := e.cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return err
+	}
+	defer att.Close()
+	if stdin != nil {
+		go func() {
+			_, _ = io.Copy(att.Conn, stdin)
+			_ = att.CloseWrite()
+		}()
+	}
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(stdout, &stderr, att.Reader); err != nil {
+		return err
+	}
+	insp, err := e.cli.ContainerExecInspect(ctx, idResp.ID)
+	if err != nil {
+		return err
+	}
+	if insp.ExitCode != 0 {
+		return fmt.Errorf("exec %v exited %d: %s", cmd, insp.ExitCode, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas uint64) error {

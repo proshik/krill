@@ -45,6 +45,9 @@ func (m *mockEngine) ServiceScale(context.Context, string, uint64) error        
 func (m *mockEngine) VolumeRemove(context.Context, string) error                               { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error                 { return nil }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error     { return nil }
+func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
+	return nil
+}
 
 type mockBuilder struct {
 	mu     sync.Mutex
