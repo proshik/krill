@@ -28,6 +28,7 @@ templ Layout(title string, org db.Organization, role string) {
 					if role == "owner" || role == "admin" {
 						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
 						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
+						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
 					}
 					<a class="k-nav" href="/logout">{ i18n.T(ctx, "nav.logout") }</a>
 				</nav>

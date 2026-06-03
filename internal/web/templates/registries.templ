@@ -1,0 +1,58 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+templ Registries(org db.Organization, role string, regs []db.Registry) {
+	@Layout(i18n.T(ctx, "reg.title"), org, role) {
+		<div class="k-card">
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "reg.name") }</th>
+						<th>{ i18n.T(ctx, "reg.url") }</th>
+						<th>{ i18n.T(ctx, "reg.username") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, reg := range regs {
+						<tr>
+							<td>{ reg.Name }</td><td class="k-mono">{ reg.RegistryUrl }</td><td>{ reg.Username }</td>
+							<td>
+								if role == "owner" || role == "admin" {
+									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries/" + itoa(reg.ID) + "/delete") } onsubmit="return confirm('Delete registry?')">
+										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "reg.delete") }</button>
+									</form>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			if role == "owner" || role == "admin" {
+				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") } class="mt-4 flex flex-col gap-2">
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "reg.name") }</label>
+						<input class="k-input" name="name"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "reg.url") }</label>
+						<input class="k-input" name="registry_url"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "reg.username") }</label>
+						<input class="k-input" name="username"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "reg.password") }</label>
+						<input class="k-input" name="password" type="password"/>
+					</div>
+					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "reg.add") }</button>
+				</form>
+			}
+		</div>
+	}
+}
