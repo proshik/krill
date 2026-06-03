@@ -150,7 +150,11 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		pgs, _ = s.q.ListPostgresByEnvironment(r.Context(), active.ID)
 		redises, _ = s.q.ListRedisByEnvironment(r.Context(), active.ID)
 	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, pgs, redises))
+	registries, err := s.q.ListRegistriesByOrg(r.Context(), o.ID)
+	if err != nil {
+		logFrom(r).Error("projectPage: list registries", "err", err, "org_id", o.ID)
+	}
+	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, pgs, redises, registries))
 }
 
 func projURL(orgID, projID int64) string {

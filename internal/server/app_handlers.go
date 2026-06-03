@@ -76,6 +76,21 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "specify git URL for the 'Dockerfile' source", http.StatusBadRequest)
 		return
 	}
+	var registryID *int64
+	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
+		n, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil {
+			http.Error(w, "invalid registry", http.StatusBadRequest)
+			return
+		}
+		reg, gerr := s.q.GetRegistry(r.Context(), n)
+		if gerr != nil || reg.OrganizationID != o.ID {
+			logFrom(r).Info("createApp: registry not found or org mismatch", "registry_id", n, "org_id", o.ID)
+			http.Error(w, "invalid registry", http.StatusBadRequest)
+			return
+		}
+		registryID = &n
+	}
 	a, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag, Domain: domain, Port: int32(port),
 		Env: parseEnv(r.FormValue("env")), SourceType: sourceType,
@@ -97,8 +112,42 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create domain", http.StatusInternalServerError)
 		return
 	}
+	if registryID != nil {
+		if err := s.q.SetApplicationRegistry(r.Context(), db.SetApplicationRegistryParams{ID: a.ID, RegistryID: registryID}); err != nil {
+			logFrom(r).Error("createApp: set registry failed", "err", err, "app_id", a.ID)
+		}
+	}
 	logFrom(r).Info("application created", "app_id", a.ID, "environment_id", e.ID, "name", name)
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID), http.StatusSeeOther)
+}
+
+func (s *Server) setAppRegistry(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	o, _, _ := s.loadOrg(w, r)
+	var registryID *int64
+	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
+		n, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil {
+			http.Error(w, "invalid registry", http.StatusBadRequest)
+			return
+		}
+		reg, gerr := s.q.GetRegistry(r.Context(), n)
+		if gerr != nil || reg.OrganizationID != o.ID {
+			http.Error(w, "invalid registry", http.StatusBadRequest)
+			return
+		}
+		registryID = &n
+	}
+	if err := s.q.SetApplicationRegistry(r.Context(), db.SetApplicationRegistryParams{ID: c.App.ID, RegistryID: registryID}); err != nil {
+		logFrom(r).Error("setAppRegistry: update failed", "err", err, "app_id", c.App.ID)
+		http.Error(w, "failed to set registry", http.StatusInternalServerError)
+		return
+	}
+	logFrom(r).Info("application registry set", "app_id", c.App.ID, "registry_id", registryID)
+	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
 func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +158,11 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	tab := r.URL.Query().Get("tab")
 	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" {
 		tab = "general"
+	}
+	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {
+		logFrom(r).Error("appDetail: failed to list registries", "err", err, "org_id", c.Org.ID)
+	} else {
+		c.Registries = regs
 	}
 	if tab == "deployments" {
 		deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)

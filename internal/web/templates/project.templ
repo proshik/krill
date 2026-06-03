@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb, registries []db.Registry) {
 	@Layout(project.Name, org, role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
@@ -103,7 +103,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				</form>
 			</dialog>
 			if active.ID != 0 {
-				@appCreateModal(org.ID, project.ID, active.ID)
+				@appCreateModal(org.ID, project.ID, active.ID, registries)
 				<dialog id="new-db" class="k-modal">
 					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases") }>
 						<div class="k-modal-head"><div class="k-modal-title">{ i18n.T(ctx, "db.new") }</div></div>
@@ -133,7 +133,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 	}
 }
 
-templ appCreateModal(orgID, projID, envID int64) {
+templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 	<dialog id="new-app" class="k-modal">
 		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/projects/" + itoa(projID) + "/environments/" + itoa(envID) + "/apps") }>
 			<div class="k-modal-head">
@@ -183,6 +183,15 @@ templ appCreateModal(orgID, projID, envID int64) {
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.port") }</label>
 					<input class="k-input" name="port" type="number" value="80" required/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "app.registry") }</label>
+					<select class="k-select" name="registry_id">
+						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
+						for _, reg := range registries {
+							<option value={ itoa(reg.ID) }>{ reg.Name }</option>
+						}
+					</select>
 				</div>
 			</div>
 			<div class="k-modal-foot">
