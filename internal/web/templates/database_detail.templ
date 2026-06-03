@@ -29,7 +29,7 @@ templ DatabaseDetail(c DatabaseCtx) {
 	@Layout(c.Name, c.Org, c.Role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID)) }>{ c.Project.Name }</a> /
-			{ c.Env.Name } / { c.Name }
+			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID) + "/environments/" + itoa(c.Env.ID)) }>{ c.Env.Name }</a> / { c.Name }
 		</p>
 		<div class="k-frame"><div class="k-panel">
 			<div class="k-panel-head">

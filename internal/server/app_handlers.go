@@ -201,6 +201,30 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
 }
 
+func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if c.App.RegistryID == nil {
+		http.Error(w, "select a registry first", http.StatusBadRequest)
+		return
+	}
+	reg, err := s.q.GetRegistry(r.Context(), *c.App.RegistryID)
+	if err != nil {
+		http.Error(w, "registry not found", http.StatusBadRequest)
+		return
+	}
+	repo := docker.RegistryRepo(reg.RegistryUrl, c.App.Image)
+	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, reg.Password, repo)
+	if err != nil {
+		logFrom(r).Info("appTags: list tags failed", "err", err, "app_id", c.App.ID, "image", c.App.Image)
+		http.Error(w, "could not load tags from the registry", http.StatusBadGateway)
+		return
+	}
+	render(w, r, http.StatusOK, templates.TagOptions(tags, c.App.Tag))
+}
+
 func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {

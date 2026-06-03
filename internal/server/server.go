@@ -119,6 +119,7 @@ func (s *Server) Router() http.Handler {
 			r.Route("/projects/{projID}/environments/{envID}/apps/{appID}", func(r chi.Router) {
 				r.Get("/", s.appDetail)
 				r.Get("/status", s.appStatus)
+				r.Get("/tags", s.appTags)
 				r.Post("/deploy", s.deployApp)
 				r.Post("/env", s.saveEnv)
 				r.Get("/logs", s.appLogs)

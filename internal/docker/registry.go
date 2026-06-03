@@ -1,8 +1,13 @@
 package docker
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/docker/docker/api/types/registry"
 )
@@ -19,4 +24,97 @@ func EncodeRegistryAuth(username, password, serverAddr string) (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+var bearerChallengeRe = regexp.MustCompile(`(\w+)="([^"]*)"`)
+
+// parseBearerChallenge extracts realm/service/scope from a WWW-Authenticate: Bearer ... header.
+func parseBearerChallenge(h string) map[string]string {
+	out := map[string]string{}
+	for _, m := range bearerChallengeRe.FindAllStringSubmatch(h, -1) {
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+func registryHost(registryURL string) string {
+	h := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(registryURL, "https://"), "http://"), "/")
+	return h
+}
+
+// RegistryRepo strips the registry host prefix from image to derive the repo
+// path used in the v2 API (e.g. "ghcr.io/proshik/x" -> "proshik/x").
+func RegistryRepo(registryURL, image string) string {
+	return strings.TrimPrefix(image, registryHost(registryURL)+"/")
+}
+
+// RegistryListTags lists the tags for repo in a registry, following the v2
+// token (WWW-Authenticate: Bearer) flow. Anonymous if username is empty.
+func RegistryListTags(ctx context.Context, registryURL, username, password, repo string) ([]string, error) {
+	host := registryHost(registryURL)
+	tagsURL := fmt.Sprintf("https://%s/v2/%s/tags/list", host, repo)
+	do := func(bearer string) (*http.Response, error) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return http.DefaultClient.Do(req)
+	}
+	resp, err := do("")
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		ch := parseBearerChallenge(resp.Header.Get("WWW-Authenticate"))
+		resp.Body.Close()
+		if ch["realm"] == "" {
+			return nil, fmt.Errorf("registry requires auth but no bearer realm")
+		}
+		treq, _ := http.NewRequestWithContext(ctx, http.MethodGet, ch["realm"], nil)
+		q := treq.URL.Query()
+		if ch["service"] != "" {
+			q.Set("service", ch["service"])
+		}
+		if ch["scope"] != "" {
+			q.Set("scope", ch["scope"])
+		}
+		treq.URL.RawQuery = q.Encode()
+		if username != "" {
+			treq.SetBasicAuth(username, password)
+		}
+		tresp, terr := http.DefaultClient.Do(treq)
+		if terr != nil {
+			return nil, terr
+		}
+		defer tresp.Body.Close()
+		if tresp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("registry token request failed: %s", tresp.Status)
+		}
+		var tok struct {
+			Token       string `json:"token"`
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.NewDecoder(tresp.Body).Decode(&tok); err != nil {
+			return nil, err
+		}
+		bearer := tok.Token
+		if bearer == "" {
+			bearer = tok.AccessToken
+		}
+		resp, err = do(bearer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("registry tags request failed: %s", resp.Status)
+	}
+	var body struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return body.Tags, nil
 }

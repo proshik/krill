@@ -68,6 +68,7 @@ var en = map[string]string{
 	"app.registry":              "Registry",
 	"app.registry_public":       "Public (no auth)",
 	"app.registry_save":         "Save registry",
+	"app.load_tags":             "Load tags",
 	"tab.general":               "General",
 	"tab.environment":           "Environment",
 	"tab.deployments":           "Deployments",

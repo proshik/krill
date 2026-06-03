@@ -23,3 +23,11 @@ func TestEncodeRegistryAuth(t *testing.T) {
 		t.Fatalf("fields = %+v", m)
 	}
 }
+
+func TestParseBearerChallenge(t *testing.T) {
+	h := `Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:proshik/x:pull"`
+	c := parseBearerChallenge(h)
+	if c["realm"] != "https://ghcr.io/token" || c["service"] != "ghcr.io" || c["scope"] != "repository:proshik/x:pull" {
+		t.Fatalf("parsed = %+v", c)
+	}
+}
