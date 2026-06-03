@@ -27,6 +27,7 @@ type App struct {
 	GitBranch      string
 	DockerfilePath string
 	Domains        []traefik.Domain
+	RegistryAuth   string
 }
 
 // Store — what the deployer needs from the store.
@@ -211,12 +212,13 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		domains = []traefik.Domain{{Host: app.Domain, TLS: false}}
 	}
 	return docker.ServiceSpec{
-		Name:     name,
-		Image:    imageTag,
-		Env:      app.Env,
-		Labels:   traefik.AppLabels(name, domains, app.Port, d.network),
-		Replicas: 1,
-		Network:  d.network,
+		Name:         name,
+		Image:        imageTag,
+		Env:          app.Env,
+		Labels:       traefik.AppLabels(name, domains, app.Port, d.network),
+		Replicas:     1,
+		Network:      d.network,
+		RegistryAuth: app.RegistryAuth,
 	}
 }
 

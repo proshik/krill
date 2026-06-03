@@ -248,6 +248,15 @@ func TestDeployConvergeTimeoutMarksError(t *testing.T) {
 	}
 }
 
+func TestBuildSpecRegistryAuth(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	app := imageApp()
+	app.RegistryAuth = "ABC123"
+	if spec := d.buildSpec(app, "nginx:alpine"); spec.RegistryAuth != "ABC123" {
+		t.Fatalf("RegistryAuth = %q, want ABC123", spec.RegistryAuth)
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

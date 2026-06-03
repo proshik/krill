@@ -4,6 +4,7 @@ import (
 	"context"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/traefik"
 )
 
@@ -38,6 +39,13 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	}
 	for _, d := range doms {
 		out.Domains = append(out.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls})
+	}
+	if a.RegistryID != nil {
+		if reg, rerr := s.q.GetRegistry(ctx, *a.RegistryID); rerr == nil {
+			if auth, aerr := docker.EncodeRegistryAuth(reg.Username, reg.Password, reg.RegistryUrl); aerr == nil {
+				out.RegistryAuth = auth
+			}
+		}
 	}
 	return out, nil
 }
