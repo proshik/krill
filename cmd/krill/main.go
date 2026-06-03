@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
@@ -113,10 +114,29 @@ func run() error {
 	dbStore := dbservice.NewDBStore(q)
 	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
 
+	// Backups: service + in-process cron scheduler.
+	backupStore := backup.NewDBStore(q)
+	backupSvc := backup.New(engine, backupStore)
+	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
+		if err := backupSvc.RunBackup(ctx, id, time.Now()); err != nil {
+			slog.Error("scheduled backup failed", "backup", id, "err", err)
+		}
+	})
+	if err := sched.Reload(); err != nil {
+		slog.Warn("backup scheduler reload failed", "err", err)
+	}
+	defer sched.Stop()
+
 	// HTTP server.
+	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
+	app.SetBackups(backupSvc, func() {
+		if err := sched.Reload(); err != nil {
+			slog.Error("backup scheduler reload failed", "err", err)
+		}
+	})
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc).Router(),
+		Handler: app.Router(),
 	}
 
 	errCh := make(chan error, 1)
