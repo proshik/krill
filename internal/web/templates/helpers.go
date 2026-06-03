@@ -4,10 +4,31 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/proshik/krill/internal/database/gen"
 )
 
 // itoa formats an int64 for interpolation into URLs inside templates.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// destName returns the Name of the destination with the given id, or "" if none.
+func destName(dests []db.Destination, id int64) string {
+	for _, d := range dests {
+		if d.ID == id {
+			return d.Name
+		}
+	}
+	return ""
+}
+
+// tsStr formats a timestamptz as "2006-01-02 15:04", or "—" if not set.
+func tsStr(t pgtype.Timestamptz) string {
+	if !t.Valid {
+		return "—"
+	}
+	return t.Time.Format("2006-01-02 15:04")
+}
 
 // humanSize renders a byte count as a short human-readable string.
 func humanSize(n int64) string {

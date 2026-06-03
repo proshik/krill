@@ -375,6 +375,16 @@ func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.Da
 		if row.ExternalPort != nil {
 			c.External = dbservice.PostgresExternalURL(pg, s.cfg.Host)
 		}
+		if backups, err := s.q.ListBackupsByDB(r.Context(), id); err != nil {
+			logFrom(r).Error("loadDBCtx: failed to list backups", "err", err, "db_id", id)
+		} else {
+			c.Backups = backups
+		}
+		if dests, err := s.q.ListDestinationsByOrg(r.Context(), o.ID); err != nil {
+			logFrom(r).Error("loadDBCtx: failed to list destinations", "err", err, "org_id", o.ID)
+		} else {
+			c.Destinations = dests
+		}
 	} else {
 		row, _ := s.q.GetRedis(r.Context(), id)
 		rd := dbservice.RedisDB{AppName: row.AppName, Password: row.Password, ExternalPort: row.ExternalPort}

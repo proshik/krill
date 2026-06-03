@@ -20,6 +20,9 @@ type DatabaseCtx struct {
 	External string
 	Base     string // path to /databases/{engine}/{id}
 	Tab      string
+
+	Backups      []db.Backup      // postgres only: configured backups
+	Destinations []db.Destination // postgres only: org S3 destinations
 }
 
 templ DatabaseDetail(c DatabaseCtx) {
@@ -67,7 +70,103 @@ templ DatabaseDetail(c DatabaseCtx) {
 					<script src="/static/app.js"></script>
 					<script>mountLogTerminal(document.getElementById('terminal').dataset.ws);</script>
 				</div>
+				if c.Engine == "postgres" && (c.Role == "owner" || c.Role == "admin") {
+					@backupsSection(c)
+				}
 			</div>
 		</div></div>
 	}
+}
+
+templ backupsSection(c DatabaseCtx) {
+	<div>
+		<div class="k-label">{ i18n.T(ctx, "backup.section") }</div>
+		if len(c.Backups) == 0 {
+			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
+		} else {
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "backup.destination") }</th>
+						<th>{ i18n.T(ctx, "backup.schedule") }</th>
+						<th>{ i18n.T(ctx, "backup.retention") }</th>
+						<th>{ i18n.T(ctx, "backup.enabled") }</th>
+						<th>{ i18n.T(ctx, "backup.last_run") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, b := range c.Backups {
+						<tr>
+							<td>{ destName(c.Destinations, b.DestinationID) }</td>
+							<td class="k-mono">{ b.Schedule }</td>
+							<td>{ itoa(int64(b.Retention)) }</td>
+							<td>
+								if b.Enabled {
+									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "backup.enabled") }</span>
+								} else {
+									<span class="k-badge k-badge-idle"><span class="k-dot"></span>—</span>
+								}
+							</td>
+							<td>
+								<div>{ tsStr(b.LastRunAt) } { b.LastStatus }</div>
+								if b.LastError != "" {
+									<div class="text-xs" style="color:var(--color-err)">{ b.LastError }</div>
+								}
+							</td>
+							<td>
+								<div class="flex items-center gap-2 flex-wrap">
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } style="display:inline">
+										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
+									</form>
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } style="display:inline">
+										<button class="k-btn">{ i18n.T(ctx, "backup.toggle") }</button>
+									</form>
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } onsubmit="return confirm('Delete backup?')" style="display:inline">
+										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
+									</form>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td colspan="6">
+								<div class="k-label">{ i18n.T(ctx, "backup.objects") }</div>
+								<div hx-get={ c.Base + "/backups/" + itoa(b.ID) + "/objects" } hx-trigger="load" hx-swap="innerHTML"></div>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+		if len(c.Destinations) == 0 {
+			<p class="k-muted">
+				{ i18n.T(ctx, "backup.no_destinations") }
+				<a class="underline" href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
+			</p>
+		} else {
+			<form method="post" action={ templ.SafeURL(c.Base + "/backups") } class="mt-4 flex flex-col gap-2">
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.destination") }</label>
+					<select class="k-input" name="destination_id">
+						for _, d := range c.Destinations {
+							<option value={ itoa(d.ID) }>{ d.Name }</option>
+						}
+					</select>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.schedule") }</label>
+					<input class="k-input" name="schedule" placeholder="0 3 * * *"/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.retention") }</label>
+					<input class="k-input" name="retention" type="number" value="7" min="1"/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.prefix") }</label>
+					<input class="k-input" name="prefix"/>
+				</div>
+				<button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button>
+			</form>
+		}
+	</div>
 }

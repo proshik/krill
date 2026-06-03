@@ -1,12 +1,23 @@
 package templates
 
-import db "github.com/proshik/krill/internal/database/gen"
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
 
 templ Destinations(org db.Organization, role string, dests []db.Destination) {
-	@Layout("Destinations", org, role) {
+	@Layout(i18n.T(ctx, "dest.title"), org, role) {
 		<div class="k-card">
 			<table class="k-table">
-				<thead><tr><th>Name</th><th>Endpoint</th><th>Bucket</th><th>Region</th><th></th></tr></thead>
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "dest.name") }</th>
+						<th>{ i18n.T(ctx, "dest.endpoint") }</th>
+						<th>{ i18n.T(ctx, "dest.bucket") }</th>
+						<th>{ i18n.T(ctx, "dest.region") }</th>
+						<th></th>
+					</tr>
+				</thead>
 				<tbody>
 					for _, d := range dests {
 						<tr>
@@ -14,7 +25,7 @@ templ Destinations(org db.Organization, role string, dests []db.Destination) {
 							<td>
 								if role == "owner" || role == "admin" {
 									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations/" + itoa(d.ID) + "/delete") } onsubmit="return confirm('Delete destination?')">
-										<button class="k-btn k-btn-danger">Delete</button>
+										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "dest.delete") }</button>
 									</form>
 								}
 							</td>
@@ -24,13 +35,31 @@ templ Destinations(org db.Organization, role string, dests []db.Destination) {
 			</table>
 			if role == "owner" || role == "admin" {
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") } class="mt-4 flex flex-col gap-2">
-					<input class="k-input" name="name" placeholder="name"/>
-					<input class="k-input" name="endpoint" placeholder="endpoint (blank for AWS; URL for MinIO)"/>
-					<input class="k-input" name="bucket" placeholder="bucket"/>
-					<input class="k-input" name="region" placeholder="region (us-east-1)"/>
-					<input class="k-input" name="access_key" placeholder="access key"/>
-					<input class="k-input" name="secret_key" placeholder="secret key" type="password"/>
-					<button class="k-btn k-btn-primary">Add destination</button>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.name") }</label>
+						<input class="k-input" name="name"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.endpoint") }</label>
+						<input class="k-input" name="endpoint" placeholder="(blank for AWS; URL for MinIO)"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.bucket") }</label>
+						<input class="k-input" name="bucket"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.region") }</label>
+						<input class="k-input" name="region" placeholder="us-east-1"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.access_key") }</label>
+						<input class="k-input" name="access_key"/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "dest.secret_key") }</label>
+						<input class="k-input" name="secret_key" type="password"/>
+					</div>
+					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "dest.add") }</button>
 				</form>
 			}
 		</div>
