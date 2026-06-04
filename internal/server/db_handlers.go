@@ -36,7 +36,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	version := strings.TrimSpace(r.FormValue("version"))
 	if name == "" || (engine != "postgres" && engine != "redis") {
 		logFrom(r).Info("createDatabase: engine and name are required", "environment_id", e.ID, "engine", engine)
-		http.Error(w, "engine and name are required", http.StatusBadRequest)
+		s.flashErr(w, r, "engine and name are required")
 		return
 	}
 	var extPort *int32
@@ -44,7 +44,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 65535 {
 			logFrom(r).Info("createDatabase: invalid external_port", "environment_id", e.ID, "engine", engine, "name", name)
-			http.Error(w, "invalid external_port", http.StatusBadRequest)
+			s.flashErr(w, r, "invalid external_port")
 			return
 		}
 		x := int32(n)
@@ -52,7 +52,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		rdN, _ := s.q.CountRedisByExternalPort(r.Context(), &x)
 		if pgN+rdN > 0 {
 			logFrom(r).Warn("createDatabase: external port already in use", "environment_id", e.ID, "engine", engine, "name", name)
-			http.Error(w, "external port already in use", http.StatusBadRequest)
+			s.flashErr(w, r, "external port already in use")
 			return
 		}
 		extPort = &x
@@ -60,7 +60,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	pw, err := genPassword()
 	if err != nil {
 		logFrom(r).Error("createDatabase: failed to generate password", "err", err, "environment_id", e.ID, "engine", engine, "name", name)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		s.flashErr(w, r, "internal error")
 		return
 	}
 	switch engine {
@@ -76,7 +76,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			logFrom(r).Error("createDatabase: failed to create postgres", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
-			http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+			s.flashErr(w, r, "create: "+err.Error())
 			return
 		}
 		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
@@ -90,11 +90,12 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			logFrom(r).Error("createDatabase: failed to create redis", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
-			http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+			s.flashErr(w, r, "create: "+err.Error())
 			return
 		}
 		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
 	}
+	s.setFlash(w, "ok", "Database created")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
 
@@ -109,6 +110,7 @@ func (s *Server) deployDatabase(w http.ResponseWriter, r *http.Request) {
 		s.dbsvc.DeployRedis(r.Context(), id)
 	}
 	logFrom(r).Info("database deploy requested", "db_id", id, "engine", eng)
+	s.setFlash(w, "ok", "Deployment queued")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -123,6 +125,7 @@ func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
 		_ = s.dbsvc.StartRedis(r.Context(), id)
 	}
 	logFrom(r).Info("database started", "db_id", id, "engine", eng)
+	s.setFlash(w, "ok", "Start requested")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -137,6 +140,7 @@ func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
 		_ = s.dbsvc.StopRedis(r.Context(), id)
 	}
 	logFrom(r).Info("database stopped", "db_id", id, "engine", eng)
+	s.setFlash(w, "ok", "Stop requested")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -155,7 +159,7 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			logFrom(r).Error("versionDatabase: failed to update image", "err", err, "db_id", id, "engine", eng, "image", image)
-			http.Error(w, "failed to update image", http.StatusInternalServerError)
+			s.flashErr(w, r, "failed to update image")
 			return
 		}
 		logFrom(r).Info("database version updated", "db_id", id, "engine", eng, "image", image)
@@ -165,6 +169,7 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.dbsvc.DeployRedis(r.Context(), id)
 	}
+	s.setFlash(w, "ok", "Version update queued")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -183,6 +188,7 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 		_ = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
 	}
 	logFrom(r).Info("database deleted", "db_id", id, "engine", eng, "destroy_data", destroy)
+	s.setFlash(w, "ok", "Database deleted")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
 

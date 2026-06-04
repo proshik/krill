@@ -50,7 +50,30 @@ func TestCreateRegistrySucceeds(t *testing.T) {
 	}
 }
 
-func TestCreateRegistryDuplicateName400(t *testing.T) {
+// TestCreateRegistryMissingFieldsFlash drives the converted createRegistry error
+// path (missing required fields) and asserts the PRG response: a 303 redirect
+// with an "err:"-prefixed krill_flash cookie, and no registry row created.
+func TestCreateRegistryMissingFieldsFlash(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "owner@k.local")
+
+	// Only a name — registry_url/username/password are missing.
+	rec := createRegistryForm(t, h, cookie, o.ID, url.Values{"name": {"primary"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("missing fields want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := flashCookieValue(rec); !strings.HasPrefix(got, "err:") {
+		t.Fatalf("missing fields want krill_flash cookie prefixed err:, got %q", got)
+	}
+	if regs, _ := q.ListRegistriesByOrg(ctx, o.ID); len(regs) != 0 {
+		t.Fatalf("expected no registry created, got %d", len(regs))
+	}
+}
+
+func TestCreateRegistryDuplicateNameFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	ownerID := mkUser(t, q, "owner@k.local")
@@ -67,10 +90,13 @@ func TestCreateRegistryDuplicateName400(t *testing.T) {
 		t.Fatalf("first create want 303, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	// Same name again → 400.
+	// Same name again → err flash + 303.
 	rec := createRegistryForm(t, h, cookie, o.ID, form)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate name want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate name want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("duplicate name want err flash, got %q", flashCookieValue(rec))
 	}
 
 	regs, _ := q.ListRegistriesByOrg(ctx, o.ID)
@@ -180,7 +206,7 @@ func TestCreateAppWithRegistrySetsRegistryID(t *testing.T) {
 	}
 }
 
-func TestCreateAppCrossOrgRegistry400(t *testing.T) {
+func TestCreateAppCrossOrgRegistryFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 
@@ -208,8 +234,11 @@ func TestCreateAppCrossOrgRegistry400(t *testing.T) {
 		"port":        {"80"},
 		"registry_id": {i64(regA.ID)},
 	})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("cross-org registry want 400, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("cross-org registry want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("cross-org registry want err flash, got %q", flashCookieValue(rec))
 	}
 
 	apps, _ := q.ListApplicationsByEnvironment(ctx, eB.ID)

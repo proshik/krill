@@ -39,7 +39,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	secretKey := r.FormValue("secret_key")
 
 	if name == "" || bucket == "" {
-		http.Error(w, "name and bucket are required", http.StatusBadRequest)
+		s.flashErr(w, r, "name and bucket are required")
 		return
 	}
 	if region == "" {
@@ -49,11 +49,11 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	n, err := s.q.CountDestinationsByName(r.Context(), db.CountDestinationsByNameParams{OrganizationID: o.ID, Name: name})
 	if err != nil {
 		logFrom(r).Error("createDestination: failed to count destinations", "err", err, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	if n > 0 {
-		http.Error(w, "a destination with this name already exists", http.StatusBadRequest)
+		s.flashErr(w, r, "a destination with this name already exists")
 		return
 	}
 
@@ -65,7 +65,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 		SecretKey: secretKey,
 	}); err != nil {
 		logFrom(r).Info("createDestination: bucket access check failed", "err", err, "org_id", o.ID, "bucket", bucket, "endpoint", endpoint)
-		http.Error(w, "cannot access bucket with these credentials", http.StatusBadRequest)
+		s.flashErr(w, r, "cannot access bucket with these credentials")
 		return
 	}
 
@@ -80,10 +80,11 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createDestination: failed to create destination", "err", err, "org_id", o.ID, "name", name)
-		http.Error(w, "failed to create destination: "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create destination: "+err.Error())
 		return
 	}
 	logFrom(r).Info("destination created", "org_id", o.ID, "destination_id", d.ID, "name", d.Name, "bucket", d.Bucket, "endpoint", d.Endpoint)
+	s.setFlash(w, "ok", "Destination created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/destinations", http.StatusSeeOther)
 }
 
@@ -108,18 +109,19 @@ func (s *Server) deleteDestination(w http.ResponseWriter, r *http.Request) {
 	n, err := s.q.CountBackupsByDestination(r.Context(), dID)
 	if err != nil {
 		logFrom(r).Error("deleteDestination: failed to count backups", "err", err, "destination_id", dID, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	if n > 0 {
-		http.Error(w, "destination is in use by backups", http.StatusBadRequest)
+		s.flashErr(w, r, "destination is in use by backups")
 		return
 	}
 	if err := s.q.DeleteDestination(r.Context(), dID); err != nil {
 		logFrom(r).Error("deleteDestination: failed to delete destination", "err", err, "destination_id", dID, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	logFrom(r).Info("destination deleted", "org_id", o.ID, "destination_id", dID)
+	s.setFlash(w, "ok", "Destination deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/destinations", http.StatusSeeOther)
 }

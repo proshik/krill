@@ -66,7 +66,7 @@ func TestCreateDestinationSucceeds(t *testing.T) {
 	}
 }
 
-func TestCreateDestinationDuplicateName400(t *testing.T) {
+func TestCreateDestinationDuplicateNameFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	ownerID := mkUser(t, q, "owner@k.local")
@@ -97,10 +97,13 @@ func TestCreateDestinationDuplicateName400(t *testing.T) {
 		t.Fatalf("first create want 303, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	// Same name again → 400.
+	// Same name again → err flash + 303.
 	rec := createDestinationForm(t, h, cookie, o.ID, form)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate name want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate name want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("duplicate name want err flash, got %q", flashCookieValue(rec))
 	}
 
 	dests, _ := q.ListDestinationsByOrg(ctx, o.ID)

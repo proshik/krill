@@ -42,23 +42,24 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 	tls := r.FormValue("tls") == "on"
 	if !validHost(host) {
 		logFrom(r).Info("addDomain: invalid host", "app_id", c.App.ID, "host", host)
-		http.Error(w, "invalid host", http.StatusBadRequest)
+		s.flashErr(w, r, "invalid host")
 		return
 	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), host); n > 0 {
 		logFrom(r).Info("addDomain: host already in use", "app_id", c.App.ID, "host", host)
-		http.Error(w, "host already in use", http.StatusBadRequest)
+		s.flashErr(w, r, "host already in use")
 		return
 	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
 		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false,
 	}); err != nil {
 		logFrom(r).Error("addDomain: create failed", "err", err, "app_id", c.App.ID, "host", host)
-		http.Error(w, "failed to add domain", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to add domain")
 		return
 	}
 	logFrom(r).Info("domain added", "app_id", c.App.ID, "host", host, "tls", tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	s.setFlash(w, "ok", "Domain added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -73,11 +74,12 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetDomainTLS(r.Context(), db.SetDomainTLSParams{ID: d.ID, Tls: !d.Tls}); err != nil {
 		logFrom(r).Error("toggleDomainTLS: update failed", "err", err, "domain_id", d.ID)
-		http.Error(w, "failed to update domain", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to update domain")
 		return
 	}
 	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", !d.Tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	s.setFlash(w, "ok", "TLS setting updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -92,16 +94,17 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	if n, _ := s.q.CountDomainsByApplication(r.Context(), c.App.ID); n <= 1 {
 		logFrom(r).Info("deleteDomain: refused to delete last domain", "app_id", c.App.ID, "domain_id", d.ID)
-		http.Error(w, "cannot delete the last domain", http.StatusBadRequest)
+		s.flashErr(w, r, "cannot delete the last domain")
 		return
 	}
 	if err := s.q.DeleteDomain(r.Context(), d.ID); err != nil {
 		logFrom(r).Error("deleteDomain: delete failed", "err", err, "domain_id", d.ID)
-		http.Error(w, "failed to delete domain", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to delete domain")
 		return
 	}
 	logFrom(r).Info("domain deleted", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	s.setFlash(w, "ok", "Domain deleted")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 

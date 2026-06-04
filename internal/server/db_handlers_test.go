@@ -79,7 +79,7 @@ func TestAdminCreatesPostgres(t *testing.T) {
 	}
 }
 
-func TestCreateDatabaseInvalidPort400(t *testing.T) {
+func TestCreateDatabaseInvalidPortFlash(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	ctx := context.Background()
@@ -102,8 +102,11 @@ func TestCreateDatabaseInvalidPort400(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid port 'abc' want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invalid port 'abc' want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("invalid port 'abc' want err flash cookie, got %q", flashCookieValue(rec))
 	}
 
 	// out-of-range port
@@ -113,8 +116,11 @@ func TestCreateDatabaseInvalidPort400(t *testing.T) {
 	req2.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusBadRequest {
-		t.Fatalf("invalid port '99999' want 400, got %d", rec2.Code)
+	if rec2.Code != http.StatusSeeOther {
+		t.Fatalf("invalid port '99999' want 303, got %d", rec2.Code)
+	}
+	if !hasErrFlash(rec2) {
+		t.Fatalf("invalid port '99999' want err flash cookie, got %q", flashCookieValue(rec2))
 	}
 
 	// no row should have been created
@@ -124,7 +130,7 @@ func TestCreateDatabaseInvalidPort400(t *testing.T) {
 	}
 }
 
-func TestCreateDatabaseDuplicatePort400(t *testing.T) {
+func TestCreateDatabaseDuplicatePortFlash(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	ctx := context.Background()
@@ -158,8 +164,11 @@ func TestCreateDatabaseDuplicatePort400(t *testing.T) {
 	req2.AddCookie(&http.Cookie{Name: auth.CookieName, Value: tok})
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate port want 400, got %d", rec2.Code)
+	if rec2.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate port want 303, got %d", rec2.Code)
+	}
+	if !hasErrFlash(rec2) {
+		t.Fatalf("duplicate port want err flash cookie, got %q", flashCookieValue(rec2))
 	}
 
 	// only the first row should exist

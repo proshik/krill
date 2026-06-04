@@ -53,40 +53,40 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	port, err := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
 	if err != nil || port <= 0 || !isSlug(name) {
 		logFrom(r).Info("createApp: invalid fields", "environment_id", e.ID, "name", name)
-		http.Error(w, "check the fields: name (slug), port", http.StatusBadRequest)
+		s.flashErr(w, r, "check the fields: name (slug), port")
 		return
 	}
 	if !validHost(domain) {
 		logFrom(r).Info("createApp: invalid domain", "environment_id", e.ID, "name", name, "domain", domain)
-		http.Error(w, "invalid domain", http.StatusBadRequest)
+		s.flashErr(w, r, "invalid domain")
 		return
 	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), domain); n > 0 {
 		logFrom(r).Info("createApp: domain already in use", "environment_id", e.ID, "name", name, "domain", domain)
-		http.Error(w, "domain already in use", http.StatusBadRequest)
+		s.flashErr(w, r, "domain already in use")
 		return
 	}
 	if sourceType == "image" && image == "" {
 		logFrom(r).Info("createApp: image required for image source", "environment_id", e.ID, "name", name)
-		http.Error(w, "specify image for the 'image' source", http.StatusBadRequest)
+		s.flashErr(w, r, "specify image for the 'image' source")
 		return
 	}
 	if sourceType == "dockerfile" && gitURL == "" {
 		logFrom(r).Info("createApp: git URL required for dockerfile source", "environment_id", e.ID, "name", name)
-		http.Error(w, "specify git URL for the 'Dockerfile' source", http.StatusBadRequest)
+		s.flashErr(w, r, "specify git URL for the 'Dockerfile' source")
 		return
 	}
 	var registryID *int64
 	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
-			http.Error(w, "invalid registry", http.StatusBadRequest)
+			s.flashErr(w, r, "invalid registry")
 			return
 		}
 		reg, gerr := s.q.GetRegistry(r.Context(), n)
 		if gerr != nil || reg.OrganizationID != o.ID {
 			logFrom(r).Info("createApp: registry not found or org mismatch", "registry_id", n, "org_id", o.ID)
-			http.Error(w, "invalid registry", http.StatusBadRequest)
+			s.flashErr(w, r, "invalid registry")
 			return
 		}
 		registryID = &n
@@ -98,7 +98,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createApp: failed to create application", "err", err, "environment_id", e.ID, "name", name)
-		http.Error(w, "failed to create (name/domain already taken?): "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create (name/domain already taken?): "+err.Error())
 		return
 	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
@@ -109,7 +109,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("createApp: rollback delete application failed", "err", derr, "app_id", a.ID)
 		}
 		logFrom(r).Error("createApp: create primary domain failed", "err", err, "app_id", a.ID, "host", a.Domain)
-		http.Error(w, "failed to create domain", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to create domain")
 		return
 	}
 	if registryID != nil {
@@ -118,6 +118,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	logFrom(r).Info("application created", "app_id", a.ID, "environment_id", e.ID, "name", name)
+	s.setFlash(w, "ok", "Application created")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID), http.StatusSeeOther)
 }
 
@@ -131,22 +132,23 @@ func (s *Server) setAppRegistry(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
-			http.Error(w, "invalid registry", http.StatusBadRequest)
+			s.flashErr(w, r, "invalid registry")
 			return
 		}
 		reg, gerr := s.q.GetRegistry(r.Context(), n)
 		if gerr != nil || reg.OrganizationID != o.ID {
-			http.Error(w, "invalid registry", http.StatusBadRequest)
+			s.flashErr(w, r, "invalid registry")
 			return
 		}
 		registryID = &n
 	}
 	if err := s.q.SetApplicationRegistry(r.Context(), db.SetApplicationRegistryParams{ID: c.App.ID, RegistryID: registryID}); err != nil {
 		logFrom(r).Error("setAppRegistry: update failed", "err", err, "app_id", c.App.ID)
-		http.Error(w, "failed to set registry", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to set registry")
 		return
 	}
 	logFrom(r).Info("application registry set", "app_id", c.App.ID, "registry_id", registryID)
+	s.setFlash(w, "ok", "Registry updated")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
@@ -242,7 +244,7 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 				ID: c.App.ID, GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 			}); err != nil {
 				logFrom(r).Error("deployApp: failed to update application source", "err", err, "app_id", c.App.ID)
-				http.Error(w, "failed to update source", http.StatusInternalServerError)
+				s.flashErr(w, r, "failed to update source")
 				return
 			}
 		}
@@ -252,13 +254,14 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 		if image != "" && tag != "" {
 			if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag}); err != nil {
 				logFrom(r).Error("deployApp: failed to update application image", "err", err, "app_id", c.App.ID, "image", image)
-				http.Error(w, "failed to update image", http.StatusInternalServerError)
+				s.flashErr(w, r, "failed to update image")
 				return
 			}
 		}
 	}
 	s.deployer.Enqueue(c.App.ID, "manual")
 	logFrom(r).Info("deploy enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Deployment queued")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
@@ -271,10 +274,11 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 		ID: c.App.ID, Env: parseEnv(r.FormValue("env")),
 	}); err != nil {
 		logFrom(r).Error("saveEnv: failed to update application env", "err", err, "app_id", c.App.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	logFrom(r).Info("environment variables updated", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Variables saved — applied on next deploy")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
 }
 
@@ -286,10 +290,11 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	_ = s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID))
 	if err := s.q.DeleteApplication(r.Context(), c.App.ID); err != nil {
 		logFrom(r).Error("deleteApp: failed to delete application", "err", err, "app_id", c.App.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	logFrom(r).Info("application deleted", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Application deleted")
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)
 }
 

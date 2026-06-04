@@ -69,7 +69,7 @@ func TestAddBackupSucceeds(t *testing.T) {
 	}
 }
 
-func TestAddBackupCrossOrgDestination400(t *testing.T) {
+func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	o, projID, envID, pgID, _, cookie := backupFixture(t, q, orgSvc)
@@ -88,15 +88,18 @@ func TestAddBackupCrossOrgDestination400(t *testing.T) {
 	base := backupsBase(o.ID, projID, envID, pgID)
 	form := url.Values{"destination_id": {i64(otherDest.ID)}, "schedule": {"0 3 * * *"}, "retention": {"7"}}
 	rec := postForm(t, h, base, cookie, form)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("cross-org destination want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("cross-org destination want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("cross-org destination want err flash, got %q", flashCookieValue(rec))
 	}
 	if bks, _ := q.ListBackupsByDB(ctx, pgID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
 
-func TestAddBackupZeroRetention400(t *testing.T) {
+func TestAddBackupZeroRetentionFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
@@ -104,8 +107,11 @@ func TestAddBackupZeroRetention400(t *testing.T) {
 	base := backupsBase(o.ID, projID, envID, pgID)
 	form := url.Values{"destination_id": {i64(destID)}, "schedule": {"0 3 * * *"}, "retention": {"0"}}
 	rec := postForm(t, h, base, cookie, form)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("retention 0 want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("retention 0 want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("retention 0 want err flash, got %q", flashCookieValue(rec))
 	}
 	if bks, _ := q.ListBackupsByDB(ctx, pgID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))

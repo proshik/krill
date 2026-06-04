@@ -117,13 +117,13 @@ func TestCreateAppCustomDomainValidation(t *testing.T) {
 
 	base := url.Values{"image": {"nginx"}, "tag": {"latest"}, "port": {"8080"}}
 
-	// Invalid custom domain (would otherwise be injected unescaped into a Traefik rule) -> 400.
+	// Invalid custom domain (would otherwise be injected unescaped into a Traefik rule) -> err flash + 303.
 	bad := url.Values{"name": {"app1"}, "domain": {"x.com`)||PathPrefix(`/"}}
 	for k, v := range base {
 		bad[k] = v
 	}
-	if rec := postForm(t, h, appsURL, cookie, bad); rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid custom domain want 400, got %d", rec.Code)
+	if rec := postForm(t, h, appsURL, cookie, bad); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("invalid custom domain want 303+err flash, got %d flash=%q", rec.Code, flashCookieValue(rec))
 	}
 
 	// First app claims a custom domain.
@@ -135,13 +135,13 @@ func TestCreateAppCustomDomainValidation(t *testing.T) {
 		t.Fatalf("first custom domain want 303, got %d body: %s", rec.Code, rec.Body.String())
 	}
 
-	// Second app reusing the same host -> 400, and no orphan app is created.
+	// Second app reusing the same host -> err flash + 303, and no orphan app is created.
 	dup := url.Values{"name": {"app3"}, "domain": {"taken.example.com"}}
 	for k, v := range base {
 		dup[k] = v
 	}
-	if rec := postForm(t, h, appsURL, cookie, dup); rec.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate custom domain want 400, got %d", rec.Code)
+	if rec := postForm(t, h, appsURL, cookie, dup); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("duplicate custom domain want 303+err flash, got %d flash=%q", rec.Code, flashCookieValue(rec))
 	}
 	apps, err := q.ListApplicationsByEnvironment(ctx, e.ID)
 	if err != nil {
@@ -183,8 +183,11 @@ func TestAddDomainInvalidHost(t *testing.T) {
 	base, cookie, appID := domainFixture(t, h, q, orgSvc, "web.primary.example.com")
 
 	rec := postForm(t, h, base+"/domains", cookie, url.Values{"host": {"not a host"}})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("invalid host want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invalid host want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("invalid host want err flash, got %q", flashCookieValue(rec))
 	}
 
 	doms, _ := q.ListDomainsByApplication(ctx, appID)
@@ -204,8 +207,11 @@ func TestAddDomainDuplicate(t *testing.T) {
 	}
 	// add the same host again — should fail
 	rec := postForm(t, h, base+"/domains", cookie, url.Values{"host": {"dup.example.com"}})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("duplicate host want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("duplicate host want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("duplicate host want err flash, got %q", flashCookieValue(rec))
 	}
 
 	doms, _ := q.ListDomainsByApplication(ctx, appID)
@@ -286,8 +292,11 @@ func TestCannotDeleteLastDomain(t *testing.T) {
 	last := doms[0]
 
 	rec := postForm(t, h, base+"/domains/"+i64(last.ID)+"/delete", cookie, url.Values{})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("delete last domain want 400, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete last domain want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("delete last domain want err flash, got %q", flashCookieValue(rec))
 	}
 	if _, err := q.GetDomain(ctx, last.ID); err != nil {
 		t.Errorf("last domain %d was deleted: %v", last.ID, err)

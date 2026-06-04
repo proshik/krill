@@ -37,25 +37,25 @@ func (s *Server) createRegistry(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if name == "" || registryURL == "" || username == "" || password == "" {
-		http.Error(w, "name, registry_url, username and password are required", http.StatusBadRequest)
+		s.flashErr(w, r, "name, registry_url, username and password are required")
 		return
 	}
 
 	n, err := s.q.CountRegistriesByName(r.Context(), db.CountRegistriesByNameParams{OrganizationID: o.ID, Name: name})
 	if err != nil {
 		logFrom(r).Error("createRegistry: failed to count registries", "err", err, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	if n > 0 {
-		http.Error(w, "a registry with this name already exists", http.StatusBadRequest)
+		s.flashErr(w, r, "a registry with this name already exists")
 		return
 	}
 
 	if s.engine != nil {
 		if err := s.engine.RegistryCheck(r.Context(), registryURL, username, password); err != nil {
 			logFrom(r).Info("createRegistry: auth check failed", "org_id", o.ID, "registry_url", registryURL)
-			http.Error(w, "cannot authenticate to registry", http.StatusBadRequest)
+			s.flashErr(w, r, "cannot authenticate to registry")
 			return
 		}
 	}
@@ -69,10 +69,11 @@ func (s *Server) createRegistry(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createRegistry: failed to create registry", "err", err, "org_id", o.ID, "name", name)
-		http.Error(w, "failed to create registry: "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create registry: "+err.Error())
 		return
 	}
 	logFrom(r).Info("registry created", "org_id", o.ID, "registry_id", reg.ID, "name", reg.Name, "registry_url", reg.RegistryUrl, "username", reg.Username)
+	s.setFlash(w, "ok", "Registry created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/registries", http.StatusSeeOther)
 }
 
@@ -96,14 +97,15 @@ func (s *Server) deleteRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 	id2 := id
 	if n, _ := s.q.CountApplicationsByRegistry(r.Context(), &id2); n > 0 {
-		http.Error(w, "registry is used by an application", http.StatusBadRequest)
+		s.flashErr(w, r, "registry is used by an application")
 		return
 	}
 	if err := s.q.DeleteRegistry(r.Context(), id); err != nil {
 		logFrom(r).Error("deleteRegistry: failed to delete registry", "err", err, "registry_id", id, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.flashErr(w, r, err.Error())
 		return
 	}
 	logFrom(r).Info("registry deleted", "org_id", o.ID, "registry_id", id)
+	s.setFlash(w, "ok", "Registry deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/registries", http.StatusSeeOther)
 }

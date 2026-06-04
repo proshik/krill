@@ -17,10 +17,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.org.CreateProject(r.Context(), o.ID, r.FormValue("name"), r.FormValue("description"))
 	if err != nil {
 		logFrom(r).Info("createProject: rejected", "err", err, "org_id", o.ID)
-		http.Error(w, "failed to create project: "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create project: "+err.Error())
 		return
 	}
 	logFrom(r).Info("project created", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
+	s.setFlash(w, "ok", "Project created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -72,10 +73,11 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	e, err := s.org.CreateEnvironment(r.Context(), p.ID, r.FormValue("name"))
 	if err != nil {
 		logFrom(r).Info("createEnvironment: rejected", "err", err, "project_id", p.ID, "org_id", o.ID)
-		http.Error(w, "failed to create environment: "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create environment: "+err.Error())
 		return
 	}
 	logFrom(r).Info("environment created", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
+	s.setFlash(w, "ok", "Environment created")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 

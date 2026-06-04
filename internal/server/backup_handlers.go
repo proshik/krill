@@ -64,17 +64,17 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 
 	destID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("destination_id")), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid destination", http.StatusBadRequest)
+		s.flashErr(w, r, "invalid destination")
 		return
 	}
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	if schedule == "" {
-		http.Error(w, "schedule is required", http.StatusBadRequest)
+		s.flashErr(w, r, "schedule is required")
 		return
 	}
 	retention, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retention")))
 	if err != nil || retention < 1 {
-		http.Error(w, "retention must be at least 1", http.StatusBadRequest)
+		s.flashErr(w, r, "retention must be at least 1")
 		return
 	}
 	prefix := strings.TrimSpace(r.FormValue("prefix"))
@@ -82,7 +82,7 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	dest, err := s.q.GetDestination(r.Context(), destID)
 	if err != nil || dest.OrganizationID != o.ID {
 		logFrom(r).Info("addBackup: destination not found or org mismatch", "destination_id", destID, "org_id", o.ID, "db_id", dbID)
-		http.Error(w, "invalid destination", http.StatusBadRequest)
+		s.flashErr(w, r, "invalid destination")
 		return
 	}
 
@@ -96,13 +96,14 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("addBackup: create failed", "err", err, "db_id", dbID, "destination_id", destID)
-		http.Error(w, "failed to create backup: "+err.Error(), http.StatusBadRequest)
+		s.flashErr(w, r, "failed to create backup: "+err.Error())
 		return
 	}
 	logFrom(r).Info("backup created", "backup_id", b.ID, "db_id", dbID, "destination_id", destID, "schedule", schedule, "retention", retention)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
+	s.setFlash(w, "ok", "Backup schedule created")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -114,13 +115,14 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.DeleteBackup(r.Context(), b.ID); err != nil {
 		logFrom(r).Error("deleteBackup: delete failed", "err", err, "backup_id", b.ID)
-		http.Error(w, "failed to delete backup", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to delete backup")
 		return
 	}
 	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", b.PostgresDbID)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
+	s.setFlash(w, "ok", "Backup schedule deleted")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -132,13 +134,14 @@ func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetBackupEnabled(r.Context(), db.SetBackupEnabledParams{ID: b.ID, Enabled: !b.Enabled}); err != nil {
 		logFrom(r).Error("toggleBackup: update failed", "err", err, "backup_id", b.ID)
-		http.Error(w, "failed to update backup", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to update backup")
 		return
 	}
 	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.PostgresDbID, "enabled", !b.Enabled)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
+	s.setFlash(w, "ok", "Backup schedule updated")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -159,6 +162,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 	} else {
 		logFrom(r).Info("backup run completed", "backup_id", b.ID, "db_id", b.PostgresDbID)
 	}
+	s.setFlash(w, "ok", "Backup started")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
@@ -179,10 +183,11 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.backupSvc.RestoreByID(r.Context(), b.ID, key); err != nil {
 		logFrom(r).Error("restoreBackup: restore failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
-		http.Error(w, "failed to restore backup", http.StatusInternalServerError)
+		s.flashErr(w, r, "failed to restore backup")
 		return
 	}
 	logFrom(r).Info("backup restored", "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+	s.setFlash(w, "ok", "Restore started")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 

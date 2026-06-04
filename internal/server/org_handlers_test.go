@@ -41,6 +41,22 @@ func mkUser(t *testing.T, q *db.Queries, email string) int64 {
 	return u.ID
 }
 
+// flashCookieValue returns the value of the "krill_flash" Set-Cookie header (if
+// any) on the response. The cookie format is "<kind>:<urlescaped-msg>".
+func flashCookieValue(rec *httptest.ResponseRecorder) string {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "krill_flash" {
+			return c.Value
+		}
+	}
+	return ""
+}
+
+// hasErrFlash reports whether the response set an error flash cookie.
+func hasErrFlash(rec *httptest.ResponseRecorder) bool {
+	return strings.HasPrefix(flashCookieValue(rec), "err:")
+}
+
 func newServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
@@ -136,8 +152,11 @@ func TestCannotDemoteLastOwner(t *testing.T) {
 	req.AddCookie(loginAs(t, q, "owner@k.local"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("demote last owner want 403, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("demote last owner want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("demote last owner want err flash, got %q", flashCookieValue(rec))
 	}
 	got, _ := q.GetMemberByID(ctx, ownerMem.ID)
 	if got.Role != "owner" {
@@ -159,8 +178,11 @@ func TestCannotRemoveLastOwner(t *testing.T) {
 	req.AddCookie(loginAs(t, q, "owner@k.local"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("remove last owner want 403, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("remove last owner want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("remove last owner want err flash, got %q", flashCookieValue(rec))
 	}
 	if _, err := q.GetMemberByID(ctx, ownerMem.ID); err != nil {
 		t.Fatalf("owner should still exist: %v", err)
@@ -244,8 +266,11 @@ func TestAdminCannotGrantOwner(t *testing.T) {
 	req.AddCookie(loginAs(t, q, "admin@k.local"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("admin granting owner want 403, got %d", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin granting owner want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("admin granting owner want err flash, got %q", flashCookieValue(rec))
 	}
 	got, _ := q.GetMemberByID(ctx, mem.ID)
 	if got.Role != "member" {
