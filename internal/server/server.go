@@ -68,6 +68,7 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
+		r.Use(s.flashMiddleware)
 
 		r.Get("/", s.home)
 		r.Get("/orgs", s.listOrgs)

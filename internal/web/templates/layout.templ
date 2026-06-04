@@ -2,12 +2,13 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/flash"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
 templ Layout(title string, org db.Organization, role string) {
 	<!DOCTYPE html>
-	<html lang="ru" class="dark">
+	<html lang="en" class="dark">
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -35,6 +36,11 @@ templ Layout(title string, org db.Organization, role string) {
 			</aside>
 			<main class="flex-1 min-w-0">
 				<div class="k-content">
+					if f := flash.From(ctx); f != nil {
+						<div class="k-toast-host">
+							<div class={ "k-toast", "k-toast-" + f.Kind, "k-toast-pop" } onclick="krillDismissToast(this)" role="status">{ f.Msg }</div>
+						</div>
+					}
 					{ children... }
 				</div>
 				<script src="/static/app.js"></script>
@@ -45,7 +51,7 @@ templ Layout(title string, org db.Organization, role string) {
 
 templ Bare(title string) {
 	<!DOCTYPE html>
-	<html lang="ru" class="dark">
+	<html lang="en" class="dark">
 		<head>
 			<meta charset="utf-8"/>
 			<title>{ title } — Krill</title>
