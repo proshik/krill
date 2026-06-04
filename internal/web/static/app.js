@@ -40,3 +40,53 @@ document.addEventListener("click", function (e) {
     e.target.close();
   }
 });
+
+// Copy text to the clipboard and show a confirmation toast.
+window.krillCopyToClip = function (text, label) {
+  const done = function () { krillShowToast((label || "Copied") + " to clipboard", "ok"); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(function () { krillFallbackCopy(text, done); });
+  } else {
+    krillFallbackCopy(text, done);
+  }
+};
+function krillFallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) { /* ignore */ }
+  document.body.removeChild(ta);
+}
+
+// Show a transient toast. kind: "ok" | "err".
+window.krillShowToast = function (msg, kind) {
+  let host = document.getElementById("k-toast-host");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "k-toast-host";
+    host.className = "k-toast-host";
+    document.body.appendChild(host);
+  }
+  const el = document.createElement("div");
+  el.className = "k-toast k-toast-" + (kind === "err" ? "err" : "ok") + " k-toast-pop";
+  el.textContent = msg;
+  el.addEventListener("click", function () { krillDismissToast(el); });
+  host.appendChild(el);
+  setTimeout(function () { krillDismissToast(el); }, 4000);
+};
+window.krillDismissToast = function (el) {
+  if (!el || el.dataset.gone) return;
+  el.dataset.gone = "1";
+  el.classList.add("k-toast-out");
+  setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+};
+
+// Confirm DB deletion, reflecting whether the data volume will be destroyed.
+window.krillConfirmDbDelete = function (form) {
+  const name = form.dataset.dbName || "this database";
+  const destroy = !!(form.querySelector('[name="destroy_data"]') || {}).checked;
+  const msg = destroy
+    ? 'Delete "' + name + '" AND permanently destroy its data volume? This cannot be undone.'
+    : 'Delete "' + name + '"? The data volume will be kept.';
+  return confirm(msg);
+};
