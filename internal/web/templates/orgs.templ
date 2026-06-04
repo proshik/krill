@@ -28,3 +28,39 @@ templ Orgs(orgs []db.Organization) {
 		</div>
 	}
 }
+
+// OrgSwitcher is the modal body lazily loaded into the sidebar #org-switcher
+// dialog: the user's organizations (current one highlighted) plus a create form.
+templ OrgSwitcher(orgs []db.Organization, currentID int64) {
+	<div class="k-modal-head">
+		<div class="k-modal-title">{ i18n.T(ctx, "orgs.switch_title") }</div>
+	</div>
+	<div class="k-modal-body">
+		if len(orgs) == 0 {
+			<p class="k-mono">{ i18n.T(ctx, "orgs.empty") }</p>
+		} else {
+			<ul class="list-none p-0 m-0 flex flex-col gap-1">
+				for _, o := range orgs {
+					<li>
+						<a class={ "k-org-item", templ.KV("k-org-item-active", o.ID == currentID) } href={ templ.SafeURL("/orgs/" + itoa(o.ID)) }>
+							<span>{ o.Name }</span>
+							if o.ID == currentID {
+								<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "orgs.current") }</span>
+							}
+						</a>
+					</li>
+				}
+			</ul>
+		}
+		<form method="post" action="/orgs" class="mt-1">
+			<label class="k-label k-label-required">{ i18n.T(ctx, "orgs.new_label") }</label>
+			<div class="flex items-center gap-2">
+				<input class="k-input" name="name" required placeholder="My Company"/>
+				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+			</div>
+		</form>
+	</div>
+	<div class="k-modal-foot">
+		<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('org-switcher')">{ i18n.T(ctx, "common.close") }</button>
+	</div>
+}

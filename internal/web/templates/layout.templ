@@ -22,7 +22,10 @@ templ Layout(title string, org db.Organization, role string) {
 			<aside class="k-side">
 				<div class="k-side-brand">🦐 Krill</div>
 				<div class="k-org-badge">
-					<a href="/orgs">{ org.Name } ▾</a>
+					<button type="button" class="k-org-switch" hx-get={ "/orgs/switcher?current=" + itoa(org.ID) } hx-target="#org-switcher" hx-swap="innerHTML" onclick="krillOpenModal('org-switcher')" title={ i18n.T(ctx, "orgs.switch_title") }>
+						<span>{ org.Name }</span>
+						<span class="chev">▾</span>
+					</button>
 					<span class="role">{ role }</span>
 				</div>
 				<nav>
@@ -46,6 +49,7 @@ templ Layout(title string, org db.Organization, role string) {
 				</div>
 				<script src="/static/app.js"></script>
 			</main>
+			<dialog id="org-switcher" class="k-modal"></dialog>
 		</body>
 	</html>
 }

@@ -72,6 +72,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/", s.home)
 		r.Get("/orgs", s.listOrgs)
+		r.Get("/orgs/switcher", s.orgSwitcher)
 		r.Post("/orgs", s.createOrg)
 
 		r.Route("/orgs/{orgID}", func(r chi.Router) {

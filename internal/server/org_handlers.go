@@ -24,6 +24,20 @@ func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.Orgs(orgs))
 }
 
+// orgSwitcher renders the sidebar org-switcher modal body: the user's
+// organizations (the one named by the "current" query param highlighted) plus a
+// create form. It is an HTMX partial loaded into the #org-switcher dialog.
+func (s *Server) orgSwitcher(w http.ResponseWriter, r *http.Request) {
+	orgs, err := s.q.ListOrganizationsForUser(r.Context(), auth.UserID(r.Context()))
+	if err != nil {
+		logFrom(r).Error("orgSwitcher: failed to list organizations", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	current, _ := strconv.ParseInt(r.URL.Query().Get("current"), 10, 64)
+	render(w, r, http.StatusOK, templates.OrgSwitcher(orgs, current))
+}
+
 func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	o, err := s.org.CreateOrg(r.Context(), auth.UserID(r.Context()), name)
