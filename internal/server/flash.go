@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/proshik/krill/internal/web/flash"
+	"github.com/proshik/krill/internal/web/nav"
 )
 
 const flashPwCookie = "krill_flash_pw"
@@ -76,13 +77,18 @@ func (s *Server) flashErr(w http.ResponseWriter, r *http.Request, msg string) {
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// flashMiddleware extracts the flash cookie into the request context for
-// full-page GET responses, so Layout can render it. It skips HTMX and static
-// requests so polling does not consume the flash early.
+// flashMiddleware records the request path (for sidebar highlighting) and
+// extracts the flash cookie into the request context for full-page renders, so
+// Layout can render the toast. It consumes the flash on normal full-page GETs
+// and on hx-boost navigations (which also render the full Layout), but skips
+// non-boosted HTMX requests (status polling, partial swaps) so they do not
+// consume the flash early. Static requests are skipped entirely.
 func (s *Server) flashMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(nav.WithPath(r.Context(), r.URL.Path))
+		boosted := r.Header.Get("HX-Boosted") == "true"
 		if r.Method == http.MethodGet &&
-			r.Header.Get("HX-Request") != "true" &&
+			(r.Header.Get("HX-Request") != "true" || boosted) &&
 			!strings.HasPrefix(r.URL.Path, "/static/") {
 			if k, m := s.takeFlash(w, r); k != "" {
 				r = r.WithContext(flash.With(r.Context(), &flash.Flash{Kind: k, Msg: m}))

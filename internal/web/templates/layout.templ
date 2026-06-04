@@ -4,6 +4,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/flash"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/nav"
 )
 
 templ Layout(title string, org db.Organization, role string) {
@@ -17,7 +18,7 @@ templ Layout(title string, org db.Organization, role string) {
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
 		</head>
-		<body class="flex">
+		<body class="flex" hx-boost="true">
 			<aside class="k-side">
 				<div class="k-side-brand">🦐 Krill</div>
 				<div class="k-org-badge">
@@ -25,13 +26,13 @@ templ Layout(title string, org db.Organization, role string) {
 					<span class="role">{ role }</span>
 				</div>
 				<nav>
-					<a class={ "k-nav", "k-nav-active" } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ i18n.T(ctx, "nav.projects") }</a>
+					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "projects")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ i18n.T(ctx, "nav.projects") }</a>
 					if role == "owner" || role == "admin" {
-						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
-						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
-						<a class="k-nav" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "destinations")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "registries")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
 					}
-					<a class="k-nav" href="/logout">{ i18n.T(ctx, "nav.logout") }</a>
+					<a class="k-nav" href="/logout" hx-boost="false">{ i18n.T(ctx, "nav.logout") }</a>
 				</nav>
 			</aside>
 			<main class="flex-1 min-w-0">

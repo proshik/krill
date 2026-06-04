@@ -35,11 +35,15 @@ window.krillCloseModal = function (id) {
   if (d && typeof d.close === "function") d.close();
 };
 // Clicking the backdrop (outside the content) closes the modal.
-document.addEventListener("click", function (e) {
-  if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
-    e.target.close();
-  }
-});
+// Guarded so hx-boost re-running this script does not stack duplicate listeners.
+if (!window.__krillClickInit) {
+  window.__krillClickInit = true;
+  document.addEventListener("click", function (e) {
+    if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
+      e.target.close();
+    }
+  });
+}
 
 // Copy text to the clipboard and show a confirmation toast.
 window.krillCopyToClip = function (text, label) {
