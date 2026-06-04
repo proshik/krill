@@ -58,7 +58,7 @@ templ generalTab(c AppCtx) {
 		</div>
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>
-			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
+			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } onsubmit="krillBusy(this.querySelector('button[type=submit]'), 'Deploying…')">
 				<label class="k-label">Git URL</label>
 				<input class="k-input" name="git_url" value={ c.App.GitUrl }/>
 				<label class="k-label">{ i18n.T(ctx, "app.git_branch") }</label>
@@ -68,7 +68,7 @@ templ generalTab(c AppCtx) {
 				<div class="mt-3"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button></div>
 			</form>
 		} else {
-			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
+			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } onsubmit="krillBusy(this.querySelector('button[type=submit]'), 'Deploying…')">
 				<label class="k-label">{ i18n.T(ctx, "app.image") }</label>
 				<input class="k-input" name="image" value={ c.App.Image } placeholder="ghcr.io/owner/name (full ref)"/>
 				<label class="k-label">{ i18n.T(ctx, "app.tag") }</label>
@@ -76,7 +76,7 @@ templ generalTab(c AppCtx) {
 					<input class="k-input" name="tag" value={ c.App.Tag }/>
 				</div>
 				if c.App.RegistryID != nil {
-					<button type="button" class="k-btn k-btn-secondary mt-2" hx-get={ c.base() + "/tags" } hx-target="#tag-field" hx-swap="innerHTML">{ i18n.T(ctx, "app.load_tags") }</button>
+					<button type="button" class="k-btn k-btn-secondary mt-2" hx-get={ c.base() + "/tags" } hx-target="#tag-field" hx-swap="innerHTML" hx-disabled-elt="this"><span class="k-spin"></span>{ i18n.T(ctx, "app.load_tags") }</button>
 				}
 				<div class="mt-3"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button></div>
 			</form>
@@ -99,7 +99,11 @@ templ generalTab(c AppCtx) {
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.registry_save") }</button>
 			</form>
 		}
-		<p class="k-mono text-xs mt-3">{ i18n.T(ctx, "app.open") } <a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a></p>
+		<p class="k-mono text-xs mt-3 flex items-center gap-2">
+			{ i18n.T(ctx, "app.open") }
+			<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
+			<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>
+		</p>
 	</div>
 }
 
@@ -163,7 +167,7 @@ templ domainsTab(c AppCtx) {
 								<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
 							</form>
 							if !d.IsPrimary {
-								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" onsubmit="return confirm('Delete domain?')">
+								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
 									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
 								</form>
 							}

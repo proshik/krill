@@ -92,7 +92,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 					</div>
 					<div class="k-modal-body">
 						<div>
-							<label class="k-label">{ i18n.T(ctx, "common.name") }</label>
+							<label class="k-label k-label-required">{ i18n.T(ctx, "common.name") }</label>
 							<input class="k-input" name="name" required placeholder="staging"/>
 						</div>
 					</div>
@@ -115,7 +115,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 									<option value="redis">Redis</option>
 								</select>
 							</div>
-							<div><label class="k-label">{ i18n.T(ctx, "common.name") }</label><input class="k-input" name="name" required placeholder="db"/></div>
+							<div><label class="k-label k-label-required">{ i18n.T(ctx, "common.name") }</label><input class="k-input" name="name" required placeholder="db"/></div>
 							<div><label class="k-label">{ i18n.T(ctx, "db.version") }</label><input class="k-input" name="version" id="db-version" value="postgres:17"/></div>
 							<div><label class="k-label">{ i18n.T(ctx, "db.external_port") }</label><input class="k-input" name="external_port" type="number" placeholder=""/></div>
 						</div>
@@ -142,7 +142,7 @@ templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 			</div>
 			<div class="k-modal-body">
 				<div>
-					<label class="k-label">{ i18n.T(ctx, "app.name_slug") }</label>
+					<label class="k-label k-label-required">{ i18n.T(ctx, "app.name_slug") }</label>
 					<input class="k-input" name="name" required pattern="[a-z0-9-]+" placeholder="web"/>
 				</div>
 				<div>
@@ -181,7 +181,7 @@ templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 					<input class="k-input" name="domain" placeholder={ i18n.T(ctx, "app.domain_auto") }/>
 				</div>
 				<div>
-					<label class="k-label">{ i18n.T(ctx, "app.port") }</label>
+					<label class="k-label k-label-required">{ i18n.T(ctx, "app.port") }</label>
 					<input class="k-input" name="port" type="number" value="80" required/>
 				</div>
 				<div>

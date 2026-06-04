@@ -147,118 +147,131 @@ func Registries(org db.Organization, role string, regs []db.Registry) templ.Comp
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" onsubmit=\"return confirm('Delete registry?')\"><button class=\"k-btn k-btn-danger\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "\" data-name=\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var10 string
-					templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.delete"))
+					templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.ResolveAttributeValue(reg.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 27, Col: 72}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 26, Col: 143}
 					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var10)
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "</button></form>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" onsubmit=\"return confirm('Delete registry ' + this.dataset.name + '?')\"><button class=\"k-btn k-btn-danger\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var11 string
+					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.delete"))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 27, Col: 72}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</button></form>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</td></tr>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</td></tr>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</tbody></table>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</tbody></table>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			if role == "owner" || role == "admin" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "<form method=\"post\" action=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "<form method=\"post\" action=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var11 templ.SafeURL
-				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries"))
+				var templ_7745c5c3_Var12 templ.SafeURL
+				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries"))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 36, Col: 87}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, "\" class=\"mt-4 flex flex-col gap-2\"><div><label class=\"k-label\">")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var12 string
-				templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.name"))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 38, Col: 54}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "</label> <input class=\"k-input\" name=\"name\"></div><div><label class=\"k-label\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" class=\"mt-4 flex flex-col gap-2\"><div><label class=\"k-label k-label-required\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var13 string
-				templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.url"))
+				templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.name"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 42, Col: 53}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 38, Col: 71}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</label> <input class=\"k-input\" name=\"registry_url\" placeholder=\"ghcr.io (host only — not the image path)\"></div><div><label class=\"k-label\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</label> <input class=\"k-input\" name=\"name\" required></div><div><label class=\"k-label k-label-required\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var14 string
-				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.username"))
+				templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.url"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 46, Col: 58}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 42, Col: 70}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</label> <input class=\"k-input\" name=\"username\"></div><div><label class=\"k-label\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</label> <input class=\"k-input\" name=\"registry_url\" required placeholder=\"ghcr.io (host only — not the image path)\"></div><div><label class=\"k-label k-label-required\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var15 string
-				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.password"))
+				templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.username"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 50, Col: 58}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 46, Col: 75}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</label> <input class=\"k-input\" name=\"password\" type=\"password\"></div><button class=\"k-btn k-btn-primary\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "</label> <input class=\"k-input\" name=\"username\" required></div><div><label class=\"k-label k-label-required\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var16 string
-				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.add"))
+				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.password"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 53, Col: 65}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 50, Col: 75}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</button></form>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "</label> <input class=\"k-input\" name=\"password\" type=\"password\" required></div><button class=\"k-btn k-btn-primary\">")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var17 string
+				templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "reg.add"))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/registries.templ`, Line: 53, Col: 65}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</button></form>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "</div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -143,7 +143,7 @@ func BackupObjects(base string, backupID int64, objs []backup.Object) templ.Comp
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" onsubmit=\"return confirm('Restore this backup? This overwrites the current database.')\" style=\"display:inline\"><input type=\"hidden\" name=\"key\" value=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\" onsubmit=\"if(!confirm('Restore this backup? This overwrites the current database.')) return false; krillBusy(this.querySelector('button'), 'Restoring…')\" style=\"display:inline\"><input type=\"hidden\" name=\"key\" value=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

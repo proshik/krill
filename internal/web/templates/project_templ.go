@@ -563,14 +563,14 @@ func Project(org db.Organization, role string, project db.Project, envs []db.Env
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "</div></div><div class=\"k-modal-body\"><div><label class=\"k-label\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "</div></div><div class=\"k-modal-body\"><div><label class=\"k-label k-label-required\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var32 string
 				templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "common.name"))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 95, Col: 58}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 95, Col: 75}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 				if templ_7745c5c3_Err != nil {
@@ -650,14 +650,14 @@ func Project(org db.Organization, role string, project db.Project, envs []db.Env
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</label> <select class=\"k-select\" name=\"engine\" onchange=\"krillDbVersion(this.value)\"><option value=\"postgres\">PostgreSQL</option> <option value=\"redis\">Redis</option></select></div><div><label class=\"k-label\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</label> <select class=\"k-select\" name=\"engine\" onchange=\"krillDbVersion(this.value)\"><option value=\"postgres\">PostgreSQL</option> <option value=\"redis\">Redis</option></select></div><div><label class=\"k-label k-label-required\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var38 string
 					templ_7745c5c3_Var38, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "common.name"))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 118, Col: 63}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 118, Col: 80}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var38))
 					if templ_7745c5c3_Err != nil {
@@ -791,14 +791,14 @@ func appCreateModal(orgID, projID, envID int64, registries []db.Registry) templ.
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</div></div><div class=\"k-modal-body\"><div><label class=\"k-label\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 72, "</div></div><div class=\"k-modal-body\"><div><label class=\"k-label k-label-required\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var47 string
 		templ_7745c5c3_Var47, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "app.name_slug"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 145, Col: 58}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 145, Col: 75}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var47))
 		if templ_7745c5c3_Err != nil {
@@ -934,14 +934,14 @@ func appCreateModal(orgID, projID, envID int64, registries []db.Registry) templ.
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "\"></div><div><label class=\"k-label\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 83, "\"></div><div><label class=\"k-label k-label-required\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var58 string
 		templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.T(ctx, "app.port"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 184, Col: 53}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/project.templ`, Line: 184, Col: 70}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var58))
 		if templ_7745c5c3_Err != nil {

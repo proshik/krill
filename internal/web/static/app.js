@@ -90,3 +90,11 @@ window.krillConfirmDbDelete = function (form) {
     : 'Delete "' + name + '"? The data volume will be kept.';
   return confirm(msg);
 };
+
+// Disable a submit button on form submit to prevent double-submits and signal activity.
+window.krillBusy = function (btn, label) {
+  if (!btn) return;
+  btn.disabled = true;
+  btn.dataset.label = btn.textContent;
+  btn.textContent = label || "Working…";
+};

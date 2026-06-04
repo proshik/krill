@@ -41,25 +41,31 @@ templ DatabaseDetail(c DatabaseCtx) {
 			<div class="k-panel-body flex flex-col gap-4">
 				if c.Role == "owner" || c.Role == "admin" {
 					<div class="flex gap-2 flex-wrap">
-						<form method="post" action={ templ.SafeURL(c.Base + "/deploy") }><button class="k-btn k-btn-primary">{ i18n.T(ctx, "db.deploy") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/start") }><button class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.start") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/stop") }><button class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/delete") } onsubmit="return confirm('Delete database?')" class="flex items-center gap-2">
+						<form method="post" action={ templ.SafeURL(c.Base + "/deploy") } onsubmit="krillBusy(this.querySelector('button'), 'Deploying…')"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "db.deploy") }</button></form>
+						<form method="post" action={ templ.SafeURL(c.Base + "/start") } onsubmit="krillBusy(this.querySelector('button'), 'Starting…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.start") }</button></form>
+						<form method="post" action={ templ.SafeURL(c.Base + "/stop") } onsubmit="krillBusy(this.querySelector('button'), 'Stopping…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
+						<form method="post" action={ templ.SafeURL(c.Base + "/delete") } data-db-name={ c.Name } onsubmit="return krillConfirmDbDelete(this)" class="flex items-center gap-2">
 							<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
 							<label class="k-label"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
 						</form>
 					</div>
-					<form method="post" action={ templ.SafeURL(c.Base + "/version") } class="flex items-end gap-2">
+					<form method="post" action={ templ.SafeURL(c.Base + "/version") } onsubmit="krillBusy(this.querySelector('button'), 'Updating…')" class="flex items-end gap-2">
 						<div class="flex-1"><label class="k-label">{ i18n.T(ctx, "db.change_version") }</label><input class="k-input" name="image" value={ c.Image }/></div>
-						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
+						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
 					</form>
 				}
 				<div>
 					<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
-					<input class="k-input k-mono" readonly value={ c.Internal }/>
+					<div class="flex items-center gap-2">
+						<input class="k-input k-mono" readonly value={ c.Internal }/>
+						<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+					</div>
 					if c.External != "" {
 						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
-						<input class="k-input k-mono" readonly value={ c.External }/>
+						<div class="flex items-center gap-2">
+							<input class="k-input k-mono" readonly value={ c.External }/>
+							<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+						</div>
 					}
 				</div>
 				<div>
@@ -116,13 +122,13 @@ templ backupsSection(c DatabaseCtx) {
 							</td>
 							<td>
 								<div class="flex items-center gap-2 flex-wrap">
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } style="display:inline">
-										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } onsubmit="krillBusy(this.querySelector('button'), 'Running…')" class="inline">
+										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
 									</form>
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } style="display:inline">
-										<button class="k-btn">{ i18n.T(ctx, "backup.toggle") }</button>
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
+										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.toggle") }</button>
 									</form>
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } onsubmit="return confirm('Delete backup?')" style="display:inline">
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-dest={ destName(c.Destinations, b.DestinationID) } onsubmit="return confirm('Delete backup schedule for ' + this.dataset.dest + '?')" class="inline">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
 									</form>
 								</div>
@@ -147,15 +153,15 @@ templ backupsSection(c DatabaseCtx) {
 			<form method="post" action={ templ.SafeURL(c.Base + "/backups") } class="mt-4 flex flex-col gap-2">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "backup.destination") }</label>
-					<select class="k-input" name="destination_id">
+					<select class="k-select" name="destination_id">
 						for _, d := range c.Destinations {
 							<option value={ itoa(d.ID) }>{ d.Name }</option>
 						}
 					</select>
 				</div>
 				<div>
-					<label class="k-label">{ i18n.T(ctx, "backup.schedule") }</label>
-					<input class="k-input" name="schedule" placeholder="0 3 * * *"/>
+					<label class="k-label k-label-required">{ i18n.T(ctx, "backup.schedule") }</label>
+					<input class="k-input" name="schedule" required placeholder="0 3 * * *"/>
 				</div>
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "backup.retention") }</label>
