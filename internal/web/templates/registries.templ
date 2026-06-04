@@ -50,7 +50,7 @@ templ Registries(org db.Organization, role string, regs []db.Registry) {
 						<label class="k-label k-label-required">{ i18n.T(ctx, "reg.password") }</label>
 						<input class="k-input" name="password" type="password" required/>
 					</div>
-					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "reg.add") }</button>
+					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "reg.add") }</button></div>
 				</form>
 			}
 		</div>

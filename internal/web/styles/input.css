@@ -31,7 +31,7 @@
 
 /* ── global base ── */
 @layer base {
-  html { color-scheme: dark; }
+  html { color-scheme: dark; scrollbar-gutter: stable; }
   body {
     background: var(--color-bg);
     color: var(--color-fg);
@@ -84,6 +84,10 @@
 
   .k-tab { padding:6px 2px; margin-right:18px; color:var(--color-muted); font-weight:600; font-size:14px; border-bottom:2px solid transparent; }
   .k-tab-active { color:var(--color-fg); border-bottom-color:var(--color-accent); }
+  .k-tab-add { display:inline-flex; align-items:center; gap:4px; margin-left:10px; padding:3px 10px; border-radius:8px;
+               border:1px dashed var(--color-border-strong); color:var(--color-accent); font-family:var(--font-mono);
+               font-size:12px; font-weight:600; cursor:pointer; transition:background .15s, border-color .15s; }
+  .k-tab-add:hover { background:var(--color-surface-2); border-color:var(--color-accent); }
 
   .k-toast { border-radius:10px; padding:12px 14px; font-size:13px; border:1px solid var(--color-border-strong); }
   .k-toast-ok { border-color:rgba(190,242,100,.4); background:rgba(190,242,100,.06); }

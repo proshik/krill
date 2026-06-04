@@ -59,7 +59,7 @@ templ Destinations(org db.Organization, role string, dests []db.Destination) {
 						<label class="k-label">{ i18n.T(ctx, "dest.secret_key") }</label>
 						<input class="k-input" name="secret_key" type="password"/>
 					</div>
-					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "dest.add") }</button>
+					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "dest.add") }</button></div>
 				</form>
 			}
 		</div>
