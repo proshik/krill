@@ -23,22 +23,23 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 							<td class="k-mono">{ m.Email }</td>
 							<td>{ m.Role }</td>
 							<td>
-								if role == "owner" || role == "admin" {
-									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/role") } class="inline">
-										<label class="k-label">{ i18n.T(ctx, "members.role.change") }</label>
-										<select class="k-select" name="role">
-											<option value="owner" selected?={ m.Role == "owner" }>{ i18n.T(ctx, "members.role.owner") }</option>
-											<option value="admin" selected?={ m.Role == "admin" }>{ i18n.T(ctx, "members.role.admin") }</option>
-											<option value="member" selected?={ m.Role == "member" }>{ i18n.T(ctx, "members.role.member") }</option>
-										</select>
-										<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "members.role.save") }</button>
-									</form>
-								}
-								if (role == "owner" || role == "admin") && m.Role != "owner" {
-									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline" data-email={ m.Email } onsubmit="return confirm('Remove member ' + this.dataset.email + '?')">
-										<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "common.delete") }</button>
-									</form>
-								}
+								<div class="flex items-center gap-2 flex-wrap justify-end">
+									if role == "owner" || role == "admin" {
+										<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/role") } class="flex items-center gap-2">
+											<select class="k-select w-auto" name="role" aria-label={ i18n.T(ctx, "members.role.change") }>
+												<option value="owner" selected?={ m.Role == "owner" }>{ i18n.T(ctx, "members.role.owner") }</option>
+												<option value="admin" selected?={ m.Role == "admin" }>{ i18n.T(ctx, "members.role.admin") }</option>
+												<option value="member" selected?={ m.Role == "member" }>{ i18n.T(ctx, "members.role.member") }</option>
+											</select>
+											<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "members.role.save") }</button>
+										</form>
+									}
+									if (role == "owner" || role == "admin") && m.Role != "owner" {
+										<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline" data-email={ m.Email } onsubmit="return confirm('Remove member ' + this.dataset.email + '?')">
+											<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "common.delete") }</button>
+										</form>
+									}
+								</div>
 							</td>
 						</tr>
 					}

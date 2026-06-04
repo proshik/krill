@@ -163,14 +163,16 @@ templ domainsTab(c AppCtx) {
 							}
 						</td>
 						<td>
-							<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
-								<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
-							</form>
-							if !d.IsPrimary {
-								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
-									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
+							<div class="flex items-center gap-2 flex-wrap justify-end">
+								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
+									<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
 								</form>
-							}
+								if !d.IsPrimary {
+									<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
+										<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
+									</form>
+								}
+							</div>
 						</td>
 					</tr>
 				}
