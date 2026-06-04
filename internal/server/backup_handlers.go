@@ -153,7 +153,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.backupSvc == nil {
-		http.Error(w, "backups unavailable", http.StatusServiceUnavailable)
+		s.flashErr(w, r, "backups unavailable")
 		return
 	}
 	// Detached context: a manual backup should finish even if the client disconnects.
@@ -174,11 +174,11 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimSpace(r.FormValue("key"))
 	if key == "" {
-		http.Error(w, "key is required", http.StatusBadRequest)
+		s.flashErr(w, r, "key is required")
 		return
 	}
 	if s.backupSvc == nil {
-		http.Error(w, "backups unavailable", http.StatusServiceUnavailable)
+		s.flashErr(w, r, "backups unavailable")
 		return
 	}
 	if err := s.backupSvc.RestoreByID(r.Context(), b.ID, key); err != nil {
