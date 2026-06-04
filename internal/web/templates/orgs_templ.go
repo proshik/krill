@@ -46,7 +46,7 @@ func Orgs(orgs []db.Organization) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"k-card w-[420px]\"><h2 class=\"text-2xl mb-4\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"k-card w-[420px] max-w-full\"><h2 class=\"text-2xl mb-4\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

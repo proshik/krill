@@ -4,12 +4,12 @@ import "github.com/proshik/krill/internal/web/i18n"
 
 templ Login(errMsg string) {
 	@Bare(i18n.T(ctx, "login.page_title")) {
-		<div class="k-card">
+		<div class="k-card w-[360px] max-w-full">
 			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "login.title") }</h2>
 			if errMsg != "" {
 				<div class="k-toast k-toast-err mb-3">{ errMsg }</div>
 			}
-			<form method="post" action="/login">
+			<form method="post" action="/login" hx-boost="false">
 				<label class="k-label">{ i18n.T(ctx, "login.email") }</label>
 				<input class="k-input" name="email" type="email" required autofocus/>
 				<label class="k-label">{ i18n.T(ctx, "login.password") }</label>

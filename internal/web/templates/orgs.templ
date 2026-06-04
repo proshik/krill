@@ -7,7 +7,7 @@ import (
 
 templ Orgs(orgs []db.Organization) {
 	@Bare(i18n.T(ctx, "orgs.page_title")) {
-		<div class="k-card w-[420px]">
+		<div class="k-card w-[420px] max-w-full">
 			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "orgs.title") }</h2>
 			if len(orgs) == 0 {
 				<p class="k-mono mb-3">{ i18n.T(ctx, "orgs.empty") }</p>

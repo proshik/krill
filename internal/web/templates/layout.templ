@@ -57,11 +57,18 @@ templ Bare(title string) {
 			<meta charset="utf-8"/>
 			<title>{ title } — Krill</title>
 			<link rel="stylesheet" href="/static/app.css"/>
+			<script src="/static/htmx.min.js"></script>
 		</head>
-		<body class="flex items-center justify-center min-h-screen">
-			<main class="w-[340px]">
+		<body class="flex" hx-boost="true">
+			<main class="flex-1 flex items-center justify-center min-h-screen p-4">
+				if f := flash.From(ctx); f != nil {
+					<div class="k-toast-host">
+						<div class={ "k-toast", "k-toast-" + f.Kind, "k-toast-pop" } onclick="krillDismissToast(this)" role="status">{ f.Msg }</div>
+					</div>
+				}
 				{ children... }
 			</main>
+			<script src="/static/app.js"></script>
 		</body>
 	</html>
 }
