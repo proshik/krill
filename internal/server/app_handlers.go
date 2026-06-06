@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
@@ -332,6 +333,110 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("environment variables updated", "app_id", c.App.ID, "app_name", c.App.Name)
 	s.setFlash(w, "ok", "Variables saved — applied on next deploy")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
+}
+
+// saveAdvanced validates and persists the app's advanced container settings.
+// Applied on the next deploy (the ServiceSpec is rebuilt from these values).
+func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	memLimit := strings.TrimSpace(r.FormValue("memory_limit"))
+	if _, err := docker.ParseMemoryBytes(memLimit); err != nil {
+		s.flashErr(w, r, "invalid memory limit (e.g. 256m, 1g)")
+		return
+	}
+	cpuLimit := strings.TrimSpace(r.FormValue("cpu_limit"))
+	if _, err := docker.ParseNanoCPUs(cpuLimit); err != nil {
+		s.flashErr(w, r, "invalid CPU limit (e.g. 0.5, 1)")
+		return
+	}
+	replicas, err := strconv.Atoi(strings.TrimSpace(r.FormValue("replicas")))
+	if err != nil || replicas < 1 || replicas > 20 {
+		s.flashErr(w, r, "replicas must be between 1 and 20")
+		return
+	}
+	cond := r.FormValue("restart_condition")
+	if cond != "any" && cond != "on-failure" && cond != "none" {
+		s.flashErr(w, r, "invalid restart condition")
+		return
+	}
+	maxAttStr := strings.TrimSpace(r.FormValue("restart_max_attempts"))
+	if maxAttStr == "" {
+		maxAttStr = "0"
+	}
+	maxAtt, err := strconv.Atoi(maxAttStr)
+	if err != nil || maxAtt < 0 {
+		s.flashErr(w, r, "max restart attempts must be 0 or more")
+		return
+	}
+	hcCmd := strings.TrimSpace(r.FormValue("healthcheck_cmd"))
+	hcInterval := strings.TrimSpace(r.FormValue("healthcheck_interval"))
+	hcTimeout := strings.TrimSpace(r.FormValue("healthcheck_timeout"))
+	hcStart := strings.TrimSpace(r.FormValue("healthcheck_start_period"))
+	hcRetries := strings.TrimSpace(r.FormValue("healthcheck_retries"))
+	if hcCmd == "" {
+		hcInterval, hcTimeout, hcStart, hcRetries = "", "", "", ""
+	} else {
+		for _, d := range []string{hcInterval, hcTimeout, hcStart} {
+			if d == "" {
+				continue
+			}
+			if _, perr := time.ParseDuration(d); perr != nil {
+				s.flashErr(w, r, "invalid healthcheck duration (e.g. 30s, 1m)")
+				return
+			}
+		}
+		if hcRetries != "" {
+			if n, perr := strconv.Atoi(hcRetries); perr != nil || n < 0 {
+				s.flashErr(w, r, "healthcheck retries must be 0 or more")
+				return
+			}
+		}
+	}
+
+	if err := s.q.UpdateApplicationAdvanced(r.Context(), db.UpdateApplicationAdvancedParams{
+		ID:                     c.App.ID,
+		MemoryLimit:            nilIfEmpty(memLimit),
+		CpuLimit:               nilIfEmpty(cpuLimit),
+		Replicas:               int32(replicas),
+		RestartCondition:       cond,
+		RestartMaxAttempts:     int32(maxAtt),
+		HealthcheckCmd:         nilIfEmpty(hcCmd),
+		HealthcheckInterval:    nilIfEmpty(hcInterval),
+		HealthcheckTimeout:     nilIfEmpty(hcTimeout),
+		HealthcheckRetries:     int32PtrIfSet(hcRetries),
+		HealthcheckStartPeriod: nilIfEmpty(hcStart),
+	}); err != nil {
+		logFrom(r).Error("saveAdvanced: failed to update advanced settings", "err", err, "app_id", c.App.ID)
+		s.flashErr(w, r, "failed to save settings")
+		return
+	}
+	logFrom(r).Info("advanced settings updated", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Advanced settings saved — applied on next deploy")
+	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
+}
+
+func nilIfEmpty(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func int32PtrIfSet(s string) *int32 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return nil
+	}
+	v := int32(n)
+	return &v
 }
 
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {

@@ -127,6 +127,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/reload", s.reloadApp)
 				r.Post("/stop", s.stopApp)
 				r.Post("/env", s.saveEnv)
+				r.Post("/advanced", s.saveAdvanced)
 				r.Get("/logs", s.appLogs)
 				r.Get("/deployments-list", s.listDeployments)
 				r.Get("/deployments/{deployID}", s.deploymentLogPage)
