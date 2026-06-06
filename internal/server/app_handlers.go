@@ -265,16 +265,16 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
-// rebuildApp enqueues a fresh deployment (rebuild from source for Dockerfile
-// apps, re-pull for image apps) — same pipeline as deploy, always from scratch.
+// rebuildApp enqueues a from-scratch deployment: docker build --no-cache for
+// Dockerfile apps, re-pull for image apps.
 func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
 		return
 	}
-	s.deployer.Enqueue(c.App.ID, "manual")
+	s.deployer.EnqueueRebuild(c.App.ID, "manual")
 	logFrom(r).Info("rebuild enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Rebuild queued")
+	s.setFlash(w, "ok", "Rebuild queued (no cache)")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 

@@ -45,12 +45,16 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 
 	dfPath := filepath.Join(dir, dockerfile)
 	cdir := contextDir(dir, dockerfile)
-	fmt.Fprintf(out, "→ docker build -t %s -f %s %s\n", req.ImageTag, dfPath, cdir)
+	cacheNote := ""
+	if req.NoCache {
+		cacheNote = " --no-cache"
+	}
+	fmt.Fprintf(out, "→ docker build%s -t %s -f %s %s\n", cacheNote, req.ImageTag, dfPath, cdir)
 	var env []string
 	if b.dockerHost != "" {
 		env = append(os.Environ(), "DOCKER_HOST="+b.dockerHost)
 	}
-	if err := b.run(ctx, out, "docker", buildArgs(req.ImageTag, dfPath, cdir), env); err != nil {
+	if err := b.run(ctx, out, "docker", buildArgs(req.ImageTag, dfPath, cdir, req.NoCache), env); err != nil {
 		return fmt.Errorf("docker build failed: %w", err)
 	}
 	fmt.Fprintf(out, "✅ build complete: %s\n", req.ImageTag)

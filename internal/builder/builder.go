@@ -17,6 +17,7 @@ type BuildRequest struct {
 	GitBranch      string
 	DockerfilePath string // relative to the repo root
 	ImageTag       string // e.g. krill-7:42
+	NoCache        bool   // pass --no-cache to docker build (Rebuild)
 }
 
 // Builder clones the repository and builds the image, streaming output to out.
@@ -52,9 +53,13 @@ func cloneArgs(gitURL, branch, dir string) []string {
 	return []string{"clone", "--branch", branch, "--depth", "1", "--", gitURL, dir}
 }
 
-// buildArgs — argv for docker build.
-func buildArgs(tag, dockerfile, context string) []string {
-	return []string{"build", "-t", tag, "-f", dockerfile, context}
+// buildArgs — argv for docker build. noCache adds --no-cache (forced rebuild).
+func buildArgs(tag, dockerfile, context string, noCache bool) []string {
+	args := []string{"build"}
+	if noCache {
+		args = append(args, "--no-cache")
+	}
+	return append(args, "-t", tag, "-f", dockerfile, context)
 }
 
 // contextDir — the build context: the directory containing the Dockerfile.

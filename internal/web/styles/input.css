@@ -108,6 +108,8 @@
             border-radius:50%; animation:k-spin .7s linear infinite; }
   .htmx-request .k-spin, .k-spin.htmx-request { display:inline-block; }
   .k-label-required::after { content:" *"; color:var(--color-err); }
+  .k-hint { list-style:none; padding:0; margin:0; font-size:11px; line-height:1.7; color:var(--color-faint); }
+  .k-hint b { color:var(--color-muted); font-weight:600; }
 
   /* sidebar */
   .k-side { width:210px; padding:18px 14px; border-right:1px solid var(--color-border); background:#0c0c0c; min-height:100vh; display:flex; flex-direction:column; }

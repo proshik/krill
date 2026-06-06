@@ -14,10 +14,18 @@ func TestCloneArgs(t *testing.T) {
 }
 
 func TestBuildArgs(t *testing.T) {
-	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub")
+	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", false)
 	want := []string{"build", "-t", "krill-7:42", "-f", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildArgs = %v, want %v", got, want)
+	}
+}
+
+func TestBuildArgsNoCache(t *testing.T) {
+	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", true)
+	want := []string{"build", "--no-cache", "-t", "krill-7:42", "-f", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildArgs no-cache = %v, want %v", got, want)
 	}
 }
 

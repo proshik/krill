@@ -46,6 +46,12 @@ var (
 	convergePollInterval = 1 * time.Second
 )
 
+// job is one queued unit of work: a deployment plus build options.
+type job struct {
+	deployID int64
+	noCache  bool // force docker build --no-cache (Rebuild)
+}
+
 // Deployer handles deployments through a queue and a worker.
 type Deployer struct {
 	engine   docker.Engine
@@ -53,7 +59,7 @@ type Deployer struct {
 	store    Store
 	hub      *DeployLogHub
 	network  string
-	queue    chan int64 // deployID
+	queue    chan job
 	done     chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -69,7 +75,7 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 		store:   store,
 		hub:     hub,
 		network: network,
-		queue:   make(chan int64, 64),
+		queue:   make(chan job, 64),
 		done:    make(chan struct{}),
 	}
 }
@@ -82,12 +88,12 @@ func (d *Deployer) Start(ctx context.Context) {
 			select {
 			case <-d.done:
 				return
-			case deployID := <-d.queue:
+			case j := <-d.queue:
 				jobCtx, cancel := context.WithTimeout(ctx, jobTimeout)
 				d.mu.Lock()
 				d.cancelJob = cancel
 				d.mu.Unlock()
-				d.run(jobCtx, deployID)
+				d.run(jobCtx, j.deployID, j.noCache)
 				cancel()
 				d.mu.Lock()
 				d.cancelJob = nil
@@ -99,6 +105,16 @@ func (d *Deployer) Start(ctx context.Context) {
 
 // Enqueue creates a deployment record and puts it in the queue. Returns deployID (0 on error/after Stop).
 func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
+	return d.enqueue(appID, trigger, false)
+}
+
+// EnqueueRebuild is like Enqueue but forces a from-scratch build (docker build
+// --no-cache for Dockerfile apps; image apps re-pull as usual).
+func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
+	return d.enqueue(appID, trigger, true)
+}
+
+func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	select {
 	case <-d.done:
 		return 0
@@ -112,7 +128,7 @@ func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.hub.Open(deployID)
 	select {
-	case d.queue <- deployID:
+	case d.queue <- job{deployID: deployID, noCache: noCache}:
 	case <-d.done:
 	}
 	return deployID
@@ -130,7 +146,7 @@ func (d *Deployer) Stop() {
 	d.wg.Wait()
 }
 
-func (d *Deployer) run(ctx context.Context, deployID int64) {
+func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	app, appErr := d.store.GetDeploymentApp(ctx, deployID)
 	out := d.hub.Writer(deployID)
 	if appErr != nil {
@@ -146,6 +162,7 @@ func (d *Deployer) run(ctx context.Context, deployID int64) {
 			AppID: app.ID, DeployID: deployID,
 			GitURL: app.GitURL, GitBranch: app.GitBranch,
 			DockerfilePath: app.DockerfilePath, ImageTag: imageTag,
+			NoCache: noCache,
 		}, out)
 	} else {
 		imageTag = app.Image + ":" + app.Tag

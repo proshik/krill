@@ -84,11 +84,17 @@ templ generalTab(c AppCtx) {
 		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
 		<form id="stop-form" method="post" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return confirm('Stop ' + this.dataset.appName + '?')"></form>
 		<div class="flex items-center gap-2 flex-wrap mt-3">
-			<button type="submit" form="deploy-form" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button>
-			<button type="submit" form="reload-form" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.reload") }</button>
-			<button type="submit" form="rebuild-form" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.rebuild") }</button>
-			<button type="submit" form="stop-form" class="k-btn k-btn-danger">{ i18n.T(ctx, "app.stop") }</button>
+			<button type="submit" form="deploy-form" class="k-btn k-btn-primary" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.deploy") }</button>
+			<button type="submit" form="reload-form" class="k-btn k-btn-secondary" title={ i18n.T(ctx, "app.reload_hint") }>{ i18n.T(ctx, "app.reload") }</button>
+			<button type="submit" form="rebuild-form" class="k-btn k-btn-secondary" title={ i18n.T(ctx, "app.rebuild_hint") }>{ i18n.T(ctx, "app.rebuild") }</button>
+			<button type="submit" form="stop-form" class="k-btn k-btn-danger" title={ i18n.T(ctx, "app.stop_hint") }>{ i18n.T(ctx, "app.stop") }</button>
 		</div>
+		<ul class="k-hint mt-2">
+			<li><b>{ i18n.T(ctx, "app.deploy") }</b> — { i18n.T(ctx, "app.deploy_hint") }</li>
+			<li><b>{ i18n.T(ctx, "app.reload") }</b> — { i18n.T(ctx, "app.reload_hint") }</li>
+			<li><b>{ i18n.T(ctx, "app.rebuild") }</b> — { i18n.T(ctx, "app.rebuild_hint") }</li>
+			<li><b>{ i18n.T(ctx, "app.stop") }</b> — { i18n.T(ctx, "app.stop_hint") }</li>
+		</ul>
 		if c.Role == "owner" || c.Role == "admin" {
 			<form method="post" action={ templ.SafeURL(c.base() + "/registry") } class="mt-4 flex items-end gap-2">
 				<div class="flex-1">
