@@ -41,7 +41,9 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		DockerfilePath: a.DockerfilePath,
 	}
 	for _, d := range doms {
-		out.Domains = append(out.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls})
+		out.Domains = append(out.Domains, traefik.Domain{
+			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
+		})
 	}
 	out.Replicas = uint64(a.Replicas)
 	out.RestartCondition = a.RestartCondition

@@ -303,6 +303,119 @@ func TestCannotDeleteLastDomain(t *testing.T) {
 	}
 }
 
+// exposureAppFixture builds an org→project→env chain and creates an app via the
+// real createApp POST flow (so the primary domain gets the createApp default
+// Exposed=false), then returns the base app URL, the owner cookie, the app ID,
+// and the primary domain ID.
+func exposureAppFixture(t *testing.T, h http.Handler, q *db.Queries, orgSvc *org.Service, name, email string) (string, *http.Cookie, int64, int64) {
+	t.Helper()
+	ctx := context.Background()
+	ownerID := mkUser(t, q, email)
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	appsURL := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps"
+	cookie := loginAs(t, q, email)
+
+	rec := postForm(t, h, appsURL, cookie, url.Values{
+		"name":  {name},
+		"image": {"nginx"},
+		"tag":   {"latest"},
+		"port":  {"8080"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("createApp want 303, got %d body: %s", rec.Code, rec.Body.String())
+	}
+	apps, err := q.ListApplicationsByEnvironment(ctx, e.ID)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("expected 1 application, got %d err=%v", len(apps), err)
+	}
+	appID := apps[0].ID
+	doms, err := q.ListDomainsByApplication(ctx, appID)
+	if err != nil {
+		t.Fatalf("ListDomainsByApplication: %v", err)
+	}
+	var primaryID int64
+	for _, d := range doms {
+		if d.IsPrimary {
+			primaryID = d.ID
+		}
+	}
+	if primaryID == 0 {
+		t.Fatalf("primary domain not found; got %+v", doms)
+	}
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(appID)
+	return base, cookie, appID, primaryID
+}
+
+// TestSetDomainExposureInvalidPath verifies that an invalid path (missing
+// leading slash) is rejected with an err flash and leaves the domain unchanged.
+func TestSetDomainExposureInvalidPath(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, _, primaryID := exposureAppFixture(t, h, q, orgSvc, "expapp", "owner-exp1@k.local")
+
+	rec := postForm(t, h, base+"/domains/"+i64(primaryID)+"/exposure", cookie, url.Values{
+		"exposed": {"on"},
+		"paths":   {"bad-no-slash"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("invalid path want 303, got %d", rec.Code)
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("invalid path want err flash, got %q", flashCookieValue(rec))
+	}
+	d, err := q.GetDomain(ctx, primaryID)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if d.Exposed {
+		t.Errorf("Exposed want false (unchanged), got true")
+	}
+}
+
+// TestSetDomainExposureValid verifies that a valid exposure update persists
+// Exposed=true and the cleaned path.
+func TestSetDomainExposureValid(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, _, primaryID := exposureAppFixture(t, h, q, orgSvc, "expapp", "owner-exp2@k.local")
+
+	rec := postForm(t, h, base+"/domains/"+i64(primaryID)+"/exposure", cookie, url.Values{
+		"exposed": {"on"},
+		"paths":   {"/webhook"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("valid exposure want 303, got %d", rec.Code)
+	}
+	d, err := q.GetDomain(ctx, primaryID)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if !d.Exposed {
+		t.Errorf("Exposed want true, got false")
+	}
+	if d.Paths != "/webhook" {
+		t.Errorf("Paths want %q, got %q", "/webhook", d.Paths)
+	}
+}
+
+// TestCreateAppPrimaryDomainInternal verifies that the primary domain created by
+// the createApp flow is internal by default (Exposed=false).
+func TestCreateAppPrimaryDomainInternal(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	_, _, _, primaryID := exposureAppFixture(t, h, q, orgSvc, "expapp", "owner-exp3@k.local")
+
+	d, err := q.GetDomain(ctx, primaryID)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if d.Exposed {
+		t.Errorf("primary domain Exposed want false (internal default), got true")
+	}
+}
+
 // TestDomainCrossTenantIsolation verifies that a user authenticated under
 // org-B cannot mutate (toggle TLS or delete) a domain that belongs to org-A's
 // application by injecting org-A's domainID into the org-B URL path.

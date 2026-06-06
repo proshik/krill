@@ -110,12 +110,12 @@ func (f *fakeStore) depStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(
 func imageApp() App {
 	return App{ID: 1, Name: "web", Image: "nginx", Tag: "alpine",
 		Domain: "web.127-0-0-1.sslip.io", Port: 80, Env: map[string]string{"K": "V"}, SourceType: "image",
-		Domains: []traefik.Domain{{Host: "web.127-0-0-1.sslip.io", TLS: false}}}
+		Domains: []traefik.Domain{{Host: "web.127-0-0-1.sslip.io", TLS: false, Exposed: true}}}
 }
 func dockerfileApp() App {
 	return App{ID: 2, Name: "api", Domain: "api.x", Port: 3000, Env: map[string]string{},
 		SourceType: "dockerfile", GitURL: "https://github.com/x/y.git", GitBranch: "main", DockerfilePath: "Dockerfile",
-		Domains: []traefik.Domain{{Host: "api.x", TLS: false}}}
+		Domains: []traefik.Domain{{Host: "api.x", TLS: false, Exposed: true}}}
 }
 
 func newDeployer(eng docker.Engine, b builder.Builder, st Store) *Deployer {

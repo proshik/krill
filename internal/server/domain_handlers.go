@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -15,6 +16,24 @@ var hostRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2
 func validHost(h string) bool {
 	h = strings.ToLower(strings.TrimSpace(h))
 	return len(h) <= 253 && hostRe.MatchString(h)
+}
+
+// validPaths parses a newline-separated paths textarea: each entry must start
+// with "/" and contain no whitespace or backticks (safe to interpolate into a
+// Traefik rule). Returns the cleaned prefixes (empty slice = all paths).
+func validPaths(raw string) ([]string, error) {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		p := strings.TrimSpace(line)
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "` \t") {
+			return nil, errors.New("each path must start with / and contain no spaces or backticks")
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // loadDomain loads {domainID}, verifying it belongs to the app in the chain.
@@ -50,8 +69,14 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, "host already in use")
 		return
 	}
+	expose := r.FormValue("exposed") == "on"
+	paths, perr := validPaths(r.FormValue("paths"))
+	if perr != nil {
+		s.flashErr(w, r, perr.Error())
+		return
+	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
-		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false, Exposed: true, Paths: "",
+		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false, Exposed: expose, Paths: strings.Join(paths, "\n"),
 	}); err != nil {
 		logFrom(r).Error("addDomain: create failed", "err", err, "app_id", c.App.ID, "host", host)
 		s.flashErr(w, r, "failed to add domain")
@@ -80,6 +105,34 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", !d.Tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
 	s.setFlash(w, "ok", "TLS setting updated")
+	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
+}
+
+func (s *Server) setDomainExposure(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	d, ok := s.loadDomain(w, r, c.App.ID)
+	if !ok {
+		return
+	}
+	expose := r.FormValue("exposed") == "on"
+	paths, perr := validPaths(r.FormValue("paths"))
+	if perr != nil {
+		s.flashErr(w, r, perr.Error())
+		return
+	}
+	if err := s.q.UpdateDomainExposure(r.Context(), db.UpdateDomainExposureParams{
+		ID: d.ID, Exposed: expose, Paths: strings.Join(paths, "\n"),
+	}); err != nil {
+		logFrom(r).Error("setDomainExposure: update failed", "err", err, "domain_id", d.ID)
+		s.flashErr(w, r, "failed to update exposure")
+		return
+	}
+	logFrom(r).Info("domain exposure updated", "domain_id", d.ID, "app_id", c.App.ID, "exposed", expose, "paths", len(paths))
+	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	s.setFlash(w, "ok", "Exposure updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -120,7 +173,9 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 	}
 	ds := make([]traefik.Domain, 0, len(doms))
 	for _, d := range doms {
-		ds = append(ds, traefik.Domain{Host: d.Host, TLS: d.Tls})
+		ds = append(ds, traefik.Domain{
+			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
+		})
 	}
 	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, s.cfg.Network)
 	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {

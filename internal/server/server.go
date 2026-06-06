@@ -101,6 +101,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/registry", s.setAppRegistry)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains", s.addDomain)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/tls", s.toggleDomainTLS)
+				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/exposure", s.setDomainExposure)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/delete", s.deleteDomain)
 				r.Post("/projects/{projID}/environments/{envID}/databases", s.createDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{engine}/{dbID}/deploy", s.deployDatabase)
