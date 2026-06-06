@@ -2,7 +2,7 @@
 
 A minimal self-hosted PaaS written in Go: deploy containerized apps and managed databases onto a single-node Docker Swarm, routed by Traefik, managed from a dark web control plane.
 
-> **Status:** Early, active development — a learning project. Phases 0, 1, 2, 2.5, and 3 are complete. Next up are backups (Phase 4) and domains/TLS (Phase 5). Not yet production-hardened.
+> **Status:** Early, active development — a learning project. Phases 0–5 are complete (apps, managed databases, S3 backups, domains/TLS), plus a deploy-parity track (private registries, advanced container settings, app lifecycle controls, per-domain route exposure). Not yet production-hardened.
 
 ## Why Krill
 
@@ -41,6 +41,13 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Full lifecycle: deploy, start, stop, delete, and version change.
 - Opt-in "destroy data" on delete (the named volume is only removed when explicitly requested).
 
+### Deploy-parity: container settings, lifecycle, route exposure
+- **Advanced container settings** — per-app memory/CPU limits (`256m` / `0.5`), replica count, restart policy, and a healthcheck (command/interval/timeout/retries/start period), edited on the app's **Advanced** tab and applied to the Swarm service spec.
+- **App lifecycle controls** — Deploy / Reload / Rebuild / Stop buttons on the General tab. Reload restarts the service without rebuilding, Rebuild does a no-cache `docker build`, Stop scales to zero.
+- **Per-domain route exposure (internal by default)** — new apps are not publicly routed; each domain has an **Exposed** toggle and an optional list of public path prefixes. Unexposed services stay on the overlay network only (no Traefik route); exposed domains can be narrowed to specific paths.
+- **Private registries** — org-scoped registry credentials, selectable per app, for pulling private images (see [Private images](#private-images-registries)).
+- **Environment editor** — per-app env vars edited in either a Key-Value grid or a Raw `KEY=value` text mode.
+
 ### Traefik routing (Phases 0+)
 - A pinned Traefik service is bootstrapped into the Swarm and watches the Swarm API.
 - Apps are discovered via service labels; only labeled services are exposed.
@@ -49,6 +56,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Tailwind CSS v4 design system built with the standalone CLI (no Node).
 - Near-black / lime palette, Space Grotesk + JetBrains Mono, dark full-width layout.
 - Reusable templ components plus an i18n foundation (`i18n.T(ctx, "key")` with an English catalog).
+- Post-redirect-get flash toasts (success/error) on every form action, copy buttons, named destructive confirmations, button loading states, `hx-boost` navigation, and a blurred-backdrop org-switcher modal. Destinations and Registries live under a single sidebar **Settings** group.
 
 ## Architecture
 
