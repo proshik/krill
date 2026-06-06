@@ -133,6 +133,41 @@ func TestBuildSpecImage(t *testing.T) {
 	}
 }
 
+func TestBuildSpecAdvanced(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	app := imageApp()
+	app.MemoryLimitBytes = 268435456
+	app.NanoCPUs = 500000000
+	app.RestartCondition = "on-failure"
+	app.RestartMaxAttempts = 3
+	app.Healthcheck = &docker.HealthcheckSpec{
+		Test:     []string{"CMD-SHELL", "true"},
+		Interval: 30 * time.Second,
+		Timeout:  5 * time.Second,
+		Retries:  3,
+	}
+
+	spec := d.buildSpec(app, "nginx:alpine")
+	if spec.MemoryLimitBytes != 268435456 {
+		t.Errorf("MemoryLimitBytes = %d, want 268435456", spec.MemoryLimitBytes)
+	}
+	if spec.NanoCPUs != 500000000 {
+		t.Errorf("NanoCPUs = %d, want 500000000", spec.NanoCPUs)
+	}
+	if spec.RestartCondition != "on-failure" {
+		t.Errorf("RestartCondition = %q, want on-failure", spec.RestartCondition)
+	}
+	if spec.RestartMaxAttempts != 3 {
+		t.Errorf("RestartMaxAttempts = %d, want 3", spec.RestartMaxAttempts)
+	}
+	if spec.Healthcheck == nil {
+		t.Fatal("Healthcheck = nil, want non-nil")
+	}
+	if spec.Healthcheck.Retries != 3 {
+		t.Errorf("Healthcheck.Retries = %d, want 3", spec.Healthcheck.Retries)
+	}
+}
+
 func TestImageDeployNoBuild(t *testing.T) {
 	eng := &mockEngine{}
 	b := &mockBuilder{}
