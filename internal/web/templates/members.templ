@@ -35,7 +35,7 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 										</form>
 									}
 									if (role == "owner" || role == "admin") && m.Role != "owner" {
-										<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline" data-email={ m.Email } onsubmit="return confirm('Remove member ' + this.dataset.email + '?')">
+										<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline" data-email={ m.Email } onsubmit="return confirm('Remove member ' + this.dataset.email + '?')">
 											<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "common.delete") }</button>
 										</form>
 									}

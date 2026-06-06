@@ -26,7 +26,7 @@ templ Destinations(org db.Organization, role string, dests []db.Destination) {
 							<td>{ d.Name }</td><td class="k-mono">{ d.Endpoint }</td><td class="k-mono">{ d.Bucket }</td><td>{ d.Region }</td>
 							<td>
 								if role == "owner" || role == "admin" {
-									<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations/" + itoa(d.ID) + "/delete") } data-name={ d.Name } onsubmit="return confirm('Delete destination ' + this.dataset.name + '?')">
+									<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations/" + itoa(d.ID) + "/delete") } data-name={ d.Name } onsubmit="return confirm('Delete destination ' + this.dataset.name + '?')">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "dest.delete") }</button>
 									</form>
 								}
