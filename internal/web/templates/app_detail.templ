@@ -34,6 +34,7 @@ templ AppDetail(c AppCtx, tab string) {
 			<a href={ templ.SafeURL(c.base() + "?tab=deployments") } class={ "k-tab", templ.KV("k-tab-active", tab == "deployments") }>{ i18n.T(ctx, "tab.deployments") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ "k-tab", templ.KV("k-tab-active", tab == "logs") }>{ i18n.T(ctx, "tab.logs") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=advanced") } class={ "k-tab", templ.KV("k-tab-active", tab == "advanced") }>{ i18n.T(ctx, "tab.advanced") }</a>
 		</div>
 		switch tab {
 			case "env":
@@ -44,6 +45,8 @@ templ AppDetail(c AppCtx, tab string) {
 				@logsTab(c)
 			case "domains":
 				@domainsTab(c)
+			case "advanced":
+				@advancedTab(c)
 			default:
 				@generalTab(c)
 		}
@@ -233,4 +236,60 @@ templ TagOptions(tags []string, current string) {
 templ TagError(current, msg string) {
 	<input class="k-input" name="tag" value={ current }/>
 	<p class="k-mono text-xs mt-1" style="color:var(--color-err)">{ msg }</p>
+}
+
+templ advancedTab(c AppCtx) {
+	<div class="k-panel">
+		<div class="k-panel-head">
+			<div>
+				<div class="k-panel-title">{ i18n.T(ctx, "adv.title") }</div>
+				<div class="k-panel-desc">{ i18n.T(ctx, "adv.desc") }</div>
+			</div>
+		</div>
+		<div class="k-panel-body">
+			<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:560px">
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "app.replicas") }</label>
+					<input class="k-input" name="replicas" type="number" min="1" value={ itoa(int64(c.App.Replicas)) }/>
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "app.memory_limit") }</label>
+						<input class="k-input" name="memory_limit" placeholder="256m" value={ strv(c.App.MemoryLimit) }/>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "app.cpu_limit") }</label>
+						<input class="k-input" name="cpu_limit" placeholder="0.5" value={ strv(c.App.CpuLimit) }/>
+					</div>
+				</div>
+				<div class="grid grid-cols-2 gap-3">
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "app.restart_condition") }</label>
+						<select class="k-select" name="restart_condition">
+							<option value="any" selected?={ c.App.RestartCondition == "any" }>any</option>
+							<option value="on-failure" selected?={ c.App.RestartCondition == "on-failure" }>on-failure</option>
+							<option value="none" selected?={ c.App.RestartCondition == "none" }>none</option>
+						</select>
+					</div>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "app.restart_max_attempts") }</label>
+						<input class="k-input" name="restart_max_attempts" type="number" min="0" value={ itoa(int64(c.App.RestartMaxAttempts)) }/>
+					</div>
+				</div>
+				<div class="k-label" style="margin-top:.5rem;color:var(--color-fg)">{ i18n.T(ctx, "adv.healthcheck") }</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "app.healthcheck_cmd") }</label>
+					<input class="k-input k-mono" name="healthcheck_cmd" placeholder="curl -f http://localhost/ || exit 1" value={ strv(c.App.HealthcheckCmd) }/>
+				</div>
+				<div class="grid grid-cols-4 gap-3">
+					<div><label class="k-label">{ i18n.T(ctx, "app.healthcheck_interval") }</label><input class="k-input" name="healthcheck_interval" placeholder="30s" value={ strv(c.App.HealthcheckInterval) }/></div>
+					<div><label class="k-label">{ i18n.T(ctx, "app.healthcheck_timeout") }</label><input class="k-input" name="healthcheck_timeout" placeholder="5s" value={ strv(c.App.HealthcheckTimeout) }/></div>
+					<div><label class="k-label">{ i18n.T(ctx, "app.healthcheck_retries") }</label><input class="k-input" name="healthcheck_retries" type="number" min="0" placeholder="3" value={ i32v(c.App.HealthcheckRetries) }/></div>
+					<div><label class="k-label">{ i18n.T(ctx, "app.healthcheck_start_period") }</label><input class="k-input" name="healthcheck_start_period" placeholder="10s" value={ strv(c.App.HealthcheckStartPeriod) }/></div>
+				</div>
+				<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "adv.apply_hint") }</p>
+				<div class="flex justify-end"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button></div>
+			</form>
+		</div>
+	</div>
 }

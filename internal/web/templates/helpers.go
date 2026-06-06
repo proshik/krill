@@ -12,6 +12,22 @@ import (
 // itoa formats an int64 for interpolation into URLs inside templates.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
+// strv dereferences a *string into a value, returning "" when nil.
+func strv(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// i32v formats a *int32 as a decimal string, returning "" when nil.
+func i32v(p *int32) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.Itoa(int(*p))
+}
+
 // destName returns the Name of the destination with the given id, or "" if none.
 func destName(dests []db.Destination, id int64) string {
 	for _, d := range dests {
