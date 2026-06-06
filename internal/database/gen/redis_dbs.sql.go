@@ -153,20 +153,6 @@ func (q *Queries) ListRedisByEnvironment(ctx context.Context, environmentID int6
 	return items, nil
 }
 
-const updateRedisExternalPort = `-- name: UpdateRedisExternalPort :exec
-UPDATE redis_dbs SET external_port = $2, updated_at = now() WHERE id = $1
-`
-
-type UpdateRedisExternalPortParams struct {
-	ID           int64  `json:"id"`
-	ExternalPort *int32 `json:"external_port"`
-}
-
-func (q *Queries) UpdateRedisExternalPort(ctx context.Context, arg UpdateRedisExternalPortParams) error {
-	_, err := q.db.Exec(ctx, updateRedisExternalPort, arg.ID, arg.ExternalPort)
-	return err
-}
-
 const updateRedisImage = `-- name: UpdateRedisImage :exec
 UPDATE redis_dbs SET image = $2, updated_at = now() WHERE id = $1
 `

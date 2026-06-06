@@ -96,10 +96,8 @@ type Querier interface {
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
 	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
-	UpdatePostgresExternalPort(ctx context.Context, arg UpdatePostgresExternalPortParams) error
 	UpdatePostgresImage(ctx context.Context, arg UpdatePostgresImageParams) error
 	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
-	UpdateRedisExternalPort(ctx context.Context, arg UpdateRedisExternalPortParams) error
 	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
 	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
 }

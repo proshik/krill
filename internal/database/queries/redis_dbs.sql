@@ -14,9 +14,6 @@ UPDATE redis_dbs SET status = $2, updated_at = now() WHERE id = $1;
 -- name: UpdateRedisImage :exec
 UPDATE redis_dbs SET image = $2, updated_at = now() WHERE id = $1;
 
--- name: UpdateRedisExternalPort :exec
-UPDATE redis_dbs SET external_port = $2, updated_at = now() WHERE id = $1;
-
 -- name: DeleteRedis :exec
 DELETE FROM redis_dbs WHERE id = $1;
 

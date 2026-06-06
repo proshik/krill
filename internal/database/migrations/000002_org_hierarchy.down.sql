@@ -1,3 +1,5 @@
+-- WARNING: destructive — drops the org-hierarchy tables and ALL their data.
+-- Down migrations are for local/dev rollback only; Krill applies migrations up-only on startup.
 DROP TABLE IF EXISTS applications;
 CREATE TABLE applications (
     id         BIGSERIAL PRIMARY KEY,

@@ -14,9 +14,6 @@ UPDATE postgres_dbs SET status = $2, updated_at = now() WHERE id = $1;
 -- name: UpdatePostgresImage :exec
 UPDATE postgres_dbs SET image = $2, updated_at = now() WHERE id = $1;
 
--- name: UpdatePostgresExternalPort :exec
-UPDATE postgres_dbs SET external_port = $2, updated_at = now() WHERE id = $1;
-
 -- name: DeletePostgres :exec
 DELETE FROM postgres_dbs WHERE id = $1;
 

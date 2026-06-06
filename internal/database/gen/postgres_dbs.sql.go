@@ -163,20 +163,6 @@ func (q *Queries) ListPostgresByEnvironment(ctx context.Context, environmentID i
 	return items, nil
 }
 
-const updatePostgresExternalPort = `-- name: UpdatePostgresExternalPort :exec
-UPDATE postgres_dbs SET external_port = $2, updated_at = now() WHERE id = $1
-`
-
-type UpdatePostgresExternalPortParams struct {
-	ID           int64  `json:"id"`
-	ExternalPort *int32 `json:"external_port"`
-}
-
-func (q *Queries) UpdatePostgresExternalPort(ctx context.Context, arg UpdatePostgresExternalPortParams) error {
-	_, err := q.db.Exec(ctx, updatePostgresExternalPort, arg.ID, arg.ExternalPort)
-	return err
-}
-
 const updatePostgresImage = `-- name: UpdatePostgresImage :exec
 UPDATE postgres_dbs SET image = $2, updated_at = now() WHERE id = $1
 `
