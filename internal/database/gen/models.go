@@ -84,6 +84,8 @@ type Domain struct {
 	Tls           bool      `json:"tls"`
 	IsPrimary     bool      `json:"is_primary"`
 	CreatedAt     time.Time `json:"created_at"`
+	Exposed       bool      `json:"exposed"`
+	Paths         string    `json:"paths"`
 }
 
 type Environment struct {

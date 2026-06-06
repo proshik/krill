@@ -51,7 +51,7 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
-		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false,
+		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false, Exposed: true, Paths: "",
 	}); err != nil {
 		logFrom(r).Error("addDomain: create failed", "err", err, "app_id", c.App.ID, "host", host)
 		s.flashErr(w, r, "failed to add domain")

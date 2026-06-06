@@ -103,7 +103,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
-		ApplicationID: a.ID, Host: a.Domain, Tls: false, IsPrimary: true,
+		ApplicationID: a.ID, Host: a.Domain, Tls: false, IsPrimary: true, Exposed: false, Paths: "",
 	}); err != nil {
 		// Roll back the orphaned application so it does not linger without a domain.
 		if derr := s.q.DeleteApplication(r.Context(), a.ID); derr != nil {

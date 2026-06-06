@@ -30,7 +30,7 @@ func domainFixture(t *testing.T, h http.Handler, q *db.Queries, orgSvc *org.Serv
 		t.Fatalf("create application: %v", err)
 	}
 	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
-		ApplicationID: a.ID, Host: primary, Tls: false, IsPrimary: true,
+		ApplicationID: a.ID, Host: primary, Tls: false, IsPrimary: true, Exposed: true, Paths: "",
 	}); err != nil {
 		t.Fatalf("create primary domain: %v", err)
 	}
@@ -334,13 +334,13 @@ func TestDomainCrossTenantIsolation(t *testing.T) {
 	}
 	// primary domain for app-A (required for the app to be valid)
 	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
-		ApplicationID: appA.ID, Host: "web-a.primary.example.com", Tls: false, IsPrimary: true,
+		ApplicationID: appA.ID, Host: "web-a.primary.example.com", Tls: false, IsPrimary: true, Exposed: true, Paths: "",
 	}); err != nil {
 		t.Fatalf("create org-A primary domain: %v", err)
 	}
 	// extra non-primary domain — this is the one we will try to steal
 	extraDom, err := q.CreateDomain(ctx, db.CreateDomainParams{
-		ApplicationID: appA.ID, Host: "a-extra.example.com", Tls: false, IsPrimary: false,
+		ApplicationID: appA.ID, Host: "a-extra.example.com", Tls: false, IsPrimary: false, Exposed: true, Paths: "",
 	})
 	if err != nil {
 		t.Fatalf("create org-A extra domain: %v", err)

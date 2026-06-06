@@ -16,6 +16,7 @@ type Querier interface {
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountDomainsByHost(ctx context.Context, host string) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
+	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
@@ -92,6 +93,7 @@ type Querier interface {
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
+	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
 	UpdatePostgresExternalPort(ctx context.Context, arg UpdatePostgresExternalPortParams) error
 	UpdatePostgresImage(ctx context.Context, arg UpdatePostgresImageParams) error

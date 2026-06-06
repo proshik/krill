@@ -31,10 +31,21 @@ func (q *Queries) CountDomainsByHost(ctx context.Context, host string) (int64, e
 	return count, err
 }
 
+const countExposedDomainsByApplication = `-- name: CountExposedDomainsByApplication :one
+SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true
+`
+
+func (q *Queries) CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countExposedDomainsByApplication, applicationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDomain = `-- name: CreateDomain :one
-INSERT INTO domains (application_id, host, tls, is_primary)
-VALUES ($1, $2, $3, $4)
-RETURNING id, application_id, host, tls, is_primary, created_at
+INSERT INTO domains (application_id, host, tls, is_primary, exposed, paths)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths
 `
 
 type CreateDomainParams struct {
@@ -42,6 +53,8 @@ type CreateDomainParams struct {
 	Host          string `json:"host"`
 	Tls           bool   `json:"tls"`
 	IsPrimary     bool   `json:"is_primary"`
+	Exposed       bool   `json:"exposed"`
+	Paths         string `json:"paths"`
 }
 
 func (q *Queries) CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error) {
@@ -50,6 +63,8 @@ func (q *Queries) CreateDomain(ctx context.Context, arg CreateDomainParams) (Dom
 		arg.Host,
 		arg.Tls,
 		arg.IsPrimary,
+		arg.Exposed,
+		arg.Paths,
 	)
 	var i Domain
 	err := row.Scan(
@@ -59,6 +74,8 @@ func (q *Queries) CreateDomain(ctx context.Context, arg CreateDomainParams) (Dom
 		&i.Tls,
 		&i.IsPrimary,
 		&i.CreatedAt,
+		&i.Exposed,
+		&i.Paths,
 	)
 	return i, err
 }
@@ -73,7 +90,7 @@ func (q *Queries) DeleteDomain(ctx context.Context, id int64) error {
 }
 
 const getDomain = `-- name: GetDomain :one
-SELECT id, application_id, host, tls, is_primary, created_at
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
 FROM domains WHERE id = $1
 `
 
@@ -87,12 +104,14 @@ func (q *Queries) GetDomain(ctx context.Context, id int64) (Domain, error) {
 		&i.Tls,
 		&i.IsPrimary,
 		&i.CreatedAt,
+		&i.Exposed,
+		&i.Paths,
 	)
 	return i, err
 }
 
 const listDomainsByApplication = `-- name: ListDomainsByApplication :many
-SELECT id, application_id, host, tls, is_primary, created_at
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
 FROM domains WHERE application_id = $1 ORDER BY is_primary DESC, created_at
 `
 
@@ -112,6 +131,8 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 			&i.Tls,
 			&i.IsPrimary,
 			&i.CreatedAt,
+			&i.Exposed,
+			&i.Paths,
 		); err != nil {
 			return nil, err
 		}
@@ -134,5 +155,20 @@ type SetDomainTLSParams struct {
 
 func (q *Queries) SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error {
 	_, err := q.db.Exec(ctx, setDomainTLS, arg.ID, arg.Tls)
+	return err
+}
+
+const updateDomainExposure = `-- name: UpdateDomainExposure :exec
+UPDATE domains SET exposed = $2, paths = $3 WHERE id = $1
+`
+
+type UpdateDomainExposureParams struct {
+	ID      int64  `json:"id"`
+	Exposed bool   `json:"exposed"`
+	Paths   string `json:"paths"`
+}
+
+func (q *Queries) UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error {
+	_, err := q.db.Exec(ctx, updateDomainExposure, arg.ID, arg.Exposed, arg.Paths)
 	return err
 }
