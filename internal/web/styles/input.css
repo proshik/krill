@@ -130,7 +130,9 @@
   /* sidebar */
   .k-side { width:210px; padding:18px 14px; border-right:1px solid var(--color-border); background:#0c0c0c; min-height:100vh; display:flex; flex-direction:column; }
   .k-side-foot { margin-top:auto; display:flex; flex-direction:column; gap:1px; padding-top:14px; }
-  .k-nav-section { font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:var(--color-faint); padding:6px 11px 3px; }
+  .k-nav-logout { display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:13px; border-top:1px solid var(--color-border); color:var(--color-faint); }
+  .k-nav-logout:hover { color:var(--color-err); background:rgba(239,68,68,.08); }
+  .k-nav-logout-ico { font-size:13px; opacity:.85; }
   .k-side-brand { font-weight:700; font-size:17px; letter-spacing:-.02em; margin-bottom:16px; display:flex; align-items:center; gap:8px; }
   .k-nav { display:block; padding:8px 11px; border-radius:8px; color:var(--color-muted); font-size:14px; }
   .k-nav:hover { background:var(--color-surface-2); color:var(--color-fg); }

@@ -7,6 +7,7 @@ import (
 
 templ Registries(org db.Organization, role string, regs []db.Registry) {
 	@Layout(i18n.T(ctx, "reg.title"), org, role) {
+		@settingsNav(org.ID)
 		<div class="k-card">
 			<table class="k-table">
 				<thead>

@@ -7,6 +7,7 @@ import (
 
 templ Destinations(org db.Organization, role string, dests []db.Destination) {
 	@Layout(i18n.T(ctx, "dest.title"), org, role) {
+		@settingsNav(org.ID)
 		<div class="k-card">
 			<table class="k-table">
 				<thead>

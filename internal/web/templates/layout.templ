@@ -36,11 +36,9 @@ templ Layout(title string, org db.Organization, role string) {
 				</nav>
 				<div class="k-side-foot">
 					if role == "owner" || role == "admin" {
-						<div class="k-nav-section">{ i18n.T(ctx, "nav.settings") }</div>
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "destinations")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "registries")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsSettings(ctx)) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "nav.settings") }</a>
 					}
-					<a class="k-nav" href="/logout" hx-boost="false">{ i18n.T(ctx, "nav.logout") }</a>
+					<a class="k-nav k-nav-logout" href="/logout" hx-boost="false"><span class="k-nav-logout-ico">⎋</span> { i18n.T(ctx, "nav.logout") }</a>
 				</div>
 			</aside>
 			<main class="flex-1 min-w-0">
@@ -57,6 +55,16 @@ templ Layout(title string, org db.Organization, role string) {
 			<dialog id="org-switcher" class="k-modal"></dialog>
 		</body>
 	</html>
+}
+
+// settingsNav is the Settings sub-navigation shared by the Destinations and
+// Registries pages (they live under a single sidebar "Settings" entry).
+templ settingsNav(orgID int64) {
+	<h2 class="text-2xl mb-3">{ i18n.T(ctx, "nav.settings") }</h2>
+	<div class="k-card flex items-center mb-4 py-2 px-4">
+		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
+		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/registries") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "registries")) }>{ i18n.T(ctx, "reg.link") }</a>
+	</div>
 }
 
 templ Bare(title string) {

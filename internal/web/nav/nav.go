@@ -26,6 +26,13 @@ func IsActive(ctx context.Context, section string) bool {
 	return sectionOf(Path(ctx)) == section
 }
 
+// IsSettings reports whether the current path is one of the Settings pages
+// (Destinations or Registries), which share a single sidebar entry.
+func IsSettings(ctx context.Context) bool {
+	s := sectionOf(Path(ctx))
+	return s == "destinations" || s == "registries"
+}
+
 // sectionOf maps a request path to its sidebar section. The org-level pages
 // (members/destinations/registries) are leaf routes, so a substring match is
 // unambiguous; everything else under an org is the projects/dashboard section.
