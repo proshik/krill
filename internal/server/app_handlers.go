@@ -347,6 +347,7 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	command := strings.TrimSpace(r.FormValue("command"))
 	memLimit := strings.TrimSpace(r.FormValue("memory_limit"))
 	if _, err := docker.ParseMemoryBytes(memLimit); err != nil {
 		s.flashErr(w, r, "invalid memory limit (e.g. 256m, 1g)")
@@ -403,6 +404,7 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.q.UpdateApplicationAdvanced(r.Context(), db.UpdateApplicationAdvancedParams{
 		ID:                     c.App.ID,
+		Command:                nilIfEmpty(command),
 		MemoryLimit:            nilIfEmpty(memLimit),
 		CpuLimit:               nilIfEmpty(cpuLimit),
 		Replicas:               int32(replicas),

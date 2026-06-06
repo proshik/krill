@@ -303,3 +303,13 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestBuildSpecCommandArgs(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	app := imageApp()
+	app.Args = []string{"start-dev"}
+	spec := d.buildSpec(app, "keycloak:latest")
+	if len(spec.Args) != 1 || spec.Args[0] != "start-dev" {
+		t.Errorf("spec.Args = %v, want [start-dev]", spec.Args)
+	}
+}

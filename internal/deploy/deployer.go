@@ -28,6 +28,7 @@ type App struct {
 	DockerfilePath string
 	Domains        []traefik.Domain
 	RegistryAuth   string
+	Args           []string // container command override (CMD), e.g. ["start-dev"]
 
 	Replicas           uint64
 	MemoryLimitBytes   int64
@@ -252,6 +253,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	return docker.ServiceSpec{
 		Name:               name,
 		Image:              imageTag,
+		Args:               app.Args,
 		Env:                app.Env,
 		Labels:             traefik.AppLabels(name, domains, app.Port, d.network),
 		Replicas:           replicas,

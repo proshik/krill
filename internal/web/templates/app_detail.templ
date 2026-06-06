@@ -139,6 +139,12 @@ templ generalTab(c AppCtx) {
 				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>
 			</p>
 		}
+		if c.Role == "owner" || c.Role == "admin" {
+			<div class="k-section">{ i18n.T(ctx, "app.section_danger") }</div>
+			<form method="post" action={ templ.SafeURL(c.base() + "/delete") } data-app-name={ c.App.Name } onsubmit="return confirm('Delete app ' + this.dataset.appName + '? This removes the running service and all its configuration.')">
+				<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "app.delete") }</button>
+			</form>
+		}
 	</div>
 }
 
@@ -269,6 +275,11 @@ templ advancedTab(c AppCtx) {
 		</div>
 		<div class="k-panel-body">
 			<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:560px">
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "app.command") }</label>
+					<input class="k-input k-mono" name="command" placeholder="start-dev" value={ strv(c.App.Command) }/>
+					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "app.command_hint") }</p>
+				</div>
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.replicas") }</label>
 					<input class="k-input" name="replicas" type="number" min="1" value={ itoa(int64(c.App.Replicas)) }/>

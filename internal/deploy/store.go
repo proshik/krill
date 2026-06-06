@@ -39,6 +39,7 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		GitURL:         a.GitUrl,
 		GitBranch:      a.GitBranch,
 		DockerfilePath: a.DockerfilePath,
+		Args:           docker.SplitCommand(strDeref(a.Command)),
 	}
 	for _, d := range doms {
 		out.Domains = append(out.Domains, traefik.Domain{

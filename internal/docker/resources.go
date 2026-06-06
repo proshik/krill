@@ -26,6 +26,13 @@ func ParseMemoryBytes(s string) (int64, error) {
 	return b, nil
 }
 
+// SplitCommand splits a container command override into arguments on
+// whitespace (maps to ContainerSpec.Args, i.e. docker-compose `command:`).
+// Quoting is not supported. An empty string returns nil (use the image CMD).
+func SplitCommand(s string) []string {
+	return strings.Fields(s)
+}
+
 // ParseNanoCPUs parses a CPU count ("0.5", "2") into nano-CPUs. An empty
 // string returns (0, nil), meaning "no limit".
 func ParseNanoCPUs(s string) (int64, error) {

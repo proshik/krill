@@ -47,3 +47,28 @@ func TestParseNanoCPUs(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitCommand(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"start-dev", []string{"start-dev"}},
+		{"start --optimized", []string{"start", "--optimized"}},
+		{"  a   b\tc ", []string{"a", "b", "c"}},
+	}
+	for _, c := range cases {
+		got := SplitCommand(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("%q: got %v want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%q[%d]: got %q want %q", c.in, i, got[i], c.want[i])
+			}
+		}
+	}
+}

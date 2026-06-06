@@ -39,16 +39,17 @@ UPDATE applications SET registry_id = $2, updated_at = now() WHERE id = $1;
 
 -- name: UpdateApplicationAdvanced :exec
 UPDATE applications SET
-    memory_limit = $2,
-    cpu_limit = $3,
-    replicas = $4,
-    restart_condition = $5,
-    restart_max_attempts = $6,
-    healthcheck_cmd = $7,
-    healthcheck_interval = $8,
-    healthcheck_timeout = $9,
-    healthcheck_retries = $10,
-    healthcheck_start_period = $11,
+    command = $2,
+    memory_limit = $3,
+    cpu_limit = $4,
+    replicas = $5,
+    restart_condition = $6,
+    restart_max_attempts = $7,
+    healthcheck_cmd = $8,
+    healthcheck_interval = $9,
+    healthcheck_timeout = $10,
+    healthcheck_retries = $11,
+    healthcheck_start_period = $12,
     updated_at = now()
 WHERE id = $1;
 

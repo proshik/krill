@@ -43,6 +43,7 @@ func TestSaveAdvancedValid(t *testing.T) {
 	base, cookie, appID := domainFixture(t, h, q, orgSvc, "adv-ok.example.com")
 
 	rec := postForm(t, h, base+"/advanced", cookie, url.Values{
+		"command":              {"start-dev"},
 		"replicas":             {"2"},
 		"memory_limit":         {"256m"},
 		"cpu_limit":            {"0.5"},
@@ -58,6 +59,9 @@ func TestSaveAdvancedValid(t *testing.T) {
 	a, err := q.GetApplication(ctx, appID)
 	if err != nil {
 		t.Fatalf("GetApplication: %v", err)
+	}
+	if a.Command == nil || *a.Command != "start-dev" {
+		t.Errorf("Command want %q, got %v", "start-dev", a.Command)
 	}
 	if a.MemoryLimit == nil || *a.MemoryLimit != "256m" {
 		t.Errorf("MemoryLimit want %q, got %v", "256m", a.MemoryLimit)

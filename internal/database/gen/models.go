@@ -37,6 +37,7 @@ type Application struct {
 	HealthcheckTimeout     *string           `json:"healthcheck_timeout"`
 	HealthcheckRetries     *int32            `json:"healthcheck_retries"`
 	HealthcheckStartPeriod *string           `json:"healthcheck_start_period"`
+	Command                *string           `json:"command"`
 }
 
 type Backup struct {
