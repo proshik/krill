@@ -146,3 +146,41 @@ func TestBuildSwarmSpecAdvancedDefaults(t *testing.T) {
 		t.Errorf("expected no healthcheck, got %+v", sw.TaskTemplate.ContainerSpec.Healthcheck)
 	}
 }
+
+func TestRestartCondition(t *testing.T) {
+	cases := []struct {
+		in   string
+		want swarm.RestartPolicyCondition
+	}{
+		{"on-failure", swarm.RestartPolicyConditionOnFailure},
+		{"none", swarm.RestartPolicyConditionNone},
+		{"any", swarm.RestartPolicyConditionAny},
+		{"", swarm.RestartPolicyConditionAny},      // empty defaults to "any"
+		{"bogus", swarm.RestartPolicyConditionAny}, // unknown defaults to "any"
+	}
+	for _, tc := range cases {
+		if got := restartCondition(tc.in); got != tc.want {
+			t.Errorf("restartCondition(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestBuildSwarmSpecRestartConditionNone verifies the "none" condition reaches
+// the Swarm spec and, with RestartMaxAttempts == 0 (the boundary meaning
+// "unlimited"), no MaxAttempts pointer is set.
+func TestBuildSwarmSpecRestartConditionNone(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{
+		Name: "krill-1", Image: "nginx", Network: "krill-net",
+		RestartCondition: "none", RestartMaxAttempts: 0,
+	})
+	rp := sw.TaskTemplate.RestartPolicy
+	if rp == nil {
+		t.Fatal("restart policy is nil")
+	}
+	if rp.Condition != swarm.RestartPolicyConditionNone {
+		t.Errorf("condition = %q, want %q", rp.Condition, swarm.RestartPolicyConditionNone)
+	}
+	if rp.MaxAttempts != nil {
+		t.Errorf("RestartMaxAttempts == 0 must leave MaxAttempts nil (unlimited), got %d", *rp.MaxAttempts)
+	}
+}
