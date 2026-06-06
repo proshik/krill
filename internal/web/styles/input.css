@@ -48,7 +48,7 @@
 
 /* ── component classes (used by the Task 4 templ components) ── */
 @layer components {
-  .k-btn { @apply inline-flex items-center gap-2 rounded-[9px] px-4 py-2 text-sm font-semibold transition; cursor:pointer; }
+  .k-btn { @apply inline-flex items-center gap-2 rounded-[9px] px-4 py-2 text-sm font-semibold transition; cursor:pointer; position:relative; }
   .k-btn-primary { background:var(--color-accent); color:var(--color-accent-fg);
     box-shadow:0 0 0 1px rgba(190,242,100,.5), 0 0 20px -6px rgba(190,242,100,.55); }
   .k-btn-primary:hover { filter:brightness(1.06); transform:translateY(-1px); }
@@ -108,8 +108,17 @@
             border-radius:50%; animation:k-spin .7s linear infinite; }
   .htmx-request .k-spin, .k-spin.htmx-request { display:inline-block; }
   .k-label-required::after { content:" *"; color:var(--color-err); }
-  .k-hint { list-style:none; padding:0; margin:0; font-size:11px; line-height:1.7; color:var(--color-faint); }
-  .k-hint b { color:var(--color-muted); font-weight:600; }
+  /* small (i) marker in a button corner; reveals a styled tooltip on hover */
+  .k-info { position:absolute; top:3px; right:5px; width:14px; height:14px; border-radius:50%;
+    display:inline-flex; align-items:center; justify-content:center; border:1px solid currentColor;
+    font:italic 700 9px/1 ui-serif, Georgia, serif; opacity:.5; cursor:help; }
+  .k-info:hover { opacity:1; }
+  .k-info::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 8px); right:-5px;
+    width:max-content; max-width:230px; padding:7px 9px; border-radius:8px;
+    background:#0c0c0c; color:var(--color-fg); border:1px solid var(--color-border-strong);
+    font:400 11px/1.45 var(--font-display); text-align:left; white-space:normal; letter-spacing:0;
+    box-shadow:0 10px 28px rgba(0,0,0,.55); opacity:0; visibility:hidden; transition:opacity .12s; pointer-events:none; z-index:50; }
+  .k-info:hover::after { opacity:1; visibility:visible; }
 
   /* sidebar */
   .k-side { width:210px; padding:18px 14px; border-right:1px solid var(--color-border); background:#0c0c0c; min-height:100vh; display:flex; flex-direction:column; }

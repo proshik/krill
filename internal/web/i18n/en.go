@@ -75,7 +75,6 @@ var en = map[string]string{
 	"app.reload_hint":           "Restart the running containers without rebuilding",
 	"app.rebuild_hint":          "Force a clean rebuild from source (no cache), then deploy",
 	"app.stop_hint":             "Stop the app (scale to zero replicas)",
-	"app.actions_hint":          "What these do:",
 	"app.open":                  "Open:",
 	"app.registry":              "Registry",
 	"app.registry_public":       "Public (no auth)",
