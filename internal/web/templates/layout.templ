@@ -13,6 +13,7 @@ templ Layout(title string, org db.Organization, role string) {
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 			<title>{ title } — Krill</title>
 			<link rel="stylesheet" href="/static/xterm.css"/>
 			<link rel="stylesheet" href="/static/app.css"/>
@@ -72,6 +73,7 @@ templ Bare(title string) {
 	<html lang="en" class="dark">
 		<head>
 			<meta charset="utf-8"/>
+			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 			<title>{ title } — Krill</title>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
