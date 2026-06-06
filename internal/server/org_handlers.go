@@ -9,9 +9,22 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// home redirects to the org list.
+// home sends the user into their first organization's dashboard (the app shell),
+// so opening the app lands on the real interface rather than the standalone org
+// list. Only when the user has no organization yet do we fall back to /orgs to
+// create one.
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/orgs", http.StatusSeeOther)
+	orgs, err := s.q.ListOrganizationsForUser(r.Context(), auth.UserID(r.Context()))
+	if err != nil {
+		logFrom(r).Error("home: failed to list organizations", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(orgs) == 0 {
+		http.Redirect(w, r, "/orgs", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(orgs[0].ID, 10), http.StatusSeeOther)
 }
 
 func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
