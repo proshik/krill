@@ -105,9 +105,9 @@ func (s *Server) deployDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if eng == "postgres" {
-		s.dbsvc.DeployPostgres(r.Context(), id)
+		s.dbsvc.DeployPostgres(id)
 	} else {
-		s.dbsvc.DeployRedis(r.Context(), id)
+		s.dbsvc.DeployRedis(id)
 	}
 	logFrom(r).Info("database deploy requested", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Deployment queued")
@@ -177,9 +177,9 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Info("database version updated", "db_id", id, "engine", eng, "image", image)
 	}
 	if eng == "postgres" {
-		s.dbsvc.DeployPostgres(r.Context(), id)
+		s.dbsvc.DeployPostgres(id)
 	} else {
-		s.dbsvc.DeployRedis(r.Context(), id)
+		s.dbsvc.DeployRedis(id)
 	}
 	s.setFlash(w, "ok", "Version update queued")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)

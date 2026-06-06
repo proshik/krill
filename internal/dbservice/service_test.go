@@ -112,7 +112,7 @@ func TestDeployPostgresPullsAndDeploys(t *testing.T) {
 	eng := newMockEngine()
 	st := newFakeStore(samplePG())
 	svc := newSvc(eng, st)
-	svc.DeployPostgres(context.Background(), 1)
+	svc.DeployPostgres(1)
 	waitFor(t, func() bool { return st.st(1) == "running" })
 	if len(eng.pulled) != 1 || eng.pulled[0] != "postgres:17" {
 		t.Errorf("pulled = %+v", eng.pulled)
@@ -127,7 +127,7 @@ func TestDeployPostgresPullFailMarksError(t *testing.T) {
 	eng.failPull = true
 	st := newFakeStore(samplePG())
 	svc := newSvc(eng, st)
-	svc.DeployPostgres(context.Background(), 1)
+	svc.DeployPostgres(1)
 	waitFor(t, func() bool { return st.st(1) == "error" })
 	if len(eng.deployed) != 0 {
 		t.Error("must not deploy if pull fails")

@@ -137,6 +137,12 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	select {
 	case d.queue <- job{deployID: deployID, noCache: noCache}:
 	case <-d.done:
+		// Server shutting down before the job was queued: mark the deployment
+		// failed with a detached context so it isn't orphaned as 'deploying'.
+		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "server shutting down", "")
+		_ = d.store.SetStatus(wctx, appID, StatusError)
 	}
 	return deployID
 }
@@ -221,11 +227,15 @@ func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, im
 		depStatus = "error"
 		appStatus = StatusError
 	}
-	if err := d.store.FinishDeployment(ctx, deployID, depStatus, imageTag, errMsg, full); err != nil {
+	// Detached context: persist the final status even if the job ctx was canceled
+	// (graceful shutdown), so deployments don't get stuck as running/deploying.
+	wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.store.FinishDeployment(wctx, deployID, depStatus, imageTag, errMsg, full); err != nil {
 		slog.Error("finish deployment failed", "deploy", deployID, "err", err)
 	}
 	if appID != 0 {
-		_ = d.store.SetStatus(ctx, appID, appStatus)
+		_ = d.store.SetStatus(wctx, appID, appStatus)
 	}
 }
 

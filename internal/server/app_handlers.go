@@ -449,7 +449,12 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID))
+	// Removal failure is logged but must not block the DB delete.
+	if s.engine != nil {
+		if err := s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID)); err != nil {
+			logFrom(r).Error("deleteApp: service remove failed", "err", err, "app_id", c.App.ID)
+		}
+	}
 	if err := s.q.DeleteApplication(r.Context(), c.App.ID); err != nil {
 		logFrom(r).Error("deleteApp: failed to delete application", "err", err, "app_id", c.App.ID)
 		s.flashErr(w, r, err.Error())

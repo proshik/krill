@@ -40,7 +40,8 @@ func (s *Scheduler) Reload() error {
 	if err != nil {
 		return err
 	}
-	c := cron.New()
+	// SkipIfStillRunning ensures a slow backup never overlaps its next scheduled run.
+	c := cron.New(cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)))
 	for _, b := range bs {
 		id := b.ID
 		if _, aerr := c.AddFunc(b.Schedule, func() { s.run(context.Background(), id) }); aerr != nil {

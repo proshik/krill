@@ -36,7 +36,9 @@ func pgFeedID(id int64) int64    { return -(id*2 + 1) }
 func redisFeedID(id int64) int64 { return -(id*2 + 2) }
 
 // DeployPostgres: pull → deploy, in a goroutine; logs to hub under pgFeedID(id).
-func (s *Service) DeployPostgres(ctx context.Context, id int64) {
+// Runs detached (its own context.Background) on purpose: the deploy must outlive
+// the HTTP request that triggered it, which returns immediately with a redirect.
+func (s *Service) DeployPostgres(id int64) {
 	go s.deployPG(context.Background(), id)
 }
 
@@ -106,7 +108,9 @@ func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool
 }
 
 // --- Redis (mirrored) ---
-func (s *Service) DeployRedis(ctx context.Context, id int64) { go s.deployRedis(context.Background(), id) }
+// DeployRedis runs detached on purpose (see DeployPostgres): the deploy must
+// outlive the triggering HTTP request, which returns immediately with a redirect.
+func (s *Service) DeployRedis(id int64) { go s.deployRedis(context.Background(), id) }
 
 func (s *Service) deployRedis(ctx context.Context, id int64) {
 	r, err := s.store.GetRedis(ctx, id)
