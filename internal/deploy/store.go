@@ -2,6 +2,8 @@ package deploy
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
@@ -40,6 +42,16 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	for _, d := range doms {
 		out.Domains = append(out.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls})
 	}
+	out.Replicas = uint64(a.Replicas)
+	out.RestartCondition = a.RestartCondition
+	out.RestartMaxAttempts = uint64(a.RestartMaxAttempts)
+	if mb, err := docker.ParseMemoryBytes(strDeref(a.MemoryLimit)); err == nil {
+		out.MemoryLimitBytes = mb
+	}
+	if nc, err := docker.ParseNanoCPUs(strDeref(a.CpuLimit)); err == nil {
+		out.NanoCPUs = nc
+	}
+	out.Healthcheck = buildHealthcheck(a)
 	if a.RegistryID != nil {
 		if reg, rerr := s.q.GetRegistry(ctx, *a.RegistryID); rerr == nil {
 			if auth, aerr := docker.EncodeRegistryAuth(reg.Username, reg.Password, reg.RegistryUrl); aerr == nil {
@@ -78,4 +90,34 @@ func (s *DBStore) GetDeploymentApp(ctx context.Context, deployID int64) (App, er
 
 func (s *DBStore) ClearOldDeploymentLogs(ctx context.Context) error {
 	return s.q.ClearOldDeploymentLogs(ctx)
+}
+
+func strDeref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// buildHealthcheck assembles a HealthcheckSpec from the app's healthcheck
+// columns. Returns nil when no command is configured (healthcheck disabled).
+func buildHealthcheck(a db.Application) *docker.HealthcheckSpec {
+	cmd := strings.TrimSpace(strDeref(a.HealthcheckCmd))
+	if cmd == "" {
+		return nil
+	}
+	hc := &docker.HealthcheckSpec{Test: []string{"CMD-SHELL", cmd}}
+	if d, err := time.ParseDuration(strDeref(a.HealthcheckInterval)); err == nil {
+		hc.Interval = d
+	}
+	if d, err := time.ParseDuration(strDeref(a.HealthcheckTimeout)); err == nil {
+		hc.Timeout = d
+	}
+	if d, err := time.ParseDuration(strDeref(a.HealthcheckStartPeriod)); err == nil {
+		hc.StartPeriod = d
+	}
+	if a.HealthcheckRetries != nil {
+		hc.Retries = int(*a.HealthcheckRetries)
+	}
+	return hc
 }

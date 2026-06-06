@@ -28,6 +28,13 @@ type App struct {
 	DockerfilePath string
 	Domains        []traefik.Domain
 	RegistryAuth   string
+
+	Replicas           uint64
+	MemoryLimitBytes   int64
+	NanoCPUs           int64
+	RestartCondition   string
+	RestartMaxAttempts uint64
+	Healthcheck        *docker.HealthcheckSpec
 }
 
 // Store — what the deployer needs from the store.
@@ -228,14 +235,23 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	if len(domains) == 0 {
 		domains = []traefik.Domain{{Host: app.Domain, TLS: false}}
 	}
+	replicas := app.Replicas
+	if replicas == 0 {
+		replicas = 1
+	}
 	return docker.ServiceSpec{
-		Name:         name,
-		Image:        imageTag,
-		Env:          app.Env,
-		Labels:       traefik.AppLabels(name, domains, app.Port, d.network),
-		Replicas:     1,
-		Network:      d.network,
-		RegistryAuth: app.RegistryAuth,
+		Name:               name,
+		Image:              imageTag,
+		Env:                app.Env,
+		Labels:             traefik.AppLabels(name, domains, app.Port, d.network),
+		Replicas:           replicas,
+		Network:            d.network,
+		RegistryAuth:       app.RegistryAuth,
+		MemoryLimitBytes:   app.MemoryLimitBytes,
+		NanoCPUs:           app.NanoCPUs,
+		RestartCondition:   app.RestartCondition,
+		RestartMaxAttempts: app.RestartMaxAttempts,
+		Healthcheck:        app.Healthcheck,
 	}
 }
 
