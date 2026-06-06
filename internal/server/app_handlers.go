@@ -265,6 +265,58 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
+// rebuildApp enqueues a fresh deployment (rebuild from source for Dockerfile
+// apps, re-pull for image apps) — same pipeline as deploy, always from scratch.
+func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	s.deployer.Enqueue(c.App.ID, "manual")
+	logFrom(r).Info("rebuild enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Rebuild queued")
+	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
+}
+
+// reloadApp force-restarts the running containers without rebuilding/re-pulling.
+func (s *Server) reloadApp(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if s.engine != nil {
+		if err := s.engine.ServiceRestart(r.Context(), dockerName(c.App.ID)); err != nil {
+			logFrom(r).Error("reloadApp: failed to restart service", "err", err, "app_id", c.App.ID)
+			s.flashErr(w, r, "failed to reload application")
+			return
+		}
+	}
+	logFrom(r).Info("application reloaded", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Reload requested")
+	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+}
+
+// stopApp scales the app's service to zero replicas and marks it idle.
+func (s *Server) stopApp(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if s.engine != nil {
+		if err := s.engine.ServiceScale(r.Context(), dockerName(c.App.ID), 0); err != nil {
+			logFrom(r).Error("stopApp: failed to scale to zero", "err", err, "app_id", c.App.ID)
+			s.flashErr(w, r, "failed to stop application")
+			return
+		}
+	}
+	if err := s.q.UpdateApplicationStatus(r.Context(), db.UpdateApplicationStatusParams{ID: c.App.ID, Status: deploy.StatusIdle}); err != nil {
+		logFrom(r).Error("stopApp: failed to update status", "err", err, "app_id", c.App.ID)
+	}
+	logFrom(r).Info("application stopped", "app_id", c.App.ID, "app_name", c.App.Name)
+	s.setFlash(w, "ok", "Application stopped")
+	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+}
+
 func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {

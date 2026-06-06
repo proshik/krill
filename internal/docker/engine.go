@@ -54,6 +54,7 @@ type Engine interface {
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
+	ServiceRestart(ctx context.Context, name string) error // force-restart current tasks without rebuilding
 	ImagePull(ctx context.Context, ref string, out io.Writer) error
 	VolumeRemove(ctx context.Context, name string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error

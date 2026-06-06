@@ -58,17 +58,16 @@ templ generalTab(c AppCtx) {
 		</div>
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>
-			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } onsubmit="krillBusy(this.querySelector('button[type=submit]'), 'Deploying…')">
+			<form id="deploy-form" method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
 				<label class="k-label">Git URL</label>
 				<input class="k-input" name="git_url" value={ c.App.GitUrl }/>
 				<label class="k-label">{ i18n.T(ctx, "app.git_branch") }</label>
 				<input class="k-input" name="git_branch" value={ c.App.GitBranch }/>
 				<label class="k-label">{ i18n.T(ctx, "app.dockerfile_path") }</label>
 				<input class="k-input" name="dockerfile_path" value={ c.App.DockerfilePath }/>
-				<div class="mt-3"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button></div>
 			</form>
 		} else {
-			<form method="post" action={ templ.SafeURL(c.base() + "/deploy") } onsubmit="krillBusy(this.querySelector('button[type=submit]'), 'Deploying…')">
+			<form id="deploy-form" method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
 				<label class="k-label">{ i18n.T(ctx, "app.image") }</label>
 				<input class="k-input" name="image" value={ c.App.Image } placeholder="ghcr.io/owner/name (full ref)"/>
 				<label class="k-label">{ i18n.T(ctx, "app.tag") }</label>
@@ -78,9 +77,18 @@ templ generalTab(c AppCtx) {
 				if c.App.RegistryID != nil {
 					<button type="button" class="k-btn k-btn-secondary mt-2" hx-get={ c.base() + "/tags" } hx-target="#tag-field" hx-swap="innerHTML" hx-disabled-elt="this"><span class="k-spin"></span>{ i18n.T(ctx, "app.load_tags") }</button>
 				}
-				<div class="mt-3"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button></div>
 			</form>
 		}
+		<!-- standalone forms so all actions share one button row via the form= attribute -->
+		<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
+		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
+		<form id="stop-form" method="post" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return confirm('Stop ' + this.dataset.appName + '?')"></form>
+		<div class="flex items-center gap-2 flex-wrap mt-3">
+			<button type="submit" form="deploy-form" class="k-btn k-btn-primary">{ i18n.T(ctx, "app.deploy") }</button>
+			<button type="submit" form="reload-form" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.reload") }</button>
+			<button type="submit" form="rebuild-form" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.rebuild") }</button>
+			<button type="submit" form="stop-form" class="k-btn k-btn-danger">{ i18n.T(ctx, "app.stop") }</button>
+		</div>
 		if c.Role == "owner" || c.Role == "admin" {
 			<form method="post" action={ templ.SafeURL(c.base() + "/registry") } class="mt-4 flex items-end gap-2">
 				<div class="flex-1">

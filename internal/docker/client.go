@@ -239,3 +239,24 @@ func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas u
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
 }
+
+// ServiceRestart forces a zero-downtime rolling restart of the existing service
+// with its current spec (no rebuild/re-pull). If the service was stopped
+// (0 replicas) it is brought back to 1.
+func (e *dockerEngine) ServiceRestart(ctx context.Context, name string) error {
+	cur, found, err := e.findService(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil // nothing to restart
+	}
+	spec := cur.Spec
+	spec.TaskTemplate.ForceUpdate = cur.Spec.TaskTemplate.ForceUpdate + 1
+	if spec.Mode.Replicated != nil && (spec.Mode.Replicated.Replicas == nil || *spec.Mode.Replicated.Replicas == 0) {
+		one := uint64(1)
+		spec.Mode.Replicated.Replicas = &one
+	}
+	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
+	return err
+}

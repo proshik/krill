@@ -47,6 +47,7 @@ func (m *mockEngine) ServiceScale(_ context.Context, n string, r uint64) error {
 	m.scaled[n] = r
 	return nil
 }
+func (m *mockEngine) ServiceRestart(context.Context, string) error { return nil }
 func (m *mockEngine) VolumeRemove(_ context.Context, n string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
