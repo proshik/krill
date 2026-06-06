@@ -87,6 +87,7 @@ type Querier interface {
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error

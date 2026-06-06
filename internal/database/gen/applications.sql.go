@@ -11,7 +11,7 @@ import (
 
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period
 `
 
 type CreateApplicationParams struct {
@@ -60,6 +60,16 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.GitBranch,
 		&i.DockerfilePath,
 		&i.RegistryID,
+		&i.MemoryLimit,
+		&i.CpuLimit,
+		&i.Replicas,
+		&i.RestartCondition,
+		&i.RestartMaxAttempts,
+		&i.HealthcheckCmd,
+		&i.HealthcheckInterval,
+		&i.HealthcheckTimeout,
+		&i.HealthcheckRetries,
+		&i.HealthcheckStartPeriod,
 	)
 	return i, err
 }
@@ -74,7 +84,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -97,6 +107,16 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.GitBranch,
 		&i.DockerfilePath,
 		&i.RegistryID,
+		&i.MemoryLimit,
+		&i.CpuLimit,
+		&i.Replicas,
+		&i.RestartCondition,
+		&i.RestartMaxAttempts,
+		&i.HealthcheckCmd,
+		&i.HealthcheckInterval,
+		&i.HealthcheckTimeout,
+		&i.HealthcheckRetries,
+		&i.HealthcheckStartPeriod,
 	)
 	return i, err
 }
@@ -130,7 +150,7 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -159,6 +179,16 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.GitBranch,
 			&i.DockerfilePath,
 			&i.RegistryID,
+			&i.MemoryLimit,
+			&i.CpuLimit,
+			&i.Replicas,
+			&i.RestartCondition,
+			&i.RestartMaxAttempts,
+			&i.HealthcheckCmd,
+			&i.HealthcheckInterval,
+			&i.HealthcheckTimeout,
+			&i.HealthcheckRetries,
+			&i.HealthcheckStartPeriod,
 		); err != nil {
 			return nil, err
 		}
@@ -171,7 +201,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -200,6 +230,16 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.GitBranch,
 			&i.DockerfilePath,
 			&i.RegistryID,
+			&i.MemoryLimit,
+			&i.CpuLimit,
+			&i.Replicas,
+			&i.RestartCondition,
+			&i.RestartMaxAttempts,
+			&i.HealthcheckCmd,
+			&i.HealthcheckInterval,
+			&i.HealthcheckTimeout,
+			&i.HealthcheckRetries,
+			&i.HealthcheckStartPeriod,
 		); err != nil {
 			return nil, err
 		}
@@ -222,6 +262,53 @@ type SetApplicationRegistryParams struct {
 
 func (q *Queries) SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error {
 	_, err := q.db.Exec(ctx, setApplicationRegistry, arg.ID, arg.RegistryID)
+	return err
+}
+
+const updateApplicationAdvanced = `-- name: UpdateApplicationAdvanced :exec
+UPDATE applications SET
+    memory_limit = $2,
+    cpu_limit = $3,
+    replicas = $4,
+    restart_condition = $5,
+    restart_max_attempts = $6,
+    healthcheck_cmd = $7,
+    healthcheck_interval = $8,
+    healthcheck_timeout = $9,
+    healthcheck_retries = $10,
+    healthcheck_start_period = $11,
+    updated_at = now()
+WHERE id = $1
+`
+
+type UpdateApplicationAdvancedParams struct {
+	ID                     int64   `json:"id"`
+	MemoryLimit            *string `json:"memory_limit"`
+	CpuLimit               *string `json:"cpu_limit"`
+	Replicas               int32   `json:"replicas"`
+	RestartCondition       string  `json:"restart_condition"`
+	RestartMaxAttempts     int32   `json:"restart_max_attempts"`
+	HealthcheckCmd         *string `json:"healthcheck_cmd"`
+	HealthcheckInterval    *string `json:"healthcheck_interval"`
+	HealthcheckTimeout     *string `json:"healthcheck_timeout"`
+	HealthcheckRetries     *int32  `json:"healthcheck_retries"`
+	HealthcheckStartPeriod *string `json:"healthcheck_start_period"`
+}
+
+func (q *Queries) UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error {
+	_, err := q.db.Exec(ctx, updateApplicationAdvanced,
+		arg.ID,
+		arg.MemoryLimit,
+		arg.CpuLimit,
+		arg.Replicas,
+		arg.RestartCondition,
+		arg.RestartMaxAttempts,
+		arg.HealthcheckCmd,
+		arg.HealthcheckInterval,
+		arg.HealthcheckTimeout,
+		arg.HealthcheckRetries,
+		arg.HealthcheckStartPeriod,
+	)
 	return err
 }
 

@@ -1,0 +1,11 @@
+ALTER TABLE applications
+    DROP COLUMN memory_limit,
+    DROP COLUMN cpu_limit,
+    DROP COLUMN replicas,
+    DROP COLUMN restart_condition,
+    DROP COLUMN restart_max_attempts,
+    DROP COLUMN healthcheck_cmd,
+    DROP COLUMN healthcheck_interval,
+    DROP COLUMN healthcheck_timeout,
+    DROP COLUMN healthcheck_retries,
+    DROP COLUMN healthcheck_start_period;
