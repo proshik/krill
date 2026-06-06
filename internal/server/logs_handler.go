@@ -15,7 +15,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Info("appLogs: websocket accept failed", "err", err, "app_id", c.App.ID)
 		return

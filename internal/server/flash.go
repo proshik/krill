@@ -66,15 +66,34 @@ func (s *Server) takeFlash(w http.ResponseWriter, r *http.Request) (kind, msg st
 	return k, m
 }
 
+// backURL returns a safe same-origin redirect target from the Referer, or "/".
+func (s *Server) backURL(r *http.Request) string {
+	ref := r.Referer()
+	if ref == "" {
+		return "/"
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return "/"
+	}
+	if u.Host != "" && u.Host != r.Host {
+		return "/" // cross-origin referer — don't honor it
+	}
+	if u.Path == "" {
+		return "/"
+	}
+	back := u.Path
+	if u.RawQuery != "" {
+		back += "?" + u.RawQuery
+	}
+	return back
+}
+
 // flashErr sets an error flash and redirects back to the form (PRG), so the
 // user stays in context and sees the message instead of a bare error page.
 func (s *Server) flashErr(w http.ResponseWriter, r *http.Request, msg string) {
 	s.setFlash(w, "err", msg)
-	back := r.Referer()
-	if back == "" {
-		back = "/"
-	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // flashMiddleware records the request path (for sidebar highlighting) and

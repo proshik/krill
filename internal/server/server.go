@@ -50,6 +50,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
+	r.Use(csrfGuard)
 
 	// locale middleware: puts the default locale into the request context.
 	// Currently a no-op (always en); an extension point for cookie/Accept-Language.

@@ -40,12 +40,15 @@ func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.Bac
 	return b, s.dbBase(r, engine, dbID), true
 }
 
-// dbBase builds the DB detail URL (same shape loadDBCtx uses for templates.Base).
+// dbBase builds the DB detail URL (same shape loadDBCtx uses for templates.Base)
+// directly from the chi URL params. It is only called after the org→proj→env→db
+// chain has already been validated, so re-running the w-taking loaders (which
+// would need a ResponseWriter to report errors) is unnecessary.
 func (s *Server) dbBase(r *http.Request, engine string, dbID int64) string {
-	o, _, _ := s.loadOrg(nil, r)
-	p, _ := s.loadProject(nil, r)
-	e, _ := s.loadEnvironment(nil, r, p.ID)
-	return envURL(o.ID, p.ID, e.ID) + "/databases/" + engine + "/" + strconv.FormatInt(dbID, 10)
+	orgID, _ := pathID(r, "orgID")
+	projID, _ := pathID(r, "projID")
+	envID, _ := pathID(r, "envID")
+	return envURL(orgID, projID, envID) + "/databases/" + engine + "/" + strconv.FormatInt(dbID, 10)
 }
 
 // addBackup creates a backup config for a postgres DB (admin-only).
@@ -105,7 +108,7 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 		s.reloadBackups()
 	}
 	s.setFlash(w, "ok", "Backup schedule created")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // deleteBackup removes a backup config (admin-only).
@@ -124,7 +127,7 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 		s.reloadBackups()
 	}
 	s.setFlash(w, "ok", "Backup schedule deleted")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // toggleBackup flips the enabled flag of a backup config (admin-only).
@@ -143,7 +146,7 @@ func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 		s.reloadBackups()
 	}
 	s.setFlash(w, "ok", "Backup schedule updated")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // runBackupNow triggers an immediate backup run (admin-only). The outcome is
@@ -169,7 +172,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	s.setFlash(w, "ok", "Backup started")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // restoreBackup restores a stored object into the DB (admin-only).
@@ -198,7 +201,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	s.setFlash(w, "ok", "Restore started")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 // backupObjects renders the stored objects of a backup config (HTMX partial, admin-only).

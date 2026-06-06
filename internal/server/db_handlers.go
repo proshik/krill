@@ -111,7 +111,7 @@ func (s *Server) deployDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("database deploy requested", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Deployment queued")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,7 @@ func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("database started", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Start requested")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("database stopped", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Stop requested")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +182,7 @@ func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
 		s.dbsvc.DeployRedis(r.Context(), id)
 	}
 	s.setFlash(w, "ok", "Version update queued")
-	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
 func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +263,7 @@ func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 		rd, _ := s.q.GetRedis(r.Context(), id)
 		appName = rd.AppName
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Error("databaseLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
 		return
@@ -289,7 +289,7 @@ func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {
 	if eng == "redis" {
 		feed = dbservice.RedisFeedID(id)
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Error("databaseDeployLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng)
 		return

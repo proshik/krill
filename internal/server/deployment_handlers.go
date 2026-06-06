@@ -43,7 +43,7 @@ func (s *Server) deploymentLogWS(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
+	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Error("deploymentLogWS: websocket accept failed", "err", err, "deploy_id", dep.ID)
 		return
