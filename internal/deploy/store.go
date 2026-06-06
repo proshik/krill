@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -47,9 +48,13 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	out.RestartMaxAttempts = uint64(a.RestartMaxAttempts)
 	if mb, err := docker.ParseMemoryBytes(strDeref(a.MemoryLimit)); err == nil {
 		out.MemoryLimitBytes = mb
+	} else {
+		slog.Warn("advanced: invalid stored memory_limit", "app", a.ID, "value", strDeref(a.MemoryLimit), "err", err)
 	}
 	if nc, err := docker.ParseNanoCPUs(strDeref(a.CpuLimit)); err == nil {
 		out.NanoCPUs = nc
+	} else {
+		slog.Warn("advanced: invalid stored cpu_limit", "app", a.ID, "value", strDeref(a.CpuLimit), "err", err)
 	}
 	out.Healthcheck = buildHealthcheck(a)
 	if a.RegistryID != nil {
