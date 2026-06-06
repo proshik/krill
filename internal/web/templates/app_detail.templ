@@ -129,11 +129,13 @@ templ generalTab(c AppCtx) {
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.registry_save") }</button>
 			</form>
 		}
-		<p class="k-mono text-xs mt-3 flex items-center gap-2">
-			{ i18n.T(ctx, "app.open") }
-			<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
-			<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>
-		</p>
+		if c.Exposed {
+			<p class="k-mono text-xs mt-3 flex items-center gap-2">
+				{ i18n.T(ctx, "app.open") }
+				<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
+				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>
+			</p>
+		}
 	</div>
 }
 
@@ -233,6 +235,7 @@ templ domainsTab(c AppCtx) {
 			<div>
 				<label class="k-label">{ i18n.T(ctx, "domains.paths") }</label>
 				<textarea class="k-code" name="paths" spellcheck="false" placeholder="/webhook"></textarea>
+				<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "domains.paths_hint") }</p>
 			</div>
 			<div><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.add") }</button></div>
 		</form>
