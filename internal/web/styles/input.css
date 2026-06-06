@@ -19,7 +19,7 @@
   --color-border-strong: rgba(255,255,255,0.14);
   --color-fg:          #fafafa;
   --color-muted:       #a1a1aa;
-  --color-faint:       #7c7c84;
+  --color-faint:       #8d8d97;
   --color-accent:      #bef264;
   --color-accent-fg:   #0a0a0a;
   --color-warn:        #f59e0b;
@@ -108,10 +108,14 @@
             border-radius:50%; animation:k-spin .7s linear infinite; }
   .htmx-request .k-spin, .k-spin.htmx-request { display:inline-block; }
   .k-label-required::after { content:" *"; color:var(--color-err); }
+  /* section divider label inside a card/panel */
+  .k-section { font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--color-muted); margin-top:1.25rem; margin-bottom:.5rem; padding-top:.75rem; border-top:1px solid var(--color-border); }
+  .k-section:first-child { margin-top:0; padding-top:0; border-top:0; }
   /* small (i) marker in a button corner; reveals a styled tooltip on hover */
-  .k-info { position:absolute; top:3px; right:5px; width:14px; height:14px; border-radius:50%;
+  .k-info { position:absolute; top:2px; right:4px; width:16px; height:16px; border-radius:50%;
     display:inline-flex; align-items:center; justify-content:center; border:1px solid currentColor;
-    font:italic 700 9px/1 ui-serif, Georgia, serif; opacity:.5; cursor:help; }
+    font:italic 700 10px/1 ui-serif, Georgia, serif; opacity:.65; cursor:help; }
   .k-info:hover { opacity:1; }
   .k-info::after { content:attr(data-tip); position:absolute; bottom:calc(100% + 8px); right:-5px;
     width:max-content; max-width:230px; padding:7px 9px; border-radius:8px;
@@ -148,7 +152,7 @@
   .k-org-item-active { border-color:var(--color-accent); background:rgba(190,242,100,.06); }
 
   /* content wrapper (full-width, double card frame like Dokploy) */
-  .k-content { width:100%; padding:1.25rem; }
+  .k-content { width:100%; max-width:1240px; margin:0 auto; padding:1.25rem; }
   .k-frame { background:#0c0c0c; border:1px solid var(--color-border); border-radius:14px; padding:10px; }
   .k-panel { background:var(--color-surface); border-radius:12px; }
   .k-panel-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; padding:1.25rem 1.5rem; }

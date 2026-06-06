@@ -9,6 +9,19 @@ import (
 	"context"
 )
 
+const countApplicationsByProject = `-- name: CountApplicationsByProject :one
+SELECT count(*) FROM applications a
+JOIN environments e ON e.id = a.environment_id
+WHERE e.project_id = $1
+`
+
+func (q *Queries) CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countApplicationsByProject, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env, source_type, git_url, git_branch, dockerfile_path)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, env, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period

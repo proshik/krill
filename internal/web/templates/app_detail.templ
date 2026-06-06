@@ -61,11 +61,12 @@ templ AppDetail(c AppCtx, tab string) {
 }
 
 templ generalTab(c AppCtx) {
-	<div class="k-card">
+	<div class="k-card" style="max-width:640px">
 		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML" class="mb-4 flex items-center gap-2">
 			<span class="k-mono text-xs">{ i18n.T(ctx, "app.status") }:</span>
 			@StatusBadge(c.App.Status)
 		</div>
+		<div class="k-section">{ i18n.T(ctx, "app.section_source") }</div>
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>
 			<form id="deploy-form" method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
@@ -89,11 +90,30 @@ templ generalTab(c AppCtx) {
 				}
 			</form>
 		}
+		if c.Role == "owner" || c.Role == "admin" {
+			<form method="post" action={ templ.SafeURL(c.base() + "/registry") } class="mt-3 flex items-end gap-2">
+				<div class="flex-1">
+					<label class="k-label">{ i18n.T(ctx, "app.registry") }</label>
+					<select class="k-select" name="registry_id">
+						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
+						for _, reg := range c.Registries {
+							if c.App.RegistryID != nil && *c.App.RegistryID == reg.ID {
+								<option value={ itoa(reg.ID) } selected>{ reg.Name }</option>
+							} else {
+								<option value={ itoa(reg.ID) }>{ reg.Name }</option>
+							}
+						}
+					</select>
+				</div>
+				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.registry_save") }</button>
+			</form>
+		}
+		<div class="k-section">{ i18n.T(ctx, "app.section_actions") }</div>
 		<!-- standalone forms so all actions share one button row via the form= attribute -->
 		<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
 		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
 		<form id="stop-form" method="post" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return confirm('Stop ' + this.dataset.appName + '?')"></form>
-		<div class="flex items-center gap-2 flex-wrap mt-3">
+		<div class="flex items-center gap-2 flex-wrap">
 			<button type="submit" form="deploy-form" class="k-btn k-btn-primary pr-7">
 				{ i18n.T(ctx, "app.deploy") }
 				<span class="k-info" data-tip={ i18n.T(ctx, "app.deploy_hint") } aria-label={ i18n.T(ctx, "app.deploy_hint") } onclick="event.preventDefault();event.stopPropagation();">i</span>
@@ -111,26 +131,9 @@ templ generalTab(c AppCtx) {
 				<span class="k-info" data-tip={ i18n.T(ctx, "app.stop_hint") } aria-label={ i18n.T(ctx, "app.stop_hint") } onclick="event.preventDefault();event.stopPropagation();">i</span>
 			</button>
 		</div>
-		if c.Role == "owner" || c.Role == "admin" {
-			<form method="post" action={ templ.SafeURL(c.base() + "/registry") } class="mt-4 flex items-end gap-2">
-				<div class="flex-1">
-					<label class="k-label">{ i18n.T(ctx, "app.registry") }</label>
-					<select class="k-select" name="registry_id">
-						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
-						for _, reg := range c.Registries {
-							if c.App.RegistryID != nil && *c.App.RegistryID == reg.ID {
-								<option value={ itoa(reg.ID) } selected>{ reg.Name }</option>
-							} else {
-								<option value={ itoa(reg.ID) }>{ reg.Name }</option>
-							}
-						}
-					</select>
-				</div>
-				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "app.registry_save") }</button>
-			</form>
-		}
 		if c.Exposed {
-			<p class="k-mono text-xs mt-3 flex items-center gap-2">
+			<div class="k-section">{ i18n.T(ctx, "app.section_access") }</div>
+			<p class="k-mono text-xs flex items-center gap-2">
 				{ i18n.T(ctx, "app.open") }
 				<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
 				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>

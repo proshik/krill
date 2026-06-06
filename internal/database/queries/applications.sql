@@ -51,3 +51,8 @@ UPDATE applications SET
     healthcheck_start_period = $11,
     updated_at = now()
 WHERE id = $1;
+
+-- name: CountApplicationsByProject :one
+SELECT count(*) FROM applications a
+JOIN environments e ON e.id = a.environment_id
+WHERE e.project_id = $1;

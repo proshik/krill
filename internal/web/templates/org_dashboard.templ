@@ -8,6 +8,7 @@ import (
 type ProjectCard struct {
 	Project  db.Project
 	EnvCount int64
+	AppCount int64
 }
 
 templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
@@ -39,7 +40,7 @@ templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
 									if pc.Project.Description != "" {
 										<div class="text-sm text-[color:var(--color-muted)] mb-2">{ pc.Project.Description }</div>
 									}
-									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } { i18n.T(ctx, "projects.env_count_suffix") }</div>
+									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } { i18n.T(ctx, "projects.env_count_suffix") } · { itoa(pc.AppCount) } { i18n.T(ctx, "projects.app_count_suffix") }</div>
 								</a>
 							}
 						</div>

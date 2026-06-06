@@ -5,7 +5,7 @@ import "github.com/proshik/krill/internal/web/i18n"
 templ Login(errMsg string) {
 	@Bare(i18n.T(ctx, "login.page_title")) {
 		<div class="k-card w-[360px] max-w-full">
-			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "login.title") }</h2>
+			<div class="k-side-brand mb-4" style="font-size:20px">🦐 Krill</div>
 			if errMsg != "" {
 				<div class="k-toast k-toast-err mb-3">{ errMsg }</div>
 			}

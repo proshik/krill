@@ -78,7 +78,8 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 	cards := make([]templates.ProjectCard, 0, len(projects))
 	for _, p := range projects {
 		n, _ := s.q.CountEnvironments(r.Context(), p.ID)
-		cards = append(cards, templates.ProjectCard{Project: p, EnvCount: n})
+		a, _ := s.q.CountApplicationsByProject(r.Context(), p.ID)
+		cards = append(cards, templates.ProjectCard{Project: p, EnvCount: n, AppCount: a})
 	}
 	render(w, r, http.StatusOK, templates.OrgDashboard(o, role, cards))
 }

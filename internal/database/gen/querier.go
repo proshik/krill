@@ -10,6 +10,7 @@ import (
 
 type Querier interface {
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
