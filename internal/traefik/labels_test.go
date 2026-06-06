@@ -3,7 +3,7 @@ package traefik
 import "testing"
 
 func TestAppLabelsPlain(t *testing.T) {
-	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", TLS: false}}, 80, "krill-net")
+	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", TLS: false, Exposed: true}}, 80, "krill-net")
 	if l["traefik.enable"] != "true" {
 		t.Fatal("not enabled")
 	}
@@ -22,7 +22,7 @@ func TestAppLabelsPlain(t *testing.T) {
 }
 
 func TestAppLabelsTLS(t *testing.T) {
-	l := AppLabels("krill-1", []Domain{{Host: "b.example.com", TLS: true}}, 3000, "krill-net")
+	l := AppLabels("krill-1", []Domain{{Host: "b.example.com", TLS: true, Exposed: true}}, 3000, "krill-net")
 	if l["traefik.http.routers.krill-1-d0s.entrypoints"] != "websecure" {
 		t.Error("tls domain secure router must be on websecure")
 	}
@@ -41,5 +41,40 @@ func TestAppLabelsTLS(t *testing.T) {
 	}
 	if l["traefik.http.middlewares."+mw+".redirectscheme.scheme"] != "https" {
 		t.Errorf("redirect middleware not configured: mw=%q", mw)
+	}
+}
+
+func TestDomainRule(t *testing.T) {
+	if got := domainRule("a.example.com", nil); got != "Host(`a.example.com`)" {
+		t.Errorf("no-paths rule = %q", got)
+	}
+	got := domainRule("a.example.com", []string{"/webhook", "/healthz"})
+	want := "Host(`a.example.com`) && (PathPrefix(`/webhook`) || PathPrefix(`/healthz`))"
+	if got != want {
+		t.Errorf("paths rule = %q want %q", got, want)
+	}
+}
+
+func TestAppLabelsPaths(t *testing.T) {
+	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", Exposed: true, Paths: []string{"/webhook"}}}, 80, "krill-net")
+	if l["traefik.http.routers.krill-1-d0.rule"] != "Host(`a.example.com`) && (PathPrefix(`/webhook`))" {
+		t.Errorf("unexpected rule: %q", l["traefik.http.routers.krill-1-d0.rule"])
+	}
+}
+
+func TestAppLabelsSkipsNonExposed(t *testing.T) {
+	l := AppLabels("krill-1", []Domain{{Host: "pub.example.com", Exposed: true}, {Host: "priv.example.com", Exposed: false}}, 80, "krill-net")
+	if l["traefik.http.routers.krill-1-d0.rule"] != "Host(`pub.example.com`)" {
+		t.Errorf("exposed domain missing: %q", l["traefik.http.routers.krill-1-d0.rule"])
+	}
+	if _, ok := l["traefik.http.routers.krill-1-d1.rule"]; ok {
+		t.Errorf("non-exposed domain should not emit a router")
+	}
+}
+
+func TestAppLabelsNoneExposed(t *testing.T) {
+	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", Exposed: false}}, 80, "krill-net")
+	if l["traefik.enable"] != "false" || len(l) != 1 {
+		t.Errorf("expected only traefik.enable=false, got %v", l)
 	}
 }
