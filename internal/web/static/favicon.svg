@@ -1,4 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#0a0a0a"/>
-  <text x="32" y="46" font-size="42" font-weight="700" fill="#bef264" text-anchor="middle" font-family="ui-sans-serif,system-ui,sans-serif">K</text>
+  <g fill="none" stroke="#bef264" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- curled body -->
+    <path d="M46 21 C 30 16, 17 24, 18 36 C 19 46, 30 50, 39 45"/>
+    <!-- tail fan -->
+    <path d="M39 45 l9 4 M39 45 l4 9 M39 45 l-3 9"/>
+    <!-- antennae -->
+    <path d="M46 21 q 8 -6 13 -11" stroke-width="2.5"/>
+    <path d="M46 21 q 9 -1 14 -5" stroke-width="2.5"/>
+    <!-- legs -->
+    <path d="M24 41 l-2 6 M30 44 l-1 6 M36 45 l0 6" stroke-width="2.5"/>
+  </g>
+  <circle cx="44" cy="24" r="2.4" fill="#0a0a0a"/>
 </svg>

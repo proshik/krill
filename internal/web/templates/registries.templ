@@ -8,6 +8,7 @@ import (
 templ Registries(org db.Organization, role string, regs []db.Registry) {
 	@Layout(i18n.T(ctx, "reg.title"), org, role) {
 		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "reg.desc") }</p>
 		<div class="k-card">
 			<table class="k-table">
 				<thead>

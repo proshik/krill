@@ -8,6 +8,7 @@ import (
 templ Destinations(org db.Organization, role string, dests []db.Destination) {
 	@Layout(i18n.T(ctx, "dest.title"), org, role) {
 		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "dest.desc") }</p>
 		<div class="k-card">
 			<table class="k-table">
 				<thead>
