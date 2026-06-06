@@ -3,6 +3,7 @@ package i18n
 var en = map[string]string{
 	"nav.projects":              "Projects",
 	"nav.members":               "Members",
+	"nav.settings":              "Settings",
 	"nav.logout":                "Log out",
 	"login.page_title":          "Sign in",
 	"login.title":               "Sign in to Krill",

@@ -32,11 +32,16 @@ templ Layout(title string, org db.Organization, role string) {
 					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "projects")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ i18n.T(ctx, "nav.projects") }</a>
 					if role == "owner" || role == "admin" {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
+					}
+				</nav>
+				<div class="k-side-foot">
+					if role == "owner" || role == "admin" {
+						<div class="k-nav-section">{ i18n.T(ctx, "nav.settings") }</div>
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "destinations")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "registries")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
 					}
 					<a class="k-nav" href="/logout" hx-boost="false">{ i18n.T(ctx, "nav.logout") }</a>
-				</nav>
+				</div>
 			</aside>
 			<main class="flex-1 min-w-0">
 				<div class="k-content">
