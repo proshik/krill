@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"time"
 )
 
 // PortSpec — a published service port.
@@ -37,6 +38,21 @@ type ServiceSpec struct {
 	Constraints  []string // e.g. node.role==manager
 	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
 	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
+
+	MemoryLimitBytes   int64  // 0 = no limit
+	NanoCPUs           int64  // 0 = no limit
+	RestartCondition   string // "any" | "on-failure" | "none"; "" => "any"
+	RestartMaxAttempts uint64 // 0 = unlimited
+	Healthcheck        *HealthcheckSpec
+}
+
+// HealthcheckSpec configures the container healthcheck.
+type HealthcheckSpec struct {
+	Test        []string // e.g. ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+	Interval    time.Duration
+	Timeout     time.Duration
+	StartPeriod time.Duration
+	Retries     int
 }
 
 // ServiceState — the current state of a service in Swarm.

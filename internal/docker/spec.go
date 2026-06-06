@@ -3,6 +3,7 @@ package docker
 import (
 	"sort"
 
+	container "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/swarm"
 )
@@ -37,10 +38,31 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		})
 	}
 
+	if s.Healthcheck != nil {
+		cs.Healthcheck = &container.HealthConfig{
+			Test:        s.Healthcheck.Test,
+			Interval:    s.Healthcheck.Interval,
+			Timeout:     s.Healthcheck.Timeout,
+			StartPeriod: s.Healthcheck.StartPeriod,
+			Retries:     s.Healthcheck.Retries,
+		}
+	}
+
+	rp := &swarm.RestartPolicy{Condition: restartCondition(s.RestartCondition)}
+	if s.RestartMaxAttempts > 0 {
+		ma := s.RestartMaxAttempts
+		rp.MaxAttempts = &ma
+	}
+
 	task := swarm.TaskSpec{
 		ContainerSpec: cs,
 		Networks:      []swarm.NetworkAttachmentConfig{{Target: s.Network}},
-		RestartPolicy: &swarm.RestartPolicy{Condition: swarm.RestartPolicyConditionAny},
+		RestartPolicy: rp,
+	}
+	if s.MemoryLimitBytes > 0 || s.NanoCPUs > 0 {
+		task.Resources = &swarm.ResourceRequirements{
+			Limits: &swarm.Limit{MemoryBytes: s.MemoryLimitBytes, NanoCPUs: s.NanoCPUs},
+		}
 	}
 	if len(s.Constraints) > 0 {
 		task.Placement = &swarm.Placement{Constraints: s.Constraints}
@@ -83,4 +105,16 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		spec.EndpointSpec = ep
 	}
 	return spec
+}
+
+// restartCondition maps a human restart condition to the Swarm enum.
+func restartCondition(c string) swarm.RestartPolicyCondition {
+	switch c {
+	case "on-failure":
+		return swarm.RestartPolicyConditionOnFailure
+	case "none":
+		return swarm.RestartPolicyConditionNone
+	default:
+		return swarm.RestartPolicyConditionAny
+	}
 }

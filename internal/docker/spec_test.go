@@ -1,6 +1,11 @@
 package docker
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/docker/docker/api/types/swarm"
+)
 
 func TestBuildSwarmSpec(t *testing.T) {
 	spec := ServiceSpec{
@@ -100,5 +105,44 @@ func TestBuildSwarmSpecBindStillDefault(t *testing.T) {
 	// without DNSRR — VIP
 	if spec.Ports == nil && sw.EndpointSpec != nil && string(sw.EndpointSpec.Mode) == "dnsrr" {
 		t.Error("non-DNSRR spec should not be dnsrr")
+	}
+}
+
+func TestBuildSwarmSpecAdvanced(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{
+		Name: "krill-1", Image: "nginx:latest", Network: "krill-net",
+		MemoryLimitBytes: 268435456, NanoCPUs: 500000000,
+		RestartCondition: "on-failure", RestartMaxAttempts: 3,
+		Healthcheck: &HealthcheckSpec{
+			Test:     []string{"CMD-SHELL", "curl -f http://localhost/ || exit 1"},
+			Interval: 30 * time.Second, Timeout: 5 * time.Second,
+			StartPeriod: 10 * time.Second, Retries: 3,
+		},
+	})
+	res := sw.TaskTemplate.Resources
+	if res == nil || res.Limits == nil || res.Limits.MemoryBytes != 268435456 || res.Limits.NanoCPUs != 500000000 {
+		t.Fatalf("resources not set correctly: %+v", res)
+	}
+	rp := sw.TaskTemplate.RestartPolicy
+	if rp == nil || rp.Condition != swarm.RestartPolicyConditionOnFailure || rp.MaxAttempts == nil || *rp.MaxAttempts != 3 {
+		t.Fatalf("restart policy wrong: %+v", rp)
+	}
+	hc := sw.TaskTemplate.ContainerSpec.Healthcheck
+	if hc == nil || len(hc.Test) != 2 || hc.Interval != 30*time.Second || hc.Retries != 3 {
+		t.Fatalf("healthcheck wrong: %+v", hc)
+	}
+}
+
+func TestBuildSwarmSpecAdvancedDefaults(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{Name: "krill-1", Image: "nginx", Network: "krill-net"})
+	if sw.TaskTemplate.Resources != nil {
+		t.Errorf("expected no resources, got %+v", sw.TaskTemplate.Resources)
+	}
+	rp := sw.TaskTemplate.RestartPolicy
+	if rp == nil || rp.Condition != swarm.RestartPolicyConditionAny || rp.MaxAttempts != nil {
+		t.Errorf("expected restart any/unlimited, got %+v", rp)
+	}
+	if sw.TaskTemplate.ContainerSpec.Healthcheck != nil {
+		t.Errorf("expected no healthcheck, got %+v", sw.TaskTemplate.ContainerSpec.Healthcheck)
 	}
 }
