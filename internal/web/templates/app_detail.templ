@@ -14,6 +14,7 @@ type AppCtx struct {
 	Deps       []db.Deployment
 	Domains    []db.Domain
 	Registries []db.Registry
+	Exposed    bool
 }
 
 func (c AppCtx) base() string {
@@ -36,6 +37,12 @@ templ AppDetail(c AppCtx, tab string) {
 			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=advanced") } class={ "k-tab", templ.KV("k-tab-active", tab == "advanced") }>{ i18n.T(ctx, "tab.advanced") }</a>
 		</div>
+		if !c.Exposed {
+			<div class="k-toast k-toast-err mb-4">
+				{ i18n.T(ctx, "domains.not_exposed_warning") }
+				<a class="underline" href={ templ.SafeURL(c.base() + "?tab=domains") }>{ i18n.T(ctx, "domains.tab") }</a>.
+			</div>
+		}
 		switch tab {
 			case "env":
 				@envTab(c)
@@ -175,51 +182,59 @@ templ logsTab(c AppCtx) {
 
 templ domainsTab(c AppCtx) {
 	<div class="k-card">
-		<table class="k-table mb-4">
-			<thead>
-				<tr>
-					<th>{ i18n.T(ctx, "domains.host") }</th>
-					<th></th>
-					<th></th>
-				</tr>
-			</thead>
-			<tbody>
-				for _, d := range c.Domains {
-					<tr>
-						<td class="k-mono">{ d.Host }</td>
-						<td>
-							if d.IsPrimary {
-								<span class="k-badge">{ i18n.T(ctx, "domains.primary") }</span>
-							}
-							if d.Tls {
-								<span class="k-badge k-badge-running">{ i18n.T(ctx, "domains.tls_on") }</span>
-							} else {
-								<span class="k-badge">{ i18n.T(ctx, "domains.tls_off") }</span>
-							}
-						</td>
-						<td>
-							<div class="flex items-center gap-2 flex-wrap justify-end">
-								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
-									<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
-								</form>
-								if !d.IsPrimary {
-									<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
-										<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
-									</form>
-								}
-							</div>
-						</td>
-					</tr>
-				}
-			</tbody>
-		</table>
-		<form method="post" action={ templ.SafeURL(c.base() + "/domains") } class="flex items-end gap-2">
-			<div class="flex-1">
+		for _, d := range c.Domains {
+			<div class="mb-4 pb-4" style="border-bottom:1px solid var(--color-border)">
+				<div class="flex items-center gap-2 flex-wrap mb-2">
+					<span class="k-mono">{ d.Host }</span>
+					if d.IsPrimary {
+						<span class="k-badge">{ i18n.T(ctx, "domains.primary") }</span>
+					}
+					if d.Exposed {
+						<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "domains.exposed") }</span>
+					} else {
+						<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "domains.internal") }</span>
+					}
+					if d.Tls {
+						<span class="k-badge k-badge-running">{ i18n.T(ctx, "domains.tls_on") }</span>
+					} else {
+						<span class="k-badge">{ i18n.T(ctx, "domains.tls_off") }</span>
+					}
+				</div>
+				<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/exposure") } class="grid gap-2" style="max-width:560px">
+					<label class="k-label flex items-center gap-2"><input type="checkbox" name="exposed" checked?={ d.Exposed }/> { i18n.T(ctx, "domains.expose") }</label>
+					<div>
+						<label class="k-label">{ i18n.T(ctx, "domains.paths") }</label>
+						<textarea class="k-code" name="paths" spellcheck="false" placeholder="/webhook">{ d.Paths }</textarea>
+						<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "domains.paths_hint") }</p>
+					</div>
+					<div class="flex items-center gap-2 flex-wrap">
+						<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.save") }</button>
+					</div>
+				</form>
+				<div class="flex items-center gap-2 flex-wrap mt-2">
+					<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
+						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
+					</form>
+					if !d.IsPrimary {
+						<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
+							<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
+						</form>
+					}
+				</div>
+			</div>
+		}
+		<form method="post" action={ templ.SafeURL(c.base() + "/domains") } class="grid gap-2" style="max-width:560px">
+			<div>
 				<label class="k-label">{ i18n.T(ctx, "domains.host") }</label>
 				<input class="k-input" name="host" placeholder="app.example.com"/>
 			</div>
+			<label class="k-label flex items-center gap-2"><input type="checkbox" name="exposed" checked/> { i18n.T(ctx, "domains.expose") }</label>
 			<label class="k-label flex items-center gap-2"><input type="checkbox" name="tls"/> { i18n.T(ctx, "domains.enable_https") }</label>
-			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.add") }</button>
+			<div>
+				<label class="k-label">{ i18n.T(ctx, "domains.paths") }</label>
+				<textarea class="k-code" name="paths" spellcheck="false" placeholder="/webhook"></textarea>
+			</div>
+			<div><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.add") }</button></div>
 		</form>
 		<p class="k-mono text-xs mt-3">{ i18n.T(ctx, "domains.dns_help") }</p>
 	</div>
