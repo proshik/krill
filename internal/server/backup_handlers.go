@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"strconv"
@@ -156,12 +157,17 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, "backups unavailable")
 		return
 	}
-	// Detached context: a manual backup should finish even if the client disconnects.
-	if err := s.backupSvc.RunBackup(context.Background(), b.ID, time.Now()); err != nil {
-		logFrom(r).Error("runBackupNow: backup run failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID)
-	} else {
-		logFrom(r).Info("backup run completed", "backup_id", b.ID, "db_id", b.PostgresDbID)
-	}
+	// Run asynchronously with a detached context: a backup can take minutes, so
+	// it must not tie up the request and must finish even if the client
+	// disconnects. RunBackup records the outcome on the row's last_status.
+	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", b.PostgresDbID)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := s.backupSvc.RunBackup(ctx, b.ID, time.Now()); err != nil {
+			slog.Error("runBackupNow: backup failed", "err", err, "backup_id", b.ID)
+		}
+	}()
 	s.setFlash(w, "ok", "Backup started")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
@@ -181,17 +187,21 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, "backups unavailable")
 		return
 	}
-	if err := s.backupSvc.RestoreByID(r.Context(), b.ID, key); err != nil {
-		logFrom(r).Error("restoreBackup: restore failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
-		s.flashErr(w, r, "failed to restore backup")
-		return
-	}
-	logFrom(r).Info("backup restored", "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+	// Run asynchronously with a detached context: the S3→psql restore can take
+	// minutes, so a client disconnect must not abort a half-done restore.
+	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := s.backupSvc.RestoreByID(ctx, b.ID, key); err != nil {
+			slog.Error("restoreBackup: restore failed", "err", err, "backup_id", b.ID, "key", key)
+		}
+	}()
 	s.setFlash(w, "ok", "Restore started")
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
-// backupObjects renders the stored objects of a backup config (HTMX partial, member-readable).
+// backupObjects renders the stored objects of a backup config (HTMX partial, admin-only).
 func (s *Server) backupObjects(w http.ResponseWriter, r *http.Request) {
 	b, base, ok := s.loadBackupChain(w, r)
 	if !ok {
@@ -210,7 +220,7 @@ func (s *Server) backupObjects(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.BackupObjects(base, b.ID, objs))
 }
 
-// downloadBackup streams a stored backup object to the client (member-readable).
+// downloadBackup streams a stored backup object to the client (admin-only).
 func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	b, _, ok := s.loadBackupChain(w, r)
 	if !ok {

@@ -145,6 +145,11 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if d.IsPrimary {
+		logFrom(r).Info("deleteDomain: refused to delete primary domain", "app_id", c.App.ID, "domain_id", d.ID)
+		s.flashErr(w, r, "cannot delete the primary domain")
+		return
+	}
 	if n, _ := s.q.CountDomainsByApplication(r.Context(), c.App.ID); n <= 1 {
 		logFrom(r).Info("deleteDomain: refused to delete last domain", "app_id", c.App.ID, "domain_id", d.ID)
 		s.flashErr(w, r, "cannot delete the last domain")

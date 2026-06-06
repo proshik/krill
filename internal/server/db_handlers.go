@@ -119,10 +119,16 @@ func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var err error
 	if eng == "postgres" {
-		_ = s.dbsvc.StartPostgres(r.Context(), id)
+		err = s.dbsvc.StartPostgres(r.Context(), id)
 	} else {
-		_ = s.dbsvc.StartRedis(r.Context(), id)
+		err = s.dbsvc.StartRedis(r.Context(), id)
+	}
+	if err != nil {
+		logFrom(r).Error("startDatabase: failed to start database", "err", err, "db_id", id, "engine", eng)
+		s.flashErr(w, r, "failed to start database")
+		return
 	}
 	logFrom(r).Info("database started", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Start requested")
@@ -134,10 +140,16 @@ func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var err error
 	if eng == "postgres" {
-		_ = s.dbsvc.StopPostgres(r.Context(), id)
+		err = s.dbsvc.StopPostgres(r.Context(), id)
 	} else {
-		_ = s.dbsvc.StopRedis(r.Context(), id)
+		err = s.dbsvc.StopRedis(r.Context(), id)
+	}
+	if err != nil {
+		logFrom(r).Error("stopDatabase: failed to stop database", "err", err, "db_id", id, "engine", eng)
+		s.flashErr(w, r, "failed to stop database")
+		return
 	}
 	logFrom(r).Info("database stopped", "db_id", id, "engine", eng)
 	s.setFlash(w, "ok", "Stop requested")
@@ -182,10 +194,16 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.loadProject(w, r)
 	e, _ := s.loadEnvironment(w, r, p.ID)
 	destroy := r.FormValue("destroy_data") == "on"
+	var err error
 	if eng == "postgres" {
-		_ = s.dbsvc.DeletePostgres(r.Context(), id, destroy)
+		err = s.dbsvc.DeletePostgres(r.Context(), id, destroy)
 	} else {
-		_ = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
+		err = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
+	}
+	if err != nil {
+		logFrom(r).Error("deleteDatabase: failed to delete database", "err", err, "db_id", id, "engine", eng, "destroy_data", destroy)
+		s.flashErr(w, r, "failed to delete database")
+		return
 	}
 	logFrom(r).Info("database deleted", "db_id", id, "engine", eng, "destroy_data", destroy)
 	s.setFlash(w, "ok", "Database deleted")

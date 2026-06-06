@@ -54,20 +54,22 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
 					</form>
 				}
-				<div>
-					<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
-					<div class="flex items-center gap-2">
-						<input class="k-input k-mono" readonly value={ c.Internal }/>
-						<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
-					</div>
-					if c.External != "" {
-						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
+				if c.Role == "owner" || c.Role == "admin" {
+					<div>
+						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
 						<div class="flex items-center gap-2">
-							<input class="k-input k-mono" readonly value={ c.External }/>
-							<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+							<input class="k-input k-mono" readonly value={ c.Internal }/>
+							<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
 						</div>
-					}
-				</div>
+						if c.External != "" {
+							<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
+							<div class="flex items-center gap-2">
+								<input class="k-input k-mono" readonly value={ c.External }/>
+								<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+							</div>
+						}
+					</div>
+				}
 				<div>
 					<div class="k-label">Logs</div>
 					<div id="terminal" data-ws={ c.Base + "/logs" }></div>
