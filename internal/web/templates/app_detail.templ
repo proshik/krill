@@ -61,7 +61,7 @@ templ AppDetail(c AppCtx, tab string) {
 }
 
 templ generalTab(c AppCtx) {
-	<div class="k-card" style="max-width:640px">
+	<div class="k-card">
 		<div hx-get={ c.base() + "/status" } hx-trigger="every 2s" hx-target="#status-badge" hx-swap="outerHTML" class="mb-4 flex items-center gap-2">
 			<span class="k-mono text-xs">{ i18n.T(ctx, "app.status") }:</span>
 			@StatusBadge(c.App.Status)
