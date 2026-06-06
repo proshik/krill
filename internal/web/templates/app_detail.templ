@@ -134,15 +134,27 @@ templ envTab(c AppCtx) {
 				<div class="k-panel-title">{ i18n.T(ctx, "env.settings_title") }</div>
 				<div class="k-panel-desc">{ i18n.T(ctx, "env.settings_desc") }</div>
 			</div>
+			<div class="k-seg">
+				<button type="button" class="k-seg-btn" data-env-mode="kv" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
+				<button type="button" class="k-seg-btn" data-env-mode="raw" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
+			</div>
 		</div>
 		<div class="k-panel-body">
-			<form method="post" action={ templ.SafeURL(c.base() + "/env") }>
-				<textarea class="k-code" name="env" spellcheck="false" placeholder="NODE_ENV=production&#10;PORT=3000">{ envText(c.App.Env) }</textarea>
+			<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">
+				<div id="env-kv" style="display:none">
+					<div id="env-rows"></div>
+					<button type="button" class="k-btn k-btn-secondary mt-1" onclick="krillEnvAddRow('','')">+ { i18n.T(ctx, "env.add_var") }</button>
+				</div>
+				<div id="env-raw">
+					<textarea id="env-textarea" class="k-code" name="env" spellcheck="false" placeholder="NODE_ENV=production&#10;PORT=3000">{ envText(c.App.Env) }</textarea>
+				</div>
 				<div class="mt-4 flex justify-end">
 					<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button>
 				</div>
 			</form>
 		</div>
+		<script src="/static/app.js"></script>
+		<script>krillEnvMode('kv');</script>
 	</div>
 }
 

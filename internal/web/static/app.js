@@ -102,3 +102,69 @@ window.krillBusy = function (btn, label) {
   btn.dataset.label = btn.textContent;
   btn.textContent = label || "Working…";
 };
+
+// ── Environment editor: switch between a raw KEY=VALUE textarea and key/value rows.
+// The hidden textarea (name="env") is always the submitted source of truth; in
+// key/value mode the rows are synced into it on every edit.
+window.krillEnvSyncToTextarea = function () {
+  const ta = document.getElementById("env-textarea");
+  if (!ta) return;
+  const lines = [];
+  document.querySelectorAll("#env-rows .env-row").forEach(function (r) {
+    const k = r.querySelector(".env-key").value.trim();
+    const v = r.querySelector(".env-val").value.trim();
+    if (k) lines.push(k + "=" + v);
+  });
+  ta.value = lines.join("\n");
+};
+window.krillEnvAddRow = function (key, val) {
+  const rows = document.getElementById("env-rows");
+  if (!rows) return;
+  const row = document.createElement("div");
+  row.className = "env-row flex items-center gap-2 mb-2";
+  const k = document.createElement("input");
+  k.className = "k-input env-key"; k.placeholder = "KEY"; k.value = key || "";
+  const v = document.createElement("input");
+  v.className = "k-input env-val"; v.placeholder = "value"; v.value = val || "";
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
+  del.setAttribute("aria-label", "Remove variable");
+  del.addEventListener("click", function () { row.remove(); krillEnvSyncToTextarea(); });
+  k.addEventListener("input", krillEnvSyncToTextarea);
+  v.addEventListener("input", krillEnvSyncToTextarea);
+  row.appendChild(k); row.appendChild(v); row.appendChild(del);
+  rows.appendChild(row);
+};
+window.krillEnvBuildRows = function (text) {
+  const rows = document.getElementById("env-rows");
+  if (!rows) return;
+  rows.innerHTML = "";
+  (text || "").split("\n").forEach(function (line) {
+    line = line.trim();
+    if (!line) return;
+    const i = line.indexOf("=");
+    if (i < 0) return;
+    krillEnvAddRow(line.slice(0, i).trim(), line.slice(i + 1).trim());
+  });
+  if (!rows.children.length) krillEnvAddRow("", "");
+};
+window.krillEnvMode = function (mode) {
+  const form = document.getElementById("env-form");
+  if (!form) return;
+  const raw = document.getElementById("env-raw");
+  const kv = document.getElementById("env-kv");
+  if (mode === "kv") {
+    krillEnvBuildRows(document.getElementById("env-textarea").value);
+    raw.style.display = "none";
+    kv.style.display = "";
+  } else {
+    // only sync rows→textarea if KV rows exist, so we never wipe the textarea
+    if (document.querySelectorAll("#env-rows .env-row").length) krillEnvSyncToTextarea();
+    kv.style.display = "none";
+    raw.style.display = "";
+  }
+  form.dataset.mode = mode;
+  form.parentNode.parentNode.querySelectorAll("[data-env-mode]").forEach(function (b) {
+    b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
+  });
+};
