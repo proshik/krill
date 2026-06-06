@@ -203,7 +203,7 @@ func Destinations(org db.Organization, role string, dests []db.Destination) temp
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\" onsubmit=\"return confirm('Delete destination ' + this.dataset.name + '?')\"><button class=\"k-btn k-btn-danger\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "\" onsubmit=\"return krillConfirm(this, 'Delete destination ' + this.dataset.name + '?', 'Delete')\"><button class=\"k-btn k-btn-danger\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}

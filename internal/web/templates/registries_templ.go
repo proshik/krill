@@ -177,7 +177,7 @@ func Registries(org db.Organization, role string, regs []db.Registry) templ.Comp
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" onsubmit=\"return confirm('Delete registry ' + this.dataset.name + '?')\"><button class=\"k-btn k-btn-danger\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "\" onsubmit=\"return krillConfirm(this, 'Delete registry ' + this.dataset.name + '?', 'Delete')\"><button class=\"k-btn k-btn-danger\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}

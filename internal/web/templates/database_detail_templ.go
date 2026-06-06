@@ -848,7 +848,7 @@ func backupsSection(c DatabaseCtx) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "\" onsubmit=\"return confirm('Delete backup schedule for ' + this.dataset.dest + '?')\" class=\"inline\"><button class=\"k-btn k-btn-danger\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "\" onsubmit=\"return krillConfirm(this, 'Delete backup schedule for ' + this.dataset.dest + '?', 'Delete')\" class=\"inline\"><button class=\"k-btn k-btn-danger\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

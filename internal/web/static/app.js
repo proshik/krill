@@ -45,6 +45,38 @@ if (!window.__krillClickInit) {
   });
 }
 
+// Styled confirmation dialog (replaces the native confirm()). Used from a
+// form's onsubmit: `return krillConfirm(this, 'message', 'Delete')`. Returns
+// false to block the triggering submit, opens #k-confirm, and only submits the
+// form natively when the user clicks the confirm button. The form must carry
+// hx-boost="false" so HTMX does not fire its own request on the submit event.
+window.krillConfirm = function (form, message, confirmLabel) {
+  const dlg = document.getElementById("k-confirm");
+  if (!dlg || typeof dlg.showModal !== "function") return confirm(message);
+  const msgEl = dlg.querySelector("#k-confirm-msg");
+  const okEl = dlg.querySelector("#k-confirm-ok");
+  if (msgEl) msgEl.textContent = message;
+  if (okEl) okEl.textContent = confirmLabel || "Delete";
+  window.__krillConfirmAction = function () { form.submit(); };
+  dlg.showModal();
+  return false;
+};
+// Invoked by the confirm dialog's confirm button.
+window.krillConfirmRun = function () {
+  const action = window.__krillConfirmAction;
+  window.__krillConfirmAction = null;
+  krillCloseModal("k-confirm");
+  if (action) action();
+};
+// Clear the pending action when the dialog is dismissed (Esc/backdrop), so a
+// cancel never runs it. 'close' does not bubble, so listen in the capture phase.
+if (!window.__krillConfirmInit) {
+  window.__krillConfirmInit = true;
+  document.addEventListener("close", function (e) {
+    if (e.target && e.target.id === "k-confirm") window.__krillConfirmAction = null;
+  }, true);
+}
+
 // Copy text to the clipboard and show a confirmation toast.
 window.krillCopyToClip = function (text, label) {
   const done = function () { krillShowToast((label || "Copied") + " to clipboard", "ok"); };
@@ -92,7 +124,7 @@ window.krillConfirmDbDelete = function (form) {
   const msg = destroy
     ? 'Delete "' + name + '" AND permanently destroy its data volume? This cannot be undone.'
     : 'Delete "' + name + '"? The data volume will be kept.';
-  return confirm(msg);
+  return krillConfirm(form, msg, "Delete");
 };
 
 // Disable a submit button on form submit to prevent double-submits and signal activity.

@@ -54,6 +54,16 @@ templ Layout(title string, org db.Organization, role string) {
 				<script src="/static/app.js"></script>
 			</main>
 			<dialog id="org-switcher" class="k-modal"></dialog>
+			<dialog id="k-confirm" class="k-modal">
+				<div class="k-modal-head">
+					<div class="k-modal-title">{ i18n.T(ctx, "confirm.title") }</div>
+					<div class="k-modal-desc" id="k-confirm-msg"></div>
+				</div>
+				<div class="k-modal-foot">
+					<button type="button" class="k-btn k-btn-secondary" onclick="window.__krillConfirmAction=null;krillCloseModal('k-confirm')">{ i18n.T(ctx, "common.cancel") }</button>
+					<button type="button" id="k-confirm-ok" class="k-btn k-btn-danger" onclick="krillConfirmRun()">{ i18n.T(ctx, "common.delete") }</button>
+				</div>
+			</dialog>
 		</body>
 	</html>
 }

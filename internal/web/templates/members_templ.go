@@ -297,7 +297,7 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" onsubmit=\"return confirm('Remove member ' + this.dataset.email + '?')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" onsubmit=\"return krillConfirm(this, 'Remove member ' + this.dataset.email + '?', 'Remove')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}

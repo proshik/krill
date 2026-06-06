@@ -18,6 +18,7 @@ var en = map[string]string{
 	"orgs.switch_title":            "Switch organization",
 	"common.create":                "Create",
 	"common.close":                 "Close",
+	"confirm.title":                "Please confirm",
 	"common.cancel":                "Cancel",
 	"common.save":                  "Save",
 	"common.delete":                "Delete",

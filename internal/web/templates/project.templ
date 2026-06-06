@@ -28,11 +28,11 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						<div class="flex items-center gap-2">
 							if active.ID != 0 {
 								<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-app')">+ { i18n.T(ctx, "project.new_app") }</button>
-								<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/delete") } data-name={ active.Name } onsubmit="return confirm('Delete environment ' + this.dataset.name + ' and ALL its apps and databases?')">
+								<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/delete") } data-name={ active.Name } onsubmit="return krillConfirm(this, 'Delete environment ' + this.dataset.name + ' and ALL its apps and databases?', 'Delete')">
 									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "env.delete") }</button>
 								</form>
 							}
-							<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/delete") } data-name={ project.Name } onsubmit="return confirm('Delete project ' + this.dataset.name + ' and ALL its environments, apps and databases?')">
+							<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/delete") } data-name={ project.Name } onsubmit="return krillConfirm(this, 'Delete project ' + this.dataset.name + ' and ALL its environments, apps and databases?', 'Delete')">
 								<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "projects.delete") }</button>
 							</form>
 						</div>

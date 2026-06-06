@@ -207,7 +207,7 @@ func Project(org db.Organization, role string, project db.Project, envs []db.Env
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" onsubmit=\"return confirm('Delete environment ' + this.dataset.name + ' and ALL its apps and databases?')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" onsubmit=\"return krillConfirm(this, 'Delete environment ' + this.dataset.name + ' and ALL its apps and databases?', 'Delete')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
@@ -251,7 +251,7 @@ func Project(org db.Organization, role string, project db.Project, envs []db.Env
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" onsubmit=\"return confirm('Delete project ' + this.dataset.name + ' and ALL its environments, apps and databases?')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" onsubmit=\"return krillConfirm(this, 'Delete project ' + this.dataset.name + ' and ALL its environments, apps and databases?', 'Delete')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}

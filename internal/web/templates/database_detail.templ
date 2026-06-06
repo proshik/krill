@@ -130,7 +130,7 @@ templ backupsSection(c DatabaseCtx) {
 									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
 										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.toggle") }</button>
 									</form>
-									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-dest={ destName(c.Destinations, b.DestinationID) } onsubmit="return confirm('Delete backup schedule for ' + this.dataset.dest + '?')" class="inline">
+									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-dest={ destName(c.Destinations, b.DestinationID) } onsubmit="return krillConfirm(this, 'Delete backup schedule for ' + this.dataset.dest + '?', 'Delete')" class="inline">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
 									</form>
 								</div>

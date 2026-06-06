@@ -112,7 +112,7 @@ templ generalTab(c AppCtx) {
 		<!-- standalone forms so all actions share one button row via the form= attribute -->
 		<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
 		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
-		<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return confirm('Stop ' + this.dataset.appName + '?')"></form>
+		<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return krillConfirm(this, 'Stop ' + this.dataset.appName + '?', 'Stop')"></form>
 		<div class="flex items-center gap-2 flex-wrap">
 			<button type="submit" form="deploy-form" class="k-btn k-btn-primary pr-7">
 				{ i18n.T(ctx, "app.deploy") }
@@ -141,7 +141,7 @@ templ generalTab(c AppCtx) {
 		}
 		if c.Role == "owner" || c.Role == "admin" {
 			<div class="k-section">{ i18n.T(ctx, "app.section_danger") }</div>
-			<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/delete") } data-app-name={ c.App.Name } onsubmit="return confirm('Delete app ' + this.dataset.appName + '? This removes the running service and all its configuration.')">
+			<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/delete") } data-app-name={ c.App.Name } onsubmit="return krillConfirm(this, 'Delete app ' + this.dataset.appName + '? This removes the running service and all its configuration.', 'Delete')">
 				<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "app.delete") }</button>
 			</form>
 		}
@@ -227,7 +227,7 @@ templ domainsTab(c AppCtx) {
 						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
 					</form>
 					if !d.IsPrimary {
-						<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return confirm('Delete domain ' + this.dataset.host + '?')">
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } class="inline" data-host={ d.Host } onsubmit="return krillConfirm(this, 'Delete domain ' + this.dataset.host + '?', 'Delete')">
 							<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "domains.delete") }</button>
 						</form>
 					}

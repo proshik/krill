@@ -1004,7 +1004,7 @@ func generalTab(c AppCtx) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, "\" onsubmit=\"return confirm('Stop ' + this.dataset.appName + '?')\"></form><div class=\"flex items-center gap-2 flex-wrap\"><button type=\"submit\" form=\"deploy-form\" class=\"k-btn k-btn-primary pr-7\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 78, "\" onsubmit=\"return krillConfirm(this, 'Stop ' + this.dataset.appName + '?', 'Stop')\"></form><div class=\"flex items-center gap-2 flex-wrap\"><button type=\"submit\" form=\"deploy-form\" class=\"k-btn k-btn-primary pr-7\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1275,7 +1275,7 @@ func generalTab(c AppCtx) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "\" onsubmit=\"return confirm('Delete app ' + this.dataset.appName + '? This removes the running service and all its configuration.')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 100, "\" onsubmit=\"return krillConfirm(this, 'Delete app ' + this.dataset.appName + '? This removes the running service and all its configuration.', 'Delete')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -1757,7 +1757,7 @@ func domainsTab(c AppCtx) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 140, "\" onsubmit=\"return confirm('Delete domain ' + this.dataset.host + '?')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 140, "\" onsubmit=\"return krillConfirm(this, 'Delete domain ' + this.dataset.host + '?', 'Delete')\"><button type=\"submit\" class=\"k-btn k-btn-danger\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
