@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -71,7 +72,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		app := dbservice.GenerateAppName("postgres", name)
 		_, err := s.q.CreatePostgres(r.Context(), db.CreatePostgresParams{
 			EnvironmentID: e.ID, Name: name, AppName: app,
-			DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: pw,
+			DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: secret.Enc(pw),
 			Image: version, ExternalPort: extPort,
 		})
 		if err != nil {
@@ -86,7 +87,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		}
 		app := dbservice.GenerateAppName("redis", name)
 		_, err := s.q.CreateRedis(r.Context(), db.CreateRedisParams{
-			EnvironmentID: e.ID, Name: name, AppName: app, Password: pw, Image: version, ExternalPort: extPort,
+			EnvironmentID: e.ID, Name: name, AppName: app, Password: secret.Enc(pw), Image: version, ExternalPort: extPort,
 		})
 		if err != nil {
 			logFrom(r).Error("createDatabase: failed to create redis", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
@@ -391,7 +392,7 @@ func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.Da
 	c := templates.DatabaseCtx{Org: o, Role: role, Project: p, Env: e, Engine: eng, ID: id, Base: base}
 	if eng == "postgres" {
 		row, _ := s.q.GetPostgres(r.Context(), id)
-		pg := dbservice.PostgresDB{AppName: row.AppName, DatabaseName: row.DatabaseName, DatabaseUser: row.DatabaseUser, DatabasePassword: row.DatabasePassword, ExternalPort: row.ExternalPort}
+		pg := dbservice.PostgresDB{AppName: row.AppName, DatabaseName: row.DatabaseName, DatabaseUser: row.DatabaseUser, DatabasePassword: secret.Dec(row.DatabasePassword), ExternalPort: row.ExternalPort}
 		c.Name = row.Name
 		c.Image = row.Image
 		c.Status = row.Status
@@ -411,7 +412,7 @@ func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.Da
 		}
 	} else {
 		row, _ := s.q.GetRedis(r.Context(), id)
-		rd := dbservice.RedisDB{AppName: row.AppName, Password: row.Password, ExternalPort: row.ExternalPort}
+		rd := dbservice.RedisDB{AppName: row.AppName, Password: secret.Dec(row.Password), ExternalPort: row.ExternalPort}
 		c.Name = row.Name
 		c.Image = row.Image
 		c.Status = row.Status

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 )
 
 type DBStore struct{ q *db.Queries }
@@ -17,7 +18,7 @@ func (s *DBStore) GetPostgres(ctx context.Context, id int64) (PostgresDB, error)
 	}
 	return PostgresDB{
 		ID: r.ID, EnvironmentID: r.EnvironmentID, Name: r.Name, AppName: r.AppName,
-		DatabaseName: r.DatabaseName, DatabaseUser: r.DatabaseUser, DatabasePassword: r.DatabasePassword,
+		DatabaseName: r.DatabaseName, DatabaseUser: r.DatabaseUser, DatabasePassword: secret.Dec(r.DatabasePassword),
 		Image: r.Image, ExternalPort: r.ExternalPort, Status: r.Status,
 	}, nil
 }
@@ -29,7 +30,7 @@ func (s *DBStore) GetRedis(ctx context.Context, id int64) (RedisDB, error) {
 	}
 	return RedisDB{
 		ID: r.ID, EnvironmentID: r.EnvironmentID, Name: r.Name, AppName: r.AppName,
-		Password: r.Password, Image: r.Image, ExternalPort: r.ExternalPort, Status: r.Status,
+		Password: secret.Dec(r.Password), Image: r.Image, ExternalPort: r.ExternalPort, Status: r.Status,
 	}, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 )
 
 // PGTarget is the connection info for dumping/restoring a managed Postgres DB.
@@ -60,7 +61,7 @@ func (s *DBStore) GetDestination(ctx context.Context, id int64) (Destination, er
 	if err != nil {
 		return Destination{}, err
 	}
-	return Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: d.AccessKey, SecretKey: d.SecretKey}, nil
+	return Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: secret.Dec(d.AccessKey), SecretKey: secret.Dec(d.SecretKey)}, nil
 }
 
 func (s *DBStore) SetBackupResult(ctx context.Context, id int64, at time.Time, status, errMsg string) error {

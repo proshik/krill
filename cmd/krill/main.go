@@ -23,6 +23,7 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/org"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
 )
@@ -64,6 +65,12 @@ func run() error {
 	}
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
 	slog.Info("starting krill", "listen", cfg.ListenAddr, "base_domain", cfg.BaseDomain, "network", cfg.Network)
+
+	// Encryption-at-rest for stored credentials (opt-in via KRILL_SECRET_KEY).
+	secret.Init(cfg.SecretKey)
+	if !secret.Enabled() {
+		slog.Warn("KRILL_SECRET_KEY not set — stored secrets (DB passwords, registry/destination credentials) are NOT encrypted at rest")
+	}
 
 	// Migrations on startup.
 	if err := database.RunMigrations(cfg.DatabaseURL); err != nil {

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -65,7 +66,7 @@ func (s *Server) createRegistry(w http.ResponseWriter, r *http.Request) {
 		Name:           name,
 		RegistryUrl:    registryURL,
 		Username:       username,
-		Password:       password,
+		Password:       secret.Enc(password),
 	})
 	if err != nil {
 		logFrom(r).Error("createRegistry: failed to create registry", "err", err, "org_id", o.ID, "name", name)

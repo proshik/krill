@@ -193,6 +193,26 @@ window.krillBusy = function (btn, label) {
   btn.textContent = label || "Working…";
 };
 
+// Toggle masking of a single input (e.g. a connection string) between password
+// and text; flips the eye icon on the button that triggered it.
+window.krillReveal = function (btn) {
+  const inp = btn.parentElement.querySelector("input");
+  if (!inp) return;
+  inp.type = inp.type === "password" ? "text" : "password";
+  btn.textContent = inp.type === "password" ? "👁" : "🙈";
+};
+
+// Toggle masking of ALL env value inputs (masked by default, Dokploy-style).
+// New rows added afterwards respect the current state via window.__krillEnvReveal.
+window.krillEnvRevealToggle = function (btn) {
+  window.__krillEnvReveal = !window.__krillEnvReveal;
+  const on = window.__krillEnvReveal;
+  document.querySelectorAll("#env-rows .env-val").forEach(function (i) {
+    i.type = on ? "text" : "password";
+  });
+  btn.textContent = (on ? "🙈 " : "👁 ") + (on ? btn.dataset.hide : btn.dataset.show);
+};
+
 // ── Environment editor: switch between a raw KEY=VALUE textarea and key/value rows.
 // The hidden textarea (name="env") is always the submitted source of truth; in
 // key/value mode the rows are synced into it on every edit.
@@ -216,6 +236,7 @@ window.krillEnvAddRow = function (key, val) {
   k.className = "k-input env-key"; k.placeholder = "KEY"; k.value = key || "";
   const v = document.createElement("input");
   v.className = "k-input env-val"; v.placeholder = "value"; v.value = val || "";
+  v.type = window.__krillEnvReveal ? "text" : "password"; // values masked by default
   const del = document.createElement("button");
   del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
   del.setAttribute("aria-label", "Remove variable");

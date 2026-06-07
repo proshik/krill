@@ -58,13 +58,15 @@ templ DatabaseDetail(c DatabaseCtx) {
 					<div>
 						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
 						<div class="flex items-center gap-2">
-							<input class="k-input k-mono" readonly value={ c.Internal }/>
+							<input class="k-input k-mono" type="password" readonly value={ c.Internal }/>
+							<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
 							<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
 						</div>
 						if c.External != "" {
 							<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
 							<div class="flex items-center gap-2">
-								<input class="k-input k-mono" readonly value={ c.External }/>
+								<input class="k-input k-mono" type="password" readonly value={ c.External }/>
+								<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
 								<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
 							</div>
 						}

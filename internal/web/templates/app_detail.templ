@@ -157,9 +157,12 @@ templ envTab(c AppCtx) {
 				<div class="k-panel-title">{ i18n.T(ctx, "env.settings_title") }</div>
 				<div class="k-panel-desc">{ i18n.T(ctx, "env.settings_desc") }</div>
 			</div>
-			<div class="k-seg" id="env-seg">
-				<button type="button" class="k-seg-btn" data-env-mode="kv" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
-				<button type="button" class="k-seg-btn" data-env-mode="raw" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
+			<div class="flex items-center gap-2">
+				<button type="button" class="k-copy" data-show={ i18n.T(ctx, "env.show_values") } data-hide={ i18n.T(ctx, "env.hide_values") } onclick="krillEnvRevealToggle(this)">👁 { i18n.T(ctx, "env.show_values") }</button>
+				<div class="k-seg" id="env-seg">
+					<button type="button" class="k-seg-btn" data-env-mode="kv" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
+					<button type="button" class="k-seg-btn" data-env-mode="raw" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
+				</div>
 			</div>
 		</div>
 		<div class="k-panel-body">

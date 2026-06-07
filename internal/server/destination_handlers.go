@@ -6,6 +6,7 @@ import (
 
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -75,8 +76,8 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 		Endpoint:       endpoint,
 		Bucket:         bucket,
 		Region:         region,
-		AccessKey:      accessKey,
-		SecretKey:      secretKey,
+		AccessKey:      secret.Enc(accessKey),
+		SecretKey:      secret.Enc(secretKey),
 	})
 	if err != nil {
 		logFrom(r).Error("createDestination: failed to create destination", "err", err, "org_id", o.ID, "name", name)
