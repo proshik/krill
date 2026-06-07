@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -46,6 +47,9 @@ func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string
 }
 func (noopEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
+}
+func (noopEngine) ExecInteractive(context.Context, string, []string) (docker.ExecSession, error) {
+	return nil, errors.New("exec not supported")
 }
 func (noopEngine) RegistryCheck(context.Context, string, string, string) error { return nil }
 

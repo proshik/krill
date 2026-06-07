@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -215,7 +216,8 @@ func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, lab
 	return err
 }
 
-func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error {
+// runningContainerID returns the container ID of a running task of serviceName.
+func (e *dockerEngine) runningContainerID(ctx context.Context, serviceName string) (string, error) {
 	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
 		Filters: filters.NewArgs(
 			filters.Arg("service", serviceName),
@@ -223,17 +225,57 @@ func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []strin
 		),
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	var containerID string
 	for _, t := range tasks {
 		if t.Status.ContainerStatus != nil && t.Status.ContainerStatus.ContainerID != "" {
-			containerID = t.Status.ContainerStatus.ContainerID
-			break
+			return t.Status.ContainerStatus.ContainerID, nil
 		}
 	}
-	if containerID == "" {
-		return fmt.Errorf("no running container for service %s", serviceName)
+	return "", fmt.Errorf("no running container for service %s", serviceName)
+}
+
+// dockerExecSession adapts a hijacked exec attach to ExecSession.
+type dockerExecSession struct {
+	cli    *client.Client
+	att    types.HijackedResponse
+	execID string
+}
+
+func (s *dockerExecSession) Read(p []byte) (int, error)  { return s.att.Reader.Read(p) }
+func (s *dockerExecSession) Write(p []byte) (int, error) { return s.att.Conn.Write(p) }
+func (s *dockerExecSession) Resize(ctx context.Context, rows, cols uint) error {
+	return s.cli.ContainerExecResize(ctx, s.execID, container.ResizeOptions{Height: rows, Width: cols})
+}
+func (s *dockerExecSession) Close() error { s.att.Close(); return nil }
+
+// ExecInteractive starts an interactive TTY exec of cmd in a running container.
+func (e *dockerEngine) ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error) {
+	containerID, err := e.runningContainerID(ctx, serviceName)
+	if err != nil {
+		return nil, err
+	}
+	idResp, err := e.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+		Cmd:          cmd,
+		Tty:          true,
+		AttachStdin:  true,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	att, err := e.cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{Tty: true})
+	if err != nil {
+		return nil, err
+	}
+	return &dockerExecSession{cli: e.cli, att: att, execID: idResp.ID}, nil
+}
+
+func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error {
+	containerID, err := e.runningContainerID(ctx, serviceName)
+	if err != nil {
+		return err
 	}
 	idResp, err := e.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,

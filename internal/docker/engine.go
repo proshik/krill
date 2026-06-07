@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// ExecSession is one interactive TTY exec attached to a container. Read yields
+// the container's combined stdout+stderr (raw — not stdcopy-muxed under TTY);
+// Write sends stdin; Resize updates the PTY size; Close ends the session.
+type ExecSession interface {
+	io.ReadWriteCloser
+	Resize(ctx context.Context, rows, cols uint) error
+}
+
 // PortSpec — a published service port.
 type PortSpec struct {
 	Target    uint32
@@ -77,6 +85,7 @@ type Engine interface {
 	VolumeRemove(ctx context.Context, name string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
+	ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error)
 	RegistryCheck(ctx context.Context, serverAddr, username, password string) error
 }
 
