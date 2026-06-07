@@ -24,10 +24,26 @@ func localeOf(ctx context.Context) string {
 	return DefaultLocale
 }
 
-// catalogs: locale -> key -> text. Only en for now; adding a language = one more map.
+// catalogs: locale -> key -> text. Adding a language = one more map.
 var catalogs = map[string]map[string]string{
 	"en": en,
+	"ru": ru,
 }
+
+// Locale is a selectable language for the Settings picker.
+type Locale struct{ Code, Name string }
+
+// Locales lists the available languages (order = display order).
+var Locales = []Locale{
+	{Code: "en", Name: "English"},
+	{Code: "ru", Name: "Русский"},
+}
+
+// Supported reports whether loc has a catalog.
+func Supported(loc string) bool { _, ok := catalogs[loc]; return ok }
+
+// Current returns the locale active for ctx (for marking the picker selection).
+func Current(ctx context.Context) string { return localeOf(ctx) }
 
 // T returns the translation for a key in the locale from ctx; fallback is the key as-is.
 func T(ctx context.Context, key string) string {

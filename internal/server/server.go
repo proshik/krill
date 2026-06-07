@@ -52,11 +52,15 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(csrfGuard)
 
-	// locale middleware: puts the default locale into the request context.
-	// Currently a no-op (always en); an extension point for cookie/Accept-Language.
+	// locale middleware: picks the locale from the krill_lang cookie (set via
+	// the Settings language selector), falling back to the default.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			ctx := i18n.WithLocale(req.Context(), i18n.DefaultLocale)
+			loc := i18n.DefaultLocale
+			if c, err := req.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
+				loc = c.Value
+			}
+			ctx := i18n.WithLocale(req.Context(), loc)
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})
@@ -75,6 +79,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/orgs", s.listOrgs)
 		r.Get("/orgs/switcher", s.orgSwitcher)
 		r.Post("/orgs", s.createOrg)
+		r.Post("/lang", s.setLanguage)
 
 		r.Route("/orgs/{orgID}", func(r chi.Router) {
 			r.Use(auth.RequireOrgMember(s.org))

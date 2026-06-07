@@ -75,6 +75,14 @@ templ settingsNav(orgID int64) {
 	<div class="k-card flex items-center mb-4 py-2 px-4">
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/registries") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "registries")) }>{ i18n.T(ctx, "reg.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
+		<form method="post" hx-boost="false" action="/lang" class="ml-auto flex items-center gap-2">
+			<label class="k-label" style="margin:0">{ i18n.T(ctx, "settings.language") }</label>
+			<select class="k-select" name="lang" style="width:auto" onchange="this.form.submit()">
+				for _, l := range i18n.Locales {
+					<option value={ l.Code } selected?={ l.Code == i18n.Current(ctx) }>{ l.Name }</option>
+				}
+			</select>
+		</form>
 	</div>
 }
 

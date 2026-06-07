@@ -5,6 +5,7 @@ var en = map[string]string{
 	"nav.members":                  "Members",
 	"nav.settings":                 "Settings",
 	"nav.logout":                   "Log out",
+	"settings.language":            "Language",
 	"login.page_title":             "Sign in",
 	"login.title":                  "Sign in to Krill",
 	"login.email":                  "Email",
