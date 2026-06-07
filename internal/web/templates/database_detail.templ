@@ -44,7 +44,7 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<form method="post" action={ templ.SafeURL(c.Base + "/deploy") } onsubmit="krillBusy(this.querySelector('button'), 'Deploying…')"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "db.deploy") }</button></form>
 						<form method="post" action={ templ.SafeURL(c.Base + "/start") } onsubmit="krillBusy(this.querySelector('button'), 'Starting…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.start") }</button></form>
 						<form method="post" action={ templ.SafeURL(c.Base + "/stop") } onsubmit="krillBusy(this.querySelector('button'), 'Stopping…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
-						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-db-name={ c.Name } onsubmit="return krillConfirmDbDelete(this)" class="flex items-center gap-2">
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm-keep={ i18n.Tf(ctx, "confirm.delete_db_keep", c.Name) } data-confirm-destroy={ i18n.Tf(ctx, "confirm.delete_db_destroy", c.Name) } onsubmit="return krillConfirmDbDelete(this)" class="flex items-center gap-2">
 							<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
 							<label class="k-label"><input class="k-check" type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
 						</form>
@@ -72,11 +72,9 @@ templ DatabaseDetail(c DatabaseCtx) {
 				}
 				<div>
 					<div class="k-label">{ i18n.T(ctx, "common.logs") }</div>
-					<div id="terminal" data-ws={ c.Base + "/logs" }></div>
+					<div class="k-term" data-ws={ c.Base + "/logs" }></div>
 					<script src="/static/xterm.js"></script>
 					<script src="/static/addon-fit.js"></script>
-					<script src="/static/app.js"></script>
-					<script>mountLogTerminal(document.getElementById('terminal').dataset.ws);</script>
 				</div>
 				if c.Engine == "postgres" && (c.Role == "owner" || c.Role == "admin") {
 					@backupsSection(c)
@@ -130,7 +128,7 @@ templ backupsSection(c DatabaseCtx) {
 									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
 										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.toggle") }</button>
 									</form>
-									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-dest={ destName(c.Destinations, b.DestinationID) } onsubmit="return krillConfirm(this, 'Delete backup schedule for ' + this.dataset.dest + '?', 'Delete')" class="inline">
+									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_backup", destName(c.Destinations, b.DestinationID)) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="inline">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
 									</form>
 								</div>

@@ -1,9 +1,7 @@
 package templates
 
 import (
-	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -58,21 +56,4 @@ func humanSize(n int64) string {
 		exp++
 	}
 	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGTPE"[exp]) + "iB"
-}
-
-// envText serializes the env map into KEY=VALUE text, one per line (deterministically).
-func envText(env map[string]string) string {
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(env[k])
-		b.WriteByte('\n')
-	}
-	return b.String()
 }

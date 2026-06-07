@@ -42,13 +42,9 @@ templ DeploymentLog(c AppCtx, dep db.Deployment) {
 			@StatusBadge(dep.Status)
 		</p>
 		<div class="k-card">
-			<div id="terminal" data-ws={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
+			<div class="k-term" data-ws={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
 			<script src="/static/xterm.js"></script>
 			<script src="/static/addon-fit.js"></script>
-			<script src="/static/app.js"></script>
-			<script>
-				mountLogTerminal(document.getElementById('terminal').dataset.ws);
-			</script>
 		</div>
 	}
 }

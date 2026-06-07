@@ -18,6 +18,7 @@ templ Layout(title string, org db.Organization, role string) {
 			<link rel="stylesheet" href="/static/xterm.css"/>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
+			<script defer src="/static/app.js"></script>
 		</head>
 		<body class="flex" hx-boost="true">
 			<aside class="k-side">
@@ -51,7 +52,6 @@ templ Layout(title string, org db.Organization, role string) {
 					}
 					{ children... }
 				</div>
-				<script src="/static/app.js"></script>
 			</main>
 			<dialog id="org-switcher" class="k-modal"></dialog>
 			<dialog id="k-confirm" class="k-modal">
@@ -87,6 +87,7 @@ templ Bare(title string) {
 			<title>{ title } — Krill</title>
 			<link rel="stylesheet" href="/static/app.css"/>
 			<script src="/static/htmx.min.js"></script>
+			<script defer src="/static/app.js"></script>
 		</head>
 		<body class="flex" hx-boost="true">
 			<main class="flex-1 flex items-center justify-center min-h-screen p-4">
@@ -97,7 +98,6 @@ templ Bare(title string) {
 				}
 				{ children... }
 			</main>
-			<script src="/static/app.js"></script>
 		</body>
 	</html>
 }

@@ -1,13 +1,16 @@
-// Mounts xterm into #terminal and streams logs over WebSocket.
-window.mountLogTerminal = function (wsPath) {
-  const el = document.getElementById("terminal");
+// Mounts an xterm log viewer into a `.k-term[data-ws]` element and streams logs
+// over WebSocket. Mounting is driven by krillEnhance (DOMContentLoaded +
+// htmx:afterSettle), so any log view added by a page swap mounts automatically;
+// the data-mounted guard makes it idempotent and the singleton id is gone.
+function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
-  // After an hx-boost body swap the external xterm.js / addon-fit.js scripts
-  // load asynchronously and may not be ready when this inline call runs. Wait
-  // for them (re-query #terminal each tick so we stop if the user navigated away)
-  // and only mark mounted once we actually build the terminal.
+  const wsPath = el.dataset.ws;
+  if (!wsPath) return;
+  // After an hx-boost swap the external xterm.js / addon-fit.js scripts may
+  // still be loading; wait for them before building, and only mark mounted on
+  // an actual build.
   if (typeof Terminal === "undefined" || typeof FitAddon === "undefined" || !FitAddon.FitAddon) {
-    setTimeout(function () { window.mountLogTerminal(wsPath); }, 50);
+    setTimeout(function () { mountTerminalEl(el); }, 50);
     return;
   }
   el.dataset.mounted = "1";
@@ -16,10 +19,10 @@ window.mountLogTerminal = function (wsPath) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  // Defer the first fit to after layout: on an hx-boost body swap the script
-  // runs before the swapped DOM has a measured height, so an immediate fit()
-  // would compute 0 rows. rAF + a ResizeObserver re-fit once height exists.
-  const refit = () => { try { fit.fit(); } catch (_) { /* container not laid out yet */ } };
+  // Defer the first fit to after layout: right after a swap the container has no
+  // measured height yet, so an immediate fit() computes 0 rows. rAF + a
+  // ResizeObserver re-fit once height exists.
+  const refit = () => { try { fit.fit(); } catch (_) { /* not laid out yet */ } };
   requestAnimationFrame(refit);
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
@@ -32,6 +35,17 @@ window.mountLogTerminal = function (wsPath) {
     ? "\x1b[90m[log stream closed]\x1b[0m"
     : "\x1b[90m[no logs yet — start or redeploy the service to stream logs]\x1b[0m");
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
+}
+
+// krillEnhance wires up content present on the page or just swapped in: it mounts
+// any unmounted log terminals and initializes the env editor. Idempotent.
+window.krillEnhance = function () {
+  document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
+  if (document.getElementById("env-form")) {
+    let mode = "kv";
+    try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
+    krillEnvMode(mode);
+  }
 };
 
 // Toggles the source fields in the application creation form.
@@ -141,12 +155,10 @@ window.krillDismissToast = function (el) {
 };
 
 // Confirm DB deletion, reflecting whether the data volume will be destroyed.
+// The two i18n'd messages are rendered server-side into data attributes.
 window.krillConfirmDbDelete = function (form) {
-  const name = form.dataset.dbName || "this database";
   const destroy = !!(form.querySelector('[name="destroy_data"]') || {}).checked;
-  const msg = destroy
-    ? 'Delete "' + name + '" AND permanently destroy its data volume? This cannot be undone.'
-    : 'Delete "' + name + '"? The data volume will be kept.';
+  const msg = destroy ? form.dataset.confirmDestroy : form.dataset.confirmKeep;
   return krillConfirm(form, msg, "Delete");
 };
 
@@ -224,3 +236,12 @@ window.krillEnvMode = function (mode) {
     b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
   });
 };
+
+// Run enhancements on first load and after every hx-boost swap. Guarded so a
+// re-executed app.js does not stack duplicate listeners.
+if (!window.__krillEnhanceInit) {
+  window.__krillEnhanceInit = true;
+  document.addEventListener("DOMContentLoaded", window.krillEnhance);
+  document.addEventListener("htmx:afterSettle", window.krillEnhance);
+}
+window.krillEnhance();

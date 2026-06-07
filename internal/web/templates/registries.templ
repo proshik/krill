@@ -25,7 +25,7 @@ templ Registries(org db.Organization, role string, regs []db.Registry) {
 							<td>{ reg.Name }</td><td class="k-mono">{ reg.RegistryUrl }</td><td>{ reg.Username }</td>
 							<td>
 								if role == "owner" || role == "admin" {
-									<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries/" + itoa(reg.ID) + "/delete") } data-name={ reg.Name } onsubmit="return krillConfirm(this, 'Delete registry ' + this.dataset.name + '?', 'Delete')">
+									<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries/" + itoa(reg.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_registry", reg.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "reg.delete") }</button>
 									</form>
 								}

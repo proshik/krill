@@ -21,9 +21,12 @@ func TestIsSlug(t *testing.T) {
 }
 
 func TestParseEnv(t *testing.T) {
-	got := parseEnv("FOO=bar\n  BAZ = qux \n\nINVALID\nK=v=w")
-	want := map[string]string{"FOO": "bar", "BAZ": "qux", "K": "v=w"}
+	got, dups := parseEnv("FOO=bar\n  BAZ = qux \n\nINVALID\nK=v=w\nFOO=again")
+	want := map[string]string{"FOO": "again", "BAZ": "qux", "K": "v=w"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseEnv = %#v, want %#v", got, want)
+	}
+	if len(dups) != 1 || dups[0] != "FOO" {
+		t.Errorf("parseEnv dups = %#v, want [FOO]", dups)
 	}
 }

@@ -38,6 +38,7 @@ type Application struct {
 	HealthcheckRetries     *int32            `json:"healthcheck_retries"`
 	HealthcheckStartPeriod *string           `json:"healthcheck_start_period"`
 	Command                *string           `json:"command"`
+	EnvText                string            `json:"env_text"`
 }
 
 type Backup struct {

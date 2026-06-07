@@ -1,6 +1,9 @@
 package i18n
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type ctxKey int
 
@@ -38,4 +41,10 @@ func T(ctx context.Context, key string) string {
 		return s
 	}
 	return key
+}
+
+// Tf is T with printf-style formatting — for messages with a dynamic part
+// (e.g. a name) so the whole string stays in the catalog: T value uses %s.
+func Tf(ctx context.Context, key string, args ...any) string {
+	return fmt.Sprintf(T(ctx, key), args...)
 }

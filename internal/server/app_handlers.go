@@ -92,9 +92,11 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		}
 		registryID = &n
 	}
+	envRaw := r.FormValue("env")
+	envMap, _ := parseEnv(envRaw)
 	a, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag, Domain: domain, Port: int32(port),
-		Env: parseEnv(r.FormValue("env")), SourceType: sourceType,
+		Env: envMap, EnvText: envRaw, SourceType: sourceType,
 		GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 	})
 	if err != nil {
@@ -328,8 +330,14 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	raw := r.FormValue("env")
+	envMap, dups := parseEnv(raw)
+	if len(dups) > 0 {
+		s.flashErr(w, r, "duplicate variable: "+dups[0])
+		return
+	}
 	if err := s.q.UpdateApplicationEnv(r.Context(), db.UpdateApplicationEnvParams{
-		ID: c.App.ID, Env: parseEnv(r.FormValue("env")),
+		ID: c.App.ID, Env: envMap, EnvText: raw,
 	}); err != nil {
 		logFrom(r).Error("saveEnv: failed to update application env", "err", err, "app_id", c.App.ID)
 		s.flashErr(w, r, err.Error())
@@ -508,8 +516,12 @@ func isSlug(s string) bool {
 	return true
 }
 
-func parseEnv(raw string) map[string]string {
+// parseEnv parses KEY=VALUE lines into a map for the deploy spec and reports any
+// duplicate keys (last value wins in the map). The raw text itself is stored
+// separately (env_text) so the editor preserves the user's order.
+func parseEnv(raw string) (map[string]string, []string) {
 	env := map[string]string{}
+	var dups []string
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -519,7 +531,14 @@ func parseEnv(raw string) map[string]string {
 		if !ok {
 			continue
 		}
-		env[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if _, seen := env[k]; seen {
+			dups = append(dups, k)
+		}
+		env[k] = strings.TrimSpace(v)
 	}
-	return env
+	return env, dups
 }

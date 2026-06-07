@@ -178,8 +178,8 @@
 
   /* log terminal (xterm) — explicit height so FitAddon can size rows even when
      mounted into an hx-boost-swapped DOM before layout settles */
-  #terminal { min-height:24rem; height:24rem; width:100%; }
-  #terminal .xterm, #terminal .xterm-viewport { height:100% !important; }
+  .k-term { min-height:24rem; height:24rem; width:100%; }
+  .k-term .xterm, .k-term .xterm-viewport { height:100% !important; }
 
   /* success badge — a finished deploy should read as positive, like running */
   .k-badge-done { background:rgba(190,242,100,.13); color:#d9f99d; }
