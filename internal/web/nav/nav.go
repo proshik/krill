@@ -21,21 +21,22 @@ func Path(ctx context.Context) string {
 }
 
 // IsActive reports whether the current path belongs to the given sidebar
-// section ("projects" | "members" | "destinations" | "registries").
+// section ("projects" | "members" | "destinations" | "registries" | "notifications").
 func IsActive(ctx context.Context, section string) bool {
 	return sectionOf(Path(ctx)) == section
 }
 
 // IsSettings reports whether the current path is one of the Settings pages
-// (Destinations or Registries), which share a single sidebar entry.
+// (Destinations, Registries, or Notifications), which share a single sidebar entry.
 func IsSettings(ctx context.Context) bool {
 	s := sectionOf(Path(ctx))
-	return s == "destinations" || s == "registries"
+	return s == "destinations" || s == "registries" || s == "notifications"
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages
-// (members/destinations/registries) are leaf routes, so a substring match is
-// unambiguous; everything else under an org is the projects/dashboard section.
+// (members/destinations/registries/notifications) are leaf routes, so a
+// substring match is unambiguous; everything else under an org is the
+// projects/dashboard section.
 func sectionOf(path string) string {
 	switch {
 	case strings.Contains(path, "/members"):
@@ -44,6 +45,8 @@ func sectionOf(path string) string {
 		return "destinations"
 	case strings.Contains(path, "/registries"):
 		return "registries"
+	case strings.Contains(path, "/notifications"):
+		return "notifications"
 	default:
 		return "projects"
 	}

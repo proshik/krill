@@ -1,0 +1,61 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// NotifyView is the data the notifications page needs. HasToken is true when a
+// token is already stored (so the form shows a "keep" placeholder, never the
+// token itself).
+type NotifyView struct {
+	Enabled      bool
+	HasToken     bool
+	ChatID       string
+	NotifyDeploy bool
+	NotifyBackup bool
+	NotifyHealth bool
+}
+
+templ Notifications(org db.Organization, role string, v NotifyView) {
+	@Layout(i18n.T(ctx, "notif.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "notif.desc") }</p>
+		<div class="k-card">
+			<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications") } class="flex flex-col gap-3">
+				<label class="flex items-center gap-2">
+					<input type="checkbox" class="k-check" name="enabled" checked?={ v.Enabled }/>
+					<span>{ i18n.T(ctx, "notif.enabled") }</span>
+				</label>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "notif.bot_token") }</label>
+					if v.HasToken {
+						<input class="k-input" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
+					} else {
+						<input class="k-input" name="bot_token" type="password" autocomplete="off"/>
+					}
+				</div>
+				<div>
+					<label class="k-label k-label-required">{ i18n.T(ctx, "notif.chat_id") }</label>
+					<input class="k-input" name="chat_id" value={ v.ChatID } required/>
+				</div>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" class="k-check" name="notify_deploy" checked?={ v.NotifyDeploy }/>
+					<span>{ i18n.T(ctx, "notif.ev_deploy") }</span>
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" class="k-check" name="notify_backup" checked?={ v.NotifyBackup }/>
+					<span>{ i18n.T(ctx, "notif.ev_backup") }</span>
+				</label>
+				<label class="flex items-center gap-2">
+					<input type="checkbox" class="k-check" name="notify_health" checked?={ v.NotifyHealth }/>
+					<span>{ i18n.T(ctx, "notif.ev_health") }</span>
+				</label>
+				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "notif.save") }</button></div>
+			</form>
+			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/test") } class="mt-3">
+				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "notif.test") }</button>
+			</form>
+		</div>
+	}
+}
