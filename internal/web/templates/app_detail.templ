@@ -189,9 +189,23 @@ templ envTab(c AppCtx) {
 
 templ logsTab(c AppCtx) {
 	<div class="k-card">
-		<div class="k-term" data-ws={ c.base() + "/logs" }></div>
-		<script src="/static/xterm.js"></script>
-		<script src="/static/addon-fit.js"></script>
+		@logViewer(c.base() + "/logs")
+	</div>
+}
+
+// logViewer renders the structured log viewer (toolbar + body) bound to wsPath.
+templ logViewer(wsPath string) {
+	<div class="k-logs" data-ws={ wsPath }>
+		<div class="k-logs-bar">
+			<input class="k-input k-logs-search" placeholder={ i18n.T(ctx, "log.search") }/>
+			<div class="k-logs-levels">
+				<button type="button" class="k-logs-lvlchip" data-level="debug">DEBUG</button>
+				<button type="button" class="k-logs-lvlchip" data-level="info">INFO</button>
+				<button type="button" class="k-logs-lvlchip" data-level="warn">WARN</button>
+				<button type="button" class="k-logs-lvlchip" data-level="error">ERROR</button>
+			</div>
+		</div>
+		<div class="k-logs-body"></div>
 	</div>
 }
 

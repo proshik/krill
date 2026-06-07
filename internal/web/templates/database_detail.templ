@@ -74,9 +74,7 @@ templ DatabaseDetail(c DatabaseCtx) {
 				}
 				<div>
 					<div class="k-label">{ i18n.T(ctx, "common.logs") }</div>
-					<div class="k-term" data-ws={ c.Base + "/logs" }></div>
-					<script src="/static/xterm.js"></script>
-					<script src="/static/addon-fit.js"></script>
+					@logViewer(c.Base + "/logs")
 				</div>
 				if c.Engine == "postgres" && (c.Role == "owner" || c.Role == "admin") {
 					@backupsSection(c)

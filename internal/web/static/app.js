@@ -80,6 +80,77 @@ function mountExecTerminal(el) {
   connect();
 }
 
+// Mounts the structured log viewer into `.k-logs[data-ws]`: streams JSON frames
+// {t,lvl,msg}, renders time|level|message rows with per-level colors, and does
+// client-side text search + level filtering. Status text is hardcoded English.
+function mountLogViewer(el) {
+  if (!el || el.dataset.mounted) return;
+  el.dataset.mounted = "1";
+  const MAX_ROWS = 2000;
+  const body = el.querySelector(".k-logs-body");
+  const searchEl = el.querySelector(".k-logs-search");
+  const FILTERABLE = ["debug", "info", "warn", "error"];
+  const enabled = { debug: true, info: true, warn: true, error: true };
+  let query = "";
+
+  function rowVisible(row) {
+    const lvl = row.dataset.level;
+    const lvlOK = FILTERABLE.indexOf(lvl) === -1 || enabled[lvl];
+    const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
+    return lvlOK && txtOK;
+  }
+  function applyFilter() {
+    body.querySelectorAll(".k-log-row").forEach((r) => { r.style.display = rowVisible(r) ? "" : "none"; });
+  }
+  if (searchEl) {
+    searchEl.addEventListener("input", () => { query = searchEl.value.toLowerCase(); applyFilter(); });
+  }
+  el.querySelectorAll(".k-logs-lvlchip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const lvl = chip.dataset.level;
+      enabled[lvl] = !enabled[lvl];
+      chip.classList.toggle("k-logs-lvlchip-off", !enabled[lvl]);
+      applyFilter();
+    });
+  });
+
+  function fmtTime(t) {
+    if (!t) return "";
+    const d = new Date(t);
+    if (isNaN(d.getTime())) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+  function addRow(line) {
+    const row = document.createElement("div");
+    row.className = "k-log-row";
+    row.dataset.level = line.lvl || "";
+    row.dataset.text = (line.msg || "").toLowerCase();
+    const t = document.createElement("span");
+    t.className = "k-log-time";
+    t.textContent = fmtTime(line.t);
+    const lvl = document.createElement("span");
+    lvl.className = "k-log-lvl";
+    if (line.lvl) lvl.textContent = line.lvl.toUpperCase();
+    const msg = document.createElement("span");
+    msg.className = "k-log-msg";
+    msg.textContent = line.msg || "";
+    row.appendChild(t); row.appendChild(lvl); row.appendChild(msg);
+    if (!rowVisible(row)) row.style.display = "none";
+    const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    body.appendChild(row);
+    while (body.childElementCount > MAX_ROWS) body.removeChild(body.firstElementChild);
+    if (nearBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}${el.dataset.ws}`);
+  let got = false;
+  ws.onmessage = (e) => { got = true; try { addRow(JSON.parse(e.data)); } catch (_) { /* ignore */ } };
+  ws.onclose = () => { if (!got) addRow({ msg: "no logs yet — start or redeploy the service to stream logs" }); };
+  ws.onerror = () => addRow({ lvl: "error", msg: "log stream error" });
+}
+
 // krillExecConnect (re)connects the terminal using the current command field.
 window.krillExecConnect = function () {
   const el = document.querySelector(".k-term[data-term-ws]");
@@ -91,6 +162,7 @@ window.krillExecConnect = function () {
 window.krillEnhance = function () {
   document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
   document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
+  document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
   if (document.getElementById("env-form")) {
     let mode = "kv";
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }

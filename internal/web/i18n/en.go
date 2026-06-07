@@ -232,4 +232,5 @@ var en = map[string]string{
 	"tab.terminal":                 "Terminal",
 	"term.command":                 "Command",
 	"term.connect":                 "Connect",
+	"log.search":                   "Search logs",
 }

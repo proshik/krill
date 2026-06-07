@@ -181,6 +181,31 @@
   .k-term { min-height:24rem; height:24rem; width:100%; }
   .k-term .xterm, .k-term .xterm-viewport { height:100% !important; }
 
+  /* structured log viewer (.k-logs[data-ws]) — app & db runtime logs */
+  .k-logs { width:100%; }
+  .k-logs-bar { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
+  .k-logs-search { max-width:280px; }
+  .k-logs-levels { display:flex; gap:.25rem; }
+  .k-logs-lvlchip { font-size:11px; padding:2px 8px; border-radius:6px; border:1px solid var(--color-border); background:var(--color-surface); color:var(--color-fg); cursor:pointer; font-family:var(--font-mono); }
+  .k-logs-lvlchip-off { opacity:.4; }
+  .k-logs-body { height:24rem; overflow:auto; background:#0f1115; border:1px solid var(--color-border); border-radius:8px; padding:.25rem .5rem; font-family:var(--font-mono); font-size:12px; line-height:1.55; }
+  .k-log-row { display:grid; grid-template-columns:max-content max-content 1fr; gap:.6rem; align-items:start; border-left:3px solid transparent; padding-left:.4rem; }
+  .k-log-time { color:var(--color-muted); white-space:nowrap; }
+  .k-log-lvl { font-weight:600; white-space:nowrap; min-width:3.5rem; }
+  .k-log-msg { white-space:pre-wrap; word-break:break-word; color:var(--color-fg); }
+  .k-log-row[data-level="info"] { border-left-color:#5b9bd5; }
+  .k-log-row[data-level="info"] .k-log-lvl { color:#5b9bd5; }
+  .k-log-row[data-level="debug"] { border-left-color:#d9a441; }
+  .k-log-row[data-level="debug"] .k-log-lvl { color:#d9a441; }
+  .k-log-row[data-level="success"] { border-left-color:#9ae66e; }
+  .k-log-row[data-level="success"] .k-log-lvl { color:#9ae66e; }
+  .k-log-row[data-level="warn"] { border-left-color:#e0b000; background:rgba(224,176,0,.07); }
+  .k-log-row[data-level="warn"] .k-log-lvl { color:#e0b000; }
+  .k-log-row[data-level="error"], .k-log-row[data-level="fatal"] { border-left-color:#e5534b; background:rgba(229,83,75,.08); }
+  .k-log-row[data-level="error"] .k-log-lvl, .k-log-row[data-level="fatal"] .k-log-lvl { color:#e5534b; }
+  .k-log-row[data-level="trace"] { border-left-color:var(--color-faint); }
+  .k-log-row[data-level="trace"] .k-log-lvl { color:var(--color-muted); }
+
   /* success badge — a finished deploy should read as positive, like running */
   .k-badge-done { background:rgba(190,242,100,.13); color:#d9f99d; }
   .k-badge-done .k-dot { background:var(--color-accent); box-shadow:0 0 8px var(--color-accent); }

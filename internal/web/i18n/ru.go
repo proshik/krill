@@ -232,4 +232,5 @@ var ru = map[string]string{
 	"tab.terminal":                 "Терминал",
 	"term.command":                 "Команда",
 	"term.connect":                 "Подключить",
+	"log.search":                   "Поиск в логах",
 }
