@@ -9,6 +9,9 @@ import (
 )
 
 type Querier interface {
+	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
+	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
+	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
@@ -16,6 +19,7 @@ type Querier interface {
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountDomainsByHost(ctx context.Context, host string) (int64, error)
+	CountEnabledHealthChannels(ctx context.Context) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
@@ -59,6 +63,7 @@ type Querier interface {
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
+	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
 	GetPostgres(ctx context.Context, id int64) (PostgresDb, error)
@@ -85,6 +90,9 @@ type Querier interface {
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
+	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
+	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
@@ -100,6 +108,7 @@ type Querier interface {
 	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
 	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
 	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
+	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
 }
 
 var _ Querier = (*Queries)(nil)

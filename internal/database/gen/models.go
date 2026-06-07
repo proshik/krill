@@ -105,6 +105,20 @@ type Member struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type NotificationChannel struct {
+	ID           int64     `json:"id"`
+	OrgID        int64     `json:"org_id"`
+	Type         string    `json:"type"`
+	Enabled      bool      `json:"enabled"`
+	BotToken     string    `json:"bot_token"`
+	ChatID       string    `json:"chat_id"`
+	NotifyDeploy bool      `json:"notify_deploy"`
+	NotifyBackup bool      `json:"notify_backup"`
+	NotifyHealth bool      `json:"notify_health"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Organization struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
