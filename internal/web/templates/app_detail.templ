@@ -37,6 +37,9 @@ templ AppDetail(c AppCtx, tab string) {
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ "k-tab", templ.KV("k-tab-active", tab == "logs") }>{ i18n.T(ctx, "tab.logs") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=advanced") } class={ "k-tab", templ.KV("k-tab-active", tab == "advanced") }>{ i18n.T(ctx, "tab.advanced") }</a>
+			if c.Role == "owner" || c.Role == "admin" {
+				<a href={ templ.SafeURL(c.base() + "?tab=terminal") } class={ "k-tab", templ.KV("k-tab-active", tab == "terminal") }>{ i18n.T(ctx, "tab.terminal") }</a>
+			}
 		</div>
 		if !c.Exposed {
 			<div class="k-toast k-toast-err mb-4">
@@ -55,6 +58,8 @@ templ AppDetail(c AppCtx, tab string) {
 				@domainsTab(c)
 			case "advanced":
 				@advancedTab(c)
+			case "terminal":
+				@terminalTab(c)
 			default:
 				@generalTab(c)
 		}
@@ -185,6 +190,20 @@ templ envTab(c AppCtx) {
 templ logsTab(c AppCtx) {
 	<div class="k-card">
 		<div class="k-term" data-ws={ c.base() + "/logs" }></div>
+		<script src="/static/xterm.js"></script>
+		<script src="/static/addon-fit.js"></script>
+	</div>
+}
+
+templ terminalTab(c AppCtx) {
+	<div class="k-card">
+		<div class="flex items-center gap-2 mb-2">
+			<label class="k-label" style="margin:0">{ i18n.T(ctx, "term.command") }</label>
+			<input id="term-cmd" class="k-input k-mono" style="max-width:280px" value="/bin/sh"/>
+			<button type="button" class="k-btn k-btn-secondary" onclick="krillExecConnect()">{ i18n.T(ctx, "term.connect") }</button>
+			<span id="term-status" class="k-muted"></span>
+		</div>
+		<div class="k-term" data-term-ws={ c.base() + "/terminal/ws" }></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 	</div>

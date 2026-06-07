@@ -229,4 +229,7 @@ var en = map[string]string{
 	"notif.test_ok":                "Test message sent",
 	"notif.test_fail":              "Test message failed",
 	"notif.not_configured":         "Configure a bot token and chat ID first",
+	"tab.terminal":                 "Terminal",
+	"term.command":                 "Command",
+	"term.connect":                 "Connect",
 }

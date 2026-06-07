@@ -160,7 +160,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" {
+	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "terminal" {
 		tab = "general"
 	}
 	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {

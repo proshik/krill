@@ -37,10 +37,60 @@ function mountTerminalEl(el) {
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 }
 
+// Mounts an INTERACTIVE exec terminal into `.k-term[data-term-ws]`: xterm with
+// stdin (binary frames), resize (text JSON frames), and binary output. Status
+// text is hardcoded English to match the log viewer.
+function mountExecTerminal(el) {
+  if (!el || el.dataset.mounted) return;
+  if (typeof Terminal === "undefined" || typeof FitAddon === "undefined" || !FitAddon.FitAddon) {
+    setTimeout(function () { mountExecTerminal(el); }, 50);
+    return;
+  }
+  el.dataset.mounted = "1";
+  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: { background: "#0f1115" } });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(el);
+  const refit = () => { try { fit.fit(); } catch (_) { /* not laid out */ } };
+  requestAnimationFrame(refit);
+  window.addEventListener("resize", refit);
+  if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
+
+  const statusEl = document.getElementById("term-status");
+  const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
+  let ws = null;
+  const sendResize = () => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ rows: term.rows, cols: term.cols })); };
+  term.onData((d) => { if (ws && ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
+  term.onResize(() => sendResize());
+
+  function connect() {
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+    term.reset();
+    const cmd = (document.getElementById("term-cmd") || {}).value || "/bin/sh";
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    setStatus("connecting…");
+    ws = new WebSocket(`${proto}://${location.host}${el.dataset.termWs}?cmd=${encodeURIComponent(cmd)}`);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => { setStatus(""); refit(); sendResize(); term.focus(); };
+    ws.onmessage = (e) => term.write(new Uint8Array(e.data));
+    ws.onclose = () => setStatus("session ended — press Connect to start a new one");
+    ws.onerror = () => setStatus("connection error");
+  }
+  el._krillConnect = connect;
+  connect();
+}
+
+// krillExecConnect (re)connects the terminal using the current command field.
+window.krillExecConnect = function () {
+  const el = document.querySelector(".k-term[data-term-ws]");
+  if (el && el._krillConnect) el._krillConnect();
+};
+
 // krillEnhance wires up content present on the page or just swapped in: it mounts
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
   document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
+  document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
   if (document.getElementById("env-form")) {
     let mode = "kv";
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }

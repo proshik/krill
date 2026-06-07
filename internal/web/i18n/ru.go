@@ -229,4 +229,7 @@ var ru = map[string]string{
 	"notif.test_ok":                "Тестовое сообщение отправлено",
 	"notif.test_fail":              "Не удалось отправить тестовое сообщение",
 	"notif.not_configured":         "Сначала задайте токен бота и chat ID",
+	"tab.terminal":                 "Терминал",
+	"term.command":                 "Команда",
+	"term.connect":                 "Подключить",
 }
