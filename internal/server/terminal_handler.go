@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -122,4 +123,44 @@ func pumpTerminal(ctx context.Context, ws wsConn, sess docker.ExecSession, idle 
 			}
 		}
 	}
+}
+
+// appTerminal upgrades to a WebSocket and runs an interactive shell in the
+// app's running container. Admin-only (route is in the admin group) and
+// tenancy-checked via loadAppCtx. Session I/O is never logged.
+func (s *Server) appTerminal(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	cmd := docker.SplitCommand(r.URL.Query().Get("cmd"))
+	if len(cmd) == 0 {
+		cmd = []string{"/bin/sh"}
+	}
+	total := 0
+	for _, a := range cmd {
+		total += len(a)
+	}
+	if total > 1024 {
+		http.Error(w, "command too long", http.StatusBadRequest)
+		return
+	}
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		logFrom(r).Info("appTerminal: websocket accept failed", "err", err, "app_id", c.App.ID)
+		return
+	}
+	defer conn.CloseNow()
+	conn.SetReadLimit(1 << 20) // allow large pastes
+
+	sess, err := s.engine.ExecInteractive(r.Context(), dockerName(c.App.ID), cmd)
+	if err != nil {
+		logFrom(r).Error("appTerminal: exec failed", "err", err, "app_id", c.App.ID)
+		_ = conn.Write(r.Context(), websocket.MessageBinary, []byte("\r\nfailed to start terminal: "+err.Error()+"\r\n"))
+		conn.Close(websocket.StatusInternalError, "exec failed")
+		return
+	}
+	logFrom(r).Info("terminal session opened", "app_id", c.App.ID)
+	pumpTerminal(r.Context(), conn, sess, s.cfg.TerminalIdleTimeout)
+	logFrom(r).Info("terminal session closed", "app_id", c.App.ID)
 }

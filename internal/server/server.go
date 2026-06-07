@@ -153,6 +153,7 @@ func (s *Server) Router() http.Handler {
 					r.Post("/stop", s.stopApp)
 					r.Post("/env", s.saveEnv)
 					r.Post("/advanced", s.saveAdvanced)
+					r.Get("/terminal/ws", s.appTerminal)
 				})
 			})
 
