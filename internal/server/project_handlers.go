@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -9,6 +10,28 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/web/templates"
 )
+
+// removeEnvDatabases deletes the managed databases (Swarm service + volume +
+// row) of an environment. Used by environment/project delete so their DB
+// services and volumes are not orphaned — without this the DB rows cascade-
+// delete while the containers and volumes linger with no UI to clean them.
+func (s *Server) removeEnvDatabases(ctx context.Context, envID int64) {
+	if s.dbsvc == nil {
+		return
+	}
+	pgs, _ := s.q.ListPostgresByEnvironment(ctx, envID)
+	for _, pg := range pgs {
+		if err := s.dbsvc.DeletePostgres(ctx, pg.ID, true); err != nil {
+			slog.Error("removeEnvDatabases: postgres", "db", pg.ID, "err", err)
+		}
+	}
+	redises, _ := s.q.ListRedisByEnvironment(ctx, envID)
+	for _, rd := range redises {
+		if err := s.dbsvc.DeleteRedis(ctx, rd.ID, true); err != nil {
+			slog.Error("removeEnvDatabases: redis", "db", rd.ID, "err", err)
+		}
+	}
+}
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
@@ -52,6 +75,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		s.removeEnvDatabases(r.Context(), e.ID)
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
 		logFrom(r).Error("deleteProject: delete project", "err", err, "project_id", p.ID, "org_id", o.ID)
@@ -107,6 +131,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.removeEnvDatabases(r.Context(), e.ID)
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
 		logFrom(r).Error("deleteEnvironment: delete environment", "err", err, "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID)
 		s.flashErr(w, r, "failed to delete environment")

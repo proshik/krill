@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
@@ -100,9 +101,7 @@ func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool
 	}
 	_ = s.engine.ServiceRemove(ctx, pg.AppName) // volume is preserved by default
 	if destroyData {
-		if err := s.engine.VolumeRemove(ctx, volumeName(pg.AppName)); err != nil {
-			slog.Error("volume remove", "vol", volumeName(pg.AppName), "err", err)
-		}
+		s.removeVolume(ctx, volumeName(pg.AppName))
 	}
 	return s.store.DeletePostgresRow(ctx, id)
 }
@@ -170,11 +169,28 @@ func (s *Service) DeleteRedis(ctx context.Context, id int64, destroyData bool) e
 	}
 	_ = s.engine.ServiceRemove(ctx, r.AppName)
 	if destroyData {
-		if err := s.engine.VolumeRemove(ctx, volumeName(r.AppName)); err != nil {
-			slog.Error("volume remove", "vol", volumeName(r.AppName), "err", err)
-		}
+		s.removeVolume(ctx, volumeName(r.AppName))
 	}
 	return s.store.DeleteRedisRow(ctx, id)
+}
+
+// removeVolume deletes the named volume, retrying briefly. Right after
+// ServiceRemove the volume is usually still "in use" while Swarm tears down the
+// task container, so a single immediate attempt fails and the volume would leak.
+func (s *Service) removeVolume(ctx context.Context, name string) {
+	var err error
+	for i := 0; i < 12; i++ {
+		if err = s.engine.VolumeRemove(ctx, name); err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			slog.Error("volume remove", "vol", name, "err", ctx.Err())
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	slog.Error("volume remove gave up (still in use)", "vol", name, "err", err)
 }
 
 // PgFeedID/RedisFeedID — exported for the deploy log WS handler.
