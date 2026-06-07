@@ -22,6 +22,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/server"
@@ -112,7 +113,15 @@ func run() error {
 
 	store := deploy.NewDBStore(q)
 	deploy.SetConvergeTimeout(cfg.ConvergeTimeout)
+
+	// Notifications: Telegram alerts on failures + health transitions. Wire the
+	// notifier into the deployer BEFORE Start so the worker never reads the field
+	// concurrently with this assignment.
+	notifyStore := notify.NewDBStore(q)
+	notifySvc := notify.New(notifyStore)
+
 	dep := deploy.New(engine, b, store, hub, cfg.Network)
+	dep.SetNotifier(notifySvc)
 	dep.Start(ctx)
 	defer dep.Stop()
 
@@ -125,6 +134,12 @@ func run() error {
 	// Backups: service + in-process cron scheduler.
 	backupStore := backup.NewDBStore(q)
 	backupSvc := backup.New(engine, backupStore)
+	backupSvc.SetNotifier(notifySvc)
+
+	// Health watcher: polls service state for app down/recovered alerts.
+	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
+	go watcher.Run(ctx)
+
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
 		if err := backupSvc.RunBackup(ctx, id, time.Now()); err != nil {
 			slog.Error("scheduled backup failed", "backup", id, "err", err)
@@ -142,6 +157,7 @@ func run() error {
 			slog.Error("backup scheduler reload failed", "err", err)
 		}
 	})
+	app.SetNotify(notifySvc)
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: app.Router(),
