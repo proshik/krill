@@ -371,6 +371,43 @@ func TestDeployCrashLoopMarksError(t *testing.T) {
 	}
 }
 
+type fakeNotifier struct {
+	mu     sync.Mutex
+	appID  int64
+	reason string
+	called bool
+}
+
+func (f *fakeNotifier) DeployFailed(_ context.Context, appID int64, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called = true
+	f.appID = appID
+	f.reason = reason
+}
+func (f *fakeNotifier) was() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.called }
+
+func TestDeployFailureNotifies(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 2*time.Second, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{crashLooping: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	fn := &fakeNotifier{}
+	d.SetNotifier(fn)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	waitFor(t, func() bool { return fn.was() })
+	if fn.appID != 1 {
+		t.Fatalf("notify appID = %d, want 1", fn.appID)
+	}
+}
+
 // SetConvergeTimeout overrides the package default.
 func TestSetConvergeTimeout(t *testing.T) {
 	old := convergeTimeout

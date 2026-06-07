@@ -68,6 +68,12 @@ type job struct {
 	noCache  bool // force docker build --no-cache (Rebuild)
 }
 
+// Notifier is the optional sink for deploy-failure alerts (implemented by
+// *notify.Service). Defined here to avoid importing the notify package.
+type Notifier interface {
+	DeployFailed(ctx context.Context, appID int64, reason string)
+}
+
 // Deployer handles deployments through a queue and a worker.
 type Deployer struct {
 	engine   docker.Engine
@@ -75,6 +81,7 @@ type Deployer struct {
 	store    Store
 	hub      *DeployLogHub
 	network  string
+	notifier Notifier
 	queue    chan job
 	done     chan struct{}
 	stopOnce sync.Once
@@ -95,6 +102,9 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 		done:    make(chan struct{}),
 	}
 }
+
+// SetNotifier wires deploy-failure notifications (no-op if never set).
+func (d *Deployer) SetNotifier(n Notifier) { d.notifier = n }
 
 func (d *Deployer) Start(ctx context.Context) {
 	d.wg.Add(1)
@@ -292,6 +302,11 @@ func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, im
 	}
 	if appID != 0 {
 		_ = d.store.SetStatus(wctx, appID, appStatus)
+	}
+	// Detached context: the notifier resolves + sends asynchronously and must
+	// survive a canceled job ctx (graceful shutdown right after a failed deploy).
+	if status == StatusError && appID != 0 && d.notifier != nil {
+		d.notifier.DeployFailed(context.Background(), appID, errMsg)
 	}
 }
 

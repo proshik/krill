@@ -19,12 +19,22 @@ type Execer interface {
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 }
 
+// Notifier is the optional sink for backup-failure alerts (implemented by
+// *notify.Service). Defined here to avoid importing the notify package.
+type Notifier interface {
+	BackupFailed(ctx context.Context, backupID int64, reason string)
+}
+
 type Service struct {
-	eng   Execer
-	store Store
+	eng      Execer
+	store    Store
+	notifier Notifier
 }
 
 func New(eng Execer, store Store) *Service { return &Service{eng: eng, store: store} }
+
+// SetNotifier wires backup-failure notifications (no-op if never set).
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 func objectsToDelete(objs []Object, keep int) []Object {
 	if keep < 1 {
@@ -97,6 +107,9 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 
 func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) error {
 	_ = s.store.SetBackupResult(ctx, id, now, "error", err.Error())
+	if s.notifier != nil {
+		s.notifier.BackupFailed(ctx, id, err.Error())
+	}
 	return err
 }
 
