@@ -28,6 +28,9 @@ type Config struct {
 	// ConvergeTimeout caps how long a deploy waits for the service to become
 	// healthy before giving up (auto-extended by a healthcheck's start_period).
 	ConvergeTimeout time.Duration `env:"KRILL_CONVERGE_TIMEOUT" envDefault:"180s"`
+	// HealthPollInterval is how often the notification health watcher polls
+	// service state to detect apps going down / recovering.
+	HealthPollInterval time.Duration `env:"KRILL_HEALTH_POLL_INTERVAL" envDefault:"30s"`
 }
 
 // Load reads the configuration from the environment.
