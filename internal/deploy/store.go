@@ -34,7 +34,7 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		Tag:            a.Tag,
 		Domain:         a.Domain,
 		Port:           a.Port,
-		Env:            a.Env,
+		Env:            parseEnvText(a.EnvText),
 		SourceType:     a.SourceType,
 		GitURL:         a.GitUrl,
 		GitBranch:      a.GitBranch,
@@ -105,6 +105,27 @@ func strDeref(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+// parseEnvText turns the stored raw KEY=VALUE lines into a map for the deploy
+// spec (env is a set there — order is irrelevant). The editor keeps the raw
+// order-preserving text; this is the single derivation for the container env.
+func parseEnvText(raw string) map[string]string {
+	m := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if k = strings.TrimSpace(k); k != "" {
+			m[k] = strings.TrimSpace(v)
+		}
+	}
+	return m
 }
 
 // buildHealthcheck assembles a HealthcheckSpec from the app's healthcheck

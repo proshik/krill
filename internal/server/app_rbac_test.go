@@ -25,7 +25,7 @@ func TestMemberCannotMutateApp(t *testing.T) {
 	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
 	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
-		Domain: "rbac.example.com", Port: 80, Env: map[string]string{}, SourceType: "image",
+		Domain: "rbac.example.com", Port: 80, SourceType: "image",
 		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	if err != nil {
@@ -107,11 +107,8 @@ func TestSaveEnvPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetApplication: %v", err)
 	}
-	if a.Env["FOO"] != "bar" {
-		t.Errorf("Env[FOO] want %q, got %q", "bar", a.Env["FOO"])
-	}
-	if a.Env["BAZ"] != "qux" {
-		t.Errorf("Env[BAZ] want %q, got %q", "qux", a.Env["BAZ"])
+	if a.EnvText != "FOO=bar\nBAZ=qux" {
+		t.Errorf("EnvText want %q, got %q", "FOO=bar\nBAZ=qux", a.EnvText)
 	}
 }
 

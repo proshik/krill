@@ -179,31 +179,69 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		apps, _ = s.q.ListApplicationsByEnvironment(r.Context(), active.ID)
 		pgs, _ = s.q.ListPostgresByEnvironment(r.Context(), active.ID)
 		redises, _ = s.q.ListRedisByEnvironment(r.Context(), active.ID)
-		// Reflect the LIVE Swarm state on the cards: the stored status can be
-		// stale (e.g. a slow deploy was marked error but the service is healthy).
-		if s.engine != nil {
-			for i := range apps {
-				if st, err := s.engine.ServiceState(r.Context(), dockerName(apps[i].ID)); err == nil {
-					apps[i].Status = deploy.DeriveStatus(st, apps[i].Status)
-				}
-			}
-			for i := range pgs {
-				if st, err := s.engine.ServiceState(r.Context(), pgs[i].AppName); err == nil {
-					pgs[i].Status = deploy.DeriveStatus(st, pgs[i].Status)
-				}
-			}
-			for i := range redises {
-				if st, err := s.engine.ServiceState(r.Context(), redises[i].AppName); err == nil {
-					redises[i].Status = deploy.DeriveStatus(st, redises[i].Status)
-				}
-			}
-		}
+		// Reflect the LIVE Swarm state on the cards (the stored status can be
+		// stale) — one bulk call, not one per card.
+		s.deriveCardStatuses(r.Context(), apps, pgs, redises)
 	}
 	registries, err := s.q.ListRegistriesByOrg(r.Context(), o.ID)
 	if err != nil {
 		logFrom(r).Error("projectPage: list registries", "err", err, "org_id", o.ID)
 	}
 	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, pgs, redises, registries))
+}
+
+// deriveCardStatuses replaces each app/db stored status with the LIVE Swarm
+// status using a single bulk ServiceStates call (instead of one per card).
+// Engine-nil-safe; unknown services keep their stored status (DeriveStatus).
+func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
+	if s.engine == nil {
+		return
+	}
+	names := make([]string, 0, len(apps)+len(pgs)+len(redises))
+	for _, a := range apps {
+		names = append(names, dockerName(a.ID))
+	}
+	for _, p := range pgs {
+		names = append(names, p.AppName)
+	}
+	for _, rd := range redises {
+		names = append(names, rd.AppName)
+	}
+	states, err := s.engine.ServiceStates(ctx, names)
+	if err != nil {
+		slog.Error("deriveCardStatuses: bulk service states", "err", err)
+		return
+	}
+	for i := range apps {
+		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
+	}
+	for i := range pgs {
+		pgs[i].Status = deploy.DeriveStatus(states[pgs[i].AppName], pgs[i].Status)
+	}
+	for i := range redises {
+		redises[i].Status = deploy.DeriveStatus(states[redises[i].AppName], redises[i].Status)
+	}
+}
+
+// envStatuses renders just the card status badges (OOB) for live refresh.
+func (s *Server) envStatuses(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	e, ok := s.loadEnvironment(w, r, p.ID)
+	if !ok {
+		return
+	}
+	apps, _ := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
+	pgs, _ := s.q.ListPostgresByEnvironment(r.Context(), e.ID)
+	redises, _ := s.q.ListRedisByEnvironment(r.Context(), e.ID)
+	s.deriveCardStatuses(r.Context(), apps, pgs, redises)
+	render(w, r, http.StatusOK, templates.EnvStatuses(apps, pgs, redises))
 }
 
 func projURL(orgID, projID int64) string {

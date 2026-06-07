@@ -1,6 +1,6 @@
 -- name: CreateApplication :one
-INSERT INTO applications (environment_id, name, image, tag, domain, port, env, env_text, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
+INSERT INTO applications (environment_id, name, image, tag, domain, port, env_text, source_type, git_url, git_branch, dockerfile_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
 
 -- name: GetApplication :one
 SELECT * FROM applications WHERE id = $1;
@@ -12,7 +12,7 @@ SELECT * FROM applications WHERE environment_id = $1 ORDER BY created_at DESC;
 UPDATE applications SET image = $2, tag = $3, updated_at = now() WHERE id = $1;
 
 -- name: UpdateApplicationEnv :exec
-UPDATE applications SET env = $2, env_text = $3, updated_at = now() WHERE id = $1;
+UPDATE applications SET env_text = $2, updated_at = now() WHERE id = $1;
 
 -- name: UpdateApplicationStatus :exec
 UPDATE applications SET status = $2, updated_at = now() WHERE id = $1;

@@ -22,7 +22,7 @@ func TestClearOldDeploymentLogs(t *testing.T) {
 	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "prod", Slug: "prod"})
 	a, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine", Domain: "w.x", Port: 80,
-		Env: map[string]string{}, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	d, _ := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: a.ID, Trigger: "manual"})
 	// finish with a log and an artificially "old" finished_at

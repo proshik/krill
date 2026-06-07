@@ -54,6 +54,14 @@ var (
 	convergePollInterval = 1 * time.Second
 )
 
+// SetConvergeTimeout overrides the deploy convergence deadline (wired from
+// config at startup). A healthcheck's start_period extends it per-deploy.
+func SetConvergeTimeout(d time.Duration) {
+	if d > 0 {
+		convergeTimeout = d
+	}
+}
+
 // job is one queued unit of work: a deployment plus build options.
 type job struct {
 	deployID int64
@@ -207,11 +215,17 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	}
 	cctx, ccancel := context.WithTimeout(ctx, timeout)
 	defer ccancel()
-	converged := false
+	converged, crashed := false, false
 	for {
 		st, serr := d.engine.ServiceState(cctx, docker.ServiceName(app.ID))
 		if serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired {
 			converged = true
+			break
+		}
+		// Crash-loop: tasks keep failing. Fail fast instead of waiting the whole
+		// timeout (which is for slow starters, not for genuinely broken images).
+		if serr == nil && st.Found && st.Failed >= 3 && st.Running < st.Desired {
+			crashed = true
 			break
 		}
 		select {
@@ -224,6 +238,11 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	if converged {
 		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
 		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+		return
+	}
+	if crashed {
+		fmt.Fprintf(out, "❌ service is crash-looping (tasks keep failing) — check the image, command and env\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
 		return
 	}
 	// Not converged within the window. Tell "still starting" and "shutting down"
@@ -241,6 +260,9 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired:
 		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
 		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+	case serr == nil && st.Found && st.Failed > 0 && st.Running < st.Desired:
+		fmt.Fprintf(out, "❌ service has failed tasks (crash-looping) — check the image, command and env\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
 	case serr == nil && st.Found && st.Running > 0:
 		fmt.Fprintf(out, "⚠ service still starting after %s — continuing in the background\n", timeout)
 		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")

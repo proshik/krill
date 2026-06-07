@@ -40,6 +40,10 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				</div>
 				<div class="k-panel-body">
 					if active.ID != 0 {
+						<div class="flex justify-end items-center gap-3 mb-3">
+							<button id="status-refresh" type="button" class="k-copy" hx-get={ "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/statuses" } hx-swap="none">↻ { i18n.T(ctx, "status.refresh") }</button>
+							<label class="k-mono text-xs flex items-center gap-1" style="color:var(--color-muted)"><input class="k-check" type="checkbox" data-target="status-refresh" onchange="krillAutoRefresh(this)"/> { i18n.T(ctx, "status.autorefresh") }</label>
+						</div>
 						if len(apps) == 0 {
 							<div class="k-card flex items-center justify-between gap-3 flex-wrap">
 								<p class="k-mono">{ i18n.T(ctx, "project.no_apps") }</p>
@@ -53,7 +57,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/apps/" + itoa(a.ID)) }>
 										<div class="flex items-center justify-between">
 											<div class="font-semibold text-base">{ a.Name }</div>
-											@StatusBadge(a.Status)
+											@CardStatus("cs-app-"+itoa(a.ID), a.Status, false)
 										</div>
 										<div class="k-mono text-xs">{ a.Image }:{ a.Tag }</div>
 									</a>
@@ -70,13 +74,13 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
 								for _, pg := range pgs {
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/postgres/" + itoa(pg.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { pg.Name }</div>@StatusBadge(pg.Status)</div>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { pg.Name }</div>@CardStatus("cs-pg-"+itoa(pg.ID), pg.Status, false)</div>
 										<div class="k-mono text-xs">{ pg.Image }</div>
 									</a>
 								}
 								for _, rd := range redises {
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/redis/" + itoa(rd.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🟥</span> { rd.Name }</div>@StatusBadge(rd.Status)</div>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🟥</span> { rd.Name }</div>@CardStatus("cs-redis-"+itoa(rd.ID), rd.Status, false)</div>
 										<div class="k-mono text-xs">{ rd.Image }</div>
 									</a>
 								}

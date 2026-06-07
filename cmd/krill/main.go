@@ -104,6 +104,7 @@ func run() error {
 	}
 
 	store := deploy.NewDBStore(q)
+	deploy.SetConvergeTimeout(cfg.ConvergeTimeout)
 	dep := deploy.New(engine, b, store, hub, cfg.Network)
 	dep.Start(ctx)
 	defer dep.Stop()

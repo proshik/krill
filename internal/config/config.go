@@ -1,6 +1,10 @@
 package config
 
-import "github.com/caarlos0/env/v11"
+import (
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
 
 // Config holds the Krill configuration from environment variables.
 type Config struct {
@@ -17,6 +21,13 @@ type Config struct {
 	LogFormat     string `env:"KRILL_LOG_FORMAT" envDefault:"text"`  // text | json
 	AcmeEmail     string `env:"KRILL_ACME_EMAIL"`
 	AcmeStaging   bool   `env:"KRILL_ACME_STAGING" envDefault:"false"`
+	// SecretKey enables encryption-at-rest of stored secrets (DB passwords,
+	// registry/destination credentials). Any string; hashed to a 32-byte AES key.
+	// Empty = secrets stored as plaintext (legacy, logged as a warning).
+	SecretKey string `env:"KRILL_SECRET_KEY"`
+	// ConvergeTimeout caps how long a deploy waits for the service to become
+	// healthy before giving up (auto-extended by a healthcheck's start_period).
+	ConvergeTimeout time.Duration `env:"KRILL_CONVERGE_TIMEOUT" envDefault:"180s"`
 }
 
 // Load reads the configuration from the environment.

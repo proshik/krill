@@ -22,6 +22,8 @@ var en = map[string]string{
 	"common.logs":                  "Logs",
 	"common.stop":                  "Stop",
 	"common.remove":                "Remove",
+	"status.refresh":               "Refresh",
+	"status.autorefresh":           "Auto-refresh",
 	"confirm.title":                "Please confirm",
 	"confirm.stop_app":             "Stop %s?",
 	"confirm.delete_app":           "Delete app %s? This removes the running service and all its configuration.",

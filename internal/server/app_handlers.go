@@ -92,11 +92,9 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		}
 		registryID = &n
 	}
-	envRaw := r.FormValue("env")
-	envMap, _ := parseEnv(envRaw)
 	a, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag, Domain: domain, Port: int32(port),
-		Env: envMap, EnvText: envRaw, SourceType: sourceType,
+		EnvText: r.FormValue("env"), SourceType: sourceType,
 		GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 	})
 	if err != nil {
@@ -331,13 +329,12 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw := r.FormValue("env")
-	envMap, dups := parseEnv(raw)
-	if len(dups) > 0 {
+	if _, dups := parseEnv(raw); len(dups) > 0 {
 		s.flashErr(w, r, "duplicate variable: "+dups[0])
 		return
 	}
 	if err := s.q.UpdateApplicationEnv(r.Context(), db.UpdateApplicationEnvParams{
-		ID: c.App.ID, Env: envMap, EnvText: raw,
+		ID: c.App.ID, EnvText: raw,
 	}); err != nil {
 		logFrom(r).Error("saveEnv: failed to update application env", "err", err, "app_id", c.App.ID)
 		s.flashErr(w, r, err.Error())

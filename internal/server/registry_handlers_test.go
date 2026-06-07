@@ -256,7 +256,7 @@ func TestSetAppRegistrySetsAndClears(t *testing.T) {
 	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
 	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "latest", Domain: "web.k.local", Port: 80,
-		Env: map[string]string{}, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	if err != nil {
 		t.Fatalf("create application: %v", err)

@@ -60,6 +60,7 @@ type ServiceState struct {
 	Found   bool
 	Running int
 	Desired int
+	Failed  int // tasks (desired=running) currently failed/rejected — crash-loop signal
 }
 
 // Engine — a narrow, mockable interface to Docker/Swarm.
@@ -68,6 +69,7 @@ type Engine interface {
 	ServiceDeploy(ctx context.Context, spec ServiceSpec) error // create-or-rolling-update by name
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
+	ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error) // bulk: one API round-trip for many services
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
 	ServiceRestart(ctx context.Context, name string) error // force-restart current tasks without rebuilding

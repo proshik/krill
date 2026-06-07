@@ -1,5 +1,31 @@
 package templates
 
+import db "github.com/proshik/krill/internal/database/gen"
+
 templ StatusBadge(status string) {
 	<span id="status-badge" class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
+}
+
+// CardStatus is a status badge for a project-page card. It has a stable id so
+// it can be refreshed out-of-band; pass oob=true in the refresh fragment.
+templ CardStatus(id, status string, oob bool) {
+	if oob {
+		<span id={ id } class={ "k-badge", "k-badge-" + status } hx-swap-oob="true"><span class="k-dot"></span>{ status }</span>
+	} else {
+		<span id={ id } class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
+	}
+}
+
+// EnvStatuses renders the OOB badge updates for every app/db in an environment
+// (the live-refresh fragment).
+templ EnvStatuses(apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
+	for _, a := range apps {
+		@CardStatus("cs-app-"+itoa(a.ID), a.Status, true)
+	}
+	for _, p := range pgs {
+		@CardStatus("cs-pg-"+itoa(p.ID), p.Status, true)
+	}
+	for _, r := range redises {
+		@CardStatus("cs-redis-"+itoa(r.ID), r.Status, true)
+	}
 }

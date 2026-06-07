@@ -113,13 +113,65 @@ func (e *dockerEngine) ServiceState(ctx context.Context, name string) (ServiceSt
 	if err != nil {
 		return ServiceState{}, err
 	}
-	running := 0
+	running, failed := 0, 0
 	for _, t := range tasks {
-		if t.Status.State == swarm.TaskStateRunning {
+		switch t.Status.State {
+		case swarm.TaskStateRunning:
 			running++
+		case swarm.TaskStateFailed, swarm.TaskStateRejected:
+			failed++
 		}
 	}
-	return ServiceState{Found: true, Running: running, Desired: desired}, nil
+	return ServiceState{Found: true, Running: running, Desired: desired, Failed: failed}, nil
+}
+
+// ServiceStates returns the state of many services in ONE ServiceList + ONE
+// TaskList (instead of a call per service) — used to render status badges for a
+// page full of cards without N round-trips. Missing services are absent from
+// the map (caller falls back to the stored status).
+func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error) {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	idToName := map[string]string{}
+	out := map[string]ServiceState{}
+	for _, s := range svcs {
+		if !want[s.Spec.Name] {
+			continue
+		}
+		idToName[s.ID] = s.Spec.Name
+		desired := 0
+		if r := s.Spec.Mode.Replicated; r != nil && r.Replicas != nil {
+			desired = int(*r.Replicas)
+		}
+		out[s.Spec.Name] = ServiceState{Found: true, Desired: desired}
+	}
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("desired-state", "running")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tasks {
+		name, ok := idToName[t.ServiceID]
+		if !ok {
+			continue
+		}
+		st := out[name]
+		switch t.Status.State {
+		case swarm.TaskStateRunning:
+			st.Running++
+		case swarm.TaskStateFailed, swarm.TaskStateRejected:
+			st.Failed++
+		}
+		out[name] = st
+	}
+	return out, nil
 }
 
 func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error) {

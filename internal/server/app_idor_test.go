@@ -26,7 +26,7 @@ func TestAppCrossTenantIsolation(t *testing.T) {
 
 	appA, err := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: envA.ID, Name: "app-a", Image: "nginx", Tag: "alpine",
-		Domain: "app-a.x", Port: 80, Env: map[string]string{}, SourceType: "image",
+		Domain: "app-a.x", Port: 80, SourceType: "image",
 		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	if err != nil {

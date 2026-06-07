@@ -20,6 +20,7 @@ type mockEngine struct {
 	failNext       bool
 	neverConverge  bool
 	partialRunning bool
+	crashLooping   bool
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
@@ -34,6 +35,9 @@ func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) erro
 }
 func (m *mockEngine) ServiceRemove(context.Context, string) error { return nil }
 func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	if m.crashLooping {
+		return docker.ServiceState{Found: true, Running: 0, Desired: 1, Failed: 5}, nil
+	}
 	if m.neverConverge {
 		return docker.ServiceState{Found: true, Running: 0, Desired: 1}, nil
 	}
@@ -41,6 +45,14 @@ func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState,
 		return docker.ServiceState{Found: true, Running: 1, Desired: 2}, nil
 	}
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
+}
+func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	out := map[string]docker.ServiceState{}
+	for _, n := range names {
+		st, _ := m.ServiceState(context.Background(), n)
+		out[n] = st
+	}
+	return out, nil
 }
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
@@ -336,5 +348,39 @@ func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
 	waitFor(t, func() bool { return st.depStatus(id) == "done" })
 	if got := st.appStatus(1); got != StatusDeploying {
 		t.Errorf("app status = %q, want %q (slow start, not error)", got, StatusDeploying)
+	}
+}
+
+// A crash-looping service (tasks keep failing) must be marked error fast — and
+// NOT treated as "still starting".
+func TestDeployCrashLoopMarksError(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 2*time.Second, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{crashLooping: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	if got := st.appStatus(1); got != StatusError {
+		t.Errorf("app status = %q, want error (crash-loop)", got)
+	}
+}
+
+// SetConvergeTimeout overrides the package default.
+func TestSetConvergeTimeout(t *testing.T) {
+	old := convergeTimeout
+	defer func() { convergeTimeout = old }()
+	SetConvergeTimeout(42 * time.Second)
+	if convergeTimeout != 42*time.Second {
+		t.Errorf("convergeTimeout = %v, want 42s", convergeTimeout)
+	}
+	SetConvergeTimeout(0) // 0 = keep current
+	if convergeTimeout != 42*time.Second {
+		t.Errorf("convergeTimeout after 0 = %v, want unchanged 42s", convergeTimeout)
 	}
 }

@@ -31,7 +31,7 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
 	a, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine", Domain: "web.x", Port: 80,
-		Env: map[string]string{}, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	dep, _ := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: a.ID, Trigger: "manual"})
 	_ = q.FinishDeployment(ctx, db.FinishDeploymentParams{ID: dep.ID, Status: "done", ImageTag: "nginx:alpine", Log: "hello build log"})

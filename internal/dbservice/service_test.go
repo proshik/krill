@@ -38,6 +38,13 @@ func (m *mockEngine) ServiceRemove(_ context.Context, n string) error {
 func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
+func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	out := map[string]docker.ServiceState{}
+	for _, n := range names {
+		out[n] = docker.ServiceState{Found: true, Running: 1, Desired: 1}
+	}
+	return out, nil
+}
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
 }

@@ -46,6 +46,29 @@ window.krillEnhance = function () {
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
     krillEnvMode(mode);
   }
+  // Stop any previous status-refresh timer (the page/element may have swapped),
+  // then restore the toggle from localStorage on the current page.
+  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
+  const arcb = document.querySelector('input[data-target="status-refresh"]');
+  if (arcb) {
+    let on = "0";
+    try { on = localStorage.getItem("krillAutoRefresh") || "0"; } catch (_) { /* private mode */ }
+    if (on === "1") { arcb.checked = true; krillAutoRefresh(arcb); }
+  }
+};
+
+// Toggle periodic status refresh: when checked, click the refresh button every
+// 5s (it hx-get's the OOB status fragment). A single global timer, cleared by
+// krillEnhance on navigation so it never leaks across page swaps.
+window.krillAutoRefresh = function (cb) {
+  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
+  try { localStorage.setItem("krillAutoRefresh", cb.checked ? "1" : "0"); } catch (_) { /* private mode */ }
+  if (cb.checked) {
+    window.__krillAutoTimer = setInterval(function () {
+      const b = document.getElementById(cb.dataset.target);
+      if (b) b.click();
+    }, 5000);
+  }
 };
 
 // Toggles the source fields in the application creation form.

@@ -24,7 +24,7 @@ func domainFixture(t *testing.T, h http.Handler, q *db.Queries, orgSvc *org.Serv
 	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
 	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine", Domain: primary, Port: 80,
-		Env: map[string]string{}, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
 	if err != nil {
 		t.Fatalf("create application: %v", err)
@@ -436,7 +436,6 @@ func TestDomainCrossTenantIsolation(t *testing.T) {
 		Tag:            "alpine",
 		Domain:         "web-a.primary.example.com",
 		Port:           80,
-		Env:            map[string]string{},
 		SourceType:     "image",
 		GitUrl:         "",
 		GitBranch:      "",
@@ -472,7 +471,6 @@ func TestDomainCrossTenantIsolation(t *testing.T) {
 		Tag:            "alpine",
 		Domain:         "web-b.primary.example.com",
 		Port:           80,
-		Env:            map[string]string{},
 		SourceType:     "image",
 		GitUrl:         "",
 		GitBranch:      "",
