@@ -46,7 +46,7 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<form method="post" action={ templ.SafeURL(c.Base + "/stop") } onsubmit="krillBusy(this.querySelector('button'), 'Stopping…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
 						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-db-name={ c.Name } onsubmit="return krillConfirmDbDelete(this)" class="flex items-center gap-2">
 							<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
-							<label class="k-label"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
+							<label class="k-label"><input class="k-check" type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
 						</form>
 					</div>
 					<form method="post" action={ templ.SafeURL(c.Base + "/version") } onsubmit="krillBusy(this.querySelector('button'), 'Updating…')" class="flex items-end gap-2">
@@ -59,19 +59,19 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
 						<div class="flex items-center gap-2">
 							<input class="k-input k-mono" readonly value={ c.Internal }/>
-							<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+							<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
 						</div>
 						if c.External != "" {
 							<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
 							<div class="flex items-center gap-2">
 								<input class="k-input k-mono" readonly value={ c.External }/>
-								<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">Copy</button>
+								<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
 							</div>
 						}
 					</div>
 				}
 				<div>
-					<div class="k-label">Logs</div>
+					<div class="k-label">{ i18n.T(ctx, "common.logs") }</div>
 					<div id="terminal" data-ws={ c.Base + "/logs" }></div>
 					<script src="/static/xterm.js"></script>
 					<script src="/static/addon-fit.js"></script>

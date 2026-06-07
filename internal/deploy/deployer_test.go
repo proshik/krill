@@ -15,10 +15,11 @@ import (
 )
 
 type mockEngine struct {
-	mu            sync.Mutex
-	deployed      []docker.ServiceSpec
-	failNext      bool
-	neverConverge bool
+	mu             sync.Mutex
+	deployed       []docker.ServiceSpec
+	failNext       bool
+	neverConverge  bool
+	partialRunning bool
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
@@ -35,6 +36,9 @@ func (m *mockEngine) ServiceRemove(context.Context, string) error { return nil }
 func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	if m.neverConverge {
 		return docker.ServiceState{Found: true, Running: 0, Desired: 1}, nil
+	}
+	if m.partialRunning {
+		return docker.ServiceState{Found: true, Running: 1, Desired: 2}, nil
 	}
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
@@ -311,5 +315,26 @@ func TestBuildSpecCommandArgs(t *testing.T) {
 	spec := d.buildSpec(app, "keycloak:latest")
 	if len(spec.Args) != 1 || spec.Args[0] != "start-dev" {
 		t.Errorf("spec.Args = %v, want [start-dev]", spec.Args)
+	}
+}
+
+// A service that is partially up at the deadline (e.g. a slow JVM still warming
+// up) must NOT be recorded as a hard error — it should land as "deploying" so
+// the live status poll reconciles it to running.
+func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	if got := st.appStatus(1); got != StatusDeploying {
+		t.Errorf("app status = %q, want %q (slow start, not error)", got, StatusDeploying)
 	}
 }

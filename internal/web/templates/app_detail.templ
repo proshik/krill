@@ -70,7 +70,7 @@ templ generalTab(c AppCtx) {
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>
 			<form id="deploy-form" method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
-				<label class="k-label">Git URL</label>
+				<label class="k-label">{ i18n.T(ctx, "app.git_url") }</label>
 				<input class="k-input" name="git_url" value={ c.App.GitUrl }/>
 				<label class="k-label">{ i18n.T(ctx, "app.git_branch") }</label>
 				<input class="k-input" name="git_branch" value={ c.App.GitBranch }/>
@@ -112,7 +112,7 @@ templ generalTab(c AppCtx) {
 		<!-- standalone forms so all actions share one button row via the form= attribute -->
 		<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
 		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
-		<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return krillConfirm(this, 'Stop ' + this.dataset.appName + '?', 'Stop')"></form>
+		<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-app-name={ c.App.Name } onsubmit="return krillConfirm(this, 'Stop ' + this.dataset.appName + '?', 'Stop', 'primary')"></form>
 		<div class="flex items-center gap-2 flex-wrap">
 			<button type="submit" form="deploy-form" class="k-btn k-btn-primary pr-7">
 				{ i18n.T(ctx, "app.deploy") }
@@ -136,7 +136,7 @@ templ generalTab(c AppCtx) {
 			<p class="k-mono text-xs flex items-center gap-2">
 				{ i18n.T(ctx, "app.open") }
 				<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
-				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">Copy</button>
+				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">{ i18n.T(ctx, "common.copy") }</button>
 			</p>
 		}
 		if c.Role == "owner" || c.Role == "admin" {
@@ -155,7 +155,7 @@ templ envTab(c AppCtx) {
 				<div class="k-panel-title">{ i18n.T(ctx, "env.settings_title") }</div>
 				<div class="k-panel-desc">{ i18n.T(ctx, "env.settings_desc") }</div>
 			</div>
-			<div class="k-seg">
+			<div class="k-seg" id="env-seg">
 				<button type="button" class="k-seg-btn" data-env-mode="kv" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
 				<button type="button" class="k-seg-btn" data-env-mode="raw" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
 			</div>
@@ -175,7 +175,7 @@ templ envTab(c AppCtx) {
 			</form>
 		</div>
 		<script src="/static/app.js"></script>
-		<script>krillEnvMode('kv');</script>
+		<script>krillEnvMode(localStorage.getItem('krillEnvMode')||'kv');</script>
 	</div>
 }
 
@@ -212,7 +212,7 @@ templ domainsTab(c AppCtx) {
 					}
 				</div>
 				<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/exposure") } class="grid gap-2" style="max-width:560px">
-					<label class="k-label flex items-center gap-2"><input type="checkbox" name="exposed" checked?={ d.Exposed }/> { i18n.T(ctx, "domains.expose") }</label>
+					<label class="k-label flex items-center gap-2"><input class="k-check" type="checkbox" name="exposed" checked?={ d.Exposed }/> { i18n.T(ctx, "domains.expose") }</label>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "domains.paths") }</label>
 						<textarea class="k-code" name="paths" spellcheck="false" placeholder="/webhook">{ d.Paths }</textarea>
@@ -239,8 +239,8 @@ templ domainsTab(c AppCtx) {
 				<label class="k-label">{ i18n.T(ctx, "domains.host") }</label>
 				<input class="k-input" name="host" placeholder="app.example.com"/>
 			</div>
-			<label class="k-label flex items-center gap-2"><input type="checkbox" name="exposed" checked/> { i18n.T(ctx, "domains.expose") }</label>
-			<label class="k-label flex items-center gap-2"><input type="checkbox" name="tls"/> { i18n.T(ctx, "domains.enable_https") }</label>
+			<label class="k-label flex items-center gap-2"><input class="k-check" type="checkbox" name="exposed" checked/> { i18n.T(ctx, "domains.expose") }</label>
+			<label class="k-label flex items-center gap-2"><input class="k-check" type="checkbox" name="tls"/> { i18n.T(ctx, "domains.enable_https") }</label>
 			<div>
 				<label class="k-label">{ i18n.T(ctx, "domains.paths") }</label>
 				<textarea class="k-code" name="paths" spellcheck="false" placeholder="/webhook"></textarea>
@@ -277,7 +277,7 @@ templ advancedTab(c AppCtx) {
 			<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:560px">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.command") }</label>
-					<input class="k-input k-mono" name="command" placeholder="start-dev" value={ strv(c.App.Command) }/>
+					<input class="k-input k-mono" name="command" placeholder="e.g. start-dev (blank = image default)" value={ strv(c.App.Command) }/>
 					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "app.command_hint") }</p>
 				</div>
 				<div>
@@ -287,11 +287,11 @@ templ advancedTab(c AppCtx) {
 				<div class="grid grid-cols-2 gap-3">
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.memory_limit") }</label>
-						<input class="k-input" name="memory_limit" placeholder="256m" value={ strv(c.App.MemoryLimit) }/>
+						<input class="k-input" name="memory_limit" placeholder="e.g. 256m (blank = no limit)" value={ strv(c.App.MemoryLimit) }/>
 					</div>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.cpu_limit") }</label>
-						<input class="k-input" name="cpu_limit" placeholder="0.5" value={ strv(c.App.CpuLimit) }/>
+						<input class="k-input" name="cpu_limit" placeholder="e.g. 0.5 (blank = no limit)" value={ strv(c.App.CpuLimit) }/>
 					</div>
 				</div>
 				<div class="grid grid-cols-2 gap-3">

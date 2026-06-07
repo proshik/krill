@@ -175,6 +175,31 @@
   .k-code { width:100%; min-height:24rem; background:#0b0d10; color:#e6e6ea; border:1px solid var(--color-border-strong);
     border-radius:10px; padding:.85rem 1rem; font-family:var(--font-mono); font-size:13px; line-height:1.6; resize:vertical; tab-size:2; }
   .k-code:focus { outline:2px solid var(--color-accent); outline-offset:1px; box-shadow:0 0 16px -4px rgba(190,242,100,.4); }
+
+  /* log terminal (xterm) — explicit height so FitAddon can size rows even when
+     mounted into an hx-boost-swapped DOM before layout settles */
+  #terminal { min-height:24rem; height:24rem; width:100%; }
+  #terminal .xterm, #terminal .xterm-viewport { height:100% !important; }
+
+  /* success badge — a finished deploy should read as positive, like running */
+  .k-badge-done { background:rgba(190,242,100,.13); color:#d9f99d; }
+  .k-badge-done .k-dot { background:var(--color-accent); box-shadow:0 0 8px var(--color-accent); }
+
+  /* muted helper text (backups / db detail) */
+  .k-muted { color:var(--color-muted); font-size:13px; }
+
+  /* empty fields read as dim hints, not as set values */
+  .k-input::placeholder, .k-select::placeholder, .k-code::placeholder, .k-textarea::placeholder { color:var(--color-faint); opacity:1; }
+
+  /* accessible checkbox */
+  .k-check { accent-color:var(--color-accent); width:15px; height:15px; cursor:pointer; }
+  .k-check:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+
+  /* modal close (×) — top-right of the head */
+  .k-modal-head { position:relative; }
+  .k-modal-x { position:absolute; top:1rem; right:1rem; width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center;
+    border-radius:7px; border:1px solid var(--color-border-strong); background:transparent; color:var(--color-muted); cursor:pointer; font-size:14px; line-height:1; }
+  .k-modal-x:hover { background:var(--color-surface-2); color:var(--color-fg); }
 }
 
 @keyframes k-toast-in { from { opacity:0; transform:translateX(8px); } to { opacity:1; transform:translateX(0); } }

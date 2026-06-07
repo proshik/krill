@@ -49,7 +49,7 @@ func Layout(title string, org db.Organization, role string) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " — Krill</title><link rel=\"stylesheet\" href=\"/static/xterm.css\"><link rel=\"stylesheet\" href=\"/static/app.css\"><script src=\"/static/htmx.min.js\"></script></head><body class=\"flex\" hx-boost=\"true\"><aside class=\"k-side\"><div class=\"k-side-brand\">🦐 Krill</div><div class=\"k-org-badge\"><button type=\"button\" class=\"k-org-switch\" hx-get=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, " — Krill</title><link rel=\"stylesheet\" href=\"/static/xterm.css\"><link rel=\"stylesheet\" href=\"/static/app.css\"><script src=\"/static/htmx.min.js\"></script></head><body class=\"flex\" hx-boost=\"true\"><aside class=\"k-side\"><div class=\"k-side-brand\"><span aria-hidden=\"true\">🦐</span> Krill</div><div class=\"k-org-badge\"><button type=\"button\" class=\"k-org-switch\" hx-get=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

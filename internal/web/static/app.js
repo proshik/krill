@@ -2,19 +2,35 @@
 window.mountLogTerminal = function (wsPath) {
   const el = document.getElementById("terminal");
   if (!el || el.dataset.mounted) return;
+  // After an hx-boost body swap the external xterm.js / addon-fit.js scripts
+  // load asynchronously and may not be ready when this inline call runs. Wait
+  // for them (re-query #terminal each tick so we stop if the user navigated away)
+  // and only mark mounted once we actually build the terminal.
+  if (typeof Terminal === "undefined" || typeof FitAddon === "undefined" || !FitAddon.FitAddon) {
+    setTimeout(function () { window.mountLogTerminal(wsPath); }, 50);
+    return;
+  }
   el.dataset.mounted = "1";
 
   const term = new Terminal({ convertEol: true, fontSize: 12, theme: { background: "#0f1115" } });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
-  fit.fit();
-  window.addEventListener("resize", () => fit.fit());
+  // Defer the first fit to after layout: on an hx-boost body swap the script
+  // runs before the swapped DOM has a measured height, so an immediate fit()
+  // would compute 0 rows. rAF + a ResizeObserver re-fit once height exists.
+  const refit = () => { try { fit.fit(); } catch (_) { /* container not laid out yet */ } };
+  requestAnimationFrame(refit);
+  window.addEventListener("resize", refit);
+  if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}${wsPath}`);
-  ws.onmessage = (e) => term.writeln(e.data);
-  ws.onclose = () => term.writeln("\x1b[90m[log stream closed]\x1b[0m");
+  let gotData = false;
+  ws.onmessage = (e) => { gotData = true; term.writeln(e.data); };
+  ws.onclose = () => term.writeln(gotData
+    ? "\x1b[90m[log stream closed]\x1b[0m"
+    : "\x1b[90m[no logs yet — start or redeploy the service to stream logs]\x1b[0m");
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 };
 
@@ -28,7 +44,11 @@ window.krillToggleSource = function (val) {
 // Open/close the native <dialog> modal by id.
 window.krillOpenModal = function (id) {
   const d = document.getElementById(id);
-  if (d && typeof d.showModal === "function") d.showModal();
+  if (d && typeof d.showModal === "function") {
+    d.showModal();
+    const f = d.querySelector("input, select, textarea");
+    if (f) { try { f.focus(); } catch (_) { /* not focusable yet */ } }
+  }
 };
 window.krillCloseModal = function (id) {
   const d = document.getElementById(id);
@@ -50,13 +70,16 @@ if (!window.__krillClickInit) {
 // false to block the triggering submit, opens #k-confirm, and only submits the
 // form natively when the user clicks the confirm button. The form must carry
 // hx-boost="false" so HTMX does not fire its own request on the submit event.
-window.krillConfirm = function (form, message, confirmLabel) {
+window.krillConfirm = function (form, message, confirmLabel, kind) {
   const dlg = document.getElementById("k-confirm");
   if (!dlg || typeof dlg.showModal !== "function") return confirm(message);
   const msgEl = dlg.querySelector("#k-confirm-msg");
   const okEl = dlg.querySelector("#k-confirm-ok");
   if (msgEl) msgEl.textContent = message;
-  if (okEl) okEl.textContent = confirmLabel || "Delete";
+  if (okEl) {
+    okEl.textContent = confirmLabel || "Delete";
+    okEl.className = "k-btn " + (kind === "primary" ? "k-btn-primary" : "k-btn-danger");
+  }
   window.__krillConfirmAction = function () { form.submit(); };
   dlg.showModal();
   return false;
@@ -144,7 +167,7 @@ window.krillEnvSyncToTextarea = function () {
   const lines = [];
   document.querySelectorAll("#env-rows .env-row").forEach(function (r) {
     const k = r.querySelector(".env-key").value.trim();
-    const v = r.querySelector(".env-val").value.trim();
+    const v = r.querySelector(".env-val").value; // keep value as-typed (spaces are significant)
     if (k) lines.push(k + "=" + v);
   });
   ta.value = lines.join("\n");
@@ -196,7 +219,8 @@ window.krillEnvMode = function (mode) {
     raw.style.display = "";
   }
   form.dataset.mode = mode;
-  form.parentNode.parentNode.querySelectorAll("[data-env-mode]").forEach(function (b) {
+  try { localStorage.setItem("krillEnvMode", mode); } catch (_) { /* private mode */ }
+  document.querySelectorAll("#env-seg [data-env-mode]").forEach(function (b) {
     b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
   });
 };

@@ -41,7 +41,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				<div class="k-panel-body">
 					if active.ID != 0 {
 						if len(apps) == 0 {
-							<div class="flex flex-col items-center justify-center min-h-[36vh] gap-3">
+							<div class="k-card flex items-center justify-between gap-3 flex-wrap">
 								<p class="k-mono">{ i18n.T(ctx, "project.no_apps") }</p>
 								if role == "owner" || role == "admin" {
 									<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-app')">{ i18n.T(ctx, "project.create_app") }</button>
@@ -70,13 +70,13 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
 								for _, pg := range pgs {
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/postgres/" + itoa(pg.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base">🐘 { pg.Name }</div>@StatusBadge(pg.Status)</div>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { pg.Name }</div>@StatusBadge(pg.Status)</div>
 										<div class="k-mono text-xs">{ pg.Image }</div>
 									</a>
 								}
 								for _, rd := range redises {
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/redis/" + itoa(rd.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base">🟥 { rd.Name }</div>@StatusBadge(rd.Status)</div>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🟥</span> { rd.Name }</div>@StatusBadge(rd.Status)</div>
 										<div class="k-mono text-xs">{ rd.Image }</div>
 									</a>
 								}
@@ -97,6 +97,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 			<dialog id="new-env" class="k-modal">
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments") }>
 					<div class="k-modal-head">
+						<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-env')">✕</button>
 						<div class="k-modal-title">{ i18n.T(ctx, "env.new_modal_title") }</div>
 						<div class="k-modal-desc">{ i18n.T(ctx, "env.new_modal_desc") }</div>
 					</div>
@@ -116,7 +117,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				@appCreateModal(org.ID, project.ID, active.ID, registries)
 				<dialog id="new-db" class="k-modal">
 					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases") }>
-						<div class="k-modal-head"><div class="k-modal-title">{ i18n.T(ctx, "db.new") }</div></div>
+						<div class="k-modal-head"><button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-db')">✕</button><div class="k-modal-title">{ i18n.T(ctx, "db.new") }</div></div>
 						<div class="k-modal-body">
 							<div>
 								<label class="k-label">{ i18n.T(ctx, "db.engine") }</label>
@@ -147,6 +148,7 @@ templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 	<dialog id="new-app" class="k-modal">
 		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/projects/" + itoa(projID) + "/environments/" + itoa(envID) + "/apps") }>
 			<div class="k-modal-head">
+				<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-app')">✕</button>
 				<div class="k-modal-title">{ i18n.T(ctx, "app.new_modal_title") }</div>
 				<div class="k-modal-desc">{ i18n.T(ctx, "app.new_modal_desc") }</div>
 			</div>

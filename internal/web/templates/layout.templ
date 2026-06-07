@@ -21,7 +21,7 @@ templ Layout(title string, org db.Organization, role string) {
 		</head>
 		<body class="flex" hx-boost="true">
 			<aside class="k-side">
-				<div class="k-side-brand">🦐 Krill</div>
+				<div class="k-side-brand"><span aria-hidden="true">🦐</span> Krill</div>
 				<div class="k-org-badge">
 					<button type="button" class="k-org-switch" hx-get={ "/orgs/switcher?current=" + itoa(org.ID) } hx-target="#org-switcher" hx-swap="innerHTML" onclick="krillOpenModal('org-switcher')" title={ i18n.T(ctx, "orgs.switch_title") }>
 						<span>{ org.Name }</span>

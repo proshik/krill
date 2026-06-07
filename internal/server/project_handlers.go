@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -153,6 +154,25 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		apps, _ = s.q.ListApplicationsByEnvironment(r.Context(), active.ID)
 		pgs, _ = s.q.ListPostgresByEnvironment(r.Context(), active.ID)
 		redises, _ = s.q.ListRedisByEnvironment(r.Context(), active.ID)
+		// Reflect the LIVE Swarm state on the cards: the stored status can be
+		// stale (e.g. a slow deploy was marked error but the service is healthy).
+		if s.engine != nil {
+			for i := range apps {
+				if st, err := s.engine.ServiceState(r.Context(), dockerName(apps[i].ID)); err == nil {
+					apps[i].Status = deploy.DeriveStatus(st, apps[i].Status)
+				}
+			}
+			for i := range pgs {
+				if st, err := s.engine.ServiceState(r.Context(), pgs[i].AppName); err == nil {
+					pgs[i].Status = deploy.DeriveStatus(st, pgs[i].Status)
+				}
+			}
+			for i := range redises {
+				if st, err := s.engine.ServiceState(r.Context(), redises[i].AppName); err == nil {
+					redises[i].Status = deploy.DeriveStatus(st, redises[i].Status)
+				}
+			}
+		}
 	}
 	registries, err := s.q.ListRegistriesByOrg(r.Context(), o.ID)
 	if err != nil {

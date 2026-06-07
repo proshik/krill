@@ -11,7 +11,7 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 		if tempPassword != "" {
 			<div class="k-toast k-toast-ok mb-3 flex items-center gap-3">
 				<span>{ i18n.T(ctx, "members.temp_password") } <b class="k-mono">{ tempPassword }</b></span>
-				<button type="button" class="k-copy" data-copy={ tempPassword } onclick="krillCopyToClip(this.dataset.copy, 'Password')">Copy</button>
+				<button type="button" class="k-copy" data-copy={ tempPassword } onclick="krillCopyToClip(this.dataset.copy, 'Password')">{ i18n.T(ctx, "common.copy") }</button>
 			</div>
 		}
 		<div class="k-card mb-4">

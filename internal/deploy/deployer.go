@@ -50,7 +50,7 @@ type Store interface {
 const jobTimeout = 10 * time.Minute // a build can take longer than a pull
 
 var (
-	convergeTimeout      = 90 * time.Second
+	convergeTimeout      = 180 * time.Second
 	convergePollInterval = 1 * time.Second
 )
 
@@ -143,7 +143,9 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "server shutting down", "")
-		_ = d.store.SetStatus(wctx, appID, StatusError)
+		// Leave the app deploying (not error) on shutdown — it never ran; the
+		// live status poll reconciles after restart.
+		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
 	}
 	return deployID
 }
@@ -194,7 +196,16 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		return
 	}
 	fmt.Fprintf(out, "→ waiting for service to converge...\n")
-	cctx, ccancel := context.WithTimeout(ctx, convergeTimeout)
+	// A task is not counted Running until its healthcheck passes, and the
+	// healthcheck cannot pass before its start_period. Wait at least that long
+	// (plus headroom) so a slow-but-healthy app is not falsely failed.
+	timeout := convergeTimeout
+	if app.Healthcheck != nil && app.Healthcheck.StartPeriod > 0 {
+		if want := app.Healthcheck.StartPeriod + 60*time.Second; want > timeout {
+			timeout = want
+		}
+	}
+	cctx, ccancel := context.WithTimeout(ctx, timeout)
 	defer ccancel()
 	converged := false
 	for {
@@ -210,24 +221,46 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		}
 		break
 	}
-	if !converged {
-		fmt.Fprintf(out, "❌ service did not become healthy in time\n")
-		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service did not converge")
+	if converged {
+		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
+		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 		return
 	}
-	fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
-	d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+	// Not converged within the window. Tell "still starting" and "shutting down"
+	// apart from a genuine failure so a slow-but-healthy app is not recorded as
+	// an error (the live status poll reconciles it to running).
+	if ctx.Err() != nil {
+		fmt.Fprintf(out, "⚠ deploy interrupted (server shutting down)\n")
+		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "interrupted")
+		return
+	}
+	fctx, fcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	st, serr := d.engine.ServiceState(fctx, docker.ServiceName(app.ID))
+	fcancel()
+	switch {
+	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired:
+		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
+		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+	case serr == nil && st.Found && st.Running > 0:
+		fmt.Fprintf(out, "⚠ service still starting after %s — continuing in the background\n", timeout)
+		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")
+	default:
+		fmt.Fprintf(out, "❌ service did not become healthy in time\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service did not converge")
+	}
 }
 
 // finish closes the log hub, saves the log to deployments, and updates statuses.
 func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, imageTag, errMsg string) {
 	full := d.hub.Close(deployID)
 	depStatus := "done"
-	appStatus := StatusRunning
 	if status == StatusError {
 		depStatus = "error"
-		appStatus = StatusError
 	}
+	// Use the caller's status directly so a "still starting" deploy can land the
+	// app in StatusDeploying (the live /status poll reconciles it to running)
+	// instead of being forced to running or error.
+	appStatus := status
 	// Detached context: persist the final status even if the job ctx was canceled
 	// (graceful shutdown), so deployments don't get stuck as running/deploying.
 	wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
