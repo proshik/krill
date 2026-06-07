@@ -70,3 +70,36 @@ func TestNotificationsMemberForbidden(t *testing.T) {
 		t.Fatalf("member save want 403, got %d", rec.Code)
 	}
 }
+
+// TestNotificationsCrossTenantForbidden verifies an admin of org B cannot read
+// or write org A's notification channel (RequireOrgMember returns 404 for a
+// non-member, so the org-A config is never reachable or mutated).
+func TestNotificationsCrossTenantForbidden(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	userA := mkUser(t, q, "nt-a@k.local")
+	orgA, _ := orgSvc.CreateOrg(ctx, userA, "OrgA")
+	if _, err := q.UpsertNotificationChannel(ctx, db.UpsertNotificationChannelParams{
+		OrgID: orgA.ID, Type: "telegram", Enabled: true, BotToken: "secret-a", ChatID: "1",
+		NotifyDeploy: true, NotifyBackup: true, NotifyHealth: true,
+	}); err != nil {
+		t.Fatalf("seed org-A channel: %v", err)
+	}
+
+	userB := mkUser(t, q, "nt-b@k.local")
+	if _, err := orgSvc.CreateOrg(ctx, userB, "OrgB"); err != nil {
+		t.Fatalf("create org-B: %v", err)
+	}
+	cookieB := loginAs(t, q, "nt-b@k.local")
+
+	rec := postForm(t, h, "/orgs/"+i64(orgA.ID)+"/notifications", cookieB, url.Values{"chat_id": {"999"}})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SECURITY FINDING: cross-tenant POST expected 404, got %d", rec.Code)
+	}
+
+	ch, err := q.GetNotificationChannel(ctx, db.GetNotificationChannelParams{OrgID: orgA.ID, Type: "telegram"})
+	if err != nil || ch.ChatID != "1" {
+		t.Fatalf("SECURITY FINDING: org-A channel mutated by cross-tenant request: %+v err=%v", ch, err)
+	}
+}

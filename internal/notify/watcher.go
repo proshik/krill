@@ -77,6 +77,9 @@ func (w *Watcher) tick(ctx context.Context) {
 		w.log.Warn("notify watcher: list apps failed", "err", err)
 		return
 	}
+	if len(apps) == 0 {
+		return // nothing to poll — avoid a pointless full ServiceList round-trip
+	}
 	names := make([]string, 0, len(apps))
 	for _, a := range apps {
 		names = append(names, docker.ServiceName(a.AppID))

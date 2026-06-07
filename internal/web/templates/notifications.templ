@@ -29,11 +29,14 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 				</label>
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "notif.bot_token") }</label>
-					if v.HasToken {
-						<input class="k-input" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
-					} else {
-						<input class="k-input" name="bot_token" type="password" autocomplete="off"/>
-					}
+					<div class="flex items-center gap-2">
+						if v.HasToken {
+							<input class="k-input" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
+						} else {
+							<input class="k-input" name="bot_token" type="password" autocomplete="off"/>
+						}
+						<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
+					</div>
 				</div>
 				<div>
 					<label class="k-label k-label-required">{ i18n.T(ctx, "notif.chat_id") }</label>
