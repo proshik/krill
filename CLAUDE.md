@@ -76,7 +76,7 @@ Required env vars: `KRILL_DATABASE_URL`, `KRILL_ADMIN_EMAIL`, `KRILL_ADMIN_PASSW
   ```
 - **Native `<dialog>` modals need `margin: auto`.** Tailwind preflight resets `margin: 0` on `<dialog>`, pinning modals to the top-left. The `.k-modal` class in `input.css` restores `margin: auto` to center them.
 - **DB log feeds use negative feed IDs to avoid colliding with positive deployment IDs.** The `DeployLogHub` lives in `internal/deploy/logs.go`; the database feed-ID functions live in `internal/dbservice/service.go`: `pgFeedID(id) = -(id*2 + 1)`, `redisFeedID(id) = -(id*2 + 2)` (exported as `PgFeedID`/`RedisFeedID` for the deploy-log WS handler).
-- **Named volume `<appName>-data` persists** for managed databases unless the user opts in via the "Destroy data" checkbox (`destroy_data=on`) on delete; only then is `engine.VolumeRemove()` called.
+- **Named volume `<appName>-data` persists** for managed databases unless the user opts in via the "Destroy data" checkbox (`destroy_data=on`) on delete; only then is `engine.VolumeRemove()` called. Removal retries (`dbservice.removeVolume`) because right after `ServiceRemove` the volume is briefly "in use" while Swarm tears down the task container. **Deleting an environment or project destroys its managed-DB volumes** (`removeEnvDatabases` in `internal/server/project_handlers.go`, `destroy=true`) — otherwise the DB rows cascade-delete and the services/volumes would orphan with no UI to clean them.
 
 ## 4. Conventions (follow these)
 
