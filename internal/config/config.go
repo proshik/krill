@@ -31,6 +31,9 @@ type Config struct {
 	// HealthPollInterval is how often the notification health watcher polls
 	// service state to detect apps going down / recovering.
 	HealthPollInterval time.Duration `env:"KRILL_HEALTH_POLL_INTERVAL" envDefault:"30s"`
+	// TerminalIdleTimeout closes an interactive web-terminal session after this
+	// long with no I/O (reaps abandoned shells). 0 disables the idle timeout.
+	TerminalIdleTimeout time.Duration `env:"KRILL_TERMINAL_IDLE_TIMEOUT" envDefault:"15m"`
 }
 
 // Load reads the configuration from the environment.
