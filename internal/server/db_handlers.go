@@ -278,7 +278,7 @@ func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	streamReaderToWS(ctx, conn, rc)
+	streamParsedLogsToWS(ctx, conn, rc)
 }
 
 func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {

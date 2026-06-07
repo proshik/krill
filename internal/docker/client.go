@@ -181,6 +181,7 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 		ShowStderr: true,
 		Follow:     follow,
 		Tail:       "200",
+		Timestamps: true,
 	})
 	if err != nil {
 		return nil, err

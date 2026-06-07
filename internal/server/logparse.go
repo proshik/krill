@@ -1,9 +1,15 @@
 package server
 
 import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // LogLine is one parsed log line, sent to the client as a JSON frame.
@@ -71,4 +77,24 @@ func normalizeLevel(l string) string {
 		return "fatal"
 	}
 	return ""
+}
+
+// streamParsedLogsToWS reads lines from rc, parses each into a LogLine, and
+// sends it as a JSON text frame until the reader is exhausted or a write fails.
+func streamParsedLogsToWS(ctx context.Context, conn *websocket.Conn, rc io.Reader) {
+	sc := bufio.NewScanner(rc)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
+	for sc.Scan() {
+		b, err := json.Marshal(ParseLogLine(sc.Text()))
+		if err != nil {
+			continue
+		}
+		wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		werr := conn.Write(wctx, websocket.MessageText, b)
+		cancel()
+		if werr != nil {
+			return
+		}
+	}
+	conn.Close(websocket.StatusNormalClosure, "")
 }
