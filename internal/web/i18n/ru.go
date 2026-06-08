@@ -235,4 +235,7 @@ var ru = map[string]string{
 	"log.search":                   "Поиск в логах",
 	"nav.monitoring":               "Мониторинг",
 	"mon.title":                    "Мониторинг",
+	"mon.desc":                     "CPU и память по контейнерам на этом хосте",
+	"mon.cpu":                      "CPU %",
+	"mon.memory":                   "Память (МБ)",
 }

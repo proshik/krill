@@ -5,10 +5,26 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// Monitoring renders the /monitoring page (admin-only).
-// Task 6 replaces the placeholder body with charts and the metrics table.
 templ Monitoring(org db.Organization, role string) {
 	@Layout(i18n.T(ctx, "mon.title"), org, role) {
-		<div id="mon">monitoring</div>
+		<link rel="stylesheet" href="/static/uPlot.min.css"/>
+		<h2 class="text-2xl mb-1">{ i18n.T(ctx, "mon.title") }</h2>
+		<p class="mb-3" style="color:var(--color-muted)">{ i18n.T(ctx, "mon.desc") }</p>
+		<div id="mon" class="k-mon" data-url={ "/orgs/" + itoa(org.ID) + "/monitoring/data" }>
+			<div class="k-mon-bar">
+				<div class="k-mon-host" id="mon-host"></div>
+				<div class="k-seg" id="mon-range">
+					<button type="button" class="k-seg-btn" data-range="1h">1h</button>
+					<button type="button" class="k-seg-btn" data-range="6h">6h</button>
+					<button type="button" class="k-seg-btn k-seg-active" data-range="24h">24h</button>
+				</div>
+			</div>
+			<div class="k-mon-charts">
+				<div class="k-card"><div class="k-section">{ i18n.T(ctx, "mon.cpu") }</div><div id="mon-cpu"></div></div>
+				<div class="k-card"><div class="k-section">{ i18n.T(ctx, "mon.memory") }</div><div id="mon-mem"></div></div>
+			</div>
+			<div class="k-card mt-3"><div id="mon-table"></div></div>
+		</div>
+		<script src="/static/uPlot.iife.min.js"></script>
 	}
 }

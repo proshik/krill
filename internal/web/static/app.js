@@ -157,16 +157,83 @@ window.krillExecConnect = function () {
   if (el && el._krillConnect) el._krillConnect();
 };
 
+function mountMonitoring(el) {
+  if (!el || el.dataset.mounted) return;
+  if (typeof uPlot === "undefined") { setTimeout(() => mountMonitoring(el), 50); return; }
+  el.dataset.mounted = "1";
+  const base = el.dataset.url;
+  let range = "24h", cpuU = null, memU = null;
+  const groupLabel = { control: "Control plane", infra: "Infrastructure", app: "Apps", db: "Databases" };
+  const ACTIVE = "k-seg-active"; // must match the template + CSS active class
+
+  el.querySelectorAll("#mon-range .k-seg-btn").forEach((b) => b.addEventListener("click", () => {
+    el.querySelectorAll("#mon-range .k-seg-btn").forEach((x) => x.classList.remove(ACTIVE));
+    b.classList.add(ACTIVE); range = b.dataset.range; load();
+  }));
+
+  function fmtMB(mb){ return mb >= 1024 ? (mb/1024).toFixed(1)+" GB" : Math.round(mb)+" MB"; }
+  function mkChart(node, data, series){
+    return new uPlot({ width: node.clientWidth || 520, height: 190, padding:[6,8,0,2], legend:{show:false},
+      cursor:{points:{size:5}}, scales:{x:{time:true}},
+      axes:[{stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:30},
+            {stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:42}], series }, data, node);
+  }
+  function build(d){
+    const xs = d.x || [];
+    const cpuData=[xs], memData=[xs], cpuSer=[{}], memSer=[{}];
+    for (const s of (d.series||[])) {
+      cpuData.push(s.cpu); memData.push(s.mem);
+      cpuSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
+      memSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
+    }
+    const cpuNode=el.querySelector("#mon-cpu"), memNode=el.querySelector("#mon-mem");
+    if (cpuU) cpuU.destroy(); if (memU) memU.destroy();
+    cpuNode.innerHTML=""; memNode.innerHTML="";
+    cpuU=mkChart(cpuNode,cpuData,cpuSer); memU=mkChart(memNode,memData,memSer);
+
+    const h=d.host||{}, memPct = h.mem_total ? Math.round(h.mem_used/h.mem_total*100) : 0;
+    el.querySelector("#mon-host").innerHTML =
+      `<span>host cpu <b>${(h.cpu_pct||0).toFixed(0)}%</b></span>`+
+      `<span>host mem <b>${fmtMB((h.mem_used||0)/1048576)} / ${fmtMB((h.mem_total||0)/1048576)} (${memPct}%)</b></span>`+
+      `<span>containers <b>${h.containers||0}</b></span>`;
+
+    let html="<table class='k-table'><thead><tr><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", grp="";
+    for (const r of (d.rows||[])) {
+      if (r.group!==grp){ grp=r.group; html+=`<tr class='k-mon-grp'><td colspan='3'>${groupLabel[grp]||grp}</td></tr>`; }
+      const memTxt = (r.mem_limit && h.mem_total && r.mem_limit < h.mem_total)
+        ? `${fmtMB(r.mem/1048576)} <span style='color:var(--color-muted)'>/ ${fmtMB(r.mem_limit/1048576)}</span>`
+        : fmtMB(r.mem/1048576);
+      html+=`<tr><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${memTxt}</td></tr>`;
+    }
+    el.querySelector("#mon-table").innerHTML = html+"</tbody></table>";
+  }
+  function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
+  function load(){ fetch(`${base}?range=${range}`).then(r=>r.json()).then(build).catch(()=>{}); }
+  load();
+  // Store the poll timer globally so krillEnhance clears it on the next nav/swap
+  // (otherwise an extra fetch loop would stack on every visit to this page).
+  if (window.__krillMonTimer) clearInterval(window.__krillMonTimer);
+  window.__krillMonTimer = setInterval(load, 10000);
+  window.addEventListener("resize", ()=>{ if(cpuU)cpuU.setSize({width:el.querySelector("#mon-cpu").clientWidth,height:190}); if(memU)memU.setSize({width:el.querySelector("#mon-mem").clientWidth,height:190}); });
+}
+
 // krillEnhance wires up content present on the page or just swapped in: it mounts
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
   document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
   document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
   document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
+  document.querySelectorAll(".k-mon:not([data-mounted])").forEach(mountMonitoring);
   if (document.getElementById("env-form")) {
     let mode = "kv";
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
     krillEnvMode(mode);
+  }
+  // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
+  // re-armed by mountMonitoring only when the monitoring page is present).
+  if (!document.querySelector(".k-mon") && window.__krillMonTimer) {
+    clearInterval(window.__krillMonTimer);
+    window.__krillMonTimer = null;
   }
   // Stop any previous status-refresh timer (the page/element may have swapped),
   // then restore the toggle from localStorage on the current page.

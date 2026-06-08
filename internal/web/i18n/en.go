@@ -235,4 +235,7 @@ var en = map[string]string{
 	"log.search":                   "Search logs",
 	"nav.monitoring":               "Monitoring",
 	"mon.title":                    "Monitoring",
+	"mon.desc":                     "CPU & memory per container on this host",
+	"mon.cpu":                      "CPU %",
+	"mon.memory":                   "Memory (MB)",
 }
