@@ -64,7 +64,7 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	rng := parseRange(r.URL.Query().Get("range"))
 	apps, dbs, selfComp := s.metricLabels(r)
 
-	const monBuckets = 240
+	monBuckets := monBucketCount(rng, s.cfg.MetricsInterval)
 	now := time.Now()
 	start := now.Add(-rng)
 	x := metrics.GridTimes(start, now, monBuckets)
@@ -122,6 +122,24 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(monData{Host: host, X: x, Series: series, Rows: rows})
+}
+
+// monBucketCount picks how many time buckets to render for a range so each
+// bucket spans at least ~2 sample intervals. With finer buckets, samples would
+// land in non-adjacent buckets (nil gaps between them) and the line — drawn only
+// between consecutive non-null points, with points hidden — would be invisible.
+// Capped at 240 buckets for chart resolution and floored at 12 for tiny ranges.
+func monBucketCount(rng, interval time.Duration) int {
+	n := 240
+	if interval > 0 {
+		if m := int(rng / (2 * interval)); m < n {
+			n = m
+		}
+	}
+	if n < 12 {
+		n = 12
+	}
+	return n
 }
 
 func parseRange(s string) time.Duration {
