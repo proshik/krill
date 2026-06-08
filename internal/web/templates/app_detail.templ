@@ -156,8 +156,8 @@ templ generalTab(c AppCtx) {
 }
 
 templ envTab(c AppCtx) {
-	<div class="k-panel">
-		<div class="k-panel-head">
+	<div class="k-card">
+		<div class="flex justify-between items-center gap-4 flex-wrap mb-4">
 			<div>
 				<div class="k-panel-title">{ i18n.T(ctx, "env.settings_title") }</div>
 				<div class="k-panel-desc">{ i18n.T(ctx, "env.settings_desc") }</div>
@@ -170,8 +170,7 @@ templ envTab(c AppCtx) {
 				</div>
 			</div>
 		</div>
-		<div class="k-panel-body">
-			<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">
+		<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">
 				<div id="env-kv" style="display:none">
 					<div id="env-rows"></div>
 					<button type="button" class="k-btn k-btn-secondary mt-1" onclick="krillEnvAddRow('','')">+ { i18n.T(ctx, "env.add_var") }</button>
@@ -183,7 +182,6 @@ templ envTab(c AppCtx) {
 					<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button>
 				</div>
 			</form>
-		</div>
 	</div>
 }
 
@@ -298,15 +296,12 @@ templ TagError(current, msg string) {
 }
 
 templ advancedTab(c AppCtx) {
-	<div class="k-panel">
-		<div class="k-panel-head">
-			<div>
-				<div class="k-panel-title">{ i18n.T(ctx, "adv.title") }</div>
-				<div class="k-panel-desc">{ i18n.T(ctx, "adv.desc") }</div>
-			</div>
+	<div class="k-card">
+		<div class="mb-4">
+			<div class="k-panel-title">{ i18n.T(ctx, "adv.title") }</div>
+			<div class="k-panel-desc">{ i18n.T(ctx, "adv.desc") }</div>
 		</div>
-		<div class="k-panel-body">
-			<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:820px">
+		<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:820px">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.command") }</label>
 					<input class="k-input k-mono" name="command" placeholder="e.g. start-dev (blank = image default)" value={ strv(c.App.Command) }/>
@@ -354,6 +349,5 @@ templ advancedTab(c AppCtx) {
 				<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "adv.apply_hint") }</p>
 				<div class="flex justify-end"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button></div>
 			</form>
-		</div>
 	</div>
 }
