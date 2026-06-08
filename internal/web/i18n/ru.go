@@ -233,4 +233,6 @@ var ru = map[string]string{
 	"term.command":                 "Команда",
 	"term.connect":                 "Подключить",
 	"log.search":                   "Поиск в логах",
+	"nav.monitoring":               "Мониторинг",
+	"mon.title":                    "Мониторинг",
 }

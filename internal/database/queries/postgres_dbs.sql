@@ -27,3 +27,6 @@ WHERE pd.id = $1;
 
 -- name: CountPostgresByExternalPort :one
 SELECT count(*) FROM postgres_dbs WHERE external_port = $1;
+
+-- name: ListAllPostgres :many
+SELECT id, name, app_name FROM postgres_dbs;

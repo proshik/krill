@@ -118,6 +118,36 @@ func (q *Queries) GetRedisChain(ctx context.Context, id int64) (GetRedisChainRow
 	return i, err
 }
 
+const listAllRedis = `-- name: ListAllRedis :many
+SELECT id, name, app_name FROM redis_dbs
+`
+
+type ListAllRedisRow struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	AppName string `json:"app_name"`
+}
+
+func (q *Queries) ListAllRedis(ctx context.Context) ([]ListAllRedisRow, error) {
+	rows, err := q.db.Query(ctx, listAllRedis)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllRedisRow
+	for rows.Next() {
+		var i ListAllRedisRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.AppName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRedisByEnvironment = `-- name: ListRedisByEnvironment :many
 SELECT id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at FROM redis_dbs WHERE environment_id = $1 ORDER BY created_at
 `

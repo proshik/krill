@@ -13,6 +13,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/web"
@@ -33,7 +34,8 @@ type Server struct {
 	backupSvc     *backup.Service
 	reloadBackups func()
 
-	notify *notify.Service
+	notify  *notify.Service
+	metrics metrics.Store
 }
 
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
@@ -49,6 +51,9 @@ func (s *Server) SetBackups(svc *backup.Service, reload func()) {
 
 // SetNotify wires the notification service (used by the test-message handler).
 func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
+
+// SetMetrics wires the metrics store (used by the monitoring handler).
+func (s *Server) SetMetrics(st metrics.Store) { s.metrics = st }
 
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {
@@ -107,6 +112,8 @@ func (s *Server) Router() http.Handler {
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)
+				r.Get("/monitoring", s.monitoring)
+				r.Get("/monitoring/data", s.monitoringData)
 				r.Post("/projects", s.createProject)
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)

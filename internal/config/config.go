@@ -34,6 +34,10 @@ type Config struct {
 	// TerminalIdleTimeout closes an interactive web-terminal session after this
 	// long with no I/O (reaps abandoned shells). 0 disables the idle timeout.
 	TerminalIdleTimeout time.Duration `env:"KRILL_TERMINAL_IDLE_TIMEOUT" envDefault:"15m"`
+	// MetricsInterval is how often the monitoring sampler records container stats.
+	MetricsInterval time.Duration `env:"KRILL_METRICS_INTERVAL" envDefault:"30s"`
+	// MetricsRetention is how long metric history is kept before pruning.
+	MetricsRetention time.Duration `env:"KRILL_METRICS_RETENTION" envDefault:"48h"`
 }
 
 // Load reads the configuration from the environment.

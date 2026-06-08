@@ -34,8 +34,8 @@ func IsSettings(ctx context.Context) bool {
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages
-// (members/destinations/registries/notifications) are leaf routes, so a
-// substring match is unambiguous; everything else under an org is the
+// (members/destinations/registries/notifications/monitoring) are leaf routes,
+// so a substring match is unambiguous; everything else under an org is the
 // projects/dashboard section.
 func sectionOf(path string) string {
 	switch {
@@ -47,6 +47,8 @@ func sectionOf(path string) string {
 		return "registries"
 	case strings.Contains(path, "/notifications"):
 		return "notifications"
+	case strings.Contains(path, "/monitoring"):
+		return "monitoring"
 	default:
 		return "projects"
 	}

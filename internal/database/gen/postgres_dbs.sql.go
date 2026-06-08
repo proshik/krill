@@ -126,6 +126,36 @@ func (q *Queries) GetPostgresChain(ctx context.Context, id int64) (GetPostgresCh
 	return i, err
 }
 
+const listAllPostgres = `-- name: ListAllPostgres :many
+SELECT id, name, app_name FROM postgres_dbs
+`
+
+type ListAllPostgresRow struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	AppName string `json:"app_name"`
+}
+
+func (q *Queries) ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error) {
+	rows, err := q.db.Query(ctx, listAllPostgres)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllPostgresRow
+	for rows.Next() {
+		var i ListAllPostgresRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.AppName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPostgresByEnvironment = `-- name: ListPostgresByEnvironment :many
 SELECT id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at FROM postgres_dbs WHERE environment_id = $1 ORDER BY created_at
 `

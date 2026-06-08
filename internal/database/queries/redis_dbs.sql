@@ -27,3 +27,6 @@ WHERE rd.id = $1;
 
 -- name: CountRedisByExternalPort :one
 SELECT count(*) FROM redis_dbs WHERE external_port = $1;
+
+-- name: ListAllRedis :many
+SELECT id, name, app_name FROM redis_dbs;

@@ -233,4 +233,6 @@ var en = map[string]string{
 	"term.command":                 "Command",
 	"term.connect":                 "Connect",
 	"log.search":                   "Search logs",
+	"nav.monitoring":               "Monitoring",
+	"mon.title":                    "Monitoring",
 }

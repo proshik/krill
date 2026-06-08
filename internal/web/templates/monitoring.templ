@@ -1,0 +1,14 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// Monitoring renders the /monitoring page (admin-only).
+// Task 6 replaces the placeholder body with charts and the metrics table.
+templ Monitoring(org db.Organization, role string) {
+	@Layout(i18n.T(ctx, "mon.title"), org, role) {
+		<div id="mon">monitoring</div>
+	}
+}
