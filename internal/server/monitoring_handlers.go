@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -92,7 +93,13 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	latest, _ := s.metrics.Latest(r.Context())
+	// "Latest" only counts components that reported recently, so containers that
+	// died don't linger in the snapshot for the whole retention window.
+	freshness := 3 * s.cfg.MetricsInterval
+	if freshness < 2*time.Minute {
+		freshness = 2 * time.Minute
+	}
+	latest, _ := s.metrics.Latest(r.Context(), now.Add(-freshness))
 	rows := make([]monRow, 0, len(latest))
 	var sumCPU float64
 	var sumMem int64
@@ -165,13 +172,30 @@ func (s *Server) metricLabels(r *http.Request) (apps, dbs map[string]metrics.Lab
 			dbs[d.AppName] = metrics.Labeled{Name: d.Name, Detail: "redis"}
 		}
 	}
-	if stats, err := s.engine.ListContainerStats(r.Context()); err == nil {
-		for _, st := range stats {
-			if st.SelfControl {
-				selfComp = st.Component
-				break
-			}
+	return apps, dbs, s.selfComponent(r.Context())
+}
+
+// selfComponent returns the component key of Krill's own container, detected via
+// a live stats scan and cached for the process lifetime (the container id is
+// stable). It is resolved at most once on success; an empty result is cached too
+// (Krill running outside a container is never the control-plane container). Only
+// an engine error leaves it unresolved so a later request can retry.
+func (s *Server) selfComponent(ctx context.Context) string {
+	s.selfMu.Lock()
+	defer s.selfMu.Unlock()
+	if s.selfResolved {
+		return s.selfComp
+	}
+	stats, err := s.engine.ListContainerStats(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, st := range stats {
+		if st.SelfControl {
+			s.selfComp = st.Component
+			break
 		}
 	}
-	return apps, dbs, selfComp
+	s.selfResolved = true
+	return s.selfComp
 }

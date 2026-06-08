@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -391,33 +392,61 @@ func (e *dockerEngine) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
 }
 
+// cpuSampleWindow is the gap between the two stats reads used to derive a
+// point-in-time CPU%. One-shot stats do not prime PreCPUStats, so a single read
+// cannot yield a delta — we read twice and diff (the same way `docker stats` does).
+const cpuSampleWindow = time.Second
+
+// statsOneShot reads a single container's stats snapshot.
+func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.StatsResponse, bool) {
+	resp, err := e.cli.ContainerStatsOneShot(ctx, id)
+	if err != nil {
+		return container.StatsResponse{}, false
+	}
+	defer resp.Body.Close()
+	var s container.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return container.StatsResponse{}, false
+	}
+	return s, true
+}
+
 func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
 	hostname, _ := os.Hostname() // in a container this is the short container id
 	ctrs, err := e.cli.ContainerList(ctx, container.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	// First reading of the cumulative CPU counters per container.
+	prev := make([]container.StatsResponse, len(ctrs))
+	prevOK := make([]bool, len(ctrs))
+	for i, c := range ctrs {
+		prev[i], prevOK[i] = e.statsOneShot(ctx, c.ID)
+	}
+	// Wait so the second reading reflects CPU consumed in between.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(cpuSampleWindow):
+	}
 	out := make([]ContainerStat, 0, len(ctrs))
-	for _, c := range ctrs {
-		resp, serr := e.cli.ContainerStatsOneShot(ctx, c.ID)
-		if serr != nil {
-			continue
-		}
-		var s container.StatsResponse
-		derr := json.NewDecoder(resp.Body).Decode(&s)
-		resp.Body.Close()
-		if derr != nil {
+	for i, c := range ctrs {
+		s, ok := e.statsOneShot(ctx, c.ID)
+		if !ok {
 			continue
 		}
 		online := s.CPUStats.OnlineCPUs
 		if online == 0 {
 			online = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
 		}
-		cpu := cpuPercent(
-			s.CPUStats.CPUUsage.TotalUsage-s.PreCPUStats.CPUUsage.TotalUsage,
-			s.CPUStats.SystemUsage-s.PreCPUStats.SystemUsage,
-			online,
-		)
+		var cpu float64
+		if prevOK[i] {
+			cpu = cpuPercent(
+				s.CPUStats.CPUUsage.TotalUsage-prev[i].CPUStats.CPUUsage.TotalUsage,
+				s.CPUStats.SystemUsage-prev[i].CPUStats.SystemUsage,
+				online,
+			)
+		}
 		comp := c.Labels["com.docker.swarm.service.name"]
 		if comp == "" && len(c.Names) > 0 {
 			comp = strings.TrimPrefix(c.Names[0], "/")

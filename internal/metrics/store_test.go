@@ -21,12 +21,16 @@ func TestStoreInsertLatestPrune(t *testing.T) {
 	if err := st.Insert(ctx, "krill-7", 18.0, 220<<20, 512<<20); err != nil {
 		t.Fatalf("insert2: %v", err)
 	}
-	latest, err := st.Latest(ctx)
+	latest, err := st.Latest(ctx, time.Now().Add(-time.Hour))
 	if err != nil || len(latest) != 1 {
 		t.Fatalf("latest: %v n=%d", err, len(latest))
 	}
 	if latest[0].CPUPct < 17 || latest[0].CPUPct > 19 {
 		t.Fatalf("latest cpu = %v, want ~18", latest[0].CPUPct)
+	}
+	// A cutoff in the future excludes the (older) samples, so nothing is "current".
+	if stale, _ := st.Latest(ctx, time.Now().Add(time.Hour)); len(stale) != 0 {
+		t.Fatalf("latest with future cutoff: want 0, got %d", len(stale))
 	}
 	if since, _ := st.Since(ctx, time.Now().Add(-time.Hour)); len(since) != 2 {
 		t.Fatalf("since: want 2, got %d", len(since))

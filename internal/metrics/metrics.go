@@ -73,7 +73,7 @@ func Classify(component string, self bool, apps, dbs map[string]Labeled) (group,
 	switch {
 	case self:
 		return GroupControl, "Krill"
-	case component == "traefik":
+	case component == "krill-traefik":
 		return GroupInfra, "Traefik"
 	}
 	if l, ok := apps[component]; ok {

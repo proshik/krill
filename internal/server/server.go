@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -36,6 +37,12 @@ type Server struct {
 
 	notify  *notify.Service
 	metrics metrics.Store
+
+	// Cached self container component for monitoring (resolved once via a live
+	// stats scan; the container id is stable for the process lifetime).
+	selfMu       sync.Mutex
+	selfComp     string
+	selfResolved bool
 }
 
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {

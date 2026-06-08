@@ -27,8 +27,8 @@ func (r *recStore) Insert(_ context.Context, c string, _ float64, _, _ int64) er
 	r.inserts = append(r.inserts, c)
 	return nil
 }
-func (r *recStore) Since(context.Context, time.Time) ([]Sample, error) { return nil, nil }
-func (r *recStore) Latest(context.Context) ([]Sample, error)           { return nil, nil }
+func (r *recStore) Since(context.Context, time.Time) ([]Sample, error)  { return nil, nil }
+func (r *recStore) Latest(context.Context, time.Time) ([]Sample, error) { return nil, nil }
 func (r *recStore) Prune(_ context.Context, before time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

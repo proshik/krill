@@ -8,7 +8,7 @@ FROM metric_samples WHERE ts >= $1 ORDER BY component, ts;
 
 -- name: LatestMetricSamples :many
 SELECT DISTINCT ON (component) component, ts, cpu_pct, mem_bytes, mem_limit_bytes
-FROM metric_samples ORDER BY component, ts DESC;
+FROM metric_samples WHERE ts >= $1 ORDER BY component, ts DESC;
 
 -- name: PruneMetricSamples :exec
 DELETE FROM metric_samples WHERE ts < $1;

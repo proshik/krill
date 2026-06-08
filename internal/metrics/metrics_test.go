@@ -46,7 +46,8 @@ func TestClassify(t *testing.T) {
 		{"krill-self", true, GroupControl, "Krill"},
 		{"krill-7", false, GroupApp, "web"},
 		{"demodb", false, GroupDB, "demodb"},
-		{"traefik", false, GroupInfra, "Traefik"},
+		{"krill-traefik", false, GroupInfra, "Traefik"},
+		{"traefik", false, GroupInfra, "traefik"}, // bare name is not the swarm service; stays raw
 		{"grafana", false, GroupInfra, "grafana"},
 	}
 	for _, tc := range cases {

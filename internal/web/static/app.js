@@ -214,7 +214,14 @@ function mountMonitoring(el) {
   // (otherwise an extra fetch loop would stack on every visit to this page).
   if (window.__krillMonTimer) clearInterval(window.__krillMonTimer);
   window.__krillMonTimer = setInterval(load, 10000);
-  window.addEventListener("resize", ()=>{ if(cpuU)cpuU.setSize({width:el.querySelector("#mon-cpu").clientWidth,height:190}); if(memU)memU.setSize({width:el.querySelector("#mon-mem").clientWidth,height:190}); });
+  // A single resize handler, stored globally and removed on the next nav/swap by
+  // krillEnhance (otherwise a new listener pinning a detached chart leaks per visit).
+  if (window.__krillMonResize) window.removeEventListener("resize", window.__krillMonResize);
+  window.__krillMonResize = function(){
+    if (cpuU) cpuU.setSize({width:el.querySelector("#mon-cpu").clientWidth,height:190});
+    if (memU) memU.setSize({width:el.querySelector("#mon-mem").clientWidth,height:190});
+  };
+  window.addEventListener("resize", window.__krillMonResize);
 }
 
 // krillEnhance wires up content present on the page or just swapped in: it mounts
@@ -231,9 +238,9 @@ window.krillEnhance = function () {
   }
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
-  if (!document.querySelector(".k-mon") && window.__krillMonTimer) {
-    clearInterval(window.__krillMonTimer);
-    window.__krillMonTimer = null;
+  if (!document.querySelector(".k-mon")) {
+    if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
+    if (window.__krillMonResize) { window.removeEventListener("resize", window.__krillMonResize); window.__krillMonResize = null; }
   }
   // Stop any previous status-refresh timer (the page/element may have swapped),
   // then restore the toggle from localStorage on the current page.

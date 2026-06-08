@@ -77,7 +77,7 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
-	LatestMetricSamples(ctx context.Context) ([]LatestMetricSamplesRow, error)
+	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error)
 	ListAllRedis(ctx context.Context) ([]ListAllRedisRow, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)

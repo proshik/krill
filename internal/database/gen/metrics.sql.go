@@ -34,7 +34,7 @@ func (q *Queries) InsertMetricSample(ctx context.Context, arg InsertMetricSample
 
 const latestMetricSamples = `-- name: LatestMetricSamples :many
 SELECT DISTINCT ON (component) component, ts, cpu_pct, mem_bytes, mem_limit_bytes
-FROM metric_samples ORDER BY component, ts DESC
+FROM metric_samples WHERE ts >= $1 ORDER BY component, ts DESC
 `
 
 type LatestMetricSamplesRow struct {
@@ -45,8 +45,8 @@ type LatestMetricSamplesRow struct {
 	MemLimitBytes int64     `json:"mem_limit_bytes"`
 }
 
-func (q *Queries) LatestMetricSamples(ctx context.Context) ([]LatestMetricSamplesRow, error) {
-	rows, err := q.db.Query(ctx, latestMetricSamples)
+func (q *Queries) LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error) {
+	rows, err := q.db.Query(ctx, latestMetricSamples, ts)
 	if err != nil {
 		return nil, err
 	}

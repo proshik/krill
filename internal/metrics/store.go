@@ -20,7 +20,10 @@ type Sample struct {
 type Store interface {
 	Insert(ctx context.Context, component string, cpu float64, mem, memLimit int64) error
 	Since(ctx context.Context, since time.Time) ([]Sample, error)
-	Latest(ctx context.Context) ([]Sample, error)
+	// Latest returns the most recent sample per component, considering only
+	// samples at or after `since` so components that stopped reporting (dead
+	// containers) drop out of the "current" snapshot.
+	Latest(ctx context.Context, since time.Time) ([]Sample, error)
 	Prune(ctx context.Context, before time.Time) error
 }
 
@@ -57,8 +60,8 @@ func (s *DBStore) Since(ctx context.Context, since time.Time) ([]Sample, error) 
 	return out, nil
 }
 
-func (s *DBStore) Latest(ctx context.Context) ([]Sample, error) {
-	rows, err := s.q.LatestMetricSamples(ctx)
+func (s *DBStore) Latest(ctx context.Context, since time.Time) ([]Sample, error) {
+	rows, err := s.q.LatestMetricSamples(ctx, since)
 	if err != nil {
 		return nil, err
 	}
