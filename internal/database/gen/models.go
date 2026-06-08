@@ -105,6 +105,15 @@ type Member struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type MetricSample struct {
+	ID            int64     `json:"id"`
+	Ts            time.Time `json:"ts"`
+	Component     string    `json:"component"`
+	CpuPct        float32   `json:"cpu_pct"`
+	MemBytes      int64     `json:"mem_bytes"`
+	MemLimitBytes int64     `json:"mem_limit_bytes"`
+}
+
 type NotificationChannel struct {
 	ID           int64     `json:"id"`
 	OrgID        int64     `json:"org_id"`

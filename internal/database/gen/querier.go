@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 type Querier interface {
@@ -75,6 +76,8 @@ type Querier interface {
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
+	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
+	LatestMetricSamples(ctx context.Context) ([]LatestMetricSamplesRow, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error)
@@ -93,6 +96,8 @@ type Querier interface {
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
+	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
+	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
