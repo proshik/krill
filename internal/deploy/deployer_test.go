@@ -69,6 +69,12 @@ func (m *mockEngine) ExecInteractive(context.Context, string, []string) (docker.
 	return nil, errors.New("exec not supported")
 }
 func (m *mockEngine) RegistryCheck(context.Context, string, string, string) error { return nil }
+func (m *mockEngine) ListContainerStats(context.Context) ([]docker.ContainerStat, error) {
+	return nil, nil
+}
+func (m *mockEngine) NodeInfo(context.Context) (docker.NodeInfo, error) {
+	return docker.NodeInfo{}, nil
+}
 
 type mockBuilder struct {
 	mu     sync.Mutex

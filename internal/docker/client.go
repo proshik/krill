@@ -3,8 +3,10 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -354,4 +356,79 @@ func (e *dockerEngine) ServiceRestart(ctx context.Context, name string) error {
 	}
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
+}
+
+// cpuPercent computes docker-style %CPU (0..onlineCPUs*100).
+func cpuPercent(cpuDelta, systemDelta uint64, onlineCPUs uint32) float64 {
+	if cpuDelta == 0 || systemDelta == 0 {
+		return 0
+	}
+	if onlineCPUs == 0 {
+		onlineCPUs = 1
+	}
+	return (float64(cpuDelta) / float64(systemDelta)) * float64(onlineCPUs) * 100.0
+}
+
+// workingSet approximates the "working set" memory like `docker stats` does:
+// usage minus the page cache (cgroup v2 reports it as inactive_file, v1 as
+// total_inactive_file). Avoids the inflated raw Usage figure.
+func workingSet(m container.MemoryStats) uint64 {
+	cache := m.Stats["inactive_file"]
+	if cache == 0 {
+		cache = m.Stats["total_inactive_file"]
+	}
+	if cache > 0 && cache <= m.Usage {
+		return m.Usage - cache
+	}
+	return m.Usage
+}
+
+func (e *dockerEngine) NodeInfo(ctx context.Context) (NodeInfo, error) {
+	info, err := e.cli.Info(ctx)
+	if err != nil {
+		return NodeInfo{}, err
+	}
+	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
+}
+
+func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
+	hostname, _ := os.Hostname() // in a container this is the short container id
+	ctrs, err := e.cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ContainerStat, 0, len(ctrs))
+	for _, c := range ctrs {
+		resp, serr := e.cli.ContainerStatsOneShot(ctx, c.ID)
+		if serr != nil {
+			continue
+		}
+		var s container.StatsResponse
+		derr := json.NewDecoder(resp.Body).Decode(&s)
+		resp.Body.Close()
+		if derr != nil {
+			continue
+		}
+		online := s.CPUStats.OnlineCPUs
+		if online == 0 {
+			online = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
+		}
+		cpu := cpuPercent(
+			s.CPUStats.CPUUsage.TotalUsage-s.PreCPUStats.CPUUsage.TotalUsage,
+			s.CPUStats.SystemUsage-s.PreCPUStats.SystemUsage,
+			online,
+		)
+		comp := c.Labels["com.docker.swarm.service.name"]
+		if comp == "" && len(c.Names) > 0 {
+			comp = strings.TrimPrefix(c.Names[0], "/")
+		}
+		out = append(out, ContainerStat{
+			Component:     comp,
+			CPUPct:        cpu,
+			MemBytes:      int64(workingSet(s.MemoryStats)),
+			MemLimitBytes: int64(s.MemoryStats.Limit),
+			SelfControl:   hostname != "" && strings.HasPrefix(c.ID, hostname),
+		})
+	}
+	return out, nil
 }

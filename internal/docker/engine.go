@@ -71,6 +71,21 @@ type ServiceState struct {
 	Failed  int // tasks (desired=running) currently failed/rejected — crash-loop signal
 }
 
+// ContainerStat is a one-shot CPU/memory sample for a running container.
+type ContainerStat struct {
+	Component     string  // swarm service name (label) or container name
+	CPUPct        float64 // % of total host CPU capacity (0..NCPU*100)
+	MemBytes      int64
+	MemLimitBytes int64 // raw cgroup limit (== host total when unconstrained)
+	SelfControl   bool  // true for Krill's own container
+}
+
+// NodeInfo is host-level capacity.
+type NodeInfo struct {
+	MemTotal int64
+	NCPU     int
+}
+
 // Engine — a narrow, mockable interface to Docker/Swarm.
 type Engine interface {
 	NetworkEnsure(ctx context.Context, name string) error
@@ -87,6 +102,8 @@ type Engine interface {
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 	ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error)
 	RegistryCheck(ctx context.Context, serverAddr, username, password string) error
+	ListContainerStats(ctx context.Context) ([]ContainerStat, error)
+	NodeInfo(ctx context.Context) (NodeInfo, error)
 }
 
 // ServiceName builds the Swarm service name for an application from its id.

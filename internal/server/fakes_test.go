@@ -52,6 +52,10 @@ func (noopEngine) ExecInteractive(context.Context, string, []string) (docker.Exe
 	return nil, errors.New("exec not supported")
 }
 func (noopEngine) RegistryCheck(context.Context, string, string, string) error { return nil }
+func (noopEngine) ListContainerStats(context.Context) ([]docker.ContainerStat, error) {
+	return nil, nil
+}
+func (noopEngine) NodeInfo(context.Context) (docker.NodeInfo, error) { return docker.NodeInfo{}, nil }
 
 type noopBuilder struct{}
 
