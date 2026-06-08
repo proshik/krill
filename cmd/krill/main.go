@@ -22,6 +22,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/secret"
@@ -140,6 +141,10 @@ func run() error {
 	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
 	go watcher.Run(ctx)
 
+	// Monitoring: sample container stats into Postgres for the Monitoring page.
+	metricsStore := metrics.NewDBStore(q)
+	go metrics.NewSampler(engine, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention).Run(ctx)
+
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
 		if err := backupSvc.RunBackup(ctx, id, time.Now()); err != nil {
 			slog.Error("scheduled backup failed", "backup", id, "err", err)
@@ -158,6 +163,7 @@ func run() error {
 		}
 	})
 	app.SetNotify(notifySvc)
+	app.SetMetrics(metricsStore)
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: app.Router(),
