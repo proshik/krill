@@ -58,6 +58,50 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Reusable templ components plus an i18n foundation (`i18n.T(ctx, "key")` with an English catalog).
 - Post-redirect-get flash toasts (success/error) on every form action, copy buttons, named destructive confirmations, button loading states, `hx-boost` navigation, and a blurred-backdrop org-switcher modal. Destinations and Registries live under a single sidebar **Settings** group.
 
+## Install on a server (VPS)
+
+On a fresh Linux VPS (amd64 or arm64), one line installs Krill as a host binary
+managed by systemd, alongside its own Postgres and an initialized Docker Swarm:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh | sudo sh
+```
+
+The installer is idempotent — **re-run it to upgrade** (it pulls the latest
+release binary and restarts the service; your Postgres and secrets are kept). It:
+
+1. installs Docker (via `get.docker.com`) if missing and initializes a single-node Swarm;
+2. runs a loopback-only `postgres:17-alpine` container for Krill's own state;
+3. downloads the `krill` binary from the latest GitHub Release (SHA-256 verified);
+4. writes `/etc/krill/krill.env` (generated admin password + encryption key, created once);
+5. installs and starts a `krill` systemd service;
+6. prints the admin URL and one-time login.
+
+Useful overrides (prefix the command): `KRILL_VERSION=v0.1.0` pins a release,
+`KRILL_DOMAIN=apps.example.com` sets the base domain, `KRILL_ACME_EMAIL=...` sets
+the Let's Encrypt contact, `KRILL_ADVERTISE_ADDR=...` overrides the Swarm address,
+`KRILL_BINARY=/path/to/krill` installs a binary already on the host (skips the
+download — handy when the repo/release is private; `scp` the binary up first).
+
+After it finishes: point an A record at the server, then set the base domain and
+put the admin UI behind HTTPS (set `KRILL_COOKIE_SECURE=true` in `/etc/krill/krill.env`
+and `systemctl restart krill`). Logs: `journalctl -u krill -f`.
+
+**Uninstall:**
+
+```sh
+systemctl disable --now krill
+rm -f /etc/systemd/system/krill.service /usr/local/bin/krill
+rm -rf /etc/krill
+docker rm -f krill-postgres && docker volume rm krill-pg-data   # destroys Krill's state
+```
+
+Prefer a container instead of the host binary? The multi-arch image is published
+at `ghcr.io/proshik/krill` (see [Docker & CI](#docker--ci)).
+
+See the [installer design spec](./docs/superpowers/specs/2026-06-09-krill-installer-design.md)
+for the full rationale.
+
 ## Architecture
 
 Krill is a single Go binary (the control plane) that drives a single-node Docker Swarm over the Docker API. It stores all of its own state in PostgreSQL and lets Traefik handle HTTP routing to deployed services.
