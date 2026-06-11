@@ -129,6 +129,58 @@ func (e *dockerEngine) ServiceState(ctx context.Context, name string) (ServiceSt
 	return ServiceState{Found: true, Running: running, Desired: desired, Failed: failed}, nil
 }
 
+func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude []string) (ServiceProgress, error) {
+	svc, found, err := e.findService(ctx, name)
+	if err != nil {
+		return ServiceProgress{}, err
+	}
+	if !found {
+		return ServiceProgress{Found: false}, nil
+	}
+	desired := 0
+	if r := svc.Spec.Mode.Replicated; r != nil && r.Replicas != nil {
+		desired = int(*r.Replicas)
+	}
+	updateState := ""
+	if svc.UpdateStatus != nil {
+		updateState = string(svc.UpdateStatus.State)
+	}
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(
+			filters.Arg("service", name),
+			filters.Arg("desired-state", "running"),
+		),
+	})
+	if err != nil {
+		return ServiceProgress{}, err
+	}
+	old := make(map[string]bool, len(exclude))
+	for _, id := range exclude {
+		old[id] = true
+	}
+	running, failed := 0, 0
+	ids := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		ids = append(ids, t.ID)
+		// Only tasks NOT in the pre-deploy baseline count: during a StartFirst
+		// rolling update the old task (same ID) stays desired-state=running until
+		// the new one is ready and must not satisfy convergence.
+		if old[t.ID] {
+			continue
+		}
+		switch t.Status.State {
+		case swarm.TaskStateRunning:
+			running++
+		case swarm.TaskStateFailed, swarm.TaskStateRejected:
+			failed++
+		}
+	}
+	return ServiceProgress{
+		Found: true, Desired: desired, Running: running, Failed: failed,
+		UpdateState: updateState, TaskIDs: ids,
+	}, nil
+}
+
 // ServiceStates returns the state of many services in ONE ServiceList + ONE
 // TaskList (instead of a call per service) — used to render status badges for a
 // page full of cards without N round-trips. Missing services are absent from

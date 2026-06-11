@@ -15,12 +15,14 @@ import (
 )
 
 type mockEngine struct {
-	mu             sync.Mutex
-	deployed       []docker.ServiceSpec
-	failNext       bool
-	neverConverge  bool
-	partialRunning bool
-	crashLooping   bool
+	mu               sync.Mutex
+	deployed         []docker.ServiceSpec
+	failNext         bool
+	neverConverge    bool
+	partialRunning   bool
+	crashLooping     bool
+	rollingBack      bool // swarm rolled the update back (FailureAction=Rollback)
+	updateInProgress bool // StartFirst update: only the OLD task is running
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
@@ -46,6 +48,28 @@ func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState,
 	}
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
+// ServiceProgress mirrors ServiceState but in baseline-relative terms: Running
+// counts only NEW (non-baseline) tasks. updateInProgress models the situation
+// the convergence fix targets — the old StartFirst task still running while
+// the new one starts (ServiceState would report Running=1 here).
+func (m *mockEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch {
+	case m.rollingBack:
+		return docker.ServiceProgress{Found: true, Desired: 1, Running: 0, UpdateState: "rollback_started", TaskIDs: []string{"t-old"}}, nil
+	case m.updateInProgress:
+		return docker.ServiceProgress{Found: true, Desired: 1, Running: 0, UpdateState: "updating", TaskIDs: []string{"t-old"}}, nil
+	case m.crashLooping:
+		return docker.ServiceProgress{Found: true, Desired: 1, Running: 0, Failed: 5}, nil
+	case m.neverConverge:
+		return docker.ServiceProgress{Found: true, Desired: 1, Running: 0}, nil
+	case m.partialRunning:
+		return docker.ServiceProgress{Found: true, Desired: 2, Running: 1, TaskIDs: []string{"t-new"}}, nil
+	}
+	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t-new"}}, nil
+}
+
 func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
 	out := map[string]docker.ServiceState{}
 	for _, n := range names {
@@ -357,6 +381,49 @@ func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
 	waitFor(t, func() bool { return st.depStatus(id) == "done" })
 	if got := st.appStatus(1); got != StatusDeploying {
 		t.Errorf("app status = %q, want %q (slow start, not error)", got, StatusDeploying)
+	}
+}
+
+// A rolling update that swarm rolled back (FailureAction=Rollback) must be a
+// FAILED deploy — before the fix the old task satisfied Running>=Desired and
+// the rollback was reported as instant success.
+func TestDeployRollbackMarksError(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 2*time.Second, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{rollingBack: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	if got := st.appStatus(1); got != StatusError {
+		t.Errorf("app status = %q, want error (update rolled back)", got)
+	}
+}
+
+// During a StartFirst rolling update only the OLD task is running until the
+// new one becomes ready. The deploy must NOT be declared converged on that old
+// task (the pre-fix behavior): it should land as "deploying" via the
+// still-starting path, never as an instant success.
+func TestDeployUpdateDoesNotConvergeOnOldTask(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{updateInProgress: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	if got := st.appStatus(1); got != StatusDeploying {
+		t.Errorf("app status = %q, want %q (update in flight must not read as converged)", got, StatusDeploying)
 	}
 }
 

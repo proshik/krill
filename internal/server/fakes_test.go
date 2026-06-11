@@ -30,6 +30,9 @@ func (noopEngine) ServiceRemove(context.Context, string) error          { return
 func (noopEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
+func (noopEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+	return docker.ServiceProgress{Found: true, Running: 1, Desired: 1}, nil
+}
 func (noopEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
 	m := map[string]docker.ServiceState{}
 	for _, n := range names {

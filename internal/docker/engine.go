@@ -71,6 +71,23 @@ type ServiceState struct {
 	Failed  int // tasks (desired=running) currently failed/rejected — crash-loop signal
 }
 
+// ServiceProgress is rolling-update progress relative to a baseline task set
+// captured before the deploy. Running/Failed count ONLY tasks whose ID is not
+// in the excluded baseline — during a StartFirst rolling update the OLD task
+// keeps running (same ID) until the new one is ready, so counting it (as
+// ServiceState does) would declare every redeploy converged instantly.
+// UpdateState surfaces swarm's rolling-update state ("", "updating",
+// "completed", "rollback_started", "rollback_completed", "paused") so the
+// deployer can detect a silent rollback-on-failure.
+type ServiceProgress struct {
+	Found       bool
+	Desired     int
+	Running     int      // non-excluded tasks currently running
+	Failed      int      // non-excluded tasks failed/rejected
+	UpdateState string   // swarm UpdateStatus.State; "" when never updated
+	TaskIDs     []string // IDs of the desired-state=running tasks seen (the baseline for the next deploy)
+}
+
 // ContainerStat is a one-shot CPU/memory sample for a running container.
 type ContainerStat struct {
 	Component     string  // swarm service name (label) or container name
@@ -93,6 +110,7 @@ type Engine interface {
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
 	ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error) // bulk: one API round-trip for many services
+	ServiceProgress(ctx context.Context, name string, exclude []string) (ServiceProgress, error) // deploy convergence relative to a pre-deploy baseline task set
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
 	ServiceRestart(ctx context.Context, name string) error // force-restart current tasks without rebuilding

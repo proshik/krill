@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,7 +204,14 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		fmt.Fprintf(out, "→ deploy image %s\n", imageTag)
 	}
 
+	// Baseline task set BEFORE the deploy: convergence below only counts tasks
+	// outside it, so the old StartFirst task of a rolling update can never
+	// satisfy it (it kept redeploys reporting instant false success).
+	var baseline []string
 	if err == nil {
+		if prev, perr := d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil); perr == nil && prev.Found {
+			baseline = prev.TaskIDs
+		}
 		err = d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 	}
 
@@ -225,9 +233,17 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	}
 	cctx, ccancel := context.WithTimeout(ctx, timeout)
 	defer ccancel()
-	converged, crashed := false, false
+	converged, crashed, rolledBack := false, false, false
 	for {
-		st, serr := d.engine.ServiceState(cctx, docker.ServiceName(app.ID))
+		st, serr := d.engine.ServiceProgress(cctx, docker.ServiceName(app.ID), baseline)
+		// Swarm rolled the update back (FailureAction=Rollback): the new version
+		// failed and the old one is being restored — that is a failed deploy, and
+		// it must be checked first (the restored old-image task is "new" relative
+		// to the baseline and would otherwise read as converged).
+		if serr == nil && st.Found && strings.HasPrefix(st.UpdateState, "rollback") {
+			rolledBack = true
+			break
+		}
 		if serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired {
 			converged = true
 			break
@@ -250,6 +266,11 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 		return
 	}
+	if rolledBack {
+		fmt.Fprintf(out, "❌ rolling update failed — swarm rolled back to the previous version\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "update rolled back")
+		return
+	}
 	if crashed {
 		fmt.Fprintf(out, "❌ service is crash-looping (tasks keep failing) — check the image, command and env\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
@@ -264,16 +285,21 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		return
 	}
 	fctx, fcancel := context.WithTimeout(context.Background(), 5*time.Second)
-	st, serr := d.engine.ServiceState(fctx, docker.ServiceName(app.ID))
+	st, serr := d.engine.ServiceProgress(fctx, docker.ServiceName(app.ID), baseline)
 	fcancel()
 	switch {
+	case serr == nil && st.Found && strings.HasPrefix(st.UpdateState, "rollback"):
+		fmt.Fprintf(out, "❌ rolling update failed — swarm rolled back to the previous version\n")
+		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "update rolled back")
 	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired:
 		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
 		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 	case serr == nil && st.Found && st.Failed > 0 && st.Running < st.Desired:
 		fmt.Fprintf(out, "❌ service has failed tasks (crash-looping) — check the image, command and env\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
-	case serr == nil && st.Found && st.Running > 0:
+	case serr == nil && st.Found && (st.Running > 0 || st.UpdateState == "updating"):
+		// A new task exists but is not ready yet, or the rolling update is still
+		// in flight — leave the app "deploying"; the live poll reconciles it.
 		fmt.Fprintf(out, "⚠ service still starting after %s — continuing in the background\n", timeout)
 		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")
 	default:
