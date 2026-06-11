@@ -81,7 +81,9 @@ Useful overrides (prefix the command): `KRILL_VERSION=v0.1.0` pins a release,
 `KRILL_DOMAIN=apps.example.com` sets the base domain, `KRILL_ACME_EMAIL=...` sets
 the Let's Encrypt contact, `KRILL_ADVERTISE_ADDR=...` overrides the Swarm address,
 `KRILL_BINARY=/path/to/krill` installs a binary already on the host (skips the
-download — handy when the repo/release is private; `scp` the binary up first).
+download — handy when the repo/release is private; `scp` the binary up first),
+`KRILL_SKIP_VERIFY=1` allows installing a downloaded binary when the release has
+no `checksums.txt` (by default the installer refuses — fail closed).
 
 After it finishes: point an A record at the server, then set the base domain and
 put the admin UI behind HTTPS (set `KRILL_COOKIE_SECURE=true` in `/etc/krill/krill.env`

@@ -20,6 +20,8 @@
 #   KRILL_VERSION         release tag to install, e.g. v0.1.0 (default latest)
 #   KRILL_BINARY          path to a krill binary already on the host (skips the
 #                         download — useful when the repo/release is private)
+#   KRILL_SKIP_VERIFY     "1" installs a downloaded binary even when the release
+#                         has no checksums.txt (default: refuse — fail closed)
 #   KRILL_DOMAIN          base domain (sets KRILL_BASE_DOMAIN)
 #   KRILL_ACME_EMAIL      Let's Encrypt contact email
 #   KRILL_ADVERTISE_ADDR  Swarm advertise address (default: auto-detected IP)
@@ -176,21 +178,24 @@ else
 	info "Downloading $ASSET ($KRILL_VERSION) ..."
 	curl -fsSL "$BASE_URL/$ASSET" -o "$TMP/krill" || die "failed to download $ASSET"
 
-	if curl -fsSL "$BASE_URL/checksums.txt" -o "$TMP/checksums.txt" 2>/dev/null; then
-		want="$(awk -v a="$ASSET" '$2==a {print $1}' "$TMP/checksums.txt")"
-		if [ -n "$want" ]; then
-			if need_cmd sha256sum; then
-				got="$(sha256sum "$TMP/krill" | awk '{print $1}')"
-			else
-				got="$(shasum -a 256 "$TMP/krill" | awk '{print $1}')"
-			fi
-			[ "$want" = "$got" ] || die "checksum mismatch for $ASSET (expected $want, got $got)"
-			info "Checksum verified."
-		else
-			warn "checksums.txt has no entry for $ASSET — skipping verification"
-		fi
+	# Fail CLOSED: this binary runs as root with the Docker socket. A missing
+	# checksums.txt or entry means something is off in the supply chain — the
+	# one moment verification must block, not warn. KRILL_SKIP_VERIFY=1 is the
+	# deliberate escape hatch for forks/private setups without checksums.
+	if [ "${KRILL_SKIP_VERIFY:-}" = "1" ]; then
+		warn "KRILL_SKIP_VERIFY=1 — installing WITHOUT checksum verification"
 	else
-		warn "checksums.txt not found in release — skipping verification"
+		curl -fsSL "$BASE_URL/checksums.txt" -o "$TMP/checksums.txt" 2>/dev/null ||
+			die "checksums.txt not found in the release — refusing to install an unverified binary (set KRILL_SKIP_VERIFY=1 to override)"
+		want="$(awk -v a="$ASSET" '$2==a {print $1}' "$TMP/checksums.txt")"
+		[ -n "$want" ] || die "checksums.txt has no entry for $ASSET — refusing to install an unverified binary (set KRILL_SKIP_VERIFY=1 to override)"
+		if need_cmd sha256sum; then
+			got="$(sha256sum "$TMP/krill" | awk '{print $1}')"
+		else
+			got="$(shasum -a 256 "$TMP/krill" | awk '{print $1}')"
+		fi
+		[ "$want" = "$got" ] || die "checksum mismatch for $ASSET (expected $want, got $got)"
+		info "Checksum verified."
 	fi
 
 	install -m 0755 "$TMP/krill" "$BIN_PATH"
