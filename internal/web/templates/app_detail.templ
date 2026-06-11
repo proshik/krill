@@ -32,7 +32,9 @@ templ AppDetail(c AppCtx, tab string) {
 		<div class="k-frame">
 			<div class="k-panel flex items-center flex-wrap mb-2 py-2 px-4">
 			<a href={ templ.SafeURL(c.base()) } class={ "k-tab", templ.KV("k-tab-active", tab == "general") }>{ i18n.T(ctx, "tab.general") }</a>
-			<a href={ templ.SafeURL(c.base() + "?tab=env") } class={ "k-tab", templ.KV("k-tab-active", tab == "env") }>{ i18n.T(ctx, "tab.environment") }</a>
+			if c.Role == "owner" || c.Role == "admin" {
+				<a href={ templ.SafeURL(c.base() + "?tab=env") } class={ "k-tab", templ.KV("k-tab-active", tab == "env") }>{ i18n.T(ctx, "tab.environment") }</a>
+			}
 			<a href={ templ.SafeURL(c.base() + "?tab=deployments") } class={ "k-tab", templ.KV("k-tab-active", tab == "deployments") }>{ i18n.T(ctx, "tab.deployments") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ "k-tab", templ.KV("k-tab-active", tab == "logs") }>{ i18n.T(ctx, "tab.logs") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>

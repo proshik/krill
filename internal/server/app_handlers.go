@@ -163,6 +163,12 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "terminal" {
 		tab = "general"
 	}
+	// Env values are secrets. Members are read-only viewers and must never see
+	// them (mirrors the admin-only DB connection-string display), so the env tab
+	// silently falls back to General for non-admins.
+	if tab == "env" && c.Role != "owner" && c.Role != "admin" {
+		tab = "general"
+	}
 	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list registries", "err", err, "org_id", c.Org.ID)
 	} else {

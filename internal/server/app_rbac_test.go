@@ -3,7 +3,9 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -86,6 +88,64 @@ func TestMemberCannotMutateApp(t *testing.T) {
 		if rec.Code == http.StatusForbidden {
 			t.Errorf("owner POST %s must NOT be 403 (RBAC should allow), got 403", suffix)
 		}
+	}
+}
+
+// TestMemberCannotSeeEnvValues locks in the Critical fix that app env values
+// (secrets) are never rendered for read-only members: the env tab silently
+// falls back to General for non-admins, and the tab link is hidden. Owners
+// still see the values.
+func TestMemberCannotSeeEnvValues(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "envsec-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "envsec.example.com", Port: 80, SourceType: "image",
+		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) +
+		"/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
+
+	// Owner stores a secret env value.
+	const secret = "s3cr3t-value-xyz"
+	ownerCookie := loginAs(t, q, "envsec-owner@k.local")
+	if rec := postForm(t, h, base+"/env", ownerCookie, url.Values{"env": {"SECRET_TOKEN=" + secret}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("owner saveEnv want 303, got %d", rec.Code)
+	}
+
+	memberID := mkUser(t, q, "envsec-member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	memberCookie := loginAs(t, q, "envsec-member@k.local")
+
+	get := func(cookie *http.Cookie) string {
+		req := httptest.NewRequest(http.MethodGet, base+"/?tab=env", nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET ?tab=env want 200, got %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(memberCookie); strings.Contains(body, secret) {
+		t.Errorf("member must NOT see env values, but the secret is in the response")
+	} else if strings.Contains(body, "env-textarea") {
+		t.Errorf("member must NOT get the env editor (tab should fall back to General)")
+	}
+	if body := get(ownerCookie); !strings.Contains(body, secret) {
+		t.Errorf("owner must still see env values on the env tab")
 	}
 }
 
