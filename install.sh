@@ -7,9 +7,11 @@
 #   1. Verify root + Linux + a supported CPU arch (amd64/arm64).
 #   2. Install Docker (official convenience script) if missing.
 #   3. Initialize a single-node Docker Swarm if not already a manager.
-#   4. Run a loopback-only Postgres container for Krill's own state.
-#   5. Download the krill binary from the GitHub Release (checksum-verified).
-#   6. Generate /etc/krill/krill.env (secrets created once, preserved on re-run).
+#   4. Generate /etc/krill/krill.env (secrets created once, preserved on re-run;
+#      written BEFORE Postgres so the password can never desync from the volume).
+#   5. Run a loopback-only Postgres container for Krill's own state (and verify
+#      the configured password actually opens it).
+#   6. Download the krill binary from the GitHub Release (checksum-verified).
 #   7. Install + start a systemd service.
 #   8. Print the admin URL and one-time credentials.
 #
@@ -89,16 +91,40 @@ else
 	docker swarm init --advertise-addr "$ADVERTISE" >/dev/null || die "swarm init failed"
 fi
 
-# --- 4. State Postgres -------------------------------------------------------
-# The password lives in krill.env; on a fresh install we generate it, on upgrade
-# we reuse what's already configured so the existing volume stays usable.
+# --- 4. Config ---------------------------------------------------------------
+# Written BEFORE Postgres initializes its data volume: the password persisted in
+# krill.env and the password baked into krill-pg-data can then never diverge,
+# even if a fresh install dies halfway and is re-run (the env file doubles as
+# the upgrade marker, so the re-run reuses the same secrets).
+mkdir -p /etc/krill
 if [ "$UPGRADE" = "yes" ]; then
+	info "Keeping existing $ENV_FILE (secrets unchanged)."
+	ADMIN_EMAIL="$(sed -n 's#^KRILL_ADMIN_EMAIL=##p' "$ENV_FILE")"
 	PG_PW="$(sed -n 's#^KRILL_DATABASE_URL=postgres://krill:\([^@]*\)@.*#\1#p' "$ENV_FILE")"
 	[ -n "$PG_PW" ] || die "could not read existing Postgres password from $ENV_FILE"
 else
 	PG_PW="$(rand_hex 16)"
+	ADMIN_EMAIL="admin@krill.local"
+	[ -n "${KRILL_DOMAIN:-}" ] && ADMIN_EMAIL="admin@${KRILL_DOMAIN}"
+	ADMIN_PW="$(rand_hex 12)"
+	SECRET_KEY="$(rand_hex 32)"
+	umask 077
+	{
+		echo "KRILL_DATABASE_URL=postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
+		echo "KRILL_ADMIN_EMAIL=${ADMIN_EMAIL}"
+		echo "KRILL_ADMIN_PASSWORD=${ADMIN_PW}"
+		echo "KRILL_SECRET_KEY=${SECRET_KEY}"
+		[ -n "${KRILL_DOMAIN:-}" ] && echo "KRILL_BASE_DOMAIN=${KRILL_DOMAIN}"
+		[ -n "${KRILL_ACME_EMAIL:-}" ] && echo "KRILL_ACME_EMAIL=${KRILL_ACME_EMAIL}"
+		echo "KRILL_LISTEN_ADDR=:8080"
+		# First boot is over plain http://<ip>:8080; secure cookies would not be
+		# sent over HTTP and would break login. Flip to true once behind HTTPS.
+		echo "KRILL_COOKIE_SECURE=false"
+	} >"$ENV_FILE"
+	chmod 0600 "$ENV_FILE"
 fi
 
+# --- 5. State Postgres -------------------------------------------------------
 if [ "$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER" 2>/dev/null)" = "true" ]; then
 	info "Postgres container '$PG_CONTAINER' already running."
 else
@@ -119,7 +145,19 @@ until docker exec "$PG_CONTAINER" pg_isready -U krill -q >/dev/null 2>&1; do
 	sleep 1
 done
 
-# --- 5. Binary ---------------------------------------------------------------
+# Verify the configured password actually opens the database (over TCP — local
+# socket auth is trust, so it would not test the password). A krill-pg-data
+# volume initialized by an older failed run can hold a different password;
+# failing loud here beats letting the krill service crash-loop on auth errors.
+if ! docker exec -e PGPASSWORD="$PG_PW" "$PG_CONTAINER" \
+	psql -h 127.0.0.1 -U krill -d krill -qAtc 'select 1' >/dev/null 2>&1; then
+	die "Postgres rejected the password from $ENV_FILE — the krill-pg-data volume was initialized with a different password.
+Either restore the original $ENV_FILE, or reset the state DB (DESTROYS krill's own data):
+  docker rm -f $PG_CONTAINER && docker volume rm krill-pg-data
+then re-run this installer."
+fi
+
+# --- 6. Binary ---------------------------------------------------------------
 if [ -n "${KRILL_BINARY:-}" ]; then
 	# Use a binary already present on this host (e.g. scp'd in) — skip download.
 	[ -f "$KRILL_BINARY" ] || die "KRILL_BINARY=$KRILL_BINARY not found"
@@ -156,32 +194,6 @@ else
 	fi
 
 	install -m 0755 "$TMP/krill" "$BIN_PATH"
-fi
-
-# --- 6. Config ---------------------------------------------------------------
-mkdir -p /etc/krill
-if [ "$UPGRADE" = "yes" ]; then
-	info "Keeping existing $ENV_FILE (secrets unchanged)."
-	ADMIN_EMAIL="$(sed -n 's#^KRILL_ADMIN_EMAIL=##p' "$ENV_FILE")"
-else
-	ADMIN_EMAIL="admin@krill.local"
-	[ -n "${KRILL_DOMAIN:-}" ] && ADMIN_EMAIL="admin@${KRILL_DOMAIN}"
-	ADMIN_PW="$(rand_hex 12)"
-	SECRET_KEY="$(rand_hex 32)"
-	umask 077
-	{
-		echo "KRILL_DATABASE_URL=postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
-		echo "KRILL_ADMIN_EMAIL=${ADMIN_EMAIL}"
-		echo "KRILL_ADMIN_PASSWORD=${ADMIN_PW}"
-		echo "KRILL_SECRET_KEY=${SECRET_KEY}"
-		[ -n "${KRILL_DOMAIN:-}" ] && echo "KRILL_BASE_DOMAIN=${KRILL_DOMAIN}"
-		[ -n "${KRILL_ACME_EMAIL:-}" ] && echo "KRILL_ACME_EMAIL=${KRILL_ACME_EMAIL}"
-		echo "KRILL_LISTEN_ADDR=:8080"
-		# First boot is over plain http://<ip>:8080; secure cookies would not be
-		# sent over HTTP and would break login. Flip to true once behind HTTPS.
-		echo "KRILL_COOKIE_SECURE=false"
-	} >"$ENV_FILE"
-	chmod 0600 "$ENV_FILE"
 fi
 
 # --- 7. systemd unit ---------------------------------------------------------
