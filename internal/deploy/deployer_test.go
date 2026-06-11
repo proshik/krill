@@ -384,6 +384,33 @@ func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
 	}
 }
 
+// A full queue must reject the deployment immediately (deployment row marked
+// error) instead of blocking the calling HTTP handler goroutine for hours.
+func TestEnqueueQueueFullRejectsImmediately(t *testing.T) {
+	eng := &mockEngine{}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	// No Start(): nothing drains the queue, so it fills at its capacity.
+
+	var lastID int64
+	for i := 0; i < cap(d.queue); i++ {
+		if lastID = d.Enqueue(1, "manual"); lastID == 0 {
+			t.Fatalf("enqueue %d rejected before the queue was full", i)
+		}
+	}
+
+	done := make(chan int64, 1)
+	go func() { done <- d.Enqueue(1, "manual") }()
+	select {
+	case got := <-done:
+		if got != 0 {
+			t.Fatalf("over-capacity enqueue returned %d, want 0 (rejected)", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("over-capacity enqueue blocked — must reject immediately")
+	}
+}
+
 // A rolling update that swarm rolled back (FailureAction=Rollback) must be a
 // FAILED deploy — before the fix the old task satisfied Running>=Desired and
 // the rollback was reported as instant success.

@@ -90,9 +90,10 @@ func pumpTerminal(ctx context.Context, ws wsConn, sess docker.ExecSession, idle 
 				case <-ctx.Done():
 					return
 				case <-activity:
-					if !t.Stop() {
-						<-t.C
-					}
+					// Go 1.23+ timer semantics: Reset may be called without
+					// Stop/drain, and the old `if !t.Stop() { <-t.C }` idiom
+					// DEADLOCKS — after Stop returns false the channel is
+					// guaranteed to never deliver the fired value.
 					t.Reset(idle)
 				case <-t.C:
 					shutdown(websocket.StatusPolicyViolation, "idle timeout")

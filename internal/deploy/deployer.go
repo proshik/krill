@@ -165,6 +165,17 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 		// Leave the app deploying (not error) on shutdown — it never ran; the
 		// live status poll reconciles after restart.
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
+	default:
+		// Queue full (a full queue is hours of backlog with one worker): fail the
+		// deployment immediately instead of blocking the HTTP handler goroutine
+		// until a slot frees up.
+		slog.Warn("deploy queue full, rejecting deployment", "app", appID, "deploy", deployID)
+		d.hub.Close(deployID)
+		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "deploy queue full, try again later", "")
+		_ = d.store.SetStatus(wctx, appID, StatusError)
+		return 0
 	}
 	return deployID
 }

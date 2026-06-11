@@ -272,7 +272,11 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.deployer.Enqueue(c.App.ID, "manual")
+	if s.deployer.Enqueue(c.App.ID, "manual") == 0 {
+		logFrom(r).Error("deployApp: deployment not accepted (queue full or shutting down)", "app_id", c.App.ID)
+		s.flashErr(w, r, "could not queue the deployment — try again later")
+		return
+	}
 	logFrom(r).Info("deploy enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
 	s.setFlash(w, "ok", "Deployment queued")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
@@ -285,7 +289,11 @@ func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.deployer.EnqueueRebuild(c.App.ID, "manual")
+	if s.deployer.EnqueueRebuild(c.App.ID, "manual") == 0 {
+		logFrom(r).Error("rebuildApp: rebuild not accepted (queue full or shutting down)", "app_id", c.App.ID)
+		s.flashErr(w, r, "could not queue the rebuild — try again later")
+		return
+	}
 	logFrom(r).Info("rebuild enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
 	s.setFlash(w, "ok", "Rebuild queued (no cache)")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
