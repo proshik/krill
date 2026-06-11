@@ -92,14 +92,19 @@ func (w *hubWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// maxSubsPerFeed caps live subscribers on a single deployment's log feed so a
+// member cannot pin unbounded goroutines + 256-slot channels by opening many
+// sockets to the same feed.
+const maxSubsPerFeed = 16
+
 // Subscribe subscribes; immediately receives the accumulated buffer as the first message.
 func (h *DeployLogHub) Subscribe(deployID int64) chan string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ch := make(chan string, 256)
 	f := h.feeds[deployID]
-	if f == nil {
-		close(ch) // deployment not in progress
+	if f == nil || len(f.subs) >= maxSubsPerFeed {
+		close(ch) // not in progress, or this feed already has too many subscribers
 		return ch
 	}
 	if f.hasContent() {

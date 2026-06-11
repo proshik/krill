@@ -69,7 +69,13 @@ func pumpTerminal(ctx context.Context, ws wsConn, sess docker.ExecSession, idle 
 			n, err := sess.Read(buf)
 			if n > 0 {
 				bump()
-				if werr := ws.Write(ctx, websocket.MessageBinary, buf[:n]); werr != nil {
+				// Bound the write like the other WS handlers: a client that stops
+				// reading (full kernel buffers) must not pin the exec session
+				// indefinitely waiting on ws.Write.
+				wctx, wcancel := context.WithTimeout(ctx, 30*time.Second)
+				werr := ws.Write(wctx, websocket.MessageBinary, buf[:n])
+				wcancel()
+				if werr != nil {
 					shutdown(websocket.StatusInternalError, "write failed")
 					return
 				}

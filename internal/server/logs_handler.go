@@ -12,6 +12,12 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	release, ok := s.acquireLogSlot()
+	if !ok {
+		http.Error(w, "too many live log streams, try again shortly", http.StatusServiceUnavailable)
+		return
+	}
+	defer release()
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Info("appLogs: websocket accept failed", "err", err, "app_id", c.App.ID)

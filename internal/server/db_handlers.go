@@ -226,11 +226,19 @@ func (s *Server) databaseStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	var status, appName string
 	if eng == "postgres" {
-		pg, _ := s.q.GetPostgres(r.Context(), id)
+		pg, err := s.q.GetPostgres(r.Context(), id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		status = pg.Status
 		appName = pg.AppName
 	} else {
-		rd, _ := s.q.GetRedis(r.Context(), id)
+		rd, err := s.q.GetRedis(r.Context(), id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		status = rd.Status
 		appName = rd.AppName
 	}
@@ -258,12 +266,26 @@ func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	var appName string
 	if eng == "postgres" {
-		pg, _ := s.q.GetPostgres(r.Context(), id)
+		pg, err := s.q.GetPostgres(r.Context(), id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		appName = pg.AppName
 	} else {
-		rd, _ := s.q.GetRedis(r.Context(), id)
+		rd, err := s.q.GetRedis(r.Context(), id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 		appName = rd.AppName
 	}
+	release, ok := s.acquireLogSlot()
+	if !ok {
+		http.Error(w, "too many live log streams, try again shortly", http.StatusServiceUnavailable)
+		return
+	}
+	defer release()
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		logFrom(r).Error("databaseLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)

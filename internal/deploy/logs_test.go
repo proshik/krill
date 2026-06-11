@@ -7,6 +7,29 @@ import (
 	"time"
 )
 
+// TestSubscribeCapsPerFeed verifies a single feed rejects subscribers past the
+// cap (returning an already-closed channel) so one member cannot pin unbounded
+// goroutines/channels on one deployment's logs.
+func TestSubscribeCapsPerFeed(t *testing.T) {
+	h := NewLogHub()
+	h.Open(1)
+	for i := 0; i < maxSubsPerFeed; i++ {
+		ch := h.Subscribe(1)
+		select {
+		case _, open := <-ch:
+			if !open {
+				t.Fatalf("subscriber %d got a closed channel before the cap", i)
+			}
+		default: // empty but open — fine
+		}
+	}
+	// The next subscribe is over the cap → closed channel.
+	over := h.Subscribe(1)
+	if _, open := <-over; open {
+		t.Fatal("subscriber past the cap must receive a closed channel")
+	}
+}
+
 func TestLogHubBufferThenLive(t *testing.T) {
 	h := NewLogHub()
 	h.Open(1)

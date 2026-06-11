@@ -48,7 +48,15 @@ type Server struct {
 	// polls don't re-scan thousands of rows from Postgres each time.
 	monMu    sync.Mutex
 	monCache map[string]monCacheEntry
+
+	// logSem caps concurrent live log-follow WebSockets (each opens a dockerd
+	// follow stream + goroutines). A buffered channel used as a counting
+	// semaphore so one member can't exhaust the daemon by opening thousands.
+	logSem chan struct{}
 }
+
+// maxLiveLogStreams bounds concurrent docker log-follow WebSockets host-wide.
+const maxLiveLogStreams = 24
 
 type monCacheEntry struct {
 	data []byte
@@ -56,7 +64,22 @@ type monCacheEntry struct {
 }
 
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
-	return &Server{cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc}
+	return &Server{
+		cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc,
+		logSem: make(chan struct{}, maxLiveLogStreams),
+	}
+}
+
+// acquireLogSlot reserves a live-log-stream slot without blocking. The returned
+// release func must be called when the stream ends; ok is false when the cap is
+// reached (the caller should reject the connection).
+func (s *Server) acquireLogSlot() (release func(), ok bool) {
+	select {
+	case s.logSem <- struct{}{}:
+		return func() { <-s.logSem }, true
+	default:
+		return func() {}, false
+	}
 }
 
 // SetBackups wires the backup service and a reload hook (re-reads the cron
