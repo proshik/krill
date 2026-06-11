@@ -384,6 +384,35 @@ func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
 	}
 }
 
+// Stop must (a) cancel the in-flight job's context so shutdown doesn't hang for
+// the full job timeout, and (b) drain queued-but-unstarted jobs, failing their
+// deployment rows instead of orphaning them as 'running' forever.
+func TestStopCancelsInflightAndDrainsQueue(t *testing.T) {
+	bb := &blockingBuilder{started: make(chan struct{})}
+	st := newFakeStore(dockerfileApp())
+	d := newDeployer(&mockEngine{}, bb, st)
+	d.Start(context.Background())
+
+	id1 := d.Enqueue(2, "manual") // becomes in-flight, blocks in Build
+	<-bb.started
+	id2 := d.Enqueue(2, "manual") // sits in the queue behind id1
+
+	done := make(chan struct{})
+	go func() { d.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop hung — in-flight job context was not canceled")
+	}
+
+	if got := st.depStatus(id1); got != "error" {
+		t.Errorf("in-flight deployment %d status = %q, want error", id1, got)
+	}
+	if got := st.depStatus(id2); got != "error" {
+		t.Errorf("queued deployment %d status = %q, want error (must be drained, not orphaned)", id2, got)
+	}
+}
+
 // A full queue must reject the deployment immediately (deployment row marked
 // error) instead of blocking the calling HTTP handler goroutine for hours.
 func TestEnqueueQueueFullRejectsImmediately(t *testing.T) {

@@ -66,6 +66,7 @@ func SetConvergeTimeout(d time.Duration) {
 // job is one queued unit of work: a deployment plus build options.
 type job struct {
 	deployID int64
+	appID    int64
 	noCache  bool // force docker build --no-cache (Rebuild)
 }
 
@@ -83,13 +84,11 @@ type Deployer struct {
 	hub      *DeployLogHub
 	network  string
 	notifier Notifier
-	queue    chan job
-	done     chan struct{}
-	stopOnce sync.Once
-	wg       sync.WaitGroup
-
-	mu        sync.Mutex
-	cancelJob context.CancelFunc
+	queue     chan job
+	done      chan struct{}
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
+	runCancel context.CancelFunc // cancels the in-flight job's context on Stop
 }
 
 func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub, network string) *Deployer {
@@ -108,26 +107,57 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 func (d *Deployer) SetNotifier(n Notifier) { d.notifier = n }
 
 func (d *Deployer) Start(ctx context.Context) {
+	// runCtx is canceled by Stop so the in-flight job's context unblocks instead
+	// of running to its full timeout during graceful shutdown.
+	runCtx, runCancel := context.WithCancel(ctx)
+	d.runCancel = runCancel
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
 		for {
 			select {
 			case <-d.done:
+				d.drainQueue()
 				return
 			case j := <-d.queue:
-				jobCtx, cancel := context.WithTimeout(ctx, jobTimeout)
-				d.mu.Lock()
-				d.cancelJob = cancel
-				d.mu.Unlock()
+				// select picks randomly when both channels are ready, so a job can
+				// be dequeued exactly as we stop — re-check before running it.
+				select {
+				case <-d.done:
+					d.failQueued(j, "server shutting down")
+					d.drainQueue()
+					return
+				default:
+				}
+				jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
 				d.run(jobCtx, j.deployID, j.noCache)
 				cancel()
-				d.mu.Lock()
-				d.cancelJob = nil
-				d.mu.Unlock()
 			}
 		}
 	}()
+}
+
+// drainQueue fails every job still sitting in the queue at shutdown so its
+// deployment row isn't orphaned as 'running' forever.
+func (d *Deployer) drainQueue() {
+	for {
+		select {
+		case j := <-d.queue:
+			d.failQueued(j, "server shutting down")
+		default:
+			return
+		}
+	}
+}
+
+// failQueued marks a never-run queued job's deployment failed (detached ctx) and
+// closes its log feed. App status is left "deploying" — the live status poll
+// reconciles it after restart, matching enqueue's shutdown branch.
+func (d *Deployer) failQueued(j job, reason string) {
+	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = d.store.FinishDeployment(wctx, j.deployID, "error", "", reason, "")
+	d.hub.Close(j.deployID)
 }
 
 // Enqueue creates a deployment record and puts it in the queue. Returns deployID (0 on error/after Stop).
@@ -155,7 +185,7 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.hub.Open(deployID)
 	select {
-	case d.queue <- job{deployID: deployID, noCache: noCache}:
+	case d.queue <- job{deployID: deployID, appID: appID, noCache: noCache}:
 	case <-d.done:
 		// Server shutting down before the job was queued: mark the deployment
 		// failed with a detached context so it isn't orphaned as 'deploying'.
@@ -183,11 +213,9 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 func (d *Deployer) Stop() {
 	d.stopOnce.Do(func() {
 		close(d.done)
-		d.mu.Lock()
-		if d.cancelJob != nil {
-			d.cancelJob()
+		if d.runCancel != nil {
+			d.runCancel() // unblock any in-flight job ctx
 		}
-		d.mu.Unlock()
 	})
 	d.wg.Wait()
 }
