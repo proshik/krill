@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -23,7 +23,15 @@ import (
 
 type dockerEngine struct {
 	cli *client.Client
+
+	// cpuPrev caches each container's previous cumulative CPU counters so
+	// ListContainerStats can compute a delta across sampler ticks with a single
+	// read per container (no second read + 1s sleep). Guarded by cpuMu.
+	cpuMu   sync.Mutex
+	cpuPrev map[string]cpuCounters
 }
+
+type cpuCounters struct{ total, system uint64 }
 
 // NewEngine creates a real Engine. If host is empty → DOCKER_HOST/the default socket is used.
 func NewEngine(host string) (Engine, error) {
@@ -444,11 +452,6 @@ func (e *dockerEngine) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
 }
 
-// cpuSampleWindow is the gap between the two stats reads used to derive a
-// point-in-time CPU%. One-shot stats do not prime PreCPUStats, so a single read
-// cannot yield a delta — we read twice and diff (the same way `docker stats` does).
-const cpuSampleWindow = time.Second
-
 // statsOneShot reads a single container's stats snapshot.
 func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.StatsResponse, bool) {
 	resp, err := e.cli.ContainerStatsOneShot(ctx, id)
@@ -463,42 +466,43 @@ func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.S
 	return s, true
 }
 
+// ListContainerStats samples each running container once and derives CPU% from
+// the delta against the PREVIOUS sample (cached per container ID across calls).
+// One-shot stats do not prime PreCPUStats, so a single in-call read cannot yield
+// a delta; caching across the ~30s sampler interval gives a meaningful average
+// with one read per container (no second read, no 1s sleep). The first sample
+// for a container reports 0% (no baseline yet); a container restart resets the
+// cumulative counters, which is detected (current < previous) and reported as 0
+// rather than an astronomical underflow.
 func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
 	hostname, _ := os.Hostname() // in a container this is the short container id
 	ctrs, err := e.cli.ContainerList(ctx, container.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
-	// First reading of the cumulative CPU counters per container.
-	prev := make([]container.StatsResponse, len(ctrs))
-	prevOK := make([]bool, len(ctrs))
-	for i, c := range ctrs {
-		prev[i], prevOK[i] = e.statsOneShot(ctx, c.ID)
+	e.cpuMu.Lock()
+	defer e.cpuMu.Unlock()
+	if e.cpuPrev == nil {
+		e.cpuPrev = map[string]cpuCounters{}
 	}
-	// Wait so the second reading reflects CPU consumed in between.
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(cpuSampleWindow):
-	}
+	seen := make(map[string]bool, len(ctrs))
 	out := make([]ContainerStat, 0, len(ctrs))
-	for i, c := range ctrs {
+	for _, c := range ctrs {
 		s, ok := e.statsOneShot(ctx, c.ID)
 		if !ok {
 			continue
 		}
+		seen[c.ID] = true
 		online := s.CPUStats.OnlineCPUs
 		if online == 0 {
 			online = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
 		}
+		cur := cpuCounters{total: s.CPUStats.CPUUsage.TotalUsage, system: s.CPUStats.SystemUsage}
 		var cpu float64
-		if prevOK[i] {
-			cpu = cpuPercent(
-				s.CPUStats.CPUUsage.TotalUsage-prev[i].CPUStats.CPUUsage.TotalUsage,
-				s.CPUStats.SystemUsage-prev[i].CPUStats.SystemUsage,
-				online,
-			)
+		if prev, had := e.cpuPrev[c.ID]; had && cur.total >= prev.total && cur.system >= prev.system {
+			cpu = cpuPercent(cur.total-prev.total, cur.system-prev.system, online)
 		}
+		e.cpuPrev[c.ID] = cur
 		comp := c.Labels["com.docker.swarm.service.name"]
 		if comp == "" && len(c.Names) > 0 {
 			comp = strings.TrimPrefix(c.Names[0], "/")
@@ -510,6 +514,13 @@ func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat,
 			MemLimitBytes: int64(s.MemoryStats.Limit),
 			SelfControl:   hostname != "" && strings.HasPrefix(c.ID, hostname),
 		})
+	}
+	// Drop counters for containers that are gone so the cache can't grow without
+	// bound across deploys.
+	for id := range e.cpuPrev {
+		if !seen[id] {
+			delete(e.cpuPrev, id)
+		}
 	}
 	return out, nil
 }

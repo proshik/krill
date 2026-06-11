@@ -1,10 +1,10 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/proshik/krill/internal/metrics"
@@ -58,11 +58,31 @@ func (s *Server) monitoring(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.loadOrg(w, r); !ok {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
 		return
 	}
-	rng := parseRange(r.URL.Query().Get("range"))
-	apps, dbs, selfComp := s.metricLabels(r)
+	rngParam := r.URL.Query().Get("range")
+	rng := parseRange(rngParam)
+
+	// Serve from the per-(org,range) cache while it is fresh: the samples only
+	// change once per interval, so 10s polls must not re-scan Postgres each time.
+	cacheKey := strconv.FormatInt(o.ID, 10) + ":" + rngParam
+	ttl := s.cfg.MetricsInterval
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	if b, ok := s.monCacheGet(cacheKey, ttl); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+		return
+	}
+
+	apps, dbs := s.metricLabels(r, o.ID)
+	selfComp := ""
+	if s.selfComponentFn != nil {
+		selfComp = s.selfComponentFn()
+	}
 
 	monBuckets := monBucketCount(rng, s.cfg.MetricsInterval)
 	now := time.Now()
@@ -120,8 +140,33 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 			host.CPUPct = sumCPU / float64(ni.NCPU)
 		}
 	}
+	body, err := json.Marshal(monData{Host: host, X: x, Series: series, Rows: rows})
+	if err != nil {
+		http.Error(w, "encode failed", http.StatusInternalServerError)
+		return
+	}
+	s.monCachePut(cacheKey, body)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(monData{Host: host, X: x, Series: series, Rows: rows})
+	w.Write(body)
+}
+
+func (s *Server) monCacheGet(key string, ttl time.Duration) ([]byte, bool) {
+	s.monMu.Lock()
+	defer s.monMu.Unlock()
+	e, ok := s.monCache[key]
+	if !ok || time.Since(e.at) > ttl {
+		return nil, false
+	}
+	return e.data, true
+}
+
+func (s *Server) monCachePut(key string, data []byte) {
+	s.monMu.Lock()
+	defer s.monMu.Unlock()
+	if s.monCache == nil {
+		s.monCache = map[string]monCacheEntry{}
+	}
+	s.monCache[key] = monCacheEntry{data: data, at: time.Now()}
 }
 
 // monBucketCount picks how many time buckets to render for a range so each
@@ -169,51 +214,30 @@ func sortRows(rows []monRow) {
 	})
 }
 
-// metricLabels builds component-key -> display-name maps for apps and managed
-// DBs, plus the control-plane component key. Monitoring is an admin-only,
-// host-wide operator view, so these lookups are intentionally cross-org (all
-// apps/DBs on the node), used purely to label node-wide container stats.
-func (s *Server) metricLabels(r *http.Request) (apps, dbs map[string]metrics.Labeled, selfComp string) {
+// metricLabels builds component-key -> display-name maps for the requesting
+// org's apps and managed DBs. Monitoring is a host-wide CPU/mem view, but the
+// human NAMES (app/project/env/DB names) are scoped to the caller's org so a
+// per-org admin can't read other tenants' resource names; components owned by
+// other orgs simply stay unlabeled (classified generically by their raw key).
+func (s *Server) metricLabels(r *http.Request, orgID int64) (apps, dbs map[string]metrics.Labeled) {
 	apps, dbs = map[string]metrics.Labeled{}, map[string]metrics.Labeled{}
 	if rows, err := s.q.ListWatchedApps(r.Context()); err == nil {
 		for _, a := range rows {
+			if a.OrgID != orgID {
+				continue
+			}
 			apps[dockerName(a.AppID)] = metrics.Labeled{Name: a.AppName, Detail: a.ProjectName + "/" + a.EnvName}
 		}
 	}
-	if pgs, err := s.q.ListAllPostgres(r.Context()); err == nil {
+	if pgs, err := s.q.ListPostgresByOrg(r.Context(), orgID); err == nil {
 		for _, p := range pgs {
 			dbs[p.AppName] = metrics.Labeled{Name: p.Name, Detail: "postgres"}
 		}
 	}
-	if rds, err := s.q.ListAllRedis(r.Context()); err == nil {
+	if rds, err := s.q.ListRedisByOrg(r.Context(), orgID); err == nil {
 		for _, d := range rds {
 			dbs[d.AppName] = metrics.Labeled{Name: d.Name, Detail: "redis"}
 		}
 	}
-	return apps, dbs, s.selfComponent(r.Context())
-}
-
-// selfComponent returns the component key of Krill's own container, detected via
-// a live stats scan and cached for the process lifetime (the container id is
-// stable). It is resolved at most once on success; an empty result is cached too
-// (Krill running outside a container is never the control-plane container). Only
-// an engine error leaves it unresolved so a later request can retry.
-func (s *Server) selfComponent(ctx context.Context) string {
-	s.selfMu.Lock()
-	defer s.selfMu.Unlock()
-	if s.selfResolved {
-		return s.selfComp
-	}
-	stats, err := s.engine.ListContainerStats(ctx)
-	if err != nil {
-		return ""
-	}
-	for _, st := range stats {
-		if st.SelfControl {
-			s.selfComp = st.Component
-			break
-		}
-	}
-	s.selfResolved = true
-	return s.selfComp
+	return apps, dbs
 }

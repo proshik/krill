@@ -160,7 +160,8 @@ func run() error {
 
 	// Monitoring: sample container stats into Postgres for the Monitoring page.
 	metricsStore := metrics.NewDBStore(q)
-	go metrics.NewSampler(engine, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention).Run(ctx)
+	metricsSampler := metrics.NewSampler(engine, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention)
+	go metricsSampler.Run(ctx)
 
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
 		// Bound scheduled runs like the manual path (backup_handlers.go) — an
@@ -187,6 +188,7 @@ func run() error {
 	})
 	app.SetNotify(notifySvc)
 	app.SetMetrics(metricsStore)
+	app.SetSelfComponentFn(metricsSampler.SelfComponent)
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: app.Router(),

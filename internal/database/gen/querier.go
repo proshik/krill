@@ -91,8 +91,10 @@ type Querier interface {
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
+	ListPostgresByOrg(ctx context.Context, organizationID int64) ([]ListPostgresByOrgRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
+	ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.

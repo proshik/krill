@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -38,11 +39,20 @@ type Server struct {
 	notify  *notify.Service
 	metrics metrics.Store
 
-	// Cached self container component for monitoring (resolved once via a live
-	// stats scan; the container id is stable for the process lifetime).
-	selfMu       sync.Mutex
-	selfComp     string
-	selfResolved bool
+	// selfComponentFn returns the control-plane component key (supplied by the
+	// metrics sampler, which learns it while sampling — no per-request docker scan).
+	selfComponentFn func() string
+
+	// monCache memoizes the /monitoring/data response per (org, range) for one
+	// sampler interval: the underlying samples only change that often, so 10s
+	// polls don't re-scan thousands of rows from Postgres each time.
+	monMu    sync.Mutex
+	monCache map[string]monCacheEntry
+}
+
+type monCacheEntry struct {
+	data []byte
+	at   time.Time
 }
 
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
@@ -61,6 +71,10 @@ func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
 
 // SetMetrics wires the metrics store (used by the monitoring handler).
 func (s *Server) SetMetrics(st metrics.Store) { s.metrics = st }
+
+// SetSelfComponentFn wires the control-plane component provider (the metrics
+// sampler), so the monitoring handler need not scan docker itself.
+func (s *Server) SetSelfComponentFn(fn func() string) { s.selfComponentFn = fn }
 
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {

@@ -47,7 +47,36 @@ func TestSamplerTickInsertsAndPrunes(t *testing.T) {
 	if len(st.inserts) != 2 {
 		t.Fatalf("want 2 inserts, got %v", st.inserts)
 	}
+	// The first tick prunes (startup), but subsequent ticks must NOT prune every
+	// time — only once per pruneEvery — to avoid constant small deletes.
 	if len(st.prunedTo) != 1 {
-		t.Fatalf("tick should prune once, got %d", len(st.prunedTo))
+		t.Fatalf("first tick should prune once, got %d", len(st.prunedTo))
+	}
+	for i := 0; i < pruneEvery-2; i++ { // ticks 2..(pruneEvery-1)
+		s.tick(context.Background())
+	}
+	if len(st.prunedTo) != 1 {
+		t.Fatalf("ticks 2..%d must not prune, got %d prunes", pruneEvery-1, len(st.prunedTo))
+	}
+	s.tick(context.Background()) // tick == pruneEvery → prune again
+	if len(st.prunedTo) != 2 {
+		t.Fatalf("tick %d should prune, got %d prunes", pruneEvery, len(st.prunedTo))
+	}
+}
+
+// TestSamplerLearnsSelfComponent verifies the sampler records the control-plane
+// component from ListContainerStats (so the handler need not scan docker).
+func TestSamplerLearnsSelfComponent(t *testing.T) {
+	src := &fakeSrc{stats: []docker.ContainerStat{
+		{Component: "krill-self", SelfControl: true},
+		{Component: "traefik"},
+	}}
+	s := NewSampler(src, &recStore{}, time.Minute, time.Hour)
+	if s.SelfComponent() != "" {
+		t.Fatalf("self component should be empty before the first tick")
+	}
+	s.tick(context.Background())
+	if got := s.SelfComponent(); got != "krill-self" {
+		t.Fatalf("self component = %q, want krill-self", got)
 	}
 }

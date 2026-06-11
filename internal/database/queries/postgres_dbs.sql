@@ -30,3 +30,10 @@ SELECT count(*) FROM postgres_dbs WHERE external_port = $1;
 
 -- name: ListAllPostgres :many
 SELECT id, name, app_name FROM postgres_dbs;
+
+-- name: ListPostgresByOrg :many
+SELECT pg.id, pg.name, pg.app_name
+FROM postgres_dbs pg
+JOIN environments e ON pg.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1;

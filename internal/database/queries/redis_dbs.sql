@@ -30,3 +30,10 @@ SELECT count(*) FROM redis_dbs WHERE external_port = $1;
 
 -- name: ListAllRedis :many
 SELECT id, name, app_name FROM redis_dbs;
+
+-- name: ListRedisByOrg :many
+SELECT rd.id, rd.name, rd.app_name
+FROM redis_dbs rd
+JOIN environments e ON rd.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1;

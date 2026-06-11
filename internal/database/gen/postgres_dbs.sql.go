@@ -193,6 +193,40 @@ func (q *Queries) ListPostgresByEnvironment(ctx context.Context, environmentID i
 	return items, nil
 }
 
+const listPostgresByOrg = `-- name: ListPostgresByOrg :many
+SELECT pg.id, pg.name, pg.app_name
+FROM postgres_dbs pg
+JOIN environments e ON pg.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1
+`
+
+type ListPostgresByOrgRow struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	AppName string `json:"app_name"`
+}
+
+func (q *Queries) ListPostgresByOrg(ctx context.Context, organizationID int64) ([]ListPostgresByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listPostgresByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPostgresByOrgRow
+	for rows.Next() {
+		var i ListPostgresByOrgRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.AppName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updatePostgresImage = `-- name: UpdatePostgresImage :exec
 UPDATE postgres_dbs SET image = $2, updated_at = now() WHERE id = $1
 `

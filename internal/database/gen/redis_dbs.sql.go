@@ -183,6 +183,40 @@ func (q *Queries) ListRedisByEnvironment(ctx context.Context, environmentID int6
 	return items, nil
 }
 
+const listRedisByOrg = `-- name: ListRedisByOrg :many
+SELECT rd.id, rd.name, rd.app_name
+FROM redis_dbs rd
+JOIN environments e ON rd.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1
+`
+
+type ListRedisByOrgRow struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	AppName string `json:"app_name"`
+}
+
+func (q *Queries) ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listRedisByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRedisByOrgRow
+	for rows.Next() {
+		var i ListRedisByOrgRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.AppName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateRedisImage = `-- name: UpdateRedisImage :exec
 UPDATE redis_dbs SET image = $2, updated_at = now() WHERE id = $1
 `
