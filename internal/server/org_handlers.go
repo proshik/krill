@@ -69,17 +69,22 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	projects, err := s.q.ListProjects(r.Context(), o.ID)
+	rows, err := s.q.ListProjectsWithCounts(r.Context(), o.ID)
 	if err != nil {
 		logFrom(r).Error("orgDashboard: failed to list projects", "err", err, "org_id", o.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cards := make([]templates.ProjectCard, 0, len(projects))
-	for _, p := range projects {
-		n, _ := s.q.CountEnvironments(r.Context(), p.ID)
-		a, _ := s.q.CountApplicationsByProject(r.Context(), p.ID)
-		cards = append(cards, templates.ProjectCard{Project: p, EnvCount: n, AppCount: a})
+	cards := make([]templates.ProjectCard, 0, len(rows))
+	for _, p := range rows {
+		cards = append(cards, templates.ProjectCard{
+			Project: db.Project{
+				ID: p.ID, OrganizationID: p.OrganizationID, Name: p.Name,
+				Slug: p.Slug, Description: p.Description, CreatedAt: p.CreatedAt,
+			},
+			EnvCount: p.EnvCount,
+			AppCount: p.AppCount,
+		})
 	}
 	render(w, r, http.StatusOK, templates.OrgDashboard(o, role, cards))
 }

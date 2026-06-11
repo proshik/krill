@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const countEnvironments = `-- name: CountEnvironments :one
@@ -98,6 +99,60 @@ func (q *Queries) ListProjects(ctx context.Context, organizationID int64) ([]Pro
 			&i.Slug,
 			&i.Description,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsWithCounts = `-- name: ListProjectsWithCounts :many
+SELECT p.id, p.organization_id, p.name, p.slug, p.description, p.created_at,
+       count(DISTINCT e.id) AS env_count,
+       count(a.id)          AS app_count
+FROM projects p
+LEFT JOIN environments e ON e.project_id = p.id
+LEFT JOIN applications a ON a.environment_id = e.id
+WHERE p.organization_id = $1
+GROUP BY p.id
+ORDER BY p.created_at
+`
+
+type ListProjectsWithCountsRow struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	Slug           string    `json:"slug"`
+	Description    string    `json:"description"`
+	CreatedAt      time.Time `json:"created_at"`
+	EnvCount       int64     `json:"env_count"`
+	AppCount       int64     `json:"app_count"`
+}
+
+// One aggregate query for the org dashboard (replaces a 2N+1 per-project count
+// loop). DISTINCT on environments because the app join multiplies env rows.
+func (q *Queries) ListProjectsWithCounts(ctx context.Context, organizationID int64) ([]ListProjectsWithCountsRow, error) {
+	rows, err := q.db.Query(ctx, listProjectsWithCounts, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProjectsWithCountsRow
+	for rows.Next() {
+		var i ListProjectsWithCountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.Slug,
+			&i.Description,
+			&i.CreatedAt,
+			&i.EnvCount,
+			&i.AppCount,
 		); err != nil {
 			return nil, err
 		}

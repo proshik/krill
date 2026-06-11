@@ -93,6 +93,9 @@ type Querier interface {
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
 	ListPostgresByOrg(ctx context.Context, organizationID int64) ([]ListPostgresByOrgRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
+	// One aggregate query for the org dashboard (replaces a 2N+1 per-project count
+	// loop). DISTINCT on environments because the app join multiplies env rows.
+	ListProjectsWithCounts(ctx context.Context, organizationID int64) ([]ListProjectsWithCountsRow, error)
 	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
 	ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
