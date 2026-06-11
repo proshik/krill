@@ -90,6 +90,10 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 		pw.Close()
 	}()
 	if uerr := Upload(ctx, dst, key, pr); uerr != nil {
+		// Close the read side so the dump goroutine's blocked pw.Write fails and
+		// the goroutine (and its docker exec + in-container pg_dump) terminates —
+		// otherwise each failed upload leaks them all until process exit.
+		pr.CloseWithError(uerr)
 		return s.fail(ctx, backupID, now, uerr)
 	}
 
@@ -182,7 +186,12 @@ func (s *Service) Restore(ctx context.Context, dst Destination, pg PGTarget, key
 		return err
 	}
 	defer gz.Close()
+	// --single-transaction makes the restore atomic: the dump starts with
+	// `pg_dump --clean` DROP statements, so without it a mid-stream failure
+	// (broken S3 download, corrupt gzip, bad statement) would commit the drops
+	// and leave the database half-restored. With it, any failure rolls back to
+	// the pre-restore state (plain pg_dump output is fully transactional).
 	return s.eng.Exec(ctx, pg.AppName,
-		[]string{"psql", "-v", "ON_ERROR_STOP=1", "-U", pg.DatabaseUser, "-d", pg.DatabaseName},
+		[]string{"psql", "-v", "ON_ERROR_STOP=1", "--single-transaction", "-U", pg.DatabaseUser, "-d", pg.DatabaseName},
 		[]string{"PGPASSWORD=" + pg.DatabasePassword}, gz, io.Discard)
 }

@@ -146,6 +146,10 @@ func run() error {
 	go metrics.NewSampler(engine, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention).Run(ctx)
 
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
+		// Bound scheduled runs like the manual path (backup_handlers.go) — an
+		// unreachable S3/DB must not pin a run (and its pg_dump exec) forever.
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		defer cancel()
 		if err := backupSvc.RunBackup(ctx, id, time.Now()); err != nil {
 			slog.Error("scheduled backup failed", "backup", id, "err", err)
 		}
