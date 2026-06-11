@@ -178,6 +178,13 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, "only an owner can grant the owner role")
 		return
 	}
+	// An actor may not act on a member who outranks them: an admin must not be
+	// able to demote (or, in removeMember, delete) an owner.
+	if m.Role == "owner" && actorRole != "owner" {
+		logFrom(r).Warn("updateMemberRole: non-owner attempted to change an owner's role", "member_id", mID, "org_id", o.ID, "role", actorRole)
+		s.flashErr(w, r, "only an owner can change an owner's role")
+		return
+	}
 	if m.Role == "owner" && role != "owner" {
 		n, err := s.q.CountOwners(r.Context(), o.ID)
 		if err != nil {
@@ -202,7 +209,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
-	o, _, ok := s.loadOrg(w, r)
+	o, actorRole, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
@@ -215,6 +222,13 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	if err != nil || m.OrganizationID != o.ID {
 		logFrom(r).Info("removeMember: member not found or org mismatch", "member_id", mID, "org_id", o.ID)
 		http.NotFound(w, r)
+		return
+	}
+	// An actor may not remove a member who outranks them: an admin must not be
+	// able to remove an owner (mirrors the updateMemberRole guard).
+	if m.Role == "owner" && actorRole != "owner" {
+		logFrom(r).Warn("removeMember: non-owner attempted to remove an owner", "member_id", mID, "org_id", o.ID, "role", actorRole)
+		s.flashErr(w, r, "only an owner can remove an owner")
 		return
 	}
 	if m.Role == "owner" {

@@ -278,6 +278,67 @@ func TestAdminCannotGrantOwner(t *testing.T) {
 	}
 }
 
+// TestAdminCannotActOnOwner locks in the actor-vs-target guard: an admin must
+// not be able to demote or remove an OWNER, even when the org has co-owners
+// (the last-owner check alone allowed kicking every co-owner but one).
+func TestAdminCannotActOnOwner(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	// A SECOND owner, so the last-owner protection does not apply.
+	coID := mkUser(t, q, "co-owner@k.local")
+	co, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: coID, Role: "owner"})
+	if err != nil {
+		t.Fatalf("add co-owner: %v", err)
+	}
+	adminID := mkUser(t, q, "admin@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: adminID, Role: "admin"}); err != nil {
+		t.Fatalf("add admin: %v", err)
+	}
+	adminCookie := loginAs(t, q, "admin@k.local")
+	base := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/members/" + strconv.FormatInt(co.ID, 10)
+
+	// Admin tries to demote the co-owner to member.
+	form := url.Values{"role": {"member"}}
+	req := httptest.NewRequest(http.MethodPost, base+"/role", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(adminCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("admin demoting owner want 303+err flash, got %d %q", rec.Code, flashCookieValue(rec))
+	}
+	if got, _ := q.GetMemberByID(ctx, co.ID); got.Role != "owner" {
+		t.Fatalf("co-owner role must be unchanged, got %q", got.Role)
+	}
+
+	// Admin tries to remove the co-owner outright.
+	req = httptest.NewRequest(http.MethodPost, base+"/remove", nil)
+	req.AddCookie(adminCookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("admin removing owner want 303+err flash, got %d %q", rec.Code, flashCookieValue(rec))
+	}
+	if _, err := q.GetMemberByID(ctx, co.ID); err != nil {
+		t.Fatalf("co-owner must still exist after blocked removal: %v", err)
+	}
+
+	// An owner CAN still demote a co-owner (not blocked by the new guard).
+	req = httptest.NewRequest(http.MethodPost, base+"/role", strings.NewReader(url.Values{"role": {"admin"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(loginAs(t, q, "owner@k.local"))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("owner demoting co-owner want 303 with no err flash, got %d %q", rec.Code, flashCookieValue(rec))
+	}
+	if got, _ := q.GetMemberByID(ctx, co.ID); got.Role != "admin" {
+		t.Fatalf("co-owner role want admin after owner demotes, got %q", got.Role)
+	}
+}
+
 func TestAdminCanCreateProject(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
