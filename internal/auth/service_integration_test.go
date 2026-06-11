@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -41,6 +42,39 @@ func TestSeedAuthenticateValidate(t *testing.T) {
 	}
 	if _, ok := svc.Validate(ctx, token); ok {
 		t.Error("token must be invalid after logout")
+	}
+}
+
+// TestPruneExpiredSessions verifies the session GC: expired rows are deleted,
+// live sessions survive.
+func TestPruneExpiredSessions(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	svc := auth.NewService(q)
+	ctx := context.Background()
+
+	if err := svc.SeedAdmin(ctx, "admin@k.local", "pw"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	live, err := svc.Authenticate(ctx, "admin@k.local", "pw")
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	// An expired session row (the kind Validate never sees again).
+	u, _ := q.GetUserByEmail(ctx, "admin@k.local")
+	const stale = "stale-token"
+	if err := q.CreateSession(ctx, db.CreateSessionParams{Token: stale, UserID: u.ID, ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatalf("create stale session: %v", err)
+	}
+
+	if err := svc.PruneExpiredSessions(ctx); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if _, err := q.GetSession(ctx, stale); err == nil {
+		t.Error("expired session must be pruned")
+	}
+	if _, ok := svc.Validate(ctx, live); !ok {
+		t.Error("live session must survive pruning")
 	}
 }
 

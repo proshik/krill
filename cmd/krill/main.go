@@ -129,6 +129,23 @@ func run() error {
 	stopCleanup := deploy.StartLogCleanup(ctx, store, 10*time.Minute)
 	defer stopCleanup()
 
+	// Session GC: expired rows are otherwise only reaped lazily when the exact
+	// token is re-presented (never, once the browser drops the cookie).
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := authSvc.PruneExpiredSessions(ctx); err != nil {
+					slog.Warn("session prune failed", "err", err)
+				}
+			}
+		}
+	}()
+
 	dbStore := dbservice.NewDBStore(q)
 	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
 
@@ -150,7 +167,9 @@ func run() error {
 		// unreachable S3/DB must not pin a run (and its pg_dump exec) forever.
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 		defer cancel()
-		if err := backupSvc.RunBackup(ctx, id, time.Now()); err != nil {
+		if err := backupSvc.RunBackup(ctx, id, time.Now()); errors.Is(err, backup.ErrBackupRunning) {
+			slog.Warn("scheduled backup skipped — previous run still in flight", "backup", id)
+		} else if err != nil {
 			slog.Error("scheduled backup failed", "backup", id, "err", err)
 		}
 	})

@@ -62,6 +62,14 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.q.DeleteSession(ctx, token)
 }
 
+// PruneExpiredSessions deletes all expired session rows. Validate only reaps a
+// session lazily when its exact token is re-presented — which never happens
+// once the browser drops the cookie — so without periodic pruning the table
+// grows with every login forever.
+func (s *Service) PruneExpiredSessions(ctx context.Context) error {
+	return s.q.DeleteExpiredSessions(ctx)
+}
+
 // SeedAdmin creates the admin user and the default organization if they do not exist yet.
 // Idempotent: a repeated start does not duplicate or overwrite anything.
 func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {

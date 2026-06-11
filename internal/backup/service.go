@@ -7,12 +7,19 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 )
 
 // ErrKeyOutsideBackup is returned when a requested object key is not within the
 // backup's own prefix — prevents downloading/restoring arbitrary bucket objects.
 var ErrKeyOutsideBackup = errors.New("object key is outside this backup's prefix")
+
+// ErrBackupRunning is returned when a backup is triggered while a previous run
+// of the SAME backup is still in flight. Cron-level SkipIfStillRunning cannot
+// cover this: Scheduler.Reload swaps in a fresh cron instance (losing the
+// wrapper's state), and the manual "Backup now" path bypasses cron entirely.
+var ErrBackupRunning = errors.New("backup already running")
 
 // Execer runs a command inside a managed DB's container (docker.Engine satisfies it).
 type Execer interface {
@@ -29,9 +36,14 @@ type Service struct {
 	eng      Execer
 	store    Store
 	notifier Notifier
+
+	mu       sync.Mutex
+	inFlight map[int64]bool // backup IDs with a run in progress
 }
 
-func New(eng Execer, store Store) *Service { return &Service{eng: eng, store: store} }
+func New(eng Execer, store Store) *Service {
+	return &Service{eng: eng, store: store, inFlight: map[int64]bool{}}
+}
 
 // SetNotifier wires backup-failure notifications (no-op if never set).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
@@ -58,7 +70,22 @@ func keyFor(prefix, appName string, now time.Time) string {
 }
 
 // RunBackup dumps the DB, uploads it, then enforces count-based retention.
+// Overlapping runs of the same backup are rejected with ErrBackupRunning (two
+// concurrent pg_dumps + uploads of one DB racing retention deletes).
 func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) error {
+	s.mu.Lock()
+	if s.inFlight[backupID] {
+		s.mu.Unlock()
+		return ErrBackupRunning
+	}
+	s.inFlight[backupID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.inFlight, backupID)
+		s.mu.Unlock()
+	}()
+
 	b, err := s.store.GetBackup(ctx, backupID)
 	if err != nil {
 		return err
