@@ -99,11 +99,20 @@ fi
 # even if a fresh install dies halfway and is re-run (the env file doubles as
 # the upgrade marker, so the re-run reuses the same secrets).
 mkdir -p /etc/krill
+# MANAGE_PG: whether this installer runs the local krill-postgres container. On a
+# fresh install it always does. On upgrade it does ONLY if the configured DB URL
+# still points at the local loopback container — if the operator repointed
+# KRILL_DATABASE_URL at an external/managed Postgres, leave it alone.
+MANAGE_PG="yes"
 if [ "$UPGRADE" = "yes" ]; then
 	info "Keeping existing $ENV_FILE (secrets unchanged)."
 	ADMIN_EMAIL="$(sed -n 's#^KRILL_ADMIN_EMAIL=##p' "$ENV_FILE")"
-	PG_PW="$(sed -n 's#^KRILL_DATABASE_URL=postgres://krill:\([^@]*\)@.*#\1#p' "$ENV_FILE")"
-	[ -n "$PG_PW" ] || die "could not read existing Postgres password from $ENV_FILE"
+	if grep -Eq '^KRILL_DATABASE_URL=postgres://krill:[^@]+@127\.0\.0\.1:5432/krill' "$ENV_FILE"; then
+		PG_PW="$(sed -n 's#^KRILL_DATABASE_URL=postgres://krill:\([^@]*\)@.*#\1#p' "$ENV_FILE")"
+	else
+		MANAGE_PG="no"
+		info "KRILL_DATABASE_URL points at an external database — skipping local Postgres management."
+	fi
 else
 	PG_PW="$(rand_hex 16)"
 	ADMIN_EMAIL="admin@krill.local"
@@ -127,36 +136,38 @@ else
 fi
 
 # --- 5. State Postgres -------------------------------------------------------
-if [ "$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER" 2>/dev/null)" = "true" ]; then
-	info "Postgres container '$PG_CONTAINER' already running."
-else
-	# Remove a stopped leftover so the run below doesn't clash on the name.
-	docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
-	info "Starting Postgres ($PG_IMAGE, loopback-only) ..."
-	docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
-		-e POSTGRES_USER=krill -e POSTGRES_PASSWORD="$PG_PW" -e POSTGRES_DB=krill \
-		-v krill-pg-data:/var/lib/postgresql/data \
-		-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
-fi
+if [ "$MANAGE_PG" = "yes" ]; then
+	if [ "$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER" 2>/dev/null)" = "true" ]; then
+		info "Postgres container '$PG_CONTAINER' already running."
+	else
+		# Remove a stopped leftover so the run below doesn't clash on the name.
+		docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+		info "Starting Postgres ($PG_IMAGE, loopback-only) ..."
+		docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
+			-e POSTGRES_USER=krill -e POSTGRES_PASSWORD="$PG_PW" -e POSTGRES_DB=krill \
+			-v krill-pg-data:/var/lib/postgresql/data \
+			-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
+	fi
 
-info "Waiting for Postgres to accept connections ..."
-i=0
-until docker exec "$PG_CONTAINER" pg_isready -U krill -q >/dev/null 2>&1; do
-	i=$((i + 1))
-	[ "$i" -ge 60 ] && die "Postgres did not become ready in time"
-	sleep 1
-done
+	info "Waiting for Postgres to accept connections ..."
+	i=0
+	until docker exec "$PG_CONTAINER" pg_isready -U krill -q >/dev/null 2>&1; do
+		i=$((i + 1))
+		[ "$i" -ge 60 ] && die "Postgres did not become ready in time"
+		sleep 1
+	done
 
-# Verify the configured password actually opens the database (over TCP — local
-# socket auth is trust, so it would not test the password). A krill-pg-data
-# volume initialized by an older failed run can hold a different password;
-# failing loud here beats letting the krill service crash-loop on auth errors.
-if ! docker exec -e PGPASSWORD="$PG_PW" "$PG_CONTAINER" \
-	psql -h 127.0.0.1 -U krill -d krill -qAtc 'select 1' >/dev/null 2>&1; then
-	die "Postgres rejected the password from $ENV_FILE — the krill-pg-data volume was initialized with a different password.
+	# Verify the configured password actually opens the database (over TCP — local
+	# socket auth is trust, so it would not test the password). A krill-pg-data
+	# volume initialized by an older failed run can hold a different password;
+	# failing loud here beats letting the krill service crash-loop on auth errors.
+	if ! docker exec -e PGPASSWORD="$PG_PW" "$PG_CONTAINER" \
+		psql -h 127.0.0.1 -U krill -d krill -qAtc 'select 1' >/dev/null 2>&1; then
+		die "Postgres rejected the password from $ENV_FILE — the krill-pg-data volume was initialized with a different password.
 Either restore the original $ENV_FILE, or reset the state DB (DESTROYS krill's own data):
   docker rm -f $PG_CONTAINER && docker volume rm krill-pg-data
 then re-run this installer."
+	fi
 fi
 
 # --- 6. Binary ---------------------------------------------------------------
@@ -216,6 +227,14 @@ EnvironmentFile=${ENV_FILE}
 ExecStart=${BIN_PATH}
 Restart=always
 RestartSec=2
+# Hardening: krill runs as root for the docker socket, but these cheaply shrink
+# what a post-exploitation foothold could reach. (Root + socket stays
+# root-equivalent regardless — this only blocks suid/home/persistent-tmp tricks.)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
