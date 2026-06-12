@@ -4,10 +4,23 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 )
+
+// sanitizeGitURL strips any embedded credentials (https://user:token@host/...)
+// before the URL is echoed into the deploy log, which is persisted and visible
+// to read-only members. The clone itself still uses the original URL.
+func sanitizeGitURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
 
 // gitBuilder builds the image: git clone → docker build, via the CLI.
 type gitBuilder struct {
@@ -37,7 +50,7 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 		dockerfile = "Dockerfile"
 	}
 
-	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", req.GitURL, branch)
+	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", sanitizeGitURL(req.GitURL), branch)
 	gitEnv := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=http:https")
 	if err := b.run(ctx, out, "git", cloneArgs(req.GitURL, branch, dir), gitEnv); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)

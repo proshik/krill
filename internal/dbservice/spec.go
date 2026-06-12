@@ -58,10 +58,12 @@ func postgresSpec(pg PostgresDB, network string) docker.ServiceSpec {
 
 func redisSpec(r RedisDB, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
-		Name:        r.AppName,
-		Image:       r.Image,
-		Command:     []string{"/bin/sh"},
-		Args:        []string{"-c", "redis-server --requirepass " + r.Password},
+		Name:  r.AppName,
+		Image: r.Image,
+		// Exec form (no shell): the password is a discrete argv element, so even
+		// a value with shell metacharacters can never be reinterpreted. Args go
+		// through the image's docker-entrypoint.sh (which execs `redis-server`).
+		Args:        []string{"redis-server", "--requirepass", r.Password},
 		Replicas:    1,
 		Network:     network,
 		DNSRR:       true,

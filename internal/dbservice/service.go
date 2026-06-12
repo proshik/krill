@@ -36,11 +36,19 @@ func New(engine docker.Engine, store Store, hub *deploy.DeployLogHub, network st
 func pgFeedID(id int64) int64    { return -(id*2 + 1) }
 func redisFeedID(id int64) int64 { return -(id*2 + 2) }
 
+// dbDeployTimeout bounds a detached DB deploy so a stalled ImagePull (registry
+// blackhole) can't leak the goroutine and keep the log feed open forever.
+const dbDeployTimeout = 10 * time.Minute
+
 // DeployPostgres: pull → deploy, in a goroutine; logs to hub under pgFeedID(id).
-// Runs detached (its own context.Background) on purpose: the deploy must outlive
-// the HTTP request that triggered it, which returns immediately with a redirect.
+// Runs detached (its own context) on purpose: the deploy must outlive the HTTP
+// request that triggered it, which returns immediately with a redirect.
 func (s *Service) DeployPostgres(id int64) {
-	go s.deployPG(context.Background(), id)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)
+		defer cancel()
+		s.deployPG(ctx, id)
+	}()
 }
 
 func (s *Service) deployPG(ctx context.Context, id int64) {
@@ -109,7 +117,13 @@ func (s *Service) DeletePostgres(ctx context.Context, id int64, destroyData bool
 // --- Redis (mirrored) ---
 // DeployRedis runs detached on purpose (see DeployPostgres): the deploy must
 // outlive the triggering HTTP request, which returns immediately with a redirect.
-func (s *Service) DeployRedis(id int64) { go s.deployRedis(context.Background(), id) }
+func (s *Service) DeployRedis(id int64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)
+		defer cancel()
+		s.deployRedis(ctx, id)
+	}()
+}
 
 func (s *Service) deployRedis(ctx context.Context, id int64) {
 	r, err := s.store.GetRedis(ctx, id)

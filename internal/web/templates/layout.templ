@@ -43,7 +43,9 @@ templ Layout(title string, org db.Organization, role string) {
 					if role == "owner" || role == "admin" {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsSettings(ctx)) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "nav.settings") }</a>
 					}
-					<a class="k-nav k-nav-logout" href="/logout" hx-boost="false"><span class="k-nav-logout-ico">⎋</span> { i18n.T(ctx, "nav.logout") }</a>
+					<form method="post" action="/logout" hx-boost="false">
+						<button type="submit" class="k-nav k-nav-logout k-nav-logout-btn"><span class="k-nav-logout-ico">⎋</span> { i18n.T(ctx, "nav.logout") }</button>
+					</form>
 				</div>
 			</aside>
 			<main class="flex-1 min-w-0">

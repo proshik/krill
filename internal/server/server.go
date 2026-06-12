@@ -124,7 +124,9 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/login", s.loginPage)
 	r.Post("/login", s.loginSubmit)
-	r.Get("/logout", s.logout)
+	// POST so csrfGuard + SameSite cover it: a GET /logout is vulnerable to a
+	// cross-site top-level navigation terminating the victim's session.
+	r.Post("/logout", s.logout)
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))

@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+func TestSanitizeGitURL(t *testing.T) {
+	cases := map[string]string{
+		"https://user:token@github.com/x/y.git":         "https://github.com/x/y.git",
+		"https://x-access-token:ghp_abc@github.com/o/r":  "https://github.com/o/r",
+		"https://github.com/x/y.git":                     "https://github.com/x/y.git",
+		"git@github.com:x/y.git":                         "git@github.com:x/y.git", // scp-style, nothing to strip
+	}
+	for in, want := range cases {
+		if got := sanitizeGitURL(in); got != want {
+			t.Errorf("sanitizeGitURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestCloneArgs(t *testing.T) {
 	got := cloneArgs("https://github.com/x/y.git", "main", "/tmp/ctx")
 	want := []string{"clone", "--branch", "main", "--depth", "1", "--", "https://github.com/x/y.git", "/tmp/ctx"}

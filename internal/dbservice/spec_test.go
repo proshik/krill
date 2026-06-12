@@ -37,10 +37,11 @@ func TestRedisSpec(t *testing.T) {
 	if s.Name != "krill-redis-x" || !s.DNSRR {
 		t.Fatalf("base wrong: %+v", s)
 	}
-	if len(s.Command) == 0 || s.Command[0] != "/bin/sh" {
-		t.Errorf("command wrong: %+v", s.Command)
+	// Exec form: no shell, the password is a discrete argv element.
+	if len(s.Command) != 0 {
+		t.Errorf("command should be empty (use the image entrypoint), got %+v", s.Command)
 	}
-	if len(s.Args) != 2 || s.Args[0] != "-c" || s.Args[1] != "redis-server --requirepass secret" {
+	if len(s.Args) != 3 || s.Args[0] != "redis-server" || s.Args[1] != "--requirepass" || s.Args[2] != "secret" {
 		t.Errorf("args wrong: %+v", s.Args)
 	}
 	if len(s.Mounts) != 1 || s.Mounts[0].Target != "/data" || s.Mounts[0].Source != "krill-redis-x-data" {
