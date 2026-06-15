@@ -18,6 +18,7 @@ import (
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
+	"github.com/proshik/krill/internal/volume"
 	"github.com/proshik/krill/internal/web"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -35,6 +36,9 @@ type Server struct {
 
 	backupSvc     *backup.Service
 	reloadBackups func()
+
+	volumeSvc           *volume.VolumeService
+	reloadVolumeBackups func()
 
 	notify  *notify.Service
 	metrics metrics.Store
@@ -87,6 +91,12 @@ func (s *Server) acquireLogSlot() (release func(), ok bool) {
 func (s *Server) SetBackups(svc *backup.Service, reload func()) {
 	s.backupSvc = svc
 	s.reloadBackups = reload
+}
+
+// SetVolumeBackups wires the volume-backup service + a scheduler reload closure.
+func (s *Server) SetVolumeBackups(svc *volume.VolumeService, reload func()) {
+	s.volumeSvc = svc
+	s.reloadVolumeBackups = reload
 }
 
 // SetNotify wires the notification service (used by the test-message handler).
@@ -208,6 +218,13 @@ func (s *Server) Router() http.Handler {
 					r.Post("/advanced", s.saveAdvanced)
 					r.Post("/volumes", s.addVolume)
 					r.Post("/volumes/{volID}/delete", s.deleteVolume)
+					r.Post("/volumes/{volID}/backups", s.addVolumeBackup)
+					r.Post("/volumes/backups/{vbID}/toggle", s.toggleVolumeBackup)
+					r.Post("/volumes/backups/{vbID}/delete", s.deleteVolumeBackup)
+					r.Post("/volumes/backups/{vbID}/run", s.runVolumeBackupNow)
+					r.Post("/volumes/backups/{vbID}/restore", s.restoreVolumeBackup)
+					r.Get("/volumes/backups/{vbID}/objects", s.volumeBackupObjects)
+					r.Get("/volumes/backups/{vbID}/download", s.downloadVolumeBackup)
 					r.Get("/terminal/ws", s.appTerminal)
 				})
 			})

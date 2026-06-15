@@ -28,6 +28,7 @@ import (
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
+	"github.com/proshik/krill/internal/volume"
 )
 
 func main() {
@@ -179,11 +180,34 @@ func run() error {
 	}
 	defer sched.Stop()
 
+	// Volume backups: separate service + a second in-process cron scheduler.
+	volStore := volume.NewDBStore(q)
+	volSvc := volume.New(engine, volStore)
+	volSvc.SetNotifier(notifySvc)
+	volSched := backup.NewScheduler(volStore, func(ctx context.Context, id int64) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		defer cancel()
+		if err := volSvc.RunVolumeBackup(ctx, id, time.Now()); errors.Is(err, volume.ErrVolumeBackupRunning) {
+			slog.Warn("scheduled volume backup skipped — previous run still in flight", "volume_backup", id)
+		} else if err != nil {
+			slog.Error("scheduled volume backup failed", "volume_backup", id, "err", err)
+		}
+	})
+	if err := volSched.Reload(); err != nil {
+		slog.Warn("volume backup scheduler reload failed", "err", err)
+	}
+	defer volSched.Stop()
+
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
 	app.SetBackups(backupSvc, func() {
 		if err := sched.Reload(); err != nil {
 			slog.Error("backup scheduler reload failed", "err", err)
+		}
+	})
+	app.SetVolumeBackups(volSvc, func() {
+		if err := volSched.Reload(); err != nil {
+			slog.Error("volume backup scheduler reload failed", "err", err)
 		}
 	})
 	app.SetNotify(notifySvc)

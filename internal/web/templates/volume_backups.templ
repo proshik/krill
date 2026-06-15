@@ -1,0 +1,36 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/backup"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// VolumeBackupObjects lists stored volume-backup objects. base is the app detail
+// URL; vbID scopes the restore/download actions. (Full styling added in B5.)
+templ VolumeBackupObjects(base string, vbID int64, objs []backup.Object) {
+	<div id="vbackup-objects">
+		if len(objs) == 0 {
+			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
+		} else {
+			<table class="k-table">
+				<thead><tr><th>Key</th><th>Size</th><th>Date</th><th></th></tr></thead>
+				<tbody>
+					for _, o := range objs {
+						<tr>
+							<td class="k-mono">{ o.Key }</td>
+							<td>{ humanSize(o.Size) }</td>
+							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
+							<td>
+								<a class="k-btn" href={ templ.SafeURL(base + "/volumes/backups/" + itoa(vbID) + "/download?key=" + o.Key) }>{ i18n.T(ctx, "backup.download") }</a>
+								<form method="post" action={ templ.SafeURL(base + "/volumes/backups/" + itoa(vbID) + "/restore") } onsubmit="if(!confirm('Restore stops the app, overwrites the volume, then restarts it. Continue?')) return false; krillBusy(this.querySelector('button'), 'Restoring…')" style="display:inline">
+									<input type="hidden" name="key" value={ o.Key }/>
+									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.restore") }</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</div>
+}
