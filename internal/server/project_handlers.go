@@ -8,6 +8,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -29,6 +30,23 @@ func (s *Server) removeEnvDatabases(ctx context.Context, envID int64) {
 	for _, rd := range redises {
 		if err := s.dbsvc.DeleteRedis(ctx, rd.ID, true); err != nil {
 			slog.Error("removeEnvDatabases: redis", "db", rd.ID, "err", err)
+		}
+	}
+}
+
+// removeEnvAppVolumes deletes the Docker volumes of every application in an
+// environment. Used by environment/project delete so app volumes are not
+// orphaned — the rows cascade-delete, but without this the Docker volumes linger
+// with no UI to clean them (symmetry with removeEnvDatabases).
+func (s *Server) removeEnvAppVolumes(ctx context.Context, envID int64) {
+	if s.engine == nil {
+		return
+	}
+	apps, _ := s.q.ListApplicationsByEnvironment(ctx, envID)
+	for _, a := range apps {
+		vols, _ := s.q.ListVolumesByApplication(ctx, a.ID)
+		for _, v := range vols {
+			s.removeAppVolume(ctx, docker.VolumeName(a.ID, v.Name))
 		}
 	}
 }
@@ -75,6 +93,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		s.removeEnvAppVolumes(r.Context(), e.ID)
 		s.removeEnvDatabases(r.Context(), e.ID)
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
@@ -131,6 +150,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	s.removeEnvAppVolumes(r.Context(), e.ID)
 	s.removeEnvDatabases(r.Context(), e.ID)
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
 		logFrom(r).Error("deleteEnvironment: delete environment", "err", err, "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID)

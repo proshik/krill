@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -466,6 +468,29 @@ func int32PtrIfSet(s string) *int32 {
 	return &v
 }
 
+// removeAppVolume deletes a Docker named volume, retrying briefly: right after
+// ServiceRemove the volume is momentarily "in use" while Swarm tears down the
+// task container. A persistent failure leaves an orphaned volume (logged for
+// manual cleanup) — never fatal.
+func (s *Server) removeAppVolume(ctx context.Context, name string) {
+	if s.engine == nil {
+		return
+	}
+	var err error
+	for i := 0; i < 12; i++ {
+		if err = s.engine.VolumeRemove(ctx, name); err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			slog.Error("app volume remove cancelled", "vol", name, "err", ctx.Err())
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	slog.Error("app volume remove gave up (still in use)", "vol", name, "err", err)
+}
+
 func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
@@ -475,6 +500,15 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	if s.engine != nil {
 		if err := s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID)); err != nil {
 			logFrom(r).Error("deleteApp: service remove failed", "err", err, "app_id", c.App.ID)
+		}
+	}
+	if r.FormValue("destroy_data") == "on" {
+		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			logFrom(r).Error("deleteApp: list volumes failed", "err", err, "app_id", c.App.ID)
+		}
+		for _, v := range vols {
+			s.removeAppVolume(r.Context(), docker.VolumeName(c.App.ID, v.Name))
 		}
 	}
 	if err := s.q.DeleteApplication(r.Context(), c.App.ID); err != nil {
