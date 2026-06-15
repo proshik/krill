@@ -17,6 +17,9 @@ type AppCtx struct {
 	Volumes    []db.AppVolume
 	Registries []db.Registry
 	Exposed    bool
+
+	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
+	Destinations  []db.Destination
 }
 
 func (c AppCtx) base() string {
@@ -406,5 +409,104 @@ templ volumesTab(c AppCtx) {
 			</div>
 			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "volumes.add") }</button>
 		</form>
+		for _, v := range c.Volumes {
+			@volumeBackupsSection(c, v)
+		}
+	</div>
+}
+
+// volumeBackupsSection renders the per-volume S3 backup configuration block
+// (mirrors backupsSection in database_detail.templ).
+templ volumeBackupsSection(c AppCtx, v db.AppVolume) {
+	<div class="mt-6 pt-4" style="border-top:1px solid var(--color-border)">
+		<div class="k-label">{ i18n.T(ctx, "volumes.backup.section") } — { v.Name }</div>
+		<p class="k-panel-desc k-muted">{ i18n.T(ctx, "volumes.backup.hot_caveat") }</p>
+		if len(c.VolumeBackups[v.ID]) == 0 {
+			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
+		} else {
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "backup.destination") }</th>
+						<th>{ i18n.T(ctx, "backup.schedule") }</th>
+						<th>{ i18n.T(ctx, "backup.retention") }</th>
+						<th>{ i18n.T(ctx, "backup.enabled") }</th>
+						<th>{ i18n.T(ctx, "backup.last_run") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, b := range c.VolumeBackups[v.ID] {
+						<tr>
+							<td>{ destName(c.Destinations, b.DestinationID) }</td>
+							<td class="k-mono">{ b.Schedule }</td>
+							<td>{ itoa(int64(b.Retention)) }</td>
+							<td>
+								if b.Enabled {
+									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "backup.enabled") }</span>
+								} else {
+									<span class="k-badge k-badge-idle"><span class="k-dot"></span>—</span>
+								}
+							</td>
+							<td>
+								<div>{ tsStr(b.LastRunAt) } { b.LastStatus }</div>
+								if b.LastError != "" {
+									<div class="text-xs" style="color:var(--color-err)">{ b.LastError }</div>
+								}
+							</td>
+							<td>
+								<div class="flex items-center gap-2 flex-wrap">
+									<form method="post" action={ templ.SafeURL(c.base() + "/volumes/backups/" + itoa(b.ID) + "/run") } onsubmit="krillBusy(this.querySelector('button'), 'Running…')" class="inline">
+										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
+									</form>
+									<form method="post" action={ templ.SafeURL(c.base() + "/volumes/backups/" + itoa(b.ID) + "/toggle") } class="inline">
+										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.toggle") }</button>
+									</form>
+									<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/volumes/backups/" + itoa(b.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_backup", destName(c.Destinations, b.DestinationID)) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="inline">
+										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
+									</form>
+								</div>
+							</td>
+						</tr>
+						<tr>
+							<td colspan="6">
+								<div class="k-label">{ i18n.T(ctx, "backup.objects") }</div>
+								<div hx-get={ c.base() + "/volumes/backups/" + itoa(b.ID) + "/objects" } hx-trigger="load" hx-swap="innerHTML"></div>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+		if len(c.Destinations) == 0 {
+			<p class="k-muted">
+				{ i18n.T(ctx, "backup.no_destinations") }
+				<a class="underline" href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
+			</p>
+		} else {
+			<form method="post" action={ templ.SafeURL(c.base() + "/volumes/" + itoa(v.ID) + "/backups") } class="mt-4 flex flex-col gap-2">
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.destination") }</label>
+					<select class="k-select" name="destination_id">
+						for _, d := range c.Destinations {
+							<option value={ itoa(d.ID) }>{ d.Name }</option>
+						}
+					</select>
+				</div>
+				<div>
+					<label class="k-label k-label-required">{ i18n.T(ctx, "backup.schedule") }</label>
+					<input class="k-input" name="schedule" required placeholder="0 3 * * *"/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.retention") }</label>
+					<input class="k-input" name="retention" type="number" value="7" min="1"/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "backup.prefix") }</label>
+					<input class="k-input" name="prefix"/>
+				</div>
+				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button></div>
+			</form>
+		}
 	</div>
 }

@@ -157,6 +157,8 @@ var en = map[string]string{
 	"volumes.delete":               "Delete",
 	"volumes.empty":                "No volumes yet.",
 	"volumes.applied_on_deploy":    "Volume changes apply on the next deploy.",
+	"volumes.backup.section":       "Backups",
+	"volumes.backup.hot_caveat":    "Backups are taken hot (read-only mount); a busy app may produce an inconsistent snapshot. Restore stops the app, overwrites the volume, then restarts it.",
 	"app.delete.destroy_data":      "Destroy data (delete volumes)",
 	"env.settings_title":           "Environment Settings",
 	"env.settings_desc":            "Environment variables for this app. Applied after Deploy.",

@@ -207,6 +207,19 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Volumes = vols
+		if dests, derr := s.q.ListDestinationsByOrg(r.Context(), c.Org.ID); derr != nil {
+			logFrom(r).Error("appDetail: failed to list destinations", "err", derr, "org_id", c.Org.ID)
+		} else {
+			c.Destinations = dests
+		}
+		c.VolumeBackups = map[int64][]db.VolumeBackup{}
+		for _, v := range vols {
+			if bks, berr := s.q.ListVolumeBackupsByVolume(r.Context(), v.ID); berr != nil {
+				logFrom(r).Error("appDetail: failed to list volume backups", "err", berr, "volume_id", v.ID)
+			} else {
+				c.VolumeBackups[v.ID] = bks
+			}
+		}
 	}
 	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
 }
