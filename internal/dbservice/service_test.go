@@ -64,6 +64,8 @@ func (m *mockEngine) VolumeRemove(_ context.Context, n string) error {
 	m.removedVolumes = append(m.removedVolumes, n)
 	return nil
 }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error { return nil }
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

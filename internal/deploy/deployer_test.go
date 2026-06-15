@@ -84,6 +84,8 @@ func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, 
 func (m *mockEngine) ServiceScale(context.Context, string, uint64) error                        { return nil }
 func (m *mockEngine) ServiceRestart(context.Context, string) error                              { return nil }
 func (m *mockEngine) VolumeRemove(context.Context, string) error                               { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error                   { return nil }
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error                   { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error                 { return nil }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error     { return nil }
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {

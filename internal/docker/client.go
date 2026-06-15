@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
@@ -264,6 +265,133 @@ func (e *dockerEngine) ImagePull(ctx context.Context, ref string, out io.Writer)
 
 func (e *dockerEngine) VolumeRemove(ctx context.Context, name string) error {
 	return e.cli.VolumeRemove(ctx, name, true) // force
+}
+
+// busyboxImage is the pinned helper used to tar/untar app volumes. App images
+// often lack tar (e.g. Readeck), so we run a sidecar with the volume mounted.
+// Pinned by digest — never :latest. Bump only with a security review.
+const busyboxImage = "busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
+
+// ensureImage pulls ref if no local image matches it.
+func (e *dockerEngine) ensureImage(ctx context.Context, ref string) error {
+	imgs, err := e.cli.ImageList(ctx, image.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("reference", ref)),
+	})
+	if err == nil && len(imgs) > 0 {
+		return nil
+	}
+	rc, perr := e.cli.ImagePull(ctx, ref, image.PullOptions{})
+	if perr != nil {
+		return perr
+	}
+	defer rc.Close()
+	_, perr = io.Copy(io.Discard, rc)
+	return perr
+}
+
+// VolumeArchive streams a tar of the named volume's contents to out (raw tar;
+// the caller gzips). Runs busybox as root with the volume mounted read-only and
+// no network. Root is required so files owned by any uid (apps run as varied
+// non-root users) are readable, and so original ownership is captured in the tar.
+func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out io.Writer) error {
+	if err := e.ensureImage(ctx, busyboxImage); err != nil {
+		return err
+	}
+	resp, err := e.cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: busyboxImage,
+			Cmd:   []string{"tar", "-c", "-C", "/vol", "."},
+		},
+		&container.HostConfig{
+			Mounts:      []mount.Mount{{Type: mount.TypeVolume, Source: volumeName, Target: "/vol", ReadOnly: true}},
+			NetworkMode: "none",
+		}, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	cid := resp.ID
+	defer e.cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+
+	att, err := e.cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return err
+	}
+	defer att.Close()
+	if err := e.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(out, &stderr, att.Reader); err != nil {
+		return err
+	}
+	return waitContainer(ctx, e.cli, cid, "volume archive "+volumeName, &stderr)
+}
+
+// VolumeRestore extracts a tar (read from in; the caller gunzips) into the named
+// volume. Mounts the volume read-write; busybox runs as root with no network.
+// Root is required to write into the (root-owned) fresh-volume root and to
+// restore each entry's original ownership (tar's default) so the app can read
+// its data back as whatever uid it runs under.
+func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in io.Reader) error {
+	if err := e.ensureImage(ctx, busyboxImage); err != nil {
+		return err
+	}
+	resp, err := e.cli.ContainerCreate(ctx,
+		&container.Config{
+			Image:     busyboxImage,
+			Cmd:       []string{"tar", "-x", "-C", "/vol"},
+			OpenStdin: true, StdinOnce: true,
+		},
+		&container.HostConfig{
+			Mounts:      []mount.Mount{{Type: mount.TypeVolume, Source: volumeName, Target: "/vol"}},
+			NetworkMode: "none",
+		}, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	cid := resp.ID
+	defer e.cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+
+	att, err := e.cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return err
+	}
+	defer att.Close()
+	if err := e.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+		return err
+	}
+	copyErr := make(chan error, 1)
+	go func() {
+		_, ce := io.Copy(att.Conn, in)
+		_ = att.CloseWrite()
+		copyErr <- ce
+	}()
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(io.Discard, &stderr, att.Reader); err != nil {
+		return err
+	}
+	if err := waitContainer(ctx, e.cli, cid, "volume restore "+volumeName, &stderr); err != nil {
+		return err
+	}
+	if ce := <-copyErr; ce != nil {
+		return fmt.Errorf("stream archive to %s: %w", volumeName, ce)
+	}
+	return nil
+}
+
+// waitContainer blocks until the container exits and returns an error on a
+// non-zero exit code (including the captured stderr).
+func waitContainer(ctx context.Context, cli *client.Client, cid, what string, stderr *bytes.Buffer) error {
+	statusCh, errCh := cli.ContainerWait(ctx, cid, container.WaitConditionNotRunning)
+	select {
+	case err := <-errCh:
+		return err
+	case st := <-statusCh:
+		if st.StatusCode != 0 {
+			return fmt.Errorf("%s exited %d: %s", what, st.StatusCode, strings.TrimSpace(stderr.String()))
+		}
+	}
+	return nil
 }
 
 func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error {
