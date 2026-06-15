@@ -22,7 +22,7 @@ templ VolumeBackupObjects(base string, vbID int64, objs []backup.Object) {
 							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
 							<td>
 								<a class="k-btn" href={ templ.SafeURL(base + "/volumes/backups/" + itoa(vbID) + "/download?key=" + o.Key) }>{ i18n.T(ctx, "backup.download") }</a>
-								<form method="post" action={ templ.SafeURL(base + "/volumes/backups/" + itoa(vbID) + "/restore") } onsubmit="if(!confirm('Restore stops the app, overwrites the volume, then restarts it. Continue?')) return false; krillBusy(this.querySelector('button'), 'Restoring…')" style="display:inline">
+								<form method="post" hx-boost="false" action={ templ.SafeURL(base + "/volumes/backups/" + itoa(vbID) + "/restore") } data-confirm={ i18n.T(ctx, "volumes.backup.restore_warn") } onsubmit="return krillConfirm(this, this.dataset.confirm)" style="display:inline">
 									<input type="hidden" name="key" value={ o.Key }/>
 									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.restore") }</button>
 								</form>
