@@ -79,7 +79,51 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			Target: v.MountPath,
 		})
 	}
+	links, lerr := s.q.ListDBLinksByApplication(ctx, a.ID)
+	if lerr != nil {
+		return App{}, lerr
+	}
+	for _, l := range links {
+		if url, ok := s.resolveDBLinkURL(ctx, l); ok {
+			out.Env[l.VarName] = url // linked-DB value wins over env_text on key collision
+		} else {
+			slog.Warn("db-link: target database missing, skipping injection", "app", a.ID, "engine", l.Engine, "db_id", l.DbID, "var", l.VarName)
+		}
+	}
 	return out, nil
+}
+
+// buildDBURL builds the internal connection URL for a linked managed DB. host is
+// the DB's Swarm service name (= overlay DNS). For redis, user/dbName and scheme
+// are ignored (always redis://default:<pass>@host:6379).
+func buildDBURL(engine, scheme, user, pass, host, dbName string) string {
+	switch engine {
+	case "postgres":
+		return scheme + "://" + user + ":" + pass + "@" + host + ":5432/" + dbName
+	case "redis":
+		return "redis://default:" + pass + "@" + host + ":6379"
+	}
+	return ""
+}
+
+// resolveDBLinkURL fetches the live DB row for a link and builds its internal URL
+// (password decrypted). Returns false if the target DB no longer exists.
+func (s *DBStore) resolveDBLinkURL(ctx context.Context, l db.AppDbLink) (string, bool) {
+	switch l.Engine {
+	case "postgres":
+		pg, err := s.q.GetPostgres(ctx, l.DbID)
+		if err != nil {
+			return "", false
+		}
+		return buildDBURL("postgres", l.Scheme, pg.DatabaseUser, secret.Dec(pg.DatabasePassword), pg.AppName, pg.DatabaseName), true
+	case "redis":
+		rd, err := s.q.GetRedis(ctx, l.DbID)
+		if err != nil {
+			return "", false
+		}
+		return buildDBURL("redis", l.Scheme, "", secret.Dec(rd.Password), rd.AppName, ""), true
+	}
+	return "", false
 }
 
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {
