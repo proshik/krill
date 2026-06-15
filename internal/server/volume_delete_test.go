@@ -106,3 +106,30 @@ func TestDeleteAppWithoutDestroyDataKeepsVolumes(t *testing.T) {
 		t.Fatalf("no destroy_data → no VolumeRemove, got %v", got)
 	}
 }
+
+// Deleting an environment always removes its apps' Docker volumes (like managed
+// DBs) — there is no UI left to clean them otherwise.
+func TestDeleteEnvironmentRemovesAppVolumes(t *testing.T) {
+	eng := &recordingEngine{}
+	h, q, orgSvc := newServerWithEngine(t, eng)
+	ctx := context.Background()
+	uid := mkUser(t, q, "env-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.x", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	_, _ = q.CreateVolume(ctx, db.CreateVolumeParams{ApplicationID: app.ID, Name: "data", MountPath: "/data"})
+	cookie := loginAs(t, q, "env-owner@k.local")
+
+	envDelete := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/delete"
+	if rec := postForm(t, h, envDelete, cookie, url.Values{}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("deleteEnvironment: got %d, want 303", rec.Code)
+	}
+	got := eng.removedNames()
+	if len(got) != 1 || got[0] != "krill-vol-"+i64(app.ID)+"-data" {
+		t.Fatalf("expected env delete to remove krill-vol-%s-data, got %v", i64(app.ID), got)
+	}
+}
