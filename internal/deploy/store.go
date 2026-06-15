@@ -68,6 +68,17 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			}
 		}
 	}
+	vols, verr := s.q.ListVolumesByApplication(ctx, a.ID)
+	if verr != nil {
+		return App{}, verr
+	}
+	for _, v := range vols {
+		out.Mounts = append(out.Mounts, docker.MountSpec{
+			Type:   "volume",
+			Source: docker.VolumeName(a.ID, v.Name),
+			Target: v.MountPath,
+		})
+	}
 	return out, nil
 }
 

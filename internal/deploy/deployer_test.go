@@ -333,6 +333,22 @@ func TestDeployConvergeTimeoutMarksError(t *testing.T) {
 	}
 }
 
+func TestBuildSpecMounts(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	app := imageApp()
+	app.Mounts = []docker.MountSpec{
+		{Type: "volume", Source: "krill-vol-1-data", Target: "/data"},
+	}
+	spec := d.buildSpec(app, "nginx:alpine")
+	if len(spec.Mounts) != 1 {
+		t.Fatalf("expected 1 mount threaded into ServiceSpec, got %d", len(spec.Mounts))
+	}
+	m := spec.Mounts[0]
+	if m.Type != "volume" || m.Source != "krill-vol-1-data" || m.Target != "/data" {
+		t.Fatalf("mount not threaded verbatim: %+v", m)
+	}
+}
+
 func TestBuildSpecRegistryAuth(t *testing.T) {
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
 	app := imageApp()

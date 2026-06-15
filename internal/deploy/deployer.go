@@ -37,6 +37,7 @@ type App struct {
 	RestartCondition   string
 	RestartMaxAttempts uint64
 	Healthcheck        *docker.HealthcheckSpec
+	Mounts             []docker.MountSpec
 }
 
 // Store — what the deployer needs from the store.
@@ -399,6 +400,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		RestartCondition:   app.RestartCondition,
 		RestartMaxAttempts: app.RestartMaxAttempts,
 		Healthcheck:        app.Healthcheck,
+		Mounts:             app.Mounts,
 	}
 }
 
