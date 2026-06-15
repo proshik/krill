@@ -10,6 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppDbLink struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	Engine        string    `json:"engine"`
+	DbID          int64     `json:"db_id"`
+	VarName       string    `json:"var_name"`
+	Scheme        string    `json:"scheme"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AppVolume struct {
 	ID            int64     `json:"id"`
 	ApplicationID int64     `json:"application_id"`

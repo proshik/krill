@@ -29,6 +29,7 @@ type Querier interface {
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error)
+	CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (AppDbLink, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (Destination, error)
 	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
@@ -45,6 +46,8 @@ type Querier interface {
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
+	DeleteDBLink(ctx context.Context, id int64) error
+	DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBParams) error
 	DeleteDestination(ctx context.Context, id int64) error
 	DeleteDomain(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
@@ -62,6 +65,7 @@ type Querier interface {
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (Backup, error)
+	GetDBLink(ctx context.Context, id int64) (AppDbLink, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
@@ -90,6 +94,7 @@ type Querier interface {
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error)
+	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]AppDbLink, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)

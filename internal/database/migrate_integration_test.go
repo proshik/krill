@@ -10,13 +10,14 @@ import (
 func TestMigrationsApply(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 
-	// Expected set covers the full current schema (migrations 000001..000018;
-	// 000018 adds app_volumes + volume_backups).
+	// Expected set covers the full current schema (migrations 000001..000019;
+	// 000019 adds app_db_links).
 	expectedTables := []string{
 		"users", "sessions", "organizations", "members", "projects",
 		"environments", "applications", "deployments", "postgres_dbs",
 		"redis_dbs", "domains", "destinations", "backups", "registries",
 		"notification_channels", "metric_samples", "app_volumes", "volume_backups",
+		"app_db_links",
 	}
 
 	var n int
