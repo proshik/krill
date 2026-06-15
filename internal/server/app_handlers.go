@@ -162,13 +162,13 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "terminal" {
+	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "volumes" && tab != "terminal" {
 		tab = "general"
 	}
 	// Env values are secrets. Members are read-only viewers and must never see
 	// them (mirrors the admin-only DB connection-string display), so the env tab
 	// silently falls back to General for non-admins.
-	if tab == "env" && c.Role != "owner" && c.Role != "admin" {
+	if (tab == "env" || tab == "volumes") && c.Role != "owner" && c.Role != "admin" {
 		tab = "general"
 	}
 	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {
@@ -198,6 +198,15 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Domains = doms
+	}
+	if tab == "volumes" {
+		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: failed to list volumes", "err", err, "app_id", c.App.ID)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		c.Volumes = vols
 	}
 	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
 }
