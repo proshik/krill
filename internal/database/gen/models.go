@@ -10,6 +10,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AppVolume struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	Name          string    `json:"name"`
+	MountPath     string    `json:"mount_path"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Application struct {
 	ID                     int64     `json:"id"`
 	EnvironmentID          int64     `json:"environment_id"`
@@ -195,4 +203,18 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"password_hash"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type VolumeBackup struct {
+	ID            int64              `json:"id"`
+	AppVolumeID   int64              `json:"app_volume_id"`
+	DestinationID int64              `json:"destination_id"`
+	Schedule      string             `json:"schedule"`
+	Prefix        string             `json:"prefix"`
+	Retention     int32              `json:"retention"`
+	Enabled       bool               `json:"enabled"`
+	LastRunAt     pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus    string             `json:"last_status"`
+	LastError     string             `json:"last_error"`
+	CreatedAt     time.Time          `json:"created_at"`
 }

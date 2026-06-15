@@ -41,6 +41,7 @@ type Querier interface {
 	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
 	DeleteDestination(ctx context.Context, id int64) error
@@ -54,6 +55,7 @@ type Querier interface {
 	DeleteRedis(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
+	DeleteVolume(ctx context.Context, id int64) error
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
@@ -76,6 +78,7 @@ type Querier interface {
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
+	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error)
@@ -100,6 +103,7 @@ type Querier interface {
 	ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	ListVolumesByApplication(ctx context.Context, applicationID int64) ([]AppVolume, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
