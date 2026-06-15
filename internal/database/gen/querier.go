@@ -42,6 +42,7 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
+	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
 	DeleteDestination(ctx context.Context, id int64) error
@@ -56,6 +57,7 @@ type Querier interface {
 	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	DeleteVolume(ctx context.Context, id int64) error
+	DeleteVolumeBackup(ctx context.Context, id int64) error
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
@@ -78,7 +80,9 @@ type Querier interface {
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
+	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
+	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error)
@@ -90,6 +94,7 @@ type Querier interface {
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)
 	ListEnabledBackups(ctx context.Context) ([]Backup, error)
+	ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
@@ -103,6 +108,7 @@ type Querier interface {
 	ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
+	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
 	ListVolumesByApplication(ctx context.Context, applicationID int64) ([]AppVolume, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
@@ -113,6 +119,8 @@ type Querier interface {
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
+	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
