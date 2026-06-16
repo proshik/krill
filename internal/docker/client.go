@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -95,10 +96,43 @@ func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) erro
 		_, err = e.cli.ServiceCreate(ctx, sw, createOpts)
 		return err
 	}
+	// Swarm forbids changing a service's mode in place (replicated <-> global):
+	// ServiceUpdate returns "service mode change is not allowed". When the
+	// desired mode differs from the running one, recreate the service (remove +
+	// create) under the same name instead of updating it.
+	if (cur.Spec.Mode.Global != nil) != (sw.Mode.Global != nil) {
+		return e.recreateForModeChange(ctx, cur.ID, sw, createOpts)
+	}
 	// ForceUpdate+1 — so that even an unchanged tag triggers a rolling-update (redeploy).
 	sw.TaskTemplate.ForceUpdate = cur.Spec.TaskTemplate.ForceUpdate + 1
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, sw, updateOpts)
 	return err
+}
+
+// recreateForModeChange removes the existing service and recreates it under the
+// same name. Used when the service mode (replicated/global) changes, which
+// Swarm cannot do in place. The service name frees up once the removal is
+// processed, so ServiceCreate is retried briefly on a transient name conflict.
+func (e *dockerEngine) recreateForModeChange(ctx context.Context, id string, sw swarm.ServiceSpec, createOpts swarm.ServiceCreateOptions) error {
+	if err := e.cli.ServiceRemove(ctx, id); err != nil {
+		return fmt.Errorf("remove for mode change: %w", err)
+	}
+	var cerr error
+	for i := 0; i < 15; i++ {
+		if _, cerr = e.cli.ServiceCreate(ctx, sw, createOpts); cerr == nil {
+			return nil
+		}
+		low := strings.ToLower(cerr.Error())
+		if !strings.Contains(low, "name conflict") && !strings.Contains(low, "already in use") && !strings.Contains(low, "already exists") {
+			return cerr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return fmt.Errorf("recreate for mode change: %w", cerr)
 }
 
 func (e *dockerEngine) ServiceRemove(ctx context.Context, name string) error {
@@ -539,12 +573,24 @@ func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas u
 	if !found {
 		return nil // nothing to scale
 	}
+	// A global service has no replica count, and Swarm forbids changing a
+	// service's mode in place — so it cannot be scaled via ServiceUpdate at all.
+	// "Scaling to 0" (Stop) therefore means removing it; the next Deploy
+	// recreates it from the stored spec. (Scaling a global service up is not a
+	// real path — apps are restarted via Deploy, and managed DBs are never global.)
+	if cur.Spec.Mode.Global != nil {
+		if replicas == 0 {
+			return e.cli.ServiceRemove(ctx, cur.ID)
+		}
+		spec := cur.Spec
+		spec.Mode = swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}}
+		return e.recreateForModeChange(ctx, cur.ID, spec, swarm.ServiceCreateOptions{})
+	}
 	spec := cur.Spec
-	// Force exactly one service mode. A global service has Mode.Global set and
-	// Mode.Replicated nil; setting Replicas without clearing Global would leave
-	// BOTH modes set, which Swarm rejects. Stopping a global app (scale 0) thus
-	// converts it to replicated-0; the next Deploy re-applies Mode.Global.
-	spec.Mode = swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}}
+	if spec.Mode.Replicated == nil {
+		spec.Mode.Replicated = &swarm.ReplicatedService{}
+	}
+	spec.Mode.Replicated.Replicas = &replicas
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
 }

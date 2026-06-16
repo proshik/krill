@@ -67,12 +67,14 @@ func (s *Service) deployPG(ctx context.Context, id int64) {
 	fmt.Fprintf(out, "→ pull %s\n", pg.Image)
 	if err := s.engine.ImagePull(ctx, pg.Image, out); err != nil {
 		fmt.Fprintf(out, "❌ pull failed: %v\n", err)
+		slog.Error("postgres deploy: image pull failed", "err", err, "db_id", id, "image", pg.Image)
 		_ = s.store.SetPostgresStatus(ctx, id, "error")
 		return
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", pg.AppName)
 	if err := s.engine.ServiceDeploy(ctx, postgresSpec(pg, s.network)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
+		slog.Error("postgres deploy: service deploy failed", "err", err, "db_id", id, "app_name", pg.AppName, "node", pg.NodeHostname)
 		_ = s.store.SetPostgresStatus(ctx, id, "error")
 		return
 	}
@@ -141,12 +143,14 @@ func (s *Service) deployRedis(ctx context.Context, id int64) {
 	fmt.Fprintf(out, "→ pull %s\n", r.Image)
 	if err := s.engine.ImagePull(ctx, r.Image, out); err != nil {
 		fmt.Fprintf(out, "❌ pull failed: %v\n", err)
+		slog.Error("redis deploy: image pull failed", "err", err, "db_id", id, "image", r.Image)
 		_ = s.store.SetRedisStatus(ctx, id, "error")
 		return
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", r.AppName)
 	if err := s.engine.ServiceDeploy(ctx, redisSpec(r, s.network)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
+		slog.Error("redis deploy: service deploy failed", "err", err, "db_id", id, "app_name", r.AppName, "node", r.NodeHostname)
 		_ = s.store.SetRedisStatus(ctx, id, "error")
 		return
 	}
