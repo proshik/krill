@@ -206,6 +206,9 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, "failed to delete database")
 		return
 	}
+	if derr := s.q.DeleteDBLinksByDB(r.Context(), db.DeleteDBLinksByDBParams{Engine: eng, DbID: id}); derr != nil {
+		logFrom(r).Error("deleteDatabase: failed to remove db links", "err", derr, "db_id", id, "engine", eng)
+	}
 	logFrom(r).Info("database deleted", "db_id", id, "engine", eng, "destroy_data", destroy)
 	s.setFlash(w, "ok", "Database deleted")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)

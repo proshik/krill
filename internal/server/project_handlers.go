@@ -25,12 +25,14 @@ func (s *Server) removeEnvDatabases(ctx context.Context, envID int64) {
 		if err := s.dbsvc.DeletePostgres(ctx, pg.ID, true); err != nil {
 			slog.Error("removeEnvDatabases: postgres", "db", pg.ID, "err", err)
 		}
+		_ = s.q.DeleteDBLinksByDB(ctx, db.DeleteDBLinksByDBParams{Engine: "postgres", DbID: pg.ID})
 	}
 	redises, _ := s.q.ListRedisByEnvironment(ctx, envID)
 	for _, rd := range redises {
 		if err := s.dbsvc.DeleteRedis(ctx, rd.ID, true); err != nil {
 			slog.Error("removeEnvDatabases: redis", "db", rd.ID, "err", err)
 		}
+		_ = s.q.DeleteDBLinksByDB(ctx, db.DeleteDBLinksByDBParams{Engine: "redis", DbID: rd.ID})
 	}
 }
 
