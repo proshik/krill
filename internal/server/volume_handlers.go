@@ -24,16 +24,16 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 	existing, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
 	if err != nil {
 		logFrom(r).Error("addVolume: list volumes failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to add volume")
+		s.flashErrT(w, r, "flash.err.add_volume")
 		return
 	}
 	for _, v := range existing {
 		if v.Name == name {
-			s.flashErr(w, r, "a volume with this name already exists")
+			s.flashErrT(w, r, "flash.err.volume_name_exists")
 			return
 		}
 		if v.MountPath == mountPath {
-			s.flashErr(w, r, "a volume is already mounted at this path")
+			s.flashErrT(w, r, "flash.err.volume_path_exists")
 			return
 		}
 	}
@@ -41,11 +41,11 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 		ApplicationID: c.App.ID, Name: name, MountPath: mountPath,
 	}); err != nil {
 		logFrom(r).Error("addVolume: create failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to add volume")
+		s.flashErrT(w, r, "flash.err.add_volume")
 		return
 	}
 	logFrom(r).Info("volume added", "app_id", c.App.ID, "name", name, "mount_path", mountPath)
-	s.setFlash(w, "ok", "Volume added — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.volume_added")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }
 
@@ -63,11 +63,11 @@ func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.DeleteVolume(r.Context(), v.ID); err != nil {
 		logFrom(r).Error("deleteVolume: delete failed", "err", err, "volume_id", v.ID)
-		s.flashErr(w, r, "failed to delete volume")
+		s.flashErrT(w, r, "flash.err.delete_volume")
 		return
 	}
 	logFrom(r).Info("volume deleted", "app_id", c.App.ID, "volume_id", v.ID, "name", v.Name)
-	s.setFlash(w, "ok", "Volume removed — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.volume_removed")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }
 

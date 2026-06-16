@@ -61,11 +61,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	p, err := s.org.CreateProject(r.Context(), o.ID, r.FormValue("name"), r.FormValue("description"))
 	if err != nil {
 		logFrom(r).Info("createProject: rejected", "err", err, "org_id", o.ID)
-		s.flashErr(w, r, "failed to create project: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_project", err)
 		return
 	}
 	logFrom(r).Info("project created", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
-	s.setFlash(w, "ok", "Project created")
+	s.flashOK(w, r, "flash.ok.project_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -100,11 +100,11 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
 		logFrom(r).Error("deleteProject: delete project", "err", err, "project_id", p.ID, "org_id", o.ID)
-		s.flashErr(w, r, "failed to delete project")
+		s.flashErrT(w, r, "flash.err.delete_project")
 		return
 	}
 	logFrom(r).Info("project deleted", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
-	s.setFlash(w, "ok", "Project deleted")
+	s.flashOK(w, r, "flash.ok.project_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -120,11 +120,11 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	e, err := s.org.CreateEnvironment(r.Context(), p.ID, r.FormValue("name"))
 	if err != nil {
 		logFrom(r).Info("createEnvironment: rejected", "err", err, "project_id", p.ID, "org_id", o.ID)
-		s.flashErr(w, r, "failed to create environment: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_environment", err)
 		return
 	}
 	logFrom(r).Info("environment created", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
-	s.setFlash(w, "ok", "Environment created")
+	s.flashOK(w, r, "flash.ok.env_created")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 
@@ -156,11 +156,11 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	s.removeEnvDatabases(r.Context(), e.ID)
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
 		logFrom(r).Error("deleteEnvironment: delete environment", "err", err, "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID)
-		s.flashErr(w, r, "failed to delete environment")
+		s.flashErrT(w, r, "flash.err.delete_environment")
 		return
 	}
 	logFrom(r).Info("environment deleted", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
-	s.setFlash(w, "ok", "Environment deleted")
+	s.flashOK(w, r, "flash.ok.env_deleted")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
 }
 

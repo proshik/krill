@@ -37,7 +37,7 @@ func (s *Server) createGitCredential(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	token := r.FormValue("token")
 	if name == "" || host == "" || username == "" || token == "" {
-		s.flashErr(w, r, "name, host, username and token are required")
+		s.flashErrT(w, r, "flash.err.gitcred_fields_required")
 		return
 	}
 	n, err := s.q.CountGitCredentialsByName(r.Context(), db.CountGitCredentialsByNameParams{OrganizationID: o.ID, Name: name})
@@ -47,7 +47,7 @@ func (s *Server) createGitCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > 0 {
-		s.flashErr(w, r, "a git credential with this name already exists")
+		s.flashErrT(w, r, "flash.err.gitcred_name_exists")
 		return
 	}
 	gc, err := s.q.CreateGitCredential(r.Context(), db.CreateGitCredentialParams{
@@ -55,11 +55,11 @@ func (s *Server) createGitCredential(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createGitCredential: create failed", "err", err, "org_id", o.ID, "name", name)
-		s.flashErr(w, r, "failed to create git credential: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_gitcred", err)
 		return
 	}
 	logFrom(r).Info("git credential created", "org_id", o.ID, "git_credential_id", gc.ID, "name", gc.Name, "host", gc.Host, "username", gc.Username)
-	s.setFlash(w, "ok", "Git credential created")
+	s.flashOK(w, r, "flash.ok.gitcred_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/git-credentials", http.StatusSeeOther)
 }
 
@@ -83,7 +83,7 @@ func (s *Server) deleteGitCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	gcID := id
 	if n, _ := s.q.CountApplicationsByGitCredential(r.Context(), &gcID); n > 0 {
-		s.flashErr(w, r, "git credential is used by an application")
+		s.flashErrT(w, r, "flash.err.gitcred_in_use")
 		return
 	}
 	if err := s.q.DeleteGitCredential(r.Context(), id); err != nil {
@@ -92,6 +92,6 @@ func (s *Server) deleteGitCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("git credential deleted", "org_id", o.ID, "git_credential_id", id)
-	s.setFlash(w, "ok", "Git credential deleted")
+	s.flashOK(w, r, "flash.ok.gitcred_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/git-credentials", http.StatusSeeOther)
 }

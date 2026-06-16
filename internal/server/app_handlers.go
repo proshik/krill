@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -59,40 +60,40 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	port, err := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
 	if err != nil || port <= 0 || !isSlug(name) {
 		logFrom(r).Info("createApp: invalid fields", "environment_id", e.ID, "name", name)
-		s.flashErr(w, r, "check the fields: name (slug), port")
+		s.flashErrT(w, r, "flash.err.check_fields")
 		return
 	}
 	if !validHost(domain) {
 		logFrom(r).Info("createApp: invalid domain", "environment_id", e.ID, "name", name, "domain", domain)
-		s.flashErr(w, r, "invalid domain")
+		s.flashErrT(w, r, "flash.err.invalid_domain")
 		return
 	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), domain); n > 0 {
 		logFrom(r).Info("createApp: domain already in use", "environment_id", e.ID, "name", name, "domain", domain)
-		s.flashErr(w, r, "domain already in use")
+		s.flashErrT(w, r, "flash.err.domain_in_use")
 		return
 	}
 	if sourceType == "image" && image == "" {
 		logFrom(r).Info("createApp: image required for image source", "environment_id", e.ID, "name", name)
-		s.flashErr(w, r, "specify image for the 'image' source")
+		s.flashErrT(w, r, "flash.err.specify_image")
 		return
 	}
 	if sourceType == "dockerfile" && gitURL == "" {
 		logFrom(r).Info("createApp: git URL required for dockerfile source", "environment_id", e.ID, "name", name)
-		s.flashErr(w, r, "specify git URL for the 'Dockerfile' source")
+		s.flashErrT(w, r, "flash.err.specify_git_url")
 		return
 	}
 	var registryID *int64
 	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
-			s.flashErr(w, r, "invalid registry")
+			s.flashErrT(w, r, "flash.err.invalid_registry")
 			return
 		}
 		reg, gerr := s.q.GetRegistry(r.Context(), n)
 		if gerr != nil || reg.OrganizationID != o.ID {
 			logFrom(r).Info("createApp: registry not found or org mismatch", "registry_id", n, "org_id", o.ID)
-			s.flashErr(w, r, "invalid registry")
+			s.flashErrT(w, r, "flash.err.invalid_registry")
 			return
 		}
 		registryID = &n
@@ -104,7 +105,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createApp: failed to create application", "err", err, "environment_id", e.ID, "name", name)
-		s.flashErr(w, r, "failed to create (name/domain already taken?): "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_app", err)
 		return
 	}
 	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
@@ -115,7 +116,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("createApp: rollback delete application failed", "err", derr, "app_id", a.ID)
 		}
 		logFrom(r).Error("createApp: create primary domain failed", "err", err, "app_id", a.ID, "host", a.Domain)
-		s.flashErr(w, r, "failed to create domain")
+		s.flashErrT(w, r, "flash.err.create_domain_failed")
 		return
 	}
 	if registryID != nil {
@@ -124,7 +125,7 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	logFrom(r).Info("application created", "app_id", a.ID, "environment_id", e.ID, "name", name)
-	s.setFlash(w, "ok", "Application created")
+	s.flashOK(w, r, "flash.ok.app_created")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID), http.StatusSeeOther)
 }
 
@@ -138,23 +139,23 @@ func (s *Server) setAppRegistry(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("registry_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
-			s.flashErr(w, r, "invalid registry")
+			s.flashErrT(w, r, "flash.err.invalid_registry")
 			return
 		}
 		reg, gerr := s.q.GetRegistry(r.Context(), n)
 		if gerr != nil || reg.OrganizationID != o.ID {
-			s.flashErr(w, r, "invalid registry")
+			s.flashErrT(w, r, "flash.err.invalid_registry")
 			return
 		}
 		registryID = &n
 	}
 	if err := s.q.SetApplicationRegistry(r.Context(), db.SetApplicationRegistryParams{ID: c.App.ID, RegistryID: registryID}); err != nil {
 		logFrom(r).Error("setAppRegistry: update failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to set registry")
+		s.flashErrT(w, r, "flash.err.set_registry")
 		return
 	}
 	logFrom(r).Info("application registry set", "app_id", c.App.ID, "registry_id", registryID)
-	s.setFlash(w, "ok", "Registry updated")
+	s.flashOK(w, r, "flash.ok.registry_updated")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
@@ -169,23 +170,23 @@ func (s *Server) setAppGitCredential(w http.ResponseWriter, r *http.Request) {
 	if v := strings.TrimSpace(r.FormValue("git_credential_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
 		if perr != nil {
-			s.flashErr(w, r, "invalid git credential")
+			s.flashErrT(w, r, "flash.err.invalid_git_credential")
 			return
 		}
 		gc, gerr := s.q.GetGitCredential(r.Context(), n)
 		if gerr != nil || gc.OrganizationID != c.Org.ID {
-			s.flashErr(w, r, "invalid git credential")
+			s.flashErrT(w, r, "flash.err.invalid_git_credential")
 			return
 		}
 		gcID = &n
 	}
 	if err := s.q.SetApplicationGitCredential(r.Context(), db.SetApplicationGitCredentialParams{ID: c.App.ID, GitCredentialID: gcID}); err != nil {
 		logFrom(r).Error("setAppGitCredential: update failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to set git credential")
+		s.flashErrT(w, r, "flash.err.set_gitcred")
 		return
 	}
 	logFrom(r).Info("application git credential set", "app_id", c.App.ID, "git_credential_id", gcID)
-	s.setFlash(w, "ok", "Git credential updated")
+	s.flashOK(w, r, "flash.ok.gitcred_updated")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
@@ -233,11 +234,11 @@ func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
 		ID: c.App.ID, BuildArgs: args, BuildSecrets: secret.Enc(secrets),
 	}); err != nil {
 		logFrom(r).Error("saveBuild: update failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to save build settings")
+		s.flashErrT(w, r, "flash.err.save_build")
 		return
 	}
 	logFrom(r).Info("application build settings saved", "app_id", c.App.ID)
-	s.setFlash(w, "ok", "Build settings saved")
+	s.flashOK(w, r, "flash.ok.build_saved")
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 
@@ -404,7 +405,7 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 				ID: c.App.ID, GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 			}); err != nil {
 				logFrom(r).Error("deployApp: failed to update application source", "err", err, "app_id", c.App.ID)
-				s.flashErr(w, r, "failed to update source")
+				s.flashErrT(w, r, "flash.err.update_source")
 				return
 			}
 		}
@@ -414,18 +415,18 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 		if image != "" && tag != "" {
 			if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag}); err != nil {
 				logFrom(r).Error("deployApp: failed to update application image", "err", err, "app_id", c.App.ID, "image", image)
-				s.flashErr(w, r, "failed to update image")
+				s.flashErrT(w, r, "flash.err.update_image")
 				return
 			}
 		}
 	}
 	if s.deployer.Enqueue(c.App.ID, "manual") == 0 {
 		logFrom(r).Error("deployApp: deployment not accepted (queue full or shutting down)", "app_id", c.App.ID)
-		s.flashErr(w, r, "could not queue the deployment — try again later")
+		s.flashErrT(w, r, "flash.err.queue_deploy")
 		return
 	}
 	logFrom(r).Info("deploy enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Deployment queued")
+	s.flashOK(w, r, "flash.ok.deploy_queued")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
@@ -438,11 +439,11 @@ func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.deployer.EnqueueRebuild(c.App.ID, "manual") == 0 {
 		logFrom(r).Error("rebuildApp: rebuild not accepted (queue full or shutting down)", "app_id", c.App.ID)
-		s.flashErr(w, r, "could not queue the rebuild — try again later")
+		s.flashErrT(w, r, "flash.err.queue_rebuild")
 		return
 	}
 	logFrom(r).Info("rebuild enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Rebuild queued (no cache)")
+	s.flashOK(w, r, "flash.ok.rebuild_queued")
 	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }
 
@@ -455,12 +456,12 @@ func (s *Server) reloadApp(w http.ResponseWriter, r *http.Request) {
 	if s.engine != nil {
 		if err := s.engine.ServiceRestart(r.Context(), dockerName(c.App.ID)); err != nil {
 			logFrom(r).Error("reloadApp: failed to restart service", "err", err, "app_id", c.App.ID)
-			s.flashErr(w, r, "failed to reload application")
+			s.flashErrT(w, r, "flash.err.reload_app")
 			return
 		}
 	}
 	logFrom(r).Info("application reloaded", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Reload requested")
+	s.flashOK(w, r, "flash.ok.reload_requested")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
@@ -473,7 +474,7 @@ func (s *Server) stopApp(w http.ResponseWriter, r *http.Request) {
 	if s.engine != nil {
 		if err := s.engine.ServiceScale(r.Context(), dockerName(c.App.ID), 0); err != nil {
 			logFrom(r).Error("stopApp: failed to scale to zero", "err", err, "app_id", c.App.ID)
-			s.flashErr(w, r, "failed to stop application")
+			s.flashErrT(w, r, "flash.err.stop_application")
 			return
 		}
 	}
@@ -481,7 +482,7 @@ func (s *Server) stopApp(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Error("stopApp: failed to update status", "err", err, "app_id", c.App.ID)
 	}
 	logFrom(r).Info("application stopped", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Application stopped")
+	s.flashOK(w, r, "flash.ok.app_stopped")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
@@ -492,7 +493,7 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	raw := r.FormValue("env")
 	if _, dups := parseEnv(raw); len(dups) > 0 {
-		s.flashErr(w, r, "duplicate variable: "+dups[0])
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.duplicate_var", dups[0]))
 		return
 	}
 	if err := s.q.UpdateApplicationEnv(r.Context(), db.UpdateApplicationEnvParams{
@@ -503,7 +504,7 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("environment variables updated", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Variables saved — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.env_saved")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
 }
 
@@ -517,22 +518,22 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 	command := strings.TrimSpace(r.FormValue("command"))
 	memLimit := strings.TrimSpace(r.FormValue("memory_limit"))
 	if _, err := docker.ParseMemoryBytes(memLimit); err != nil {
-		s.flashErr(w, r, "invalid memory limit (e.g. 256m, 1g)")
+		s.flashErrT(w, r, "flash.err.invalid_mem")
 		return
 	}
 	cpuLimit := strings.TrimSpace(r.FormValue("cpu_limit"))
 	if _, err := docker.ParseNanoCPUs(cpuLimit); err != nil {
-		s.flashErr(w, r, "invalid CPU limit (e.g. 0.5, 1)")
+		s.flashErrT(w, r, "flash.err.invalid_cpu")
 		return
 	}
 	replicas, err := strconv.Atoi(strings.TrimSpace(r.FormValue("replicas")))
 	if err != nil || replicas < 1 || replicas > 20 {
-		s.flashErr(w, r, "replicas must be between 1 and 20")
+		s.flashErrT(w, r, "flash.err.replicas_range")
 		return
 	}
 	cond := r.FormValue("restart_condition")
 	if cond != "any" && cond != "on-failure" && cond != "none" {
-		s.flashErr(w, r, "invalid restart condition")
+		s.flashErrT(w, r, "flash.err.invalid_restart_cond")
 		return
 	}
 	maxAttStr := strings.TrimSpace(r.FormValue("restart_max_attempts"))
@@ -541,7 +542,7 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 	}
 	maxAtt, err := strconv.Atoi(maxAttStr)
 	if err != nil || maxAtt < 0 {
-		s.flashErr(w, r, "max restart attempts must be 0 or more")
+		s.flashErrT(w, r, "flash.err.max_attempts")
 		return
 	}
 	hcCmd := strings.TrimSpace(r.FormValue("healthcheck_cmd"))
@@ -557,13 +558,13 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if _, perr := time.ParseDuration(d); perr != nil {
-				s.flashErr(w, r, "invalid healthcheck duration (e.g. 30s, 1m)")
+				s.flashErrT(w, r, "flash.err.invalid_hc_duration")
 				return
 			}
 		}
 		if hcRetries != "" {
 			if n, perr := strconv.Atoi(hcRetries); perr != nil || n < 0 {
-				s.flashErr(w, r, "healthcheck retries must be 0 or more")
+				s.flashErrT(w, r, "flash.err.hc_retries")
 				return
 			}
 		}
@@ -584,11 +585,11 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 		HealthcheckStartPeriod: nilIfEmpty(hcStart),
 	}); err != nil {
 		logFrom(r).Error("saveAdvanced: failed to update advanced settings", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "failed to save settings")
+		s.flashErrT(w, r, "flash.err.save_settings")
 		return
 	}
 	logFrom(r).Info("advanced settings updated", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Advanced settings saved — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.advanced_saved")
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 
@@ -662,7 +663,7 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("application deleted", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.setFlash(w, "ok", "Application deleted")
+	s.flashOK(w, r, "flash.ok.app_deleted")
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)
 }
 

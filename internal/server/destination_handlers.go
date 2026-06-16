@@ -40,7 +40,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	secretKey := r.FormValue("secret_key")
 
 	if name == "" || bucket == "" {
-		s.flashErr(w, r, "name and bucket are required")
+		s.flashErrT(w, r, "flash.err.dest_fields_required")
 		return
 	}
 	if region == "" {
@@ -54,7 +54,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > 0 {
-		s.flashErr(w, r, "a destination with this name already exists")
+		s.flashErrT(w, r, "flash.err.dest_name_exists")
 		return
 	}
 
@@ -66,7 +66,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 		SecretKey: secretKey,
 	}); err != nil {
 		logFrom(r).Info("createDestination: bucket access check failed", "err", err, "org_id", o.ID, "bucket", bucket, "endpoint", endpoint)
-		s.flashErr(w, r, "cannot access bucket with these credentials")
+		s.flashErrT(w, r, "flash.err.bucket_access")
 		return
 	}
 
@@ -81,11 +81,11 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("createDestination: failed to create destination", "err", err, "org_id", o.ID, "name", name)
-		s.flashErr(w, r, "failed to create destination: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_destination", err)
 		return
 	}
 	logFrom(r).Info("destination created", "org_id", o.ID, "destination_id", d.ID, "name", d.Name, "bucket", d.Bucket, "endpoint", d.Endpoint)
-	s.setFlash(w, "ok", "Destination created")
+	s.flashOK(w, r, "flash.ok.dest_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/destinations", http.StatusSeeOther)
 }
 
@@ -114,7 +114,7 @@ func (s *Server) deleteDestination(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > 0 {
-		s.flashErr(w, r, "destination is in use by backups")
+		s.flashErrT(w, r, "flash.err.dest_in_use")
 		return
 	}
 	if err := s.q.DeleteDestination(r.Context(), dID); err != nil {
@@ -123,6 +123,6 @@ func (s *Server) deleteDestination(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("destination deleted", "org_id", o.ID, "destination_id", dID)
-	s.setFlash(w, "ok", "Destination deleted")
+	s.flashOK(w, r, "flash.ok.dest_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/destinations", http.StatusSeeOther)
 }

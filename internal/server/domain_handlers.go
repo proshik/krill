@@ -120,12 +120,12 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 	tls := r.FormValue("tls") == "on"
 	if !validHost(host) {
 		logFrom(r).Info("addDomain: invalid host", "app_id", c.App.ID, "host", host)
-		s.flashErr(w, r, "invalid host")
+		s.flashErrT(w, r, "flash.err.invalid_host")
 		return
 	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), host); n > 0 {
 		logFrom(r).Info("addDomain: host already in use", "app_id", c.App.ID, "host", host)
-		s.flashErr(w, r, "host already in use")
+		s.flashErrT(w, r, "flash.err.host_in_use")
 		return
 	}
 	expose := r.FormValue("exposed") == "on"
@@ -138,12 +138,12 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false, Exposed: expose, Paths: strings.Join(paths, "\n"),
 	}); err != nil {
 		logFrom(r).Error("addDomain: create failed", "err", err, "app_id", c.App.ID, "host", host)
-		s.flashErr(w, r, "failed to add domain")
+		s.flashErrT(w, r, "flash.err.add_domain")
 		return
 	}
 	logFrom(r).Info("domain added", "app_id", c.App.ID, "host", host, "tls", tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Domain added")
+	s.flashOK(w, r, "flash.ok.domain_added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -158,12 +158,12 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetDomainTLS(r.Context(), db.SetDomainTLSParams{ID: d.ID, Tls: !d.Tls}); err != nil {
 		logFrom(r).Error("toggleDomainTLS: update failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to update domain")
+		s.flashErrT(w, r, "flash.err.update_domain")
 		return
 	}
 	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", !d.Tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "TLS setting updated")
+	s.flashOK(w, r, "flash.ok.tls_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -186,12 +186,12 @@ func (s *Server) setDomainExposure(w http.ResponseWriter, r *http.Request) {
 		ID: d.ID, Exposed: expose, Paths: strings.Join(paths, "\n"),
 	}); err != nil {
 		logFrom(r).Error("setDomainExposure: update failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to update exposure")
+		s.flashErrT(w, r, "flash.err.update_exposure")
 		return
 	}
 	logFrom(r).Info("domain exposure updated", "domain_id", d.ID, "app_id", c.App.ID, "exposed", expose, "paths", len(paths))
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Exposure updated")
+	s.flashOK(w, r, "flash.ok.exposure_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -206,22 +206,22 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.IsPrimary {
 		logFrom(r).Info("deleteDomain: refused to delete primary domain", "app_id", c.App.ID, "domain_id", d.ID)
-		s.flashErr(w, r, "cannot delete the primary domain")
+		s.flashErrT(w, r, "flash.err.delete_primary_domain")
 		return
 	}
 	if n, _ := s.q.CountDomainsByApplication(r.Context(), c.App.ID); n <= 1 {
 		logFrom(r).Info("deleteDomain: refused to delete last domain", "app_id", c.App.ID, "domain_id", d.ID)
-		s.flashErr(w, r, "cannot delete the last domain")
+		s.flashErrT(w, r, "flash.err.delete_last_domain")
 		return
 	}
 	if err := s.q.DeleteDomain(r.Context(), d.ID); err != nil {
 		logFrom(r).Error("deleteDomain: delete failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to delete domain")
+		s.flashErrT(w, r, "flash.err.delete_domain")
 		return
 	}
 	logFrom(r).Info("domain deleted", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Domain deleted")
+	s.flashOK(w, r, "flash.ok.domain_deleted")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -262,31 +262,31 @@ func (s *Server) addDomainBasicAuthUser(w http.ResponseWriter, r *http.Request) 
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 	if !validBasicAuthUser(username) || password == "" {
-		s.flashErr(w, r, "invalid username or empty password")
+		s.flashErrT(w, r, "flash.err.invalid_user_or_pw")
 		return
 	}
 	entries := basicAuthEntries(d.BasicAuthUsers)
 	for _, e := range entries {
 		if strings.SplitN(e, ":", 2)[0] == username {
-			s.flashErr(w, r, "username already exists")
+			s.flashErrT(w, r, "flash.err.username_exists")
 			return
 		}
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
 		logFrom(r).Error("addDomainBasicAuthUser: hash failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "internal error")
+		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
 	entries = append(entries, username+":"+hash)
 	if err := s.q.SetDomainBasicAuth(r.Context(), db.SetDomainBasicAuthParams{ID: d.ID, BasicAuthUsers: strings.Join(entries, "\n")}); err != nil {
 		logFrom(r).Error("addDomainBasicAuthUser: update failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to add user")
+		s.flashErrT(w, r, "flash.err.add_user")
 		return
 	}
 	logFrom(r).Info("domain basic-auth user added", "domain_id", d.ID, "app_id", c.App.ID, "username", username)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Basic-auth user added")
+	s.flashOK(w, r, "flash.ok.ba_user_added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -309,12 +309,12 @@ func (s *Server) deleteDomainBasicAuthUser(w http.ResponseWriter, r *http.Reques
 	}
 	if err := s.q.SetDomainBasicAuth(r.Context(), db.SetDomainBasicAuthParams{ID: d.ID, BasicAuthUsers: strings.Join(kept, "\n")}); err != nil {
 		logFrom(r).Error("deleteDomainBasicAuthUser: update failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to remove user")
+		s.flashErrT(w, r, "flash.err.remove_user")
 		return
 	}
 	logFrom(r).Info("domain basic-auth user removed", "domain_id", d.ID, "app_id", c.App.ID, "username", username)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Basic-auth user removed")
+	s.flashOK(w, r, "flash.ok.ba_user_removed")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
@@ -335,11 +335,11 @@ func (s *Server) setDomainAllowedIPs(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetDomainAllowedIPs(r.Context(), db.SetDomainAllowedIPsParams{ID: d.ID, AllowedIps: strings.Join(ips, "\n")}); err != nil {
 		logFrom(r).Error("setDomainAllowedIPs: update failed", "err", err, "domain_id", d.ID)
-		s.flashErr(w, r, "failed to update allowed IPs")
+		s.flashErrT(w, r, "flash.err.update_allowed_ips")
 		return
 	}
 	logFrom(r).Info("domain allowed IPs updated", "domain_id", d.ID, "app_id", c.App.ID, "count", len(ips))
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
-	s.setFlash(w, "ok", "Allowed IPs updated")
+	s.flashOK(w, r, "flash.ok.allowed_ips_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }

@@ -68,17 +68,17 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 
 	destID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("destination_id")), 10, 64)
 	if err != nil {
-		s.flashErr(w, r, "invalid destination")
+		s.flashErrT(w, r, "flash.err.invalid_destination")
 		return
 	}
 	schedule := strings.TrimSpace(r.FormValue("schedule"))
 	if schedule == "" {
-		s.flashErr(w, r, "schedule is required")
+		s.flashErrT(w, r, "flash.err.schedule_required")
 		return
 	}
 	retention, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retention")))
 	if err != nil || retention < 1 {
-		s.flashErr(w, r, "retention must be at least 1")
+		s.flashErrT(w, r, "flash.err.retention_min")
 		return
 	}
 	prefix := strings.TrimSpace(r.FormValue("prefix"))
@@ -86,7 +86,7 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	dest, err := s.q.GetDestination(r.Context(), destID)
 	if err != nil || dest.OrganizationID != o.ID {
 		logFrom(r).Info("addBackup: destination not found or org mismatch", "destination_id", destID, "org_id", o.ID, "db_id", dbID)
-		s.flashErr(w, r, "invalid destination")
+		s.flashErrT(w, r, "flash.err.invalid_destination")
 		return
 	}
 
@@ -100,14 +100,14 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logFrom(r).Error("addBackup: create failed", "err", err, "db_id", dbID, "destination_id", destID)
-		s.flashErr(w, r, "failed to create backup: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_backup", err)
 		return
 	}
 	logFrom(r).Info("backup created", "backup_id", b.ID, "db_id", dbID, "destination_id", destID, "schedule", schedule, "retention", retention)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
-	s.setFlash(w, "ok", "Backup schedule created")
+	s.flashOK(w, r, "flash.ok.backup_created")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -119,14 +119,14 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.DeleteBackup(r.Context(), b.ID); err != nil {
 		logFrom(r).Error("deleteBackup: delete failed", "err", err, "backup_id", b.ID)
-		s.flashErr(w, r, "failed to delete backup")
+		s.flashErrT(w, r, "flash.err.delete_backup")
 		return
 	}
 	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", b.PostgresDbID)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
-	s.setFlash(w, "ok", "Backup schedule deleted")
+	s.flashOK(w, r, "flash.ok.backup_deleted")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -138,14 +138,14 @@ func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetBackupEnabled(r.Context(), db.SetBackupEnabledParams{ID: b.ID, Enabled: !b.Enabled}); err != nil {
 		logFrom(r).Error("toggleBackup: update failed", "err", err, "backup_id", b.ID)
-		s.flashErr(w, r, "failed to update backup")
+		s.flashErrT(w, r, "flash.err.update_backup")
 		return
 	}
 	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.PostgresDbID, "enabled", !b.Enabled)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
-	s.setFlash(w, "ok", "Backup schedule updated")
+	s.flashOK(w, r, "flash.ok.backup_updated")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -157,7 +157,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.backupSvc == nil {
-		s.flashErr(w, r, "backups unavailable")
+		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
 	// Run asynchronously with a detached context: a backup can take minutes, so
@@ -171,7 +171,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 			slog.Error("runBackupNow: backup failed", "err", err, "backup_id", b.ID)
 		}
 	}()
-	s.setFlash(w, "ok", "Backup started")
+	s.flashOK(w, r, "flash.ok.backup_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -183,11 +183,11 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimSpace(r.FormValue("key"))
 	if key == "" {
-		s.flashErr(w, r, "key is required")
+		s.flashErrT(w, r, "flash.err.key_required")
 		return
 	}
 	if s.backupSvc == nil {
-		s.flashErr(w, r, "backups unavailable")
+		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
 	// Run asynchronously with a detached context: the S3→psql restore can take
@@ -200,7 +200,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 			slog.Error("restoreBackup: restore failed", "err", err, "backup_id", b.ID, "key", key)
 		}
 	}()
-	s.setFlash(w, "ok", "Restore started")
+	s.flashOK(w, r, "flash.ok.restore_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 

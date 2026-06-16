@@ -56,11 +56,11 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	o, err := s.org.CreateOrg(r.Context(), auth.UserID(r.Context()), name)
 	if err != nil {
 		logFrom(r).Error("createOrg: failed to create organization", "err", err, "name", name)
-		s.flashErr(w, r, "failed to create organization: "+err.Error())
+		s.flashErrErr(w, r, "flash.err.create_org", err)
 		return
 	}
 	logFrom(r).Info("organization created", "org_id", o.ID, "name", o.Name)
-	s.setFlash(w, "ok", "Organization created")
+	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
@@ -133,7 +133,7 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 		u, err = s.q.CreateUser(r.Context(), db.CreateUserParams{Email: email, PasswordHash: hash})
 		if err != nil {
 			logFrom(r).Error("createMember: failed to create user", "err", err, "org_id", o.ID)
-			s.flashErr(w, r, "failed to create user: "+err.Error())
+			s.flashErrErr(w, r, "flash.err.create_user", err)
 			return
 		}
 	} else {
@@ -143,14 +143,14 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 		OrganizationID: o.ID, UserID: u.ID, Role: role,
 	}); err != nil {
 		logFrom(r).Error("createMember: failed to add member", "err", err, "org_id", o.ID, "user_id", u.ID, "role", role)
-		s.flashErr(w, r, "user already in the organization?")
+		s.flashErrT(w, r, "flash.err.user_in_org")
 		return
 	}
 	if tempPw != "" {
 		s.setFlashPw(w, tempPw)
 	}
 	logFrom(r).Info("member added", "org_id", o.ID, "user_id", u.ID, "role", role)
-	s.setFlash(w, "ok", "Member added")
+	s.flashOK(w, r, "flash.ok.member_added")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
 }
 
@@ -172,7 +172,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 	}
 	role := r.FormValue("role")
 	if role != "owner" && role != "admin" && role != "member" {
-		s.flashErr(w, r, "invalid role")
+		s.flashErrT(w, r, "flash.err.invalid_role")
 		return
 	}
 	// Only an owner may grant the owner role (mirrors createMember, which
@@ -180,14 +180,14 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 	// members — or themselves — beyond admin level.
 	if role == "owner" && actorRole != "owner" {
 		logFrom(r).Warn("updateMemberRole: non-owner attempted to grant owner role", "member_id", mID, "org_id", o.ID, "role", actorRole)
-		s.flashErr(w, r, "only an owner can grant the owner role")
+		s.flashErrT(w, r, "flash.err.owner_grant_owner")
 		return
 	}
 	// An actor may not act on a member who outranks them: an admin must not be
 	// able to demote (or, in removeMember, delete) an owner.
 	if m.Role == "owner" && actorRole != "owner" {
 		logFrom(r).Warn("updateMemberRole: non-owner attempted to change an owner's role", "member_id", mID, "org_id", o.ID, "role", actorRole)
-		s.flashErr(w, r, "only an owner can change an owner's role")
+		s.flashErrT(w, r, "flash.err.owner_change_owner")
 		return
 	}
 	if m.Role == "owner" && role != "owner" {
@@ -199,7 +199,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		}
 		if n <= 1 {
 			logFrom(r).Warn("updateMemberRole: attempt to demote the last owner", "member_id", mID, "org_id", o.ID)
-			s.flashErr(w, r, "cannot demote the last owner")
+			s.flashErrT(w, r, "flash.err.last_owner_demote")
 			return
 		}
 	}
@@ -209,7 +209,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("member role changed", "member_id", mID, "org_id", o.ID, "role", role)
-	s.setFlash(w, "ok", "Role updated")
+	s.flashOK(w, r, "flash.ok.role_updated")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
 }
 
@@ -233,7 +233,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	// able to remove an owner (mirrors the updateMemberRole guard).
 	if m.Role == "owner" && actorRole != "owner" {
 		logFrom(r).Warn("removeMember: non-owner attempted to remove an owner", "member_id", mID, "org_id", o.ID, "role", actorRole)
-		s.flashErr(w, r, "only an owner can remove an owner")
+		s.flashErrT(w, r, "flash.err.owner_remove_owner")
 		return
 	}
 	if m.Role == "owner" {
@@ -245,7 +245,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		}
 		if n <= 1 {
 			logFrom(r).Warn("removeMember: attempt to remove the last owner", "member_id", mID, "org_id", o.ID)
-			s.flashErr(w, r, "cannot remove the last owner")
+			s.flashErrT(w, r, "flash.err.last_owner_remove")
 			return
 		}
 	}
@@ -255,6 +255,6 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("member removed", "member_id", mID, "org_id", o.ID)
-	s.setFlash(w, "ok", "Member removed")
+	s.flashOK(w, r, "flash.ok.member_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 var envVarNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
@@ -20,31 +21,31 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := strings.SplitN(r.FormValue("db_ref"), ":", 2)
 	if len(ref) != 2 {
-		s.flashErr(w, r, "invalid database")
+		s.flashErrT(w, r, "flash.err.invalid_database")
 		return
 	}
 	engine := ref[0]
 	dbID, err := strconv.ParseInt(ref[1], 10, 64)
 	if err != nil {
-		s.flashErr(w, r, "invalid database")
+		s.flashErrT(w, r, "flash.err.invalid_database")
 		return
 	}
 	varName := strings.TrimSpace(r.FormValue("var_name"))
 	scheme := r.FormValue("scheme")
 	if !envVarNameRe.MatchString(varName) {
-		s.flashErr(w, r, "invalid variable name (use letters, digits, underscore)")
+		s.flashErrT(w, r, "flash.err.invalid_var_name")
 		return
 	}
 	switch engine {
 	case "postgres":
 		if scheme != "postgresql" && scheme != "postgres" {
-			s.flashErr(w, r, "invalid scheme for postgres")
+			s.flashErrT(w, r, "flash.err.invalid_pg_scheme")
 			return
 		}
 	case "redis":
 		scheme = "redis"
 	default:
-		s.flashErr(w, r, "invalid database")
+		s.flashErrT(w, r, "flash.err.invalid_database")
 		return
 	}
 	// the DB must belong to this app's environment
@@ -52,39 +53,39 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 	if engine == "postgres" {
 		pg, gerr := s.q.GetPostgres(r.Context(), dbID)
 		if gerr != nil {
-			s.flashErr(w, r, "database not found")
+			s.flashErrT(w, r, "flash.err.db_not_found")
 			return
 		}
 		envID = pg.EnvironmentID
 	} else {
 		rd, gerr := s.q.GetRedis(r.Context(), dbID)
 		if gerr != nil {
-			s.flashErr(w, r, "database not found")
+			s.flashErrT(w, r, "flash.err.db_not_found")
 			return
 		}
 		envID = rd.EnvironmentID
 	}
 	if envID != c.Env.ID {
 		logFrom(r).Info("addDBLink: db not in app environment", "db_id", dbID, "engine", engine, "app_id", c.App.ID)
-		s.flashErr(w, r, "database is not in this environment")
+		s.flashErrT(w, r, "flash.err.db_not_in_env")
 		return
 	}
 	// var must not already be set in env_text: the link would override it at
 	// deploy (see deploy.GetApplication), so reject here to avoid a silent shadow.
 	existing, _ := parseEnv(c.App.EnvText)
 	if _, dup := existing[varName]; dup {
-		s.flashErr(w, r, "variable "+varName+" is already set in the environment; remove it there first")
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.var_in_env", varName))
 		return
 	}
 	if _, err := s.q.CreateDBLink(r.Context(), db.CreateDBLinkParams{
 		ApplicationID: c.App.ID, Engine: engine, DbID: dbID, VarName: varName, Scheme: scheme,
 	}); err != nil {
 		logFrom(r).Error("addDBLink: create failed", "err", err, "app_id", c.App.ID)
-		s.flashErr(w, r, "a link for this variable already exists")
+		s.flashErrT(w, r, "flash.err.link_var_exists")
 		return
 	}
 	logFrom(r).Info("db link created", "app_id", c.App.ID, "engine", engine, "db_id", dbID, "var", varName)
-	s.setFlash(w, "ok", "Database linked — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.db_linked")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
 }
 
@@ -99,11 +100,11 @@ func (s *Server) deleteDBLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.DeleteDBLink(r.Context(), l.ID); err != nil {
 		logFrom(r).Error("deleteDBLink: delete failed", "err", err, "link_id", l.ID)
-		s.flashErr(w, r, "failed to remove link")
+		s.flashErrT(w, r, "flash.err.remove_link")
 		return
 	}
 	logFrom(r).Info("db link removed", "app_id", c.App.ID, "link_id", l.ID, "var", l.VarName)
-	s.setFlash(w, "ok", "Link removed — applied on next deploy")
+	s.flashOK(w, r, "flash.ok.link_removed")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
 }
 
