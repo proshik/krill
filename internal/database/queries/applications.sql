@@ -37,6 +37,12 @@ DELETE FROM applications WHERE id = $1;
 -- name: SetApplicationRegistry :exec
 UPDATE applications SET registry_id = $2, updated_at = now() WHERE id = $1;
 
+-- name: SetApplicationGitCredential :exec
+UPDATE applications SET git_credential_id = $2, updated_at = now() WHERE id = $1;
+
+-- name: UpdateApplicationBuild :exec
+UPDATE applications SET build_args = $2, build_secrets = $3, updated_at = now() WHERE id = $1;
+
 -- name: UpdateApplicationAdvanced :exec
 UPDATE applications SET
     command = $2,

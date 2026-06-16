@@ -56,6 +56,9 @@ type Application struct {
 	HealthcheckStartPeriod *string   `json:"healthcheck_start_period"`
 	Command                *string   `json:"command"`
 	EnvText                string    `json:"env_text"`
+	GitCredentialID        *int64    `json:"git_credential_id"`
+	BuildArgs              string    `json:"build_args"`
+	BuildSecrets           string    `json:"build_secrets"`
 }
 
 type Backup struct {
@@ -115,6 +118,16 @@ type Environment struct {
 	Name      string    `json:"name"`
 	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type GitCredential struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	Host           string    `json:"host"`
+	Username       string    `json:"username"`
+	Token          string    `json:"token"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Member struct {

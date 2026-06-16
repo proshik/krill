@@ -14,6 +14,7 @@ type Querier interface {
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountApplicationsByGitCredential(ctx context.Context, gitCredentialID *int64) (int64, error)
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
@@ -23,6 +24,7 @@ type Querier interface {
 	CountEnabledHealthChannels(ctx context.Context) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
+	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
@@ -34,6 +36,7 @@ type Querier interface {
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (Destination, error)
 	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
+	CreateGitCredential(ctx context.Context, arg CreateGitCredentialParams) (GitCredential, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreatePostgres(ctx context.Context, arg CreatePostgresParams) (PostgresDb, error)
@@ -52,6 +55,7 @@ type Querier interface {
 	DeleteDomain(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteGitCredential(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
 	DeleteOrganization(ctx context.Context, id int64) error
 	DeletePostgres(ctx context.Context, id int64) error
@@ -70,6 +74,7 @@ type Querier interface {
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
+	GetGitCredential(ctx context.Context, id int64) (GitCredential, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
@@ -101,6 +106,7 @@ type Querier interface {
 	ListEnabledBackups(ctx context.Context) ([]Backup, error)
 	ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
+	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
@@ -120,6 +126,7 @@ type Querier interface {
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
+	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
@@ -129,6 +136,7 @@ type Querier interface {
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
+	UpdateApplicationBuild(ctx context.Context, arg UpdateApplicationBuildParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
