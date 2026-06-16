@@ -241,7 +241,7 @@ templ envTab(c AppCtx) {
 			<form method="post" action={ templ.SafeURL(c.base() + "/db-links") } class="flex items-end gap-2 flex-wrap mb-4">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.database") }</label>
-					<select class="k-select" name="db_ref">
+					<select id="dblink-db" class="k-select" name="db_ref">
 						for _, d := range c.EnvDatabases {
 							<option value={ d.Engine + ":" + itoa(d.ID) }>{ d.Engine } · { d.Name }</option>
 						}
@@ -253,13 +253,14 @@ templ envTab(c AppCtx) {
 				</div>
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.scheme") }</label>
-					<select class="k-select" name="scheme">
-						<option value="postgresql">postgresql://</option>
-						<option value="postgres">postgres://</option>
-						<option value="redis">redis://</option>
+					<select id="dblink-scheme" class="k-select" name="scheme">
+						<option value="postgresql" data-engine="postgres">postgresql://</option>
+						<option value="postgres" data-engine="postgres">postgres://</option>
+						<option value="redis" data-engine="redis">redis://</option>
 					</select>
 				</div>
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
+				<p id="dblink-scheme-hint" class="k-muted text-xs mt-1" style="flex-basis:100%;display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
 			</form>
 		}
 		<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">

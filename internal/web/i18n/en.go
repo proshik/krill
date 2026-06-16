@@ -49,6 +49,7 @@ var en = map[string]string{
 	"dblink.delete":                "Unlink",
 	"dblink.no_databases":          "No managed databases in this environment to link.",
 	"dblink.collision":             "also set in env below — the link overrides it on deploy",
+	"dblink.scheme_hint":           "postgres:// and postgresql:// are identical — pick what your framework expects (SQLAlchemy needs postgresql://, Rails/Heroku use postgres://).",
 	"common.cancel":                "Cancel",
 	"common.save":                  "Save",
 	"common.delete":                "Delete",

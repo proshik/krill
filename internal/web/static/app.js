@@ -236,6 +236,7 @@ window.krillEnhance = function () {
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
     krillEnvMode(mode);
   }
+  krillMountDBLink();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".k-mon")) {
@@ -252,6 +253,35 @@ window.krillEnhance = function () {
     if (on === "1") { arcb.checked = true; krillAutoRefresh(arcb); }
   }
 };
+
+// Engine-aware Scheme select for the DB-link form: rebuilds the scheme options to
+// only those valid for the currently selected database (Postgres -> postgresql/
+// postgres, Redis -> redis) and reveals a hint explaining that postgres:// and
+// postgresql:// are interchangeable aliases (the choice is about the consuming
+// framework, not the database). Idempotent (guarded by data-mounted).
+function krillMountDBLink() {
+  const dbSel = document.getElementById("dblink-db");
+  const schemeSel = document.getElementById("dblink-scheme");
+  if (!dbSel || !schemeSel || schemeSel.dataset.mounted) return;
+  schemeSel.dataset.mounted = "1";
+  const hint = document.getElementById("dblink-scheme-hint");
+  const all = Array.from(schemeSel.options).map((o) => ({ value: o.value, label: o.textContent, engine: o.dataset.engine }));
+  const apply = () => {
+    const engine = dbSel.value.split(":")[0] || "";
+    const prev = schemeSel.value;
+    schemeSel.innerHTML = "";
+    all.filter((o) => o.engine === engine).forEach((o) => {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      schemeSel.appendChild(opt);
+    });
+    if (Array.from(schemeSel.options).some((o) => o.value === prev)) schemeSel.value = prev;
+    if (hint) hint.style.display = engine === "postgres" ? "" : "none";
+  };
+  dbSel.addEventListener("change", apply);
+  apply();
+}
 
 // Toggle periodic status refresh: when checked, click the refresh button every
 // 5s (it hx-get's the OOB status fragment). A single global timer, cleared by

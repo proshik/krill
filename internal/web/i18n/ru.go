@@ -49,6 +49,7 @@ var ru = map[string]string{
 	"dblink.delete":                "Отвязать",
 	"dblink.no_databases":          "В этом окружении нет managed-БД для связывания.",
 	"dblink.collision":             "также задана в env ниже — линк перекроет её при деплое",
+	"dblink.scheme_hint":           "postgres:// и postgresql:// идентичны — выбери, что ждёт твой фреймворк (SQLAlchemy → postgresql://, Rails/Heroku → postgres://).",
 	"common.cancel":                "Отмена",
 	"common.save":                  "Сохранить",
 	"common.delete":                "Удалить",
