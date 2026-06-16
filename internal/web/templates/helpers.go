@@ -2,6 +2,7 @@ package templates
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -9,6 +10,18 @@ import (
 
 // itoa formats an int64 for interpolation into URLs inside templates.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// basicAuthUsernames extracts the usernames from a newline-separated htpasswd
+// "user:hash" list. Only usernames are exposed to the UI; hashes are never shown.
+func basicAuthUsernames(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if e := strings.TrimSpace(line); e != "" {
+			out = append(out, strings.SplitN(e, ":", 2)[0])
+		}
+	}
+	return out
+}
 
 // strv dereferences a *string into a value, returning "" when nil.
 func strv(p *string) string {

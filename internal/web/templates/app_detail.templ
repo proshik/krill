@@ -355,6 +355,42 @@ templ domainsTab(c AppCtx) {
 						</form>
 					}
 				</div>
+				if d.Exposed {
+					<div class="mt-3 pt-3" style="border-top:1px dashed var(--color-border);max-width:820px">
+						<div class="k-label mb-1">{ i18n.T(ctx, "domains.protection") }</div>
+						<p class="k-mono text-xs mb-2" style="color:var(--color-faint)">{ i18n.T(ctx, "domains.protection_note") }</p>
+						<div class="k-label mb-1">{ i18n.T(ctx, "domains.basicauth") }</div>
+						if users := basicAuthUsernames(d.BasicAuthUsers); len(users) == 0 {
+							<p class="k-muted text-xs mb-2">{ i18n.T(ctx, "domains.ba_none") }</p>
+						} else {
+							<div class="flex flex-wrap gap-2 mb-2">
+								for _, u := range users {
+									<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/basic-auth/delete") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.delete_basicauth", u) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+										<input type="hidden" name="username" value={ u }/>
+										<span class="k-badge k-mono">{ u } <button type="submit" class="underline">{ i18n.T(ctx, "domains.ba_remove") }</button></span>
+									</form>
+								}
+							</div>
+						}
+						<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/basic-auth") } class="flex items-end gap-2 flex-wrap mb-3">
+							<div>
+								<label class="k-label">{ i18n.T(ctx, "domains.ba_user") }</label>
+								<input class="k-input k-mono" name="username" autocomplete="off" required/>
+							</div>
+							<div>
+								<label class="k-label">{ i18n.T(ctx, "domains.ba_pass") }</label>
+								<input class="k-input" type="password" name="password" autocomplete="new-password" required/>
+							</div>
+							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.ba_add") }</button>
+						</form>
+						<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/allowed-ips") } class="grid gap-2">
+							<label class="k-label">{ i18n.T(ctx, "domains.allowed_ips") }</label>
+							<textarea class="k-code" name="ips" spellcheck="false" placeholder="203.0.113.4&#10;10.0.0.0/8">{ d.AllowedIps }</textarea>
+							<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "domains.allowed_ips_hint") }</p>
+							<div><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "domains.save") }</button></div>
+						</form>
+					</div>
+				}
 			</div>
 		}
 		<form method="post" action={ templ.SafeURL(c.base() + "/domains") } class="grid gap-2" style="max-width:820px">
