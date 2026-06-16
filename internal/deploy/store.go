@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/secret"
@@ -68,6 +69,18 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 				out.RegistryAuth = auth
 			}
 		}
+	}
+	// Build-time credentials/args/secrets only matter for source builds.
+	if a.SourceType == "dockerfile" {
+		if a.GitCredentialID != nil {
+			if gc, gerr := s.q.GetGitCredential(ctx, *a.GitCredentialID); gerr == nil {
+				out.GitAuth = &builder.GitAuth{Username: gc.Username, Token: secret.Dec(gc.Token)}
+			} else {
+				slog.Warn("git-credential: not found, cloning without auth", "app", a.ID, "git_credential_id", *a.GitCredentialID)
+			}
+		}
+		out.BuildArgs = parseEnvText(a.BuildArgs)
+		out.BuildSecrets = parseEnvText(secret.Dec(a.BuildSecrets))
 	}
 	vols, verr := s.q.ListVolumesByApplication(ctx, a.ID)
 	if verr != nil {

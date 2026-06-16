@@ -192,3 +192,65 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 		t.Errorf("after DB delete expected env_text 'manual', got %q", got2.Env["DB_URL"])
 	}
 }
+
+func TestGetApplicationInjectsBuildCredentials(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "bc@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	gc, err := q.CreateGitCredential(ctx, db.CreateGitCredentialParams{
+		OrganizationID: o.ID, Name: "gh", Host: "github.com", Username: "x-access-token", Token: "ghp_x",
+	})
+	if err != nil {
+		t.Fatalf("create git credential: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.bc", Port: 80, EnvText: "",
+		SourceType: "dockerfile", GitUrl: "https://github.com/me/p.git", GitBranch: "main", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationGitCredential(ctx, db.SetApplicationGitCredentialParams{ID: app.ID, GitCredentialID: &gc.ID}); err != nil {
+		t.Fatalf("set git cred: %v", err)
+	}
+	// secret.Dec is identity without KRILL_SECRET_KEY, so store plaintext here.
+	if err := q.UpdateApplicationBuild(ctx, db.UpdateApplicationBuildParams{ID: app.ID, BuildArgs: "A=1\nB=2", BuildSecrets: "S=x"}); err != nil {
+		t.Fatalf("update build: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if got.GitAuth == nil || got.GitAuth.Username != "x-access-token" || got.GitAuth.Token != "ghp_x" {
+		t.Errorf("GitAuth = %+v", got.GitAuth)
+	}
+	if got.BuildArgs["A"] != "1" || got.BuildArgs["B"] != "2" {
+		t.Errorf("BuildArgs = %v", got.BuildArgs)
+	}
+	if got.BuildSecrets["S"] != "x" {
+		t.Errorf("BuildSecrets = %v", got.BuildSecrets)
+	}
+
+	// An image-source app must ignore build credentials/args/secrets.
+	img, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "img", Image: "nginx", Tag: "alpine",
+		Domain: "img.bc", Port: 80, EnvText: "",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	_ = q.UpdateApplicationBuild(ctx, db.UpdateApplicationBuildParams{ID: img.ID, BuildArgs: "A=1", BuildSecrets: "S=x"})
+	gotImg, err := NewDBStore(q).GetApplication(ctx, img.ID)
+	if err != nil {
+		t.Fatalf("GetApplication img: %v", err)
+	}
+	if gotImg.GitAuth != nil || len(gotImg.BuildArgs) != 0 || len(gotImg.BuildSecrets) != 0 {
+		t.Errorf("image app should ignore build fields: auth=%v args=%v secrets=%v", gotImg.GitAuth, gotImg.BuildArgs, gotImg.BuildSecrets)
+	}
+}

@@ -38,6 +38,10 @@ type App struct {
 	RestartMaxAttempts uint64
 	Healthcheck        *docker.HealthcheckSpec
 	Mounts             []docker.MountSpec
+
+	GitAuth      *builder.GitAuth  // private-repo HTTPS credentials (dockerfile source)
+	BuildArgs    map[string]string // --build-arg (non-secret)
+	BuildSecrets map[string]string // BuildKit --secret
 }
 
 // Store — what the deployer needs from the store.
@@ -237,7 +241,10 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 			AppID: app.ID, DeployID: deployID,
 			GitURL: app.GitURL, GitBranch: app.GitBranch,
 			DockerfilePath: app.DockerfilePath, ImageTag: imageTag,
-			NoCache: noCache,
+			NoCache:      noCache,
+			GitAuth:      app.GitAuth,
+			BuildArgs:    app.BuildArgs,
+			BuildSecrets: app.BuildSecrets,
 		}, out)
 	} else {
 		imageTag = app.Image + ":" + app.Tag
