@@ -264,6 +264,7 @@ var en = map[string]string{
 	"nodes.ssh_user":                     "SSH user",
 	"nodes.ssh_key":                      "SSH private key",
 	"nodes.add":                          "Add node",
+	"topology.title":                     "Running on",
 	"confirm.remove_node":                "Remove node %s from the cluster?",
 	"flash.err.node_fields_required":     "name, SSH host, user and key are required",
 	"flash.err.invalid_ssh_port":         "invalid SSH port",

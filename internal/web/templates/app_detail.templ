@@ -20,6 +20,7 @@ type AppCtx struct {
 
 	GitCredentials    []db.GitCredential
 	BuildSecretsPlain string // decrypted build_secrets, set for admins only (never ciphertext)
+	Tasks             []docker.TaskPlacement // running/desired tasks of this app's service + their nodes
 
 	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
 	Destinations  []db.Destination
@@ -109,6 +110,21 @@ templ generalTab(c AppCtx) {
 			<span class="k-mono text-xs">{ i18n.T(ctx, "app.status") }:</span>
 			@StatusBadge(c.App.Status)
 		</div>
+		if len(c.Tasks) > 0 {
+			<div class="mb-4">
+				<span class="k-mono text-xs">{ i18n.T(ctx, "topology.title") }:</span>
+				<div class="flex flex-col gap-1 mt-1">
+					for _, t := range c.Tasks {
+						<div class="k-mono text-xs">
+							<span class="k-badge">{ t.NodeName }</span> { t.State }
+							if t.Desired != "" && t.Desired != t.State {
+								<span class="k-muted">→ { t.Desired }</span>
+							}
+						</div>
+					}
+				</div>
+			</div>
+		}
 		<div class="k-section">{ i18n.T(ctx, "app.section_source") }</div>
 		if c.App.SourceType == "dockerfile" {
 			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>

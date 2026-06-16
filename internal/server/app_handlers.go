@@ -267,6 +267,9 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.GitCredentials = creds
 	}
+	if s.engine != nil {
+		c.Tasks, _ = s.engine.ServiceTasks(r.Context(), docker.ServiceName(c.App.ID))
+	}
 	// Build secrets are secrets: only decrypt for the editor when the viewer is an admin.
 	if c.Role == "owner" || c.Role == "admin" {
 		c.BuildSecretsPlain = secret.Dec(c.App.BuildSecrets)

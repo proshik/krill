@@ -264,6 +264,7 @@ var ru = map[string]string{
 	"nodes.ssh_user":                     "SSH-пользователь",
 	"nodes.ssh_key":                      "Приватный SSH-ключ",
 	"nodes.add":                          "Добавить ноду",
+	"topology.title":                     "Работает на",
 	"confirm.remove_node":                "Удалить ноду %s из кластера?",
 	"flash.err.node_fields_required":     "нужны name, SSH-хост, пользователь и ключ",
 	"flash.err.invalid_ssh_port":         "неверный SSH-порт",
