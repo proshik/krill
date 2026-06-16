@@ -1,15 +1,15 @@
 -- name: ListDomainsByApplication :many
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 FROM domains WHERE application_id = $1 ORDER BY is_primary DESC, created_at;
 
 -- name: GetDomain :one
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 FROM domains WHERE id = $1;
 
 -- name: CreateDomain :one
 INSERT INTO domains (application_id, host, tls, is_primary, exposed, paths)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths;
+RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips;
 
 -- name: SetDomainTLS :exec
 UPDATE domains SET tls = $2 WHERE id = $1;
@@ -28,3 +28,9 @@ UPDATE domains SET exposed = $2, paths = $3 WHERE id = $1;
 
 -- name: CountExposedDomainsByApplication :one
 SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true;
+
+-- name: SetDomainBasicAuth :exec
+UPDATE domains SET basic_auth_users = $2 WHERE id = $1;
+
+-- name: SetDomainAllowedIPs :exec
+UPDATE domains SET allowed_ips = $2 WHERE id = $1;

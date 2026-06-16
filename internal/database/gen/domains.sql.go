@@ -45,7 +45,7 @@ func (q *Queries) CountExposedDomainsByApplication(ctx context.Context, applicat
 const createDomain = `-- name: CreateDomain :one
 INSERT INTO domains (application_id, host, tls, is_primary, exposed, paths)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths
+RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 `
 
 type CreateDomainParams struct {
@@ -76,6 +76,8 @@ func (q *Queries) CreateDomain(ctx context.Context, arg CreateDomainParams) (Dom
 		&i.CreatedAt,
 		&i.Exposed,
 		&i.Paths,
+		&i.BasicAuthUsers,
+		&i.AllowedIps,
 	)
 	return i, err
 }
@@ -90,7 +92,7 @@ func (q *Queries) DeleteDomain(ctx context.Context, id int64) error {
 }
 
 const getDomain = `-- name: GetDomain :one
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 FROM domains WHERE id = $1
 `
 
@@ -106,12 +108,14 @@ func (q *Queries) GetDomain(ctx context.Context, id int64) (Domain, error) {
 		&i.CreatedAt,
 		&i.Exposed,
 		&i.Paths,
+		&i.BasicAuthUsers,
+		&i.AllowedIps,
 	)
 	return i, err
 }
 
 const listDomainsByApplication = `-- name: ListDomainsByApplication :many
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 FROM domains WHERE application_id = $1 ORDER BY is_primary DESC, created_at
 `
 
@@ -133,6 +137,8 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 			&i.CreatedAt,
 			&i.Exposed,
 			&i.Paths,
+			&i.BasicAuthUsers,
+			&i.AllowedIps,
 		); err != nil {
 			return nil, err
 		}
@@ -142,6 +148,34 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 		return nil, err
 	}
 	return items, nil
+}
+
+const setDomainAllowedIPs = `-- name: SetDomainAllowedIPs :exec
+UPDATE domains SET allowed_ips = $2 WHERE id = $1
+`
+
+type SetDomainAllowedIPsParams struct {
+	ID         int64  `json:"id"`
+	AllowedIps string `json:"allowed_ips"`
+}
+
+func (q *Queries) SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error {
+	_, err := q.db.Exec(ctx, setDomainAllowedIPs, arg.ID, arg.AllowedIps)
+	return err
+}
+
+const setDomainBasicAuth = `-- name: SetDomainBasicAuth :exec
+UPDATE domains SET basic_auth_users = $2 WHERE id = $1
+`
+
+type SetDomainBasicAuthParams struct {
+	ID             int64  `json:"id"`
+	BasicAuthUsers string `json:"basic_auth_users"`
+}
+
+func (q *Queries) SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error {
+	_, err := q.db.Exec(ctx, setDomainBasicAuth, arg.ID, arg.BasicAuthUsers)
+	return err
 }
 
 const setDomainTLS = `-- name: SetDomainTLS :exec

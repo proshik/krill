@@ -123,6 +123,8 @@ type Querier interface {
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
+	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
+	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
