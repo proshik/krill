@@ -188,6 +188,25 @@ func TestSetDomainAllowedIPs(t *testing.T) {
 	}
 }
 
+// TestSetDomainAllowedIPsNormalize: an IPv4-mapped IPv6 literal must normalize to
+// a single-host /32 (not collapse to the ::/32 block), and duplicates are folded.
+func TestSetDomainAllowedIPsNormalize(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, _, domID, _ := rpFixture(t, h, q, orgSvc, "rp-ipnorm@k.local")
+
+	rec := postForm(t, h, base+"/domains/"+i64(domID)+"/allowed-ips", cookie, url.Values{
+		"ips": {"::ffff:1.2.3.4\n1.2.3.4\n1.2.3.4\n1.2.3.0/24"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("want 303, got %d", rec.Code)
+	}
+	d, _ := q.GetDomain(ctx, domID)
+	if d.AllowedIps != "1.2.3.4/32\n1.2.3.0/24" {
+		t.Errorf("allowed_ips want %q, got %q", "1.2.3.4/32\n1.2.3.0/24", d.AllowedIps)
+	}
+}
+
 // TestDomainProtectionCrossTenant: org-B owner cannot mutate org-A's domain
 // protection by injecting org-A's domainID into the org-B URL (must 404).
 func TestDomainProtectionCrossTenant(t *testing.T) {

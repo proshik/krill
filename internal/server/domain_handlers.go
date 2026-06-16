@@ -51,23 +51,34 @@ func validBasicAuthUser(u string) bool { return basicAuthUserRe.MatchString(u) }
 // so only valid CIDRs ever reach the Traefik sourcerange.
 func validAllowedIPs(raw string) ([]string, error) {
 	var out []string
+	seen := make(map[string]bool)
+	add := func(cidr string) {
+		if !seen[cidr] {
+			seen[cidr] = true
+			out = append(out, cidr)
+		}
+	}
 	for _, line := range strings.Split(raw, "\n") {
 		s := strings.TrimSpace(line)
 		if s == "" {
 			continue
 		}
-		if _, _, err := net.ParseCIDR(s); err == nil {
-			out = append(out, s)
+		// Normalize via the parsed form so the stored/emitted value is canonical:
+		// a CIDR collapses to its network, and a bare IP uses its canonical text.
+		// Appending "/32" to the raw string would mishandle IPv4-mapped IPv6 (e.g.
+		// "::ffff:1.2.3.4/32" parses as the huge ::/32 block, not one host).
+		if _, ipnet, err := net.ParseCIDR(s); err == nil {
+			add(ipnet.String())
 			continue
 		}
 		ip := net.ParseIP(s)
 		if ip == nil {
 			return nil, fmt.Errorf("invalid IP or CIDR: %s", s)
 		}
-		if ip.To4() != nil {
-			out = append(out, s+"/32")
+		if v4 := ip.To4(); v4 != nil {
+			add(v4.String() + "/32")
 		} else {
-			out = append(out, s+"/128")
+			add(ip.String() + "/128")
 		}
 	}
 	return out, nil
