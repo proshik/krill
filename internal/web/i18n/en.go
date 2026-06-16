@@ -273,6 +273,7 @@ var en = map[string]string{
 	"flash.err.node_join":                "swarm join failed",
 	"flash.err.invalid_availability":     "invalid availability",
 	"flash.err.set_availability":         "failed to set node availability",
+	"flash.err.protect_manager":          "cannot drain or remove the control-plane (leader) node",
 	"flash.ok.node_added":                "Node added",
 	"flash.ok.node_availability":         "Node availability updated",
 	"flash.ok.node_removed":              "Node removed",

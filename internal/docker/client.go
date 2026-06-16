@@ -618,21 +618,31 @@ func (e *dockerEngine) SwarmWorkerToken(ctx context.Context) (string, error) {
 }
 
 func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error) {
+	// desired-state=running (like the other TaskList calls) so terminated tasks
+	// that Swarm keeps in history are not reported as live placements.
 	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
-		Filters: filters.NewArgs(filters.Arg("service", name)),
+		Filters: filters.NewArgs(
+			filters.Arg("service", name),
+			filters.Arg("desired-state", "running"),
+		),
 	})
 	if err != nil {
 		return nil, err
 	}
-	nodes, _ := e.Nodes(ctx)
 	id2name := map[string]string{}
-	for _, n := range nodes {
-		id2name[n.ID] = n.Hostname
+	if nodes, nerr := e.Nodes(ctx); nerr == nil { // degrade to raw IDs if unresolved
+		for _, n := range nodes {
+			id2name[n.ID] = n.Hostname
+		}
 	}
 	out := make([]TaskPlacement, 0, len(tasks))
 	for _, t := range tasks {
+		nodeName := id2name[t.NodeID]
+		if nodeName == "" {
+			nodeName = t.NodeID // fall back to the raw node ID; "" if not yet scheduled
+		}
 		out = append(out, TaskPlacement{
-			NodeID: t.NodeID, NodeName: id2name[t.NodeID],
+			NodeID: t.NodeID, NodeName: nodeName,
 			State: string(t.Status.State), Desired: string(t.DesiredState),
 		})
 	}

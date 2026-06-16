@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,23 @@ import (
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
+
+// findSwarmNode returns the live Swarm node with the given ID, if reachable.
+func (s *Server) findSwarmNode(ctx context.Context, id string) (docker.SwarmNode, bool) {
+	if s.engine == nil {
+		return docker.SwarmNode{}, false
+	}
+	nodes, err := s.engine.Nodes(ctx)
+	if err != nil {
+		return docker.SwarmNode{}, false
+	}
+	for _, n := range nodes {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return docker.SwarmNode{}, false
+}
 
 // listNodes renders the cluster: live Swarm nodes annotated with the Krill-managed
 // worker rows (readable by any member).
@@ -95,14 +113,21 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 		s.flashErrErr(w, r, "flash.err.node_join", cerr)
 		return
 	}
-	// Resolve the new node's Swarm ID by matching its advertised address.
+	// Resolve the new node's Swarm ID by matching its advertised address OR
+	// hostname (the operator may have entered either). Warn if unresolved so the
+	// blank swarm_node_id (un-removable via UI) is observable, not silent.
+	resolved := false
 	if nodes, nerr := s.engine.Nodes(r.Context()); nerr == nil {
 		for _, n := range nodes {
-			if n.Addr == host {
+			if n.Addr == host || n.Hostname == host {
 				_ = s.q.SetClusterNodeSwarmID(r.Context(), db.SetClusterNodeSwarmIDParams{ID: row.ID, SwarmNodeID: n.ID})
+				resolved = true
 				break
 			}
 		}
+	}
+	if !resolved {
+		logFrom(r).Warn("addNode: joined node not matched to a swarm ID (Addr/hostname mismatch?)", "host", host, "id", row.ID)
 	}
 	logFrom(r).Info("cluster node added", "name", name, "host", host) // no key/token
 	s.flashOK(w, r, "flash.ok.node_added")
@@ -125,6 +150,13 @@ func (s *Server) setNodeAvailability(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	// Never drain the control-plane (leader) node — that breaks scheduling/Krill.
+	if avail == "drain" {
+		if n, ok := s.findSwarmNode(r.Context(), swarmID); ok && n.Leader {
+			s.flashErrT(w, r, "flash.err.protect_manager")
+			return
+		}
+	}
 	if err := s.engine.NodeSetAvailability(r.Context(), swarmID, avail); err != nil {
 		logFrom(r).Error("setNodeAvailability: failed", "err", err, "node", swarmID, "availability", avail)
 		s.flashErrT(w, r, "flash.err.set_availability")
@@ -143,17 +175,24 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	swarmID := chi.URLParam(r, "nodeID")
+	// Never remove the control-plane (leader) node — that destroys the cluster.
+	if n, ok := s.findSwarmNode(r.Context(), swarmID); ok && n.Leader {
+		s.flashErrT(w, r, "flash.err.protect_manager")
+		return
+	}
 	if s.engine != nil {
 		if err := s.engine.NodeRemove(r.Context(), swarmID, true); err != nil {
 			logFrom(r).Warn("removeNode: swarm remove failed (deleting row anyway)", "err", err, "node", swarmID)
 		}
 	}
-	if rows, err := s.q.ListClusterNodes(r.Context()); err == nil {
-		for _, row := range rows {
-			if row.SwarmNodeID == swarmID {
-				if derr := s.q.DeleteClusterNode(r.Context(), row.ID); derr != nil {
-					logFrom(r).Error("removeNode: delete row failed", "err", derr, "id", row.ID)
-				}
+	rows, lerr := s.q.ListClusterNodes(r.Context())
+	if lerr != nil {
+		logFrom(r).Error("removeNode: list cluster nodes failed", "err", lerr, "node", swarmID)
+	}
+	for _, row := range rows {
+		if row.SwarmNodeID == swarmID {
+			if derr := s.q.DeleteClusterNode(r.Context(), row.ID); derr != nil {
+				logFrom(r).Error("removeNode: delete row failed", "err", derr, "id", row.ID)
 			}
 		}
 	}

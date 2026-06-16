@@ -273,6 +273,7 @@ var ru = map[string]string{
 	"flash.err.node_join":                "не удалось присоединиться к swarm",
 	"flash.err.invalid_availability":     "неверная доступность",
 	"flash.err.set_availability":         "не удалось изменить доступность ноды",
+	"flash.err.protect_manager":          "нельзя drain'ить или удалить control-plane (leader) ноду",
 	"flash.ok.node_added":                "Нода добавлена",
 	"flash.ok.node_availability":         "Доступность ноды обновлена",
 	"flash.ok.node_removed":              "Нода удалена",

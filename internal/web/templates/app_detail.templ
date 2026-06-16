@@ -116,7 +116,12 @@ templ generalTab(c AppCtx) {
 				<div class="flex flex-col gap-1 mt-1">
 					for _, t := range c.Tasks {
 						<div class="k-mono text-xs">
-							<span class="k-badge">{ t.NodeName }</span> { t.State }
+							if t.NodeName != "" {
+								<span class="k-badge">{ t.NodeName }</span>
+							} else {
+								<span class="k-badge k-badge-idle">—</span>
+							}
+							{ t.State }
 							if t.Desired != "" && t.Desired != t.State {
 								<span class="k-muted">→ { t.Desired }</span>
 							}
