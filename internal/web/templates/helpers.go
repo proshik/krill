@@ -11,6 +11,17 @@ import (
 // itoa formats an int64 for interpolation into URLs inside templates.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
+// nodeManagedName returns the Krill-managed name for a Swarm node ID, or "" if
+// the node was not added through Krill (e.g. the manager itself).
+func nodeManagedName(rows []db.ClusterNode, swarmID string) string {
+	for _, r := range rows {
+		if r.SwarmNodeID != "" && r.SwarmNodeID == swarmID {
+			return r.Name
+		}
+	}
+	return ""
+}
+
 // basicAuthUsernames extracts the usernames from a newline-separated htpasswd
 // "user:hash" list. Only usernames are exposed to the UI; hashes are never shown.
 func basicAuthUsernames(s string) []string {

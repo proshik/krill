@@ -159,6 +159,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
 			r.Get("/git-credentials", s.listGitCredentials)
+			r.Get("/nodes", s.listNodes)
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(auth.RoleAdmin))
@@ -171,6 +172,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
 				r.Post("/git-credentials", s.createGitCredential)
 				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
+				r.Post("/nodes", s.addNode)
+				r.Post("/nodes/{nodeID}/availability", s.setNodeAvailability)
+				r.Post("/nodes/{nodeID}/remove", s.removeNode)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)

@@ -1,0 +1,104 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+templ Nodes(org db.Organization, role string, live []docker.SwarmNode, rows []db.ClusterNode) {
+	@Layout(i18n.T(ctx, "nodes.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "nodes.desc") }</p>
+		<div class="k-card">
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "nodes.hostname") }</th>
+						<th>{ i18n.T(ctx, "nodes.managed") }</th>
+						<th>{ i18n.T(ctx, "nodes.role") }</th>
+						<th>{ i18n.T(ctx, "nodes.availability") }</th>
+						<th>{ i18n.T(ctx, "nodes.state") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					if len(live) == 0 {
+						<tr><td colspan="6" class="k-muted">{ i18n.T(ctx, "nodes.empty") }</td></tr>
+					}
+					for _, n := range live {
+						<tr>
+							<td class="k-mono">
+								{ n.Hostname }
+								if n.Leader {
+									<span class="k-badge">{ i18n.T(ctx, "nodes.leader") }</span>
+								}
+							</td>
+							<td>{ nodeManagedName(rows, n.ID) }</td>
+							<td>{ n.Role }</td>
+							<td>{ n.Availability }</td>
+							<td>
+								if n.State == "ready" {
+									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ n.State }</span>
+								} else {
+									<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ n.State }</span>
+								}
+							</td>
+							<td>
+								if role == "owner" || role == "admin" {
+									<div class="flex items-center gap-2 flex-wrap">
+										if n.Availability == "drain" {
+											<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + n.ID + "/availability") } class="inline">
+												<input type="hidden" name="availability" value="active"/>
+												<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "nodes.activate") }</button>
+											</form>
+										} else {
+											<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + n.ID + "/availability") } class="inline">
+												<input type="hidden" name="availability" value="drain"/>
+												<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "nodes.drain") }</button>
+											</form>
+										}
+										if !n.Leader && nodeManagedName(rows, n.ID) != "" {
+											<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + n.ID + "/remove") } data-confirm={ i18n.Tf(ctx, "confirm.remove_node", n.Hostname) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+												<button class="k-btn k-btn-danger">{ i18n.T(ctx, "nodes.remove") }</button>
+											</form>
+										}
+									</div>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			if role == "owner" || role == "admin" {
+				<div class="k-section">{ i18n.T(ctx, "nodes.add_title") }</div>
+				<p class="k-mono text-xs mb-2" style="color:var(--color-faint)">{ i18n.T(ctx, "nodes.add_hint") }</p>
+				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes") } class="grid gap-2" style="max-width:820px">
+					<div>
+						<label class="k-label k-label-required">{ i18n.T(ctx, "nodes.name") }</label>
+						<input class="k-input" name="name" required/>
+					</div>
+					<div class="grid grid-cols-3 gap-2">
+						<div>
+							<label class="k-label k-label-required">{ i18n.T(ctx, "nodes.ssh_host") }</label>
+							<input class="k-input" name="ssh_host" required placeholder="10.0.0.2"/>
+						</div>
+						<div>
+							<label class="k-label">{ i18n.T(ctx, "nodes.ssh_port") }</label>
+							<input class="k-input" name="ssh_port" placeholder="22"/>
+						</div>
+						<div>
+							<label class="k-label k-label-required">{ i18n.T(ctx, "nodes.ssh_user") }</label>
+							<input class="k-input" name="ssh_user" required placeholder="root"/>
+						</div>
+					</div>
+					<div>
+						<label class="k-label k-label-required">{ i18n.T(ctx, "nodes.ssh_key") }</label>
+						<textarea class="k-code" name="ssh_key" spellcheck="false" style="min-height:8rem" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+					</div>
+					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "nodes.add") }</button></div>
+				</form>
+			}
+		</div>
+	}
+}

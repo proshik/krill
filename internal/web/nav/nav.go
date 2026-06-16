@@ -30,7 +30,7 @@ func IsActive(ctx context.Context, section string) bool {
 // (Destinations, Registries, or Notifications), which share a single sidebar entry.
 func IsSettings(ctx context.Context) bool {
 	s := sectionOf(Path(ctx))
-	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials"
+	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes"
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages
@@ -45,6 +45,8 @@ func sectionOf(path string) string {
 		return "destinations"
 	case strings.Contains(path, "/git-credentials"):
 		return "git-credentials"
+	case strings.Contains(path, "/nodes"):
+		return "nodes"
 	case strings.Contains(path, "/registries"):
 		return "registries"
 	case strings.Contains(path, "/notifications"):
