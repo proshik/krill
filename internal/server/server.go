@@ -155,6 +155,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/members", s.listMembers)
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
+			r.Get("/git-credentials", s.listGitCredentials)
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(auth.RoleAdmin))
@@ -165,6 +166,8 @@ func (s *Server) Router() http.Handler {
 				r.Post("/destinations/{destID}/delete", s.deleteDestination)
 				r.Post("/registries", s.createRegistry)
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
+				r.Post("/git-credentials", s.createGitCredential)
+				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)
@@ -177,6 +180,8 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/delete", s.deleteApp)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/registry", s.setAppRegistry)
+				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/git-credential", s.setAppGitCredential)
+				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/build", s.saveBuild)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains", s.addDomain)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/tls", s.toggleDomainTLS)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/exposure", s.setDomainExposure)

@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -154,6 +156,84 @@ func (s *Server) setAppRegistry(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("application registry set", "app_id", c.App.ID, "registry_id", registryID)
 	s.setFlash(w, "ok", "Registry updated")
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+}
+
+// setAppGitCredential selects (or clears) the git credential used to clone a
+// private repo for source builds. The credential must belong to the app's org.
+func (s *Server) setAppGitCredential(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	o, _, _ := s.loadOrg(w, r)
+	var gcID *int64
+	if v := strings.TrimSpace(r.FormValue("git_credential_id")); v != "" {
+		n, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil {
+			s.flashErr(w, r, "invalid git credential")
+			return
+		}
+		gc, gerr := s.q.GetGitCredential(r.Context(), n)
+		if gerr != nil || gc.OrganizationID != o.ID {
+			s.flashErr(w, r, "invalid git credential")
+			return
+		}
+		gcID = &n
+	}
+	if err := s.q.SetApplicationGitCredential(r.Context(), db.SetApplicationGitCredentialParams{ID: c.App.ID, GitCredentialID: gcID}); err != nil {
+		logFrom(r).Error("setAppGitCredential: update failed", "err", err, "app_id", c.App.ID)
+		s.flashErr(w, r, "failed to set git credential")
+		return
+	}
+	logFrom(r).Info("application git credential set", "app_id", c.App.ID, "git_credential_id", gcID)
+	s.setFlash(w, "ok", "Git credential updated")
+	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+}
+
+var buildArgKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validBuildText checks each non-empty, non-comment line is KEY=VALUE with a KEY
+// that is a valid identifier (so it cannot inject into a docker build flag).
+func validBuildText(raw string) error {
+	for _, line := range strings.Split(raw, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		k, _, found := strings.Cut(l, "=")
+		if !found || !buildArgKeyRe.MatchString(strings.TrimSpace(k)) {
+			return fmt.Errorf("each line must be KEY=VALUE with KEY matching [A-Za-z_][A-Za-z0-9_]*: %q", l)
+		}
+	}
+	return nil
+}
+
+// saveBuild persists per-app build args (plaintext) and build secrets (encrypted).
+func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	args := strings.TrimSpace(r.FormValue("build_args"))
+	secrets := strings.TrimSpace(r.FormValue("build_secrets"))
+	if err := validBuildText(args); err != nil {
+		s.flashErr(w, r, err.Error())
+		return
+	}
+	if err := validBuildText(secrets); err != nil {
+		s.flashErr(w, r, err.Error())
+		return
+	}
+	if err := s.q.UpdateApplicationBuild(r.Context(), db.UpdateApplicationBuildParams{
+		ID: c.App.ID, BuildArgs: args, BuildSecrets: secret.Enc(secrets),
+	}); err != nil {
+		logFrom(r).Error("saveBuild: update failed", "err", err, "app_id", c.App.ID)
+		s.flashErr(w, r, "failed to save build settings")
+		return
+	}
+	logFrom(r).Info("application build settings saved", "app_id", c.App.ID)
+	s.setFlash(w, "ok", "Build settings saved")
+	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 
 func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
