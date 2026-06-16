@@ -117,13 +117,16 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(csrfGuard)
 
-	// locale middleware: picks the locale from the krill_lang cookie (set via
-	// the Settings language selector), falling back to the default.
+	// locale middleware: the krill_lang cookie (set via the Settings language
+	// selector) is authoritative; with no valid cookie, fall back to the browser's
+	// Accept-Language header, then to the default.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			loc := i18n.DefaultLocale
 			if c, err := req.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
 				loc = c.Value
+			} else if m := i18n.MatchAcceptLanguage(req.Header.Get("Accept-Language")); m != "" {
+				loc = m
 			}
 			ctx := i18n.WithLocale(req.Context(), loc)
 			next.ServeHTTP(w, req.WithContext(ctx))

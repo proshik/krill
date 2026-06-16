@@ -3,6 +3,9 @@ package i18n
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 type ctxKey int
@@ -41,6 +44,49 @@ var Locales = []Locale{
 
 // Supported reports whether loc has a catalog.
 func Supported(loc string) bool { _, ok := catalogs[loc]; return ok }
+
+// MatchAcceptLanguage returns the best supported locale for an Accept-Language
+// header value, or "" if none match. It honors q-weights (highest first, header
+// order breaking ties) and matches on the primary subtag (e.g. "ru-RU" -> "ru").
+func MatchAcceptLanguage(header string) string {
+	type pref struct {
+		loc string
+		q   float64
+	}
+	var prefs []pref
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		loc, q := part, 1.0
+		if i := strings.IndexByte(part, ';'); i >= 0 {
+			loc = strings.TrimSpace(part[:i])
+			for _, p := range strings.Split(part[i+1:], ";") {
+				if p = strings.TrimSpace(p); strings.HasPrefix(p, "q=") {
+					if v, err := strconv.ParseFloat(strings.TrimPrefix(p, "q="), 64); err == nil {
+						q = v
+					}
+				}
+			}
+		}
+		base := strings.ToLower(loc)
+		if i := strings.IndexByte(base, '-'); i >= 0 {
+			base = base[:i]
+		}
+		if base == "" || base == "*" {
+			continue
+		}
+		prefs = append(prefs, pref{base, q})
+	}
+	sort.SliceStable(prefs, func(i, j int) bool { return prefs[i].q > prefs[j].q })
+	for _, p := range prefs {
+		if Supported(p.loc) {
+			return p.loc
+		}
+	}
+	return ""
+}
 
 // Current returns the locale active for ctx (for marking the picker selection).
 func Current(ctx context.Context) string { return localeOf(ctx) }
