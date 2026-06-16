@@ -84,6 +84,11 @@ func TestSaveBuild(t *testing.T) {
 	if rec := postForm(t, h, base+"/build", cookie, url.Values{"build_args": {"1BAD=x"}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
 		t.Fatalf("bad build-arg key want 303+err, got %d", rec.Code)
 	}
+	// A '#'-prefixed line with '=' is NOT a comment to the deploy parser (it would
+	// yield the invalid key "# FOO"); save-validation must reject it in lockstep.
+	if rec := postForm(t, h, base+"/build", cookie, url.Values{"build_args": {"# FOO=bar"}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("comment-with-equals want 303+err (save/deploy parser lockstep), got %d", rec.Code)
+	}
 }
 
 func TestSetAppGitCredentialCrossOrg(t *testing.T) {

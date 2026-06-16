@@ -165,7 +165,6 @@ func (s *Server) setAppGitCredential(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	o, _, _ := s.loadOrg(w, r)
 	var gcID *int64
 	if v := strings.TrimSpace(r.FormValue("git_credential_id")); v != "" {
 		n, perr := strconv.ParseInt(v, 10, 64)
@@ -174,7 +173,7 @@ func (s *Server) setAppGitCredential(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		gc, gerr := s.q.GetGitCredential(r.Context(), n)
-		if gerr != nil || gc.OrganizationID != o.ID {
+		if gerr != nil || gc.OrganizationID != c.Org.ID {
 			s.flashErr(w, r, "invalid git credential")
 			return
 		}
@@ -192,17 +191,23 @@ func (s *Server) setAppGitCredential(w http.ResponseWriter, r *http.Request) {
 
 var buildArgKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// validBuildText checks each non-empty, non-comment line is KEY=VALUE with a KEY
-// that is a valid identifier (so it cannot inject into a docker build flag).
+// validBuildText validates build_args/build_secrets the way the deploy-time
+// parser (deploy.parseEnvText) reads them: blank lines and lines without '=' are
+// ignored; for KEY=VALUE lines the KEY must be a valid identifier (so it cannot
+// inject into a docker build flag). Keeping the two in lockstep means a save that
+// validates can never produce a key the builder later rejects.
 func validBuildText(raw string) error {
 	for _, line := range strings.Split(raw, "\n") {
 		l := strings.TrimSpace(line)
-		if l == "" || strings.HasPrefix(l, "#") {
+		if l == "" {
 			continue
 		}
 		k, _, found := strings.Cut(l, "=")
-		if !found || !buildArgKeyRe.MatchString(strings.TrimSpace(k)) {
-			return fmt.Errorf("each line must be KEY=VALUE with KEY matching [A-Za-z_][A-Za-z0-9_]*: %q", l)
+		if !found {
+			continue
+		}
+		if k = strings.TrimSpace(k); k != "" && !buildArgKeyRe.MatchString(k) {
+			return fmt.Errorf("invalid build key %q: must match [A-Za-z_][A-Za-z0-9_]*", k)
 		}
 	}
 	return nil

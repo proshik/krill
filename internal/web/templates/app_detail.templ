@@ -506,14 +506,14 @@ templ advancedTab(c AppCtx) {
 			<form method="post" action={ templ.SafeURL(c.base() + "/build") } class="grid gap-3" style="max-width:820px">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "build.args") }</label>
-					<textarea class="k-code" name="build_args" spellcheck="false" placeholder="VERSION=1.2">{ c.App.BuildArgs }</textarea>
+					<textarea class="k-code" name="build_args" spellcheck="false" style="min-height:6rem" placeholder="VERSION=1.2">{ c.App.BuildArgs }</textarea>
 					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "build.args_hint") }</p>
 				</div>
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "build.secrets") }</label>
 					<div class="flex items-start gap-2">
-						<textarea id="build-secrets-ta" class="k-code flex-1" name="build_secrets" spellcheck="false" style="-webkit-text-security:disc">{ c.BuildSecretsPlain }</textarea>
-						<button type="button" class="k-btn k-btn-secondary" onclick="(function(t){t.style.webkitTextSecurity=(t.style.webkitTextSecurity==='none'?'disc':'none')})(document.getElementById('build-secrets-ta'))">👁</button>
+						<textarea id="build-secrets-ta" class="k-code flex-1" name="build_secrets" spellcheck="false" style="-webkit-text-security:disc;min-height:6rem">{ c.BuildSecretsPlain }</textarea>
+						<button type="button" class="k-btn k-btn-secondary" aria-label={ i18n.T(ctx, "common.reveal") } onclick="(function(t){t.style.webkitTextSecurity=(t.style.webkitTextSecurity==='none'?'disc':'none')})(document.getElementById('build-secrets-ta'))">👁</button>
 					</div>
 					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "build.secrets_hint") }</p>
 				</div>
