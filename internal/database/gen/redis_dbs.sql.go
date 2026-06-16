@@ -22,7 +22,7 @@ func (q *Queries) CountRedisByExternalPort(ctx context.Context, externalPort *in
 
 const createRedis = `-- name: CreateRedis :one
 INSERT INTO redis_dbs (environment_id, name, app_name, password, image, external_port)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at, node_hostname
 `
 
 type CreateRedisParams struct {
@@ -55,6 +55,7 @@ func (q *Queries) CreateRedis(ctx context.Context, arg CreateRedisParams) (Redis
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodeHostname,
 	)
 	return i, err
 }
@@ -69,7 +70,7 @@ func (q *Queries) DeleteRedis(ctx context.Context, id int64) error {
 }
 
 const getRedis = `-- name: GetRedis :one
-SELECT id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at FROM redis_dbs WHERE id = $1
+SELECT id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at, node_hostname FROM redis_dbs WHERE id = $1
 `
 
 func (q *Queries) GetRedis(ctx context.Context, id int64) (RedisDb, error) {
@@ -86,6 +87,7 @@ func (q *Queries) GetRedis(ctx context.Context, id int64) (RedisDb, error) {
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodeHostname,
 	)
 	return i, err
 }
@@ -149,7 +151,7 @@ func (q *Queries) ListAllRedis(ctx context.Context) ([]ListAllRedisRow, error) {
 }
 
 const listRedisByEnvironment = `-- name: ListRedisByEnvironment :many
-SELECT id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at FROM redis_dbs WHERE environment_id = $1 ORDER BY created_at
+SELECT id, environment_id, name, app_name, password, image, external_port, status, created_at, updated_at, node_hostname FROM redis_dbs WHERE environment_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error) {
@@ -172,6 +174,7 @@ func (q *Queries) ListRedisByEnvironment(ctx context.Context, environmentID int6
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NodeHostname,
 		); err != nil {
 			return nil, err
 		}
@@ -215,6 +218,20 @@ func (q *Queries) ListRedisByOrg(ctx context.Context, organizationID int64) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const setRedisNode = `-- name: SetRedisNode :exec
+UPDATE redis_dbs SET node_hostname = $2, updated_at = now() WHERE id = $1
+`
+
+type SetRedisNodeParams struct {
+	ID           int64  `json:"id"`
+	NodeHostname string `json:"node_hostname"`
+}
+
+func (q *Queries) SetRedisNode(ctx context.Context, arg SetRedisNodeParams) error {
+	_, err := q.db.Exec(ctx, setRedisNode, arg.ID, arg.NodeHostname)
+	return err
 }
 
 const updateRedisImage = `-- name: UpdateRedisImage :exec

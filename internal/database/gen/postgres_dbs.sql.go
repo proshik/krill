@@ -22,7 +22,7 @@ func (q *Queries) CountPostgresByExternalPort(ctx context.Context, externalPort 
 
 const createPostgres = `-- name: CreatePostgres :one
 INSERT INTO postgres_dbs (environment_id, name, app_name, database_name, database_user, database_password, image, external_port)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at, node_hostname
 `
 
 type CreatePostgresParams struct {
@@ -61,6 +61,7 @@ func (q *Queries) CreatePostgres(ctx context.Context, arg CreatePostgresParams) 
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodeHostname,
 	)
 	return i, err
 }
@@ -75,7 +76,7 @@ func (q *Queries) DeletePostgres(ctx context.Context, id int64) error {
 }
 
 const getPostgres = `-- name: GetPostgres :one
-SELECT id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at FROM postgres_dbs WHERE id = $1
+SELECT id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at, node_hostname FROM postgres_dbs WHERE id = $1
 `
 
 func (q *Queries) GetPostgres(ctx context.Context, id int64) (PostgresDb, error) {
@@ -94,6 +95,7 @@ func (q *Queries) GetPostgres(ctx context.Context, id int64) (PostgresDb, error)
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NodeHostname,
 	)
 	return i, err
 }
@@ -157,7 +159,7 @@ func (q *Queries) ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, er
 }
 
 const listPostgresByEnvironment = `-- name: ListPostgresByEnvironment :many
-SELECT id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at FROM postgres_dbs WHERE environment_id = $1 ORDER BY created_at
+SELECT id, environment_id, name, app_name, database_name, database_user, database_password, image, external_port, status, created_at, updated_at, node_hostname FROM postgres_dbs WHERE environment_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error) {
@@ -182,6 +184,7 @@ func (q *Queries) ListPostgresByEnvironment(ctx context.Context, environmentID i
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NodeHostname,
 		); err != nil {
 			return nil, err
 		}
@@ -225,6 +228,20 @@ func (q *Queries) ListPostgresByOrg(ctx context.Context, organizationID int64) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const setPostgresNode = `-- name: SetPostgresNode :exec
+UPDATE postgres_dbs SET node_hostname = $2, updated_at = now() WHERE id = $1
+`
+
+type SetPostgresNodeParams struct {
+	ID           int64  `json:"id"`
+	NodeHostname string `json:"node_hostname"`
+}
+
+func (q *Queries) SetPostgresNode(ctx context.Context, arg SetPostgresNodeParams) error {
+	_, err := q.db.Exec(ctx, setPostgresNode, arg.ID, arg.NodeHostname)
+	return err
 }
 
 const updatePostgresImage = `-- name: UpdatePostgresImage :exec

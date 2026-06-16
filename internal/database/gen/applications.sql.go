@@ -24,7 +24,7 @@ func (q *Queries) CountApplicationsByProject(ctx context.Context, projectID int6
 
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env_text, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes
 `
 
 type CreateApplicationParams struct {
@@ -87,6 +87,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.GitCredentialID,
 		&i.BuildArgs,
 		&i.BuildSecrets,
+		&i.PlacementMode,
+		&i.PlacementNodes,
 	)
 	return i, err
 }
@@ -101,7 +103,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -138,6 +140,8 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.GitCredentialID,
 		&i.BuildArgs,
 		&i.BuildSecrets,
+		&i.PlacementMode,
+		&i.PlacementNodes,
 	)
 	return i, err
 }
@@ -171,7 +175,7 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -214,6 +218,8 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.GitCredentialID,
 			&i.BuildArgs,
 			&i.BuildSecrets,
+			&i.PlacementMode,
+			&i.PlacementNodes,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +232,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -269,6 +275,8 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.GitCredentialID,
 			&i.BuildArgs,
 			&i.BuildSecrets,
+			&i.PlacementMode,
+			&i.PlacementNodes,
 		); err != nil {
 			return nil, err
 		}
@@ -291,6 +299,21 @@ type SetApplicationGitCredentialParams struct {
 
 func (q *Queries) SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error {
 	_, err := q.db.Exec(ctx, setApplicationGitCredential, arg.ID, arg.GitCredentialID)
+	return err
+}
+
+const setApplicationPlacement = `-- name: SetApplicationPlacement :exec
+UPDATE applications SET placement_mode = $2, placement_nodes = $3, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationPlacementParams struct {
+	ID             int64  `json:"id"`
+	PlacementMode  string `json:"placement_mode"`
+	PlacementNodes string `json:"placement_nodes"`
+}
+
+func (q *Queries) SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error {
+	_, err := q.db.Exec(ctx, setApplicationPlacement, arg.ID, arg.PlacementMode, arg.PlacementNodes)
 	return err
 }
 

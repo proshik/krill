@@ -43,6 +43,9 @@ UPDATE applications SET git_credential_id = $2, updated_at = now() WHERE id = $1
 -- name: UpdateApplicationBuild :exec
 UPDATE applications SET build_args = $2, build_secrets = $3, updated_at = now() WHERE id = $1;
 
+-- name: SetApplicationPlacement :exec
+UPDATE applications SET placement_mode = $2, placement_nodes = $3, updated_at = now() WHERE id = $1;
+
 -- name: UpdateApplicationAdvanced :exec
 UPDATE applications SET
     command = $2,

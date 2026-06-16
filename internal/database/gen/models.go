@@ -59,6 +59,8 @@ type Application struct {
 	GitCredentialID        *int64    `json:"git_credential_id"`
 	BuildArgs              string    `json:"build_args"`
 	BuildSecrets           string    `json:"build_secrets"`
+	PlacementMode          string    `json:"placement_mode"`
+	PlacementNodes         string    `json:"placement_nodes"`
 }
 
 type Backup struct {
@@ -194,6 +196,7 @@ type PostgresDb struct {
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	NodeHostname     string    `json:"node_hostname"`
 }
 
 type Project struct {
@@ -216,6 +219,7 @@ type RedisDb struct {
 	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	NodeHostname  string    `json:"node_hostname"`
 }
 
 type Registry struct {

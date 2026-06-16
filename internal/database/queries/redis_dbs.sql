@@ -37,3 +37,6 @@ FROM redis_dbs rd
 JOIN environments e ON rd.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE p.organization_id = $1;
+
+-- name: SetRedisNode :exec
+UPDATE redis_dbs SET node_hostname = $2, updated_at = now() WHERE id = $1;

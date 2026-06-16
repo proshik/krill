@@ -37,3 +37,6 @@ FROM postgres_dbs pg
 JOIN environments e ON pg.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE p.organization_id = $1;
+
+-- name: SetPostgresNode :exec
+UPDATE postgres_dbs SET node_hostname = $2, updated_at = now() WHERE id = $1;

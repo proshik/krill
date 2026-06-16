@@ -132,6 +132,7 @@ type Querier interface {
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
+	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
@@ -140,6 +141,8 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	SetPostgresNode(ctx context.Context, arg SetPostgresNodeParams) error
+	SetRedisNode(ctx context.Context, arg SetRedisNodeParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
