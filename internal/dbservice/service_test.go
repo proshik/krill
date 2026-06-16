@@ -132,6 +132,23 @@ func (f *fakeStore) st(id int64) string {
 	return f.status[id]
 }
 
+func TestDBNodeConstraint(t *testing.T) {
+	if c := dbConstraint(""); c != "node.role==manager" {
+		t.Errorf("empty node = %q, want manager", c)
+	}
+	if c := dbConstraint("worker1"); c != "node.hostname==worker1" {
+		t.Errorf("worker node = %q", c)
+	}
+	sp := postgresSpec(PostgresDB{AppName: "pg", Image: "postgres:17", NodeHostname: "worker1"}, "net")
+	if len(sp.Constraints) != 1 || sp.Constraints[0] != "node.hostname==worker1" {
+		t.Errorf("postgres spec constraint = %v", sp.Constraints)
+	}
+	rs := redisSpec(RedisDB{AppName: "rd", Image: "redis:7"}, "net")
+	if len(rs.Constraints) != 1 || rs.Constraints[0] != "node.role==manager" {
+		t.Errorf("redis default constraint = %v", rs.Constraints)
+	}
+}
+
 func samplePG() PostgresDB {
 	return PostgresDB{ID: 1, AppName: "krill-pg-x", DatabaseName: "a", DatabaseUser: "u", DatabasePassword: "p", Image: "postgres:17"}
 }

@@ -189,6 +189,39 @@ func newDeployer(eng docker.Engine, b builder.Builder, st Store) *Deployer {
 	return New(eng, b, st, NewLogHub(), "krill-net")
 }
 
+func TestBuildSpecPlacement(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	base := imageApp() // ID 1
+
+	if sp := d.buildSpec(base, "i"); sp.Global || sp.SpreadNodeID || len(sp.Constraints) != 0 {
+		t.Errorf("any: unexpected placement %+v", sp)
+	}
+
+	pin := base
+	pin.PlacementMode = "pin"
+	pin.PlacementNodes = []string{"n1", "n2"}
+	sp := d.buildSpec(pin, "i")
+	if sp.Global || !sp.SpreadNodeID {
+		t.Errorf("pin: want spread not global; got global=%v spread=%v", sp.Global, sp.SpreadNodeID)
+	}
+	if len(sp.Constraints) != 1 || sp.Constraints[0] != "node.labels.krill.place.1==1" {
+		t.Errorf("pin constraints = %v", sp.Constraints)
+	}
+
+	g := base
+	g.PlacementMode = "global"
+	g.PlacementNodes = []string{"n1"}
+	if sp := d.buildSpec(g, "i"); !sp.Global || sp.SpreadNodeID {
+		t.Errorf("global: want Global not spread; got global=%v spread=%v", sp.Global, sp.SpreadNodeID)
+	}
+
+	empty := base
+	empty.PlacementMode = "pin" // no nodes selected -> no constraint
+	if sp := d.buildSpec(empty, "i"); len(sp.Constraints) != 0 {
+		t.Errorf("pin with empty node set: unexpected constraint %v", sp.Constraints)
+	}
+}
+
 func TestBuildSpecImage(t *testing.T) {
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
 	spec := d.buildSpec(imageApp(), "nginx:alpine")

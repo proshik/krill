@@ -18,6 +18,7 @@ type PostgresDB struct {
 	Image            string
 	ExternalPort     *int32
 	Status           string
+	NodeHostname     string // "" = control-plane (manager)
 }
 
 type RedisDB struct {
@@ -29,9 +30,19 @@ type RedisDB struct {
 	Image         string
 	ExternalPort  *int32
 	Status        string
+	NodeHostname  string // "" = control-plane (manager)
 }
 
 func volumeName(appName string) string { return appName + "-data" }
+
+// dbConstraint pins a managed DB to a chosen node, or to the control-plane
+// (manager) when none is selected. The named volume lives on that node.
+func dbConstraint(nodeHostname string) string {
+	if nodeHostname != "" {
+		return "node.hostname==" + nodeHostname
+	}
+	return "node.role==manager"
+}
 
 func postgresSpec(pg PostgresDB, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
@@ -45,7 +56,7 @@ func postgresSpec(pg PostgresDB, network string) docker.ServiceSpec {
 		Replicas:    1,
 		Network:     network,
 		DNSRR:       true,
-		Constraints: []string{"node.role==manager"},
+		Constraints: []string{dbConstraint(pg.NodeHostname)},
 		Mounts: []docker.MountSpec{
 			{Type: "volume", Source: volumeName(pg.AppName), Target: "/var/lib/postgresql/data"},
 		},
@@ -67,7 +78,7 @@ func redisSpec(r RedisDB, network string) docker.ServiceSpec {
 		Replicas:    1,
 		Network:     network,
 		DNSRR:       true,
-		Constraints: []string{"node.role==manager"},
+		Constraints: []string{dbConstraint(r.NodeHostname)},
 		Mounts: []docker.MountSpec{
 			{Type: "volume", Source: volumeName(r.AppName), Target: "/data"},
 		},

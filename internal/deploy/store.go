@@ -52,6 +52,8 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	out.Replicas = uint64(a.Replicas)
 	out.RestartCondition = a.RestartCondition
 	out.RestartMaxAttempts = uint64(a.RestartMaxAttempts)
+	out.PlacementMode = a.PlacementMode
+	out.PlacementNodes = splitCSV(a.PlacementNodes)
 	if mb, err := docker.ParseMemoryBytes(strDeref(a.MemoryLimit)); err == nil {
 		out.MemoryLimitBytes = mb
 	} else {
@@ -180,6 +182,17 @@ func strDeref(p *string) string {
 // parseEnvText turns the stored raw KEY=VALUE lines into a map for the deploy
 // spec (env is a set there — order is irrelevant). The editor keeps the raw
 // order-preserving text; this is the single derivation for the container env.
+// splitCSV splits a comma-separated string into trimmed, non-empty parts.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func parseEnvText(raw string) map[string]string {
 	m := map[string]string{}
 	for _, line := range strings.Split(raw, "\n") {

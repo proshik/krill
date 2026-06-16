@@ -42,6 +42,9 @@ type App struct {
 	GitAuth      *builder.GitAuth  // private-repo HTTPS credentials (dockerfile source)
 	BuildArgs    map[string]string // --build-arg (non-secret)
 	BuildSecrets map[string]string // BuildKit --secret
+
+	PlacementMode  string   // "any" | "pin" | "global"
+	PlacementNodes []string // swarm node IDs the app may run on (for pin/global)
 }
 
 // Store — what the deployer needs from the store.
@@ -83,12 +86,12 @@ type Notifier interface {
 
 // Deployer handles deployments through a queue and a worker.
 type Deployer struct {
-	engine   docker.Engine
-	builder  builder.Builder
-	store    Store
-	hub      *DeployLogHub
-	network  string
-	notifier Notifier
+	engine    docker.Engine
+	builder   builder.Builder
+	store     Store
+	hub       *DeployLogHub
+	network   string
+	notifier  Notifier
 	queue     chan job
 	done      chan struct{}
 	stopOnce  sync.Once
@@ -393,7 +396,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	if replicas == 0 {
 		replicas = 1
 	}
-	return docker.ServiceSpec{
+	spec := docker.ServiceSpec{
 		Name:               name,
 		Image:              imageTag,
 		Args:               app.Args,
@@ -409,6 +412,20 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		Healthcheck:        app.Healthcheck,
 		Mounts:             app.Mounts,
 	}
+	// Placement: restrict to the chosen node set via the per-app krill.place label
+	// (set on those nodes by the server). pin spreads replicas across them; global
+	// runs one task per node in the set. "any"/empty → default cluster-wide spread.
+	if len(app.PlacementNodes) > 0 {
+		switch app.PlacementMode {
+		case "pin":
+			spec.Constraints = append(spec.Constraints, fmt.Sprintf("node.labels.krill.place.%d==1", app.ID))
+			spec.SpreadNodeID = true
+		case "global":
+			spec.Constraints = append(spec.Constraints, fmt.Sprintf("node.labels.krill.place.%d==1", app.ID))
+			spec.Global = true
+		}
+	}
+	return spec
 }
 
 var _ io.Writer = (*hubWriter)(nil)
