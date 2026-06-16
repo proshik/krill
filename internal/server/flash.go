@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/proshik/krill/internal/web/flash"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/nav"
 )
 
@@ -94,6 +95,22 @@ func (s *Server) backURL(r *http.Request) string {
 func (s *Server) flashErr(w http.ResponseWriter, r *http.Request, msg string) {
 	s.setFlash(w, "err", msg)
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+}
+
+// flashErrT sets a translated error flash and redirects back (PRG).
+func (s *Server) flashErrT(w http.ResponseWriter, r *http.Request, key string) {
+	s.flashErr(w, r, i18n.T(r.Context(), key))
+}
+
+// flashErrErr sets a translated error-prefix flash with the (English, technical)
+// error detail appended, and redirects back.
+func (s *Server) flashErrErr(w http.ResponseWriter, r *http.Request, key string, err error) {
+	s.flashErr(w, r, i18n.T(r.Context(), key)+": "+err.Error())
+}
+
+// flashOK stores a translated success flash; the caller issues its own redirect.
+func (s *Server) flashOK(w http.ResponseWriter, r *http.Request, key string) {
+	s.setFlash(w, "ok", i18n.T(r.Context(), key))
 }
 
 // flashMiddleware records the request path (for sidebar highlighting) and
