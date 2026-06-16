@@ -18,6 +18,7 @@ type Querier interface {
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
+	CountClusterNodesByName(ctx context.Context, name string) (int64, error)
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountDomainsByHost(ctx context.Context, host string) (int64, error)
@@ -31,6 +32,7 @@ type Querier interface {
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error)
+	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (ClusterNode, error)
 	CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (AppDbLink, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDestination(ctx context.Context, arg CreateDestinationParams) (Destination, error)
@@ -49,6 +51,7 @@ type Querier interface {
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
+	DeleteClusterNode(ctx context.Context, id int64) error
 	DeleteDBLink(ctx context.Context, id int64) error
 	DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBParams) error
 	DeleteDestination(ctx context.Context, id int64) error
@@ -69,6 +72,7 @@ type Querier interface {
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (Backup, error)
+	GetClusterNode(ctx context.Context, id int64) (ClusterNode, error)
 	GetDBLink(ctx context.Context, id int64) (AppDbLink, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
@@ -99,6 +103,7 @@ type Querier interface {
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error)
+	ListClusterNodes(ctx context.Context) ([]ClusterNode, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]AppDbLink, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
@@ -130,6 +135,8 @@ type Querier interface {
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
+	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
+	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error

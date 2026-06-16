@@ -13,6 +13,9 @@ type Config struct {
 	AdminEmail    string `env:"KRILL_ADMIN_EMAIL,required"`
 	AdminPassword string `env:"KRILL_ADMIN_PASSWORD,required"`
 	DockerHost    string `env:"KRILL_DOCKER_HOST"`
+	// AdvertiseAddr is the manager IP/host a worker dials to join the swarm
+	// (":2377" is appended). Required to add worker nodes; empty disables it.
+	AdvertiseAddr string `env:"KRILL_ADVERTISE_ADDR"`
 	BaseDomain    string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
 	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
 	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
