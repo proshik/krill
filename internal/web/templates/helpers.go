@@ -11,6 +11,16 @@ import (
 // itoa formats an int64 for interpolation into URLs inside templates.
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
+// placementHas reports whether a swarm node ID is in the app's CSV placement set.
+func placementHas(csv, nodeID string) bool {
+	for _, p := range strings.Split(csv, ",") {
+		if strings.TrimSpace(p) == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 // nodeManagedName returns the Krill-managed name for a Swarm node ID, or "" if
 // the node was not added through Krill (e.g. the manager itself).
 func nodeManagedName(rows []db.ClusterNode, swarmID string) string {

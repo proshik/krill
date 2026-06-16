@@ -2,6 +2,7 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -23,6 +24,9 @@ type DatabaseCtx struct {
 
 	Backups      []db.Backup      // postgres only: configured backups
 	Destinations []db.Destination // postgres only: org S3 destinations
+
+	NodeHostname string             // pinned node ("" = control-plane/manager)
+	Nodes        []docker.SwarmNode // cluster nodes (for the node picker; admin only)
 }
 
 templ DatabaseDetail(c DatabaseCtx) {
@@ -53,6 +57,21 @@ templ DatabaseDetail(c DatabaseCtx) {
 						<div class="flex-1"><label class="k-label">{ i18n.T(ctx, "db.change_version") }</label><input class="k-input" name="image" value={ c.Image }/></div>
 						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
 					</form>
+					if len(c.Nodes) > 0 {
+						<form method="post" action={ templ.SafeURL(c.Base + "/node") } class="flex items-end gap-2">
+							<div class="flex-1">
+								<label class="k-label">{ i18n.T(ctx, "dbnode.label") }</label>
+								<select class="k-select" name="node_hostname">
+									<option value="" selected?={ c.NodeHostname == "" }>{ i18n.T(ctx, "dbnode.manager") }</option>
+									for _, n := range c.Nodes {
+										<option value={ n.Hostname } selected?={ c.NodeHostname == n.Hostname }>{ n.Hostname }</option>
+									}
+								</select>
+								<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "dbnode.hint") }</p>
+							</div>
+							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbnode.save") }</button>
+						</form>
+					}
 				}
 				if c.Role == "owner" || c.Role == "admin" {
 					<div>

@@ -219,6 +219,19 @@ func (s *Server) databaseDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Node pinning is admin-only: current pinned node + the cluster node list.
+	if c.Role == "owner" || c.Role == "admin" {
+		if c.Engine == "postgres" {
+			if pg, err := s.q.GetPostgres(r.Context(), c.ID); err == nil {
+				c.NodeHostname = pg.NodeHostname
+			}
+		} else if rd, err := s.q.GetRedis(r.Context(), c.ID); err == nil {
+			c.NodeHostname = rd.NodeHostname
+		}
+		if s.engine != nil {
+			c.Nodes, _ = s.engine.Nodes(r.Context())
+		}
+	}
 	render(w, r, http.StatusOK, templates.DatabaseDetail(c))
 }
 

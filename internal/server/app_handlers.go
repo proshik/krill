@@ -340,6 +340,9 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.engine != nil {
 		c.Tasks, _ = s.engine.ServiceTasks(r.Context(), docker.ServiceName(c.App.ID))
+		if c.Role == "owner" || c.Role == "admin" {
+			c.Nodes, _ = s.engine.Nodes(r.Context())
+		}
 	}
 	// Build secrets are secrets: only decrypt for the editor when the viewer is an admin.
 	if c.Role == "owner" || c.Role == "admin" {
