@@ -398,14 +398,23 @@ window.krillReveal = function (btn) {
   btn.textContent = inp.type === "password" ? "👁" : "🙈";
 };
 
-// Toggle masking of ALL env value inputs (masked by default, Dokploy-style).
-// New rows added afterwards respect the current state via window.__krillEnvReveal.
-window.krillEnvRevealToggle = function (btn) {
-  window.__krillEnvReveal = !window.__krillEnvReveal;
-  const on = window.__krillEnvReveal;
+// Apply the current reveal state (masked by default, Dokploy-style) to BOTH the
+// key/value value inputs AND the raw textarea. Key/value mode masks each value
+// input (type=password); raw mode masks the whole textarea (-webkit-text-security)
+// since a textarea can't mask per-value. Called on toggle and on editor init/mode
+// switch so masking holds in both modes.
+window.krillApplyEnvReveal = function () {
+  const on = !!window.__krillEnvReveal;
   document.querySelectorAll("#env-rows .env-val").forEach(function (i) {
     i.type = on ? "text" : "password";
   });
+  const ta = document.getElementById("env-textarea");
+  if (ta) ta.style.webkitTextSecurity = on ? "none" : "disc";
+};
+window.krillEnvRevealToggle = function (btn) {
+  window.__krillEnvReveal = !window.__krillEnvReveal;
+  window.krillApplyEnvReveal();
+  const on = window.__krillEnvReveal;
   btn.textContent = (on ? "🙈 " : "👁 ") + (on ? btn.dataset.hide : btn.dataset.show);
 };
 
@@ -475,6 +484,9 @@ window.krillEnvMode = function (mode) {
   document.querySelectorAll("#env-seg [data-env-mode]").forEach(function (b) {
     b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
   });
+  // Honor the current masked/revealed state in the now-active mode (so the raw
+  // textarea is masked by default on load, matching the key/value inputs).
+  window.krillApplyEnvReveal();
 };
 
 // Run enhancements on first load and after every hx-boost swap. Guarded so a
