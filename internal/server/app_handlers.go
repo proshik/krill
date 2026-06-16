@@ -256,6 +256,15 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.Registries = regs
 	}
+	if creds, err := s.q.ListGitCredentialsByOrg(r.Context(), c.Org.ID); err != nil {
+		logFrom(r).Error("appDetail: failed to list git credentials", "err", err, "org_id", c.Org.ID)
+	} else {
+		c.GitCredentials = creds
+	}
+	// Build secrets are secrets: only decrypt for the editor when the viewer is an admin.
+	if c.Role == "owner" || c.Role == "admin" {
+		c.BuildSecretsPlain = secret.Dec(c.App.BuildSecrets)
+	}
 	if n, err := s.q.CountExposedDomainsByApplication(r.Context(), c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: count exposed domains", "err", err, "app_id", c.App.ID)
 	} else {
