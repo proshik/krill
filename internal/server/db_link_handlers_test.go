@@ -99,4 +99,14 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 	if _, err := q.GetDBLink(ctx, linkA.ID); err != nil {
 		t.Fatalf("SECURITY: org-A link affected by cross-tenant request: %v", err)
 	}
+
+	// cross-env confinement: org-B must not be able to link org-A's DB (which
+	// lives in another environment) to its own app, even by supplying the raw id.
+	baseB := "/orgs/" + i64(oB.ID) + "/projects/" + i64(pB.ID) + "/environments/" + i64(eB.ID) + "/apps/" + i64(appB.ID)
+	postForm(t, h, baseB+"/db-links", cookieB, url.Values{
+		"db_ref": {"postgres:" + i64(pgA.ID)}, "var_name": {"X_URL"}, "scheme": {"postgres"},
+	})
+	if links, _ := q.ListDBLinksByApplication(ctx, appB.ID); len(links) != 0 {
+		t.Fatalf("SECURITY: org-B linked org-A's DB by id, have %d links", len(links))
+	}
 }
