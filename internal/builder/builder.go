@@ -6,8 +6,16 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 )
+
+// GitAuth carries HTTPS credentials for cloning a private repo.
+type GitAuth struct {
+	Username string
+	Token    string
+}
 
 // BuildRequest — parameters for building an image from git+Dockerfile.
 type BuildRequest struct {
@@ -18,6 +26,43 @@ type BuildRequest struct {
 	DockerfilePath string // relative to the repo root
 	ImageTag       string // e.g. krill-7:42
 	NoCache        bool   // pass --no-cache to docker build (Rebuild)
+
+	GitAuth      *GitAuth          // nil = public clone
+	BuildArgs    map[string]string // non-secret --build-arg
+	BuildSecrets map[string]string // BuildKit --secret (value = the literal secret)
+}
+
+var buildKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validBuildKey checks a build-arg/secret key is a valid identifier (no spaces,
+// '=', or ',') so it cannot inject into a docker flag.
+func validBuildKey(k string) bool { return buildKeyRe.MatchString(k) }
+
+// cloneURLWithAuth embeds HTTPS credentials into the clone URL. Credentials are
+// only allowed over https; any other scheme with auth is rejected.
+func cloneURLWithAuth(raw string, auth *GitAuth) (string, error) {
+	if auth == nil {
+		return raw, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "https" {
+		return "", errors.New("private clone requires an https git_url")
+	}
+	u.User = url.UserPassword(auth.Username, auth.Token)
+	return u.String(), nil
+}
+
+// sortedKeys returns the map keys in deterministic order (for stable argv).
+func sortedKeys(m map[string]string) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
 }
 
 // Builder clones the repository and builds the image, streaming output to out.
@@ -53,11 +98,19 @@ func cloneArgs(gitURL, branch, dir string) []string {
 	return []string{"clone", "--branch", branch, "--depth", "1", "--", gitURL, dir}
 }
 
-// buildArgs — argv for docker build. noCache adds --no-cache (forced rebuild).
-func buildArgs(tag, dockerfile, context string, noCache bool) []string {
+// buildArgs — argv for docker build. noCache adds --no-cache (forced rebuild);
+// bargs become --build-arg K=V; secretFiles become --secret id=K,src=path. Keys
+// are emitted in sorted order for deterministic argv.
+func buildArgs(tag, dockerfile, context string, noCache bool, bargs, secretFiles map[string]string) []string {
 	args := []string{"build"}
 	if noCache {
 		args = append(args, "--no-cache")
+	}
+	for _, k := range sortedKeys(bargs) {
+		args = append(args, "--build-arg", k+"="+bargs[k])
+	}
+	for _, k := range sortedKeys(secretFiles) {
+		args = append(args, "--secret", "id="+k+",src="+secretFiles[k])
 	}
 	return append(args, "-t", tag, "-f", dockerfile, context)
 }

@@ -2,6 +2,7 @@ package builder
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestCloneArgs(t *testing.T) {
 }
 
 func TestBuildArgs(t *testing.T) {
-	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", false)
+	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", false, nil, nil)
 	want := []string{"build", "-t", "krill-7:42", "-f", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildArgs = %v, want %v", got, want)
@@ -36,10 +37,58 @@ func TestBuildArgs(t *testing.T) {
 }
 
 func TestBuildArgsNoCache(t *testing.T) {
-	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", true)
+	got := buildArgs("krill-7:42", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub", true, nil, nil)
 	want := []string{"build", "--no-cache", "-t", "krill-7:42", "-f", "/tmp/ctx/sub/Dockerfile", "/tmp/ctx/sub"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildArgs no-cache = %v, want %v", got, want)
+	}
+}
+
+func TestCloneURLWithAuth(t *testing.T) {
+	got, err := cloneURLWithAuth("https://github.com/me/private.git", &GitAuth{Username: "x-access-token", Token: "ghp_abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://x-access-token:ghp_abc@github.com/me/private.git" {
+		t.Fatalf("got %q", got)
+	}
+	if san := sanitizeGitURL(got); san != "https://github.com/me/private.git" {
+		t.Fatalf("token leaked into sanitized URL: %q", san)
+	}
+	if _, err := cloneURLWithAuth("http://h/r.git", &GitAuth{Username: "u", Token: "t"}); err == nil {
+		t.Fatal("expected error for non-https auth clone")
+	}
+	if got, _ := cloneURLWithAuth("https://github.com/x/y.git", nil); got != "https://github.com/x/y.git" {
+		t.Fatalf("nil auth changed url: %q", got)
+	}
+}
+
+func TestBuildArgv(t *testing.T) {
+	argv := buildArgs("krill-7:1", "/d/Dockerfile", "/d", false,
+		map[string]string{"VERSION": "1.2", "ENV": "prod"},
+		map[string]string{"NPM_TOKEN": "/tmp/s/NPM_TOKEN"})
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--build-arg ENV=prod --build-arg VERSION=1.2") {
+		t.Fatalf("build-args argv = %q", joined)
+	}
+	if !strings.Contains(joined, "--secret id=NPM_TOKEN,src=/tmp/s/NPM_TOKEN") {
+		t.Fatalf("secret argv = %q", joined)
+	}
+	if argv[0] != "build" || argv[len(argv)-1] != "/d" {
+		t.Fatalf("argv shape wrong: %v", argv)
+	}
+}
+
+func TestValidBuildKey(t *testing.T) {
+	for _, ok := range []string{"NPM_TOKEN", "_X", "A1"} {
+		if !validBuildKey(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", "1A", "a-b", "a b", "a=b", "a,b"} {
+		if validBuildKey(bad) {
+			t.Errorf("%q should be invalid", bad)
+		}
 	}
 }
 
