@@ -2,6 +2,46 @@ package traefik
 
 import "testing"
 
+func TestAppLabelsProtection(t *testing.T) {
+	const svc = "krill-7"
+	t.Run("ip-allowlist on non-TLS attaches to base router", func(t *testing.T) {
+		l := AppLabels(svc, []Domain{{Host: "a.example.com", Exposed: true, AllowedIPs: []string{"10.0.0.0/8", "1.2.3.4/32"}}}, 80, "krill-net")
+		base := svc + "-d0"
+		if got := l["traefik.http.middlewares."+base+"-ipallow.ipallowlist.sourcerange"]; got != "10.0.0.0/8,1.2.3.4/32" {
+			t.Fatalf("sourcerange = %q", got)
+		}
+		if got := l["traefik.http.routers."+base+".middlewares"]; got != base+"-ipallow" {
+			t.Fatalf("middlewares = %q", got)
+		}
+	})
+	t.Run("basic-auth on TLS attaches to secure router, not redirect router", func(t *testing.T) {
+		l := AppLabels(svc, []Domain{{Host: "a.example.com", Exposed: true, TLS: true, BasicAuthUsers: []string{"admin:$2a$10$abc"}}}, 80, "krill-net")
+		base := svc + "-d0"
+		if got := l["traefik.http.middlewares."+base+"-auth.basicauth.users"]; got != "admin:$2a$10$abc" {
+			t.Fatalf("users = %q", got)
+		}
+		if got := l["traefik.http.routers."+base+"s.middlewares"]; got != base+"-auth" {
+			t.Fatalf("secure middlewares = %q", got)
+		}
+		if got := l["traefik.http.routers."+base+".middlewares"]; got != base+"-redirect" {
+			t.Fatalf("redirect router middlewares = %q", got)
+		}
+	})
+	t.Run("both chain ipallow then auth", func(t *testing.T) {
+		l := AppLabels(svc, []Domain{{Host: "a.example.com", Exposed: true, AllowedIPs: []string{"1.2.3.4/32"}, BasicAuthUsers: []string{"u:$2a$10$x"}}}, 80, "krill-net")
+		base := svc + "-d0"
+		if got := l["traefik.http.routers."+base+".middlewares"]; got != base+"-ipallow,"+base+"-auth" {
+			t.Fatalf("chain = %q", got)
+		}
+	})
+	t.Run("empty adds no middleware", func(t *testing.T) {
+		l := AppLabels(svc, []Domain{{Host: "a.example.com", Exposed: true}}, 80, "krill-net")
+		if _, ok := l["traefik.http.routers."+svc+"-d0.middlewares"]; ok {
+			t.Fatal("unexpected middlewares on plain exposed domain")
+		}
+	})
+}
+
 func TestAppLabelsPlain(t *testing.T) {
 	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", TLS: false, Exposed: true}}, 80, "krill-net")
 	if l["traefik.enable"] != "true" {

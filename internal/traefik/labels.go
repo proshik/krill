@@ -8,10 +8,12 @@ import (
 
 // Domain is one host routed to an application, with optional TLS.
 type Domain struct {
-	Host    string
-	TLS     bool
-	Exposed bool
-	Paths   []string // allowed path prefixes; empty = all
+	Host           string
+	TLS            bool
+	Exposed        bool
+	Paths          []string // allowed path prefixes; empty = all
+	BasicAuthUsers []string // htpasswd entries "user:bcrypthash"; empty = no basic-auth
+	AllowedIPs     []string // CIDR/IP entries; empty = no IP filter
 }
 
 // SplitPaths parses a stored newline-separated paths string into trimmed,
@@ -68,25 +70,41 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string)
 		}
 		base := fmt.Sprintf("%s-d%d", serviceName, i)
 		rule := domainRule(d.Host, d.Paths)
+		var servePrefix string // router prefix that actually serves traffic
 		if !d.TLS {
+			servePrefix = "traefik.http.routers." + base + "."
+			l[servePrefix+"rule"] = rule
+			l[servePrefix+"entrypoints"] = "web"
+			l[servePrefix+"service"] = serviceName
+		} else {
+			servePrefix = "traefik.http.routers." + base + "s."
+			l[servePrefix+"rule"] = rule
+			l[servePrefix+"entrypoints"] = "websecure"
+			l[servePrefix+"service"] = serviceName
+			l[servePrefix+"tls.certresolver"] = "le"
+			mw := base + "-redirect"
 			rp := "traefik.http.routers." + base + "."
 			l[rp+"rule"] = rule
 			l[rp+"entrypoints"] = "web"
 			l[rp+"service"] = serviceName
-			continue
+			l[rp+"middlewares"] = mw
+			l["traefik.http.middlewares."+mw+".redirectscheme.scheme"] = "https"
 		}
-		sp := "traefik.http.routers." + base + "s."
-		l[sp+"rule"] = rule
-		l[sp+"entrypoints"] = "websecure"
-		l[sp+"service"] = serviceName
-		l[sp+"tls.certresolver"] = "le"
-		mw := base + "-redirect"
-		rp := "traefik.http.routers." + base + "."
-		l[rp+"rule"] = rule
-		l[rp+"entrypoints"] = "web"
-		l[rp+"service"] = serviceName
-		l[rp+"middlewares"] = mw
-		l["traefik.http.middlewares."+mw+".redirectscheme.scheme"] = "https"
+		// Access protection on the serving router: IP filter first, then auth (AND).
+		var mws []string
+		if len(d.AllowedIPs) > 0 {
+			name := base + "-ipallow"
+			l["traefik.http.middlewares."+name+".ipallowlist.sourcerange"] = strings.Join(d.AllowedIPs, ",")
+			mws = append(mws, name)
+		}
+		if len(d.BasicAuthUsers) > 0 {
+			name := base + "-auth"
+			l["traefik.http.middlewares."+name+".basicauth.users"] = strings.Join(d.BasicAuthUsers, ",")
+			mws = append(mws, name)
+		}
+		if len(mws) > 0 {
+			l[servePrefix+"middlewares"] = strings.Join(mws, ",")
+		}
 	}
 	return l
 }
