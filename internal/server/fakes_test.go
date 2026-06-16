@@ -68,6 +68,8 @@ func (noopEngine) SwarmWorkerToken(context.Context) (string, error)          { r
 func (noopEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
 	return nil, nil
 }
+func (noopEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
+func (noopEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
 
 type noopBuilder struct{}
 

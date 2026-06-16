@@ -64,17 +64,28 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 			Limits: &swarm.Limit{MemoryBytes: s.MemoryLimitBytes, NanoCPUs: s.NanoCPUs},
 		}
 	}
-	if len(s.Constraints) > 0 {
-		task.Placement = &swarm.Placement{Constraints: s.Constraints}
+	if len(s.Constraints) > 0 || s.SpreadNodeID {
+		p := &swarm.Placement{}
+		if len(s.Constraints) > 0 {
+			p.Constraints = s.Constraints
+		}
+		if s.SpreadNodeID {
+			p.Preferences = []swarm.PlacementPreference{{Spread: &swarm.SpreadOver{SpreadDescriptor: "node.id"}}}
+		}
+		task.Placement = p
 	}
 
+	svcMode := swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}}
+	if s.Global {
+		svcMode = swarm.ServiceMode{Global: &swarm.GlobalService{}}
+	}
 	spec := swarm.ServiceSpec{
 		Annotations:  swarm.Annotations{Name: s.Name, Labels: s.Labels},
 		TaskTemplate: task,
-		Mode:         swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}},
+		Mode:         svcMode,
 		UpdateConfig: &swarm.UpdateConfig{
 			Parallelism:   1,
-			Order:         swarm.UpdateOrderStartFirst,       // zero-downtime
+			Order:         swarm.UpdateOrderStartFirst, // zero-downtime
 			FailureAction: swarm.UpdateFailureActionRollback,
 		},
 		RollbackConfig: &swarm.UpdateConfig{

@@ -44,6 +44,8 @@ type ServiceSpec struct {
 	Ports        []PortSpec
 	Mounts       []MountSpec
 	Constraints  []string // e.g. node.role==manager
+	Global       bool     // true => Mode.Global (one task per matching node); Replicas ignored
+	SpreadNodeID bool     // add a spread-over-node.id placement preference (distribute replicas)
 	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
 	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
 
@@ -138,6 +140,8 @@ type Engine interface {
 	NodeRemove(ctx context.Context, nodeID string, force bool) error
 	SwarmWorkerToken(ctx context.Context) (string, error)
 	ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error)
+	NodeSetLabel(ctx context.Context, nodeID, key, value string) error
+	NodeDeleteLabel(ctx context.Context, nodeID, key string) error
 }
 
 // ServiceName builds the Swarm service name for an application from its id.

@@ -99,6 +99,8 @@ func (m *mockEngine) SwarmWorkerToken(context.Context) (string, error)          
 func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
 	return nil, nil
 }
+func (m *mockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
+func (m *mockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
 
 type fakeStore struct {
 	mu     sync.Mutex

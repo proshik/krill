@@ -649,6 +649,33 @@ func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPla
 	return out, nil
 }
 
+func (e *dockerEngine) NodeSetLabel(ctx context.Context, nodeID, key, value string) error {
+	n, _, err := e.cli.NodeInspectWithRaw(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if n.Spec.Annotations.Labels == nil {
+		n.Spec.Annotations.Labels = map[string]string{}
+	}
+	if n.Spec.Annotations.Labels[key] == value {
+		return nil // already set — avoid a no-op version bump
+	}
+	n.Spec.Annotations.Labels[key] = value
+	return e.cli.NodeUpdate(ctx, nodeID, n.Version, n.Spec)
+}
+
+func (e *dockerEngine) NodeDeleteLabel(ctx context.Context, nodeID, key string) error {
+	n, _, err := e.cli.NodeInspectWithRaw(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if _, ok := n.Spec.Annotations.Labels[key]; !ok {
+		return nil // absent — nothing to do
+	}
+	delete(n.Spec.Annotations.Labels, key)
+	return e.cli.NodeUpdate(ctx, nodeID, n.Version, n.Spec)
+}
+
 // statsOneShot reads a single container's stats snapshot.
 func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.StatsResponse, bool) {
 	resp, err := e.cli.ContainerStatsOneShot(ctx, id)
