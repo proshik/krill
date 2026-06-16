@@ -21,7 +21,7 @@ type mockEngine struct {
 	failPull       bool
 }
 
-func newMockEngine() *mockEngine { return &mockEngine{scaled: map[string]uint64{}} }
+func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
@@ -76,7 +76,9 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 	out.Write([]byte("pulling " + ref + "\n"))
 	return nil
 }
-func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error { return nil }
+func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
+	return nil
+}
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }
@@ -90,6 +92,13 @@ func (m *mockEngine) ListContainerStats(context.Context) ([]docker.ContainerStat
 func (m *mockEngine) NodeInfo(context.Context) (docker.NodeInfo, error) {
 	return docker.NodeInfo{}, nil
 }
+func (m *mockEngine) Nodes(context.Context) ([]docker.SwarmNode, error)         { return nil, nil }
+func (m *mockEngine) NodeSetAvailability(context.Context, string, string) error { return nil }
+func (m *mockEngine) NodeRemove(context.Context, string, bool) error            { return nil }
+func (m *mockEngine) SwarmWorkerToken(context.Context) (string, error)          { return "", nil }
+func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
+}
 
 type fakeStore struct {
 	mu     sync.Mutex
@@ -98,7 +107,7 @@ type fakeStore struct {
 	status map[int64]string
 }
 
-func newFakeStore(pg PostgresDB) *fakeStore { return &fakeStore{pg: pg, status: map[int64]string{}} }
+func newFakeStore(pg PostgresDB) *fakeStore                                      { return &fakeStore{pg: pg, status: map[int64]string{}} }
 func (f *fakeStore) GetPostgres(_ context.Context, id int64) (PostgresDB, error) { return f.pg, nil }
 func (f *fakeStore) GetRedis(_ context.Context, id int64) (RedisDB, error) {
 	if f.redis.AppName == "" {
@@ -112,9 +121,9 @@ func (f *fakeStore) SetPostgresStatus(_ context.Context, id int64, s string) err
 	f.status[id] = s
 	return nil
 }
-func (f *fakeStore) SetRedisStatus(_ context.Context, id int64, s string) error      { return nil }
-func (f *fakeStore) DeletePostgresRow(_ context.Context, id int64) error             { return nil }
-func (f *fakeStore) DeleteRedisRow(_ context.Context, id int64) error                { return nil }
+func (f *fakeStore) SetRedisStatus(_ context.Context, id int64, s string) error { return nil }
+func (f *fakeStore) DeletePostgresRow(_ context.Context, id int64) error        { return nil }
+func (f *fakeStore) DeleteRedisRow(_ context.Context, id int64) error           { return nil }
 func (f *fakeStore) st(id int64) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

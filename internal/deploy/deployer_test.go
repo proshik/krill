@@ -48,6 +48,7 @@ func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState,
 	}
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
+
 // ServiceProgress mirrors ServiceState but in baseline-relative terms: Running
 // counts only NEW (non-baseline) tasks. updateInProgress models the situation
 // the convergence fix targets — the old StartFirst task still running while
@@ -81,13 +82,15 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (m *mockEngine) ServiceScale(context.Context, string, uint64) error                        { return nil }
-func (m *mockEngine) ServiceRestart(context.Context, string) error                              { return nil }
-func (m *mockEngine) VolumeRemove(context.Context, string) error                               { return nil }
-func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error                   { return nil }
-func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error                   { return nil }
-func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error                 { return nil }
-func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error     { return nil }
+func (m *mockEngine) ServiceScale(context.Context, string, uint64) error       { return nil }
+func (m *mockEngine) ServiceRestart(context.Context, string) error             { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error               { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error   { return nil }
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error   { return nil }
+func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error { return nil }
+func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
+	return nil
+}
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }
@@ -100,6 +103,13 @@ func (m *mockEngine) ListContainerStats(context.Context) ([]docker.ContainerStat
 }
 func (m *mockEngine) NodeInfo(context.Context) (docker.NodeInfo, error) {
 	return docker.NodeInfo{}, nil
+}
+func (m *mockEngine) Nodes(context.Context) ([]docker.SwarmNode, error)         { return nil, nil }
+func (m *mockEngine) NodeSetAvailability(context.Context, string, string) error { return nil }
+func (m *mockEngine) NodeRemove(context.Context, string, bool) error            { return nil }
+func (m *mockEngine) SwarmWorkerToken(context.Context) (string, error)          { return "", nil }
+func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
 }
 
 type mockBuilder struct {
@@ -156,7 +166,11 @@ func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, 
 	return nil
 }
 func (f *fakeStore) appStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.status[id] }
-func (f *fakeStore) depStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.deploys[id] }
+func (f *fakeStore) depStatus(id int64) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deploys[id]
+}
 
 func imageApp() App {
 	return App{ID: 1, Name: "web", Image: "nginx", Tag: "alpine",

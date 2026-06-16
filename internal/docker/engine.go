@@ -33,16 +33,16 @@ type MountSpec struct {
 
 // ServiceSpec — our neutral description of a Swarm service.
 type ServiceSpec struct {
-	Name        string
-	Image       string // image:tag
-	Command     []string
-	Args        []string
-	Env         map[string]string
-	Labels      map[string]string // service-level (read by the Traefik swarm provider)
-	Replicas    uint64
-	Network     string
-	Ports       []PortSpec
-	Mounts      []MountSpec
+	Name         string
+	Image        string // image:tag
+	Command      []string
+	Args         []string
+	Env          map[string]string
+	Labels       map[string]string // service-level (read by the Traefik swarm provider)
+	Replicas     uint64
+	Network      string
+	Ports        []PortSpec
+	Mounts       []MountSpec
 	Constraints  []string // e.g. node.role==manager
 	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
 	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
@@ -53,6 +53,15 @@ type ServiceSpec struct {
 	RestartMaxAttempts uint64 // 0 = unlimited
 	Healthcheck        *HealthcheckSpec
 }
+
+// SwarmNode is one cluster node (from the Swarm API).
+type SwarmNode struct {
+	ID, Hostname, Role, Availability, State, Addr string
+	Leader                                        bool
+}
+
+// TaskPlacement is one task of a service and the node it runs on.
+type TaskPlacement struct{ NodeID, NodeName, State, Desired string }
 
 // HealthcheckSpec configures the container healthcheck.
 type HealthcheckSpec struct {
@@ -109,7 +118,7 @@ type Engine interface {
 	ServiceDeploy(ctx context.Context, spec ServiceSpec) error // create-or-rolling-update by name
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
-	ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error) // bulk: one API round-trip for many services
+	ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error)          // bulk: one API round-trip for many services
 	ServiceProgress(ctx context.Context, name string, exclude []string) (ServiceProgress, error) // deploy convergence relative to a pre-deploy baseline task set
 	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
@@ -124,6 +133,11 @@ type Engine interface {
 	RegistryCheck(ctx context.Context, serverAddr, username, password string) error
 	ListContainerStats(ctx context.Context) ([]ContainerStat, error)
 	NodeInfo(ctx context.Context) (NodeInfo, error)
+	Nodes(ctx context.Context) ([]SwarmNode, error)
+	NodeSetAvailability(ctx context.Context, nodeID, availability string) error
+	NodeRemove(ctx context.Context, nodeID string, force bool) error
+	SwarmWorkerToken(ctx context.Context) (string, error)
+	ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error)
 }
 
 // ServiceName builds the Swarm service name for an application from its id.

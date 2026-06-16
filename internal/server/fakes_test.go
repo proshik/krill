@@ -10,8 +10,8 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
-	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/config"
+	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
@@ -24,9 +24,9 @@ import (
 // healthy task, so deploys converge instantly in handler tests.
 type noopEngine struct{}
 
-func (noopEngine) NetworkEnsure(context.Context, string) error          { return nil }
+func (noopEngine) NetworkEnsure(context.Context, string) error             { return nil }
 func (noopEngine) ServiceDeploy(context.Context, docker.ServiceSpec) error { return nil }
-func (noopEngine) ServiceRemove(context.Context, string) error          { return nil }
+func (noopEngine) ServiceRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
@@ -60,7 +60,14 @@ func (noopEngine) RegistryCheck(context.Context, string, string, string) error {
 func (noopEngine) ListContainerStats(context.Context) ([]docker.ContainerStat, error) {
 	return nil, nil
 }
-func (noopEngine) NodeInfo(context.Context) (docker.NodeInfo, error) { return docker.NodeInfo{}, nil }
+func (noopEngine) NodeInfo(context.Context) (docker.NodeInfo, error)         { return docker.NodeInfo{}, nil }
+func (noopEngine) Nodes(context.Context) ([]docker.SwarmNode, error)         { return nil, nil }
+func (noopEngine) NodeSetAvailability(context.Context, string, string) error { return nil }
+func (noopEngine) NodeRemove(context.Context, string, bool) error            { return nil }
+func (noopEngine) SwarmWorkerToken(context.Context) (string, error)          { return "", nil }
+func (noopEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
+}
 
 type noopBuilder struct{}
 

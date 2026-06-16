@@ -580,6 +580,65 @@ func (e *dockerEngine) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
 }
 
+func (e *dockerEngine) Nodes(ctx context.Context) ([]SwarmNode, error) {
+	ns, err := e.cli.NodeList(ctx, swarm.NodeListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SwarmNode, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, SwarmNode{
+			ID: n.ID, Hostname: n.Description.Hostname, Role: string(n.Spec.Role),
+			Availability: string(n.Spec.Availability), State: string(n.Status.State),
+			Addr: n.Status.Addr, Leader: n.ManagerStatus != nil && n.ManagerStatus.Leader,
+		})
+	}
+	return out, nil
+}
+
+func (e *dockerEngine) NodeSetAvailability(ctx context.Context, nodeID, availability string) error {
+	n, _, err := e.cli.NodeInspectWithRaw(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	n.Spec.Availability = swarm.NodeAvailability(availability)
+	return e.cli.NodeUpdate(ctx, nodeID, n.Version, n.Spec)
+}
+
+func (e *dockerEngine) NodeRemove(ctx context.Context, nodeID string, force bool) error {
+	return e.cli.NodeRemove(ctx, nodeID, swarm.NodeRemoveOptions{Force: force})
+}
+
+func (e *dockerEngine) SwarmWorkerToken(ctx context.Context) (string, error) {
+	sw, err := e.cli.SwarmInspect(ctx)
+	if err != nil {
+		return "", err
+	}
+	return sw.JoinTokens.Worker, nil
+}
+
+func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error) {
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("service", name)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	nodes, _ := e.Nodes(ctx)
+	id2name := map[string]string{}
+	for _, n := range nodes {
+		id2name[n.ID] = n.Hostname
+	}
+	out := make([]TaskPlacement, 0, len(tasks))
+	for _, t := range tasks {
+		out = append(out, TaskPlacement{
+			NodeID: t.NodeID, NodeName: id2name[t.NodeID],
+			State: string(t.Status.State), Desired: string(t.DesiredState),
+		})
+	}
+	return out, nil
+}
+
 // statsOneShot reads a single container's stats snapshot.
 func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.StatsResponse, bool) {
 	resp, err := e.cli.ContainerStatsOneShot(ctx, id)
