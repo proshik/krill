@@ -293,6 +293,8 @@ var ru = map[string]string{
 	"flash.ok.node_removed":              "Нода удалена",
 	"flash.err.invalid_placement":        "неверный режим placement",
 	"flash.err.invalid_node":             "неизвестная нода",
+	"flash.err.placement_no_nodes":       "выберите хотя бы одну ноду для режима pin/global",
+	"flash.err.placement_label_partial":  "Placement сохранён, но метки части нод не применились — пересохраните, когда кластер будет доступен",
 	"flash.ok.placement_saved":           "Placement сохранён — применится при следующем деплое",
 	"flash.ok.db_node_saved":             "Нода БД сохранена — передеплой БД, чтобы применить (том не переезжает)",
 	"confirm.delete_gitcred":             "Удалить git-кред %s?",

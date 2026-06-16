@@ -26,6 +26,17 @@ func TestSavePlacement(t *testing.T) {
 	if app.PlacementMode != "any" || app.PlacementNodes != "" {
 		t.Fatalf("placement = %q / %q", app.PlacementMode, app.PlacementNodes)
 	}
+
+	// pin/global with no nodes -> err flash, NOT persisted (would silently behave
+	// as "any" otherwise). Runs without a live engine.
+	for _, mode := range []string{"pin", "global"} {
+		if rec := postForm(t, h, base+"/placement", cookie, url.Values{"placement_mode": {mode}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+			t.Fatalf("%s with no nodes want 303+err, got %d", mode, rec.Code)
+		}
+		if app, _ := q.GetApplication(ctx, appID); app.PlacementMode != "any" {
+			t.Fatalf("%s with no nodes persisted mode=%q, want unchanged 'any'", mode, app.PlacementMode)
+		}
+	}
 	// (node-ID validation requires a live engine; covered by the live 2-node test.)
 
 	// member is blocked

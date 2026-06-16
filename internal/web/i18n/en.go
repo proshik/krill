@@ -293,6 +293,8 @@ var en = map[string]string{
 	"flash.ok.node_removed":              "Node removed",
 	"flash.err.invalid_placement":        "invalid placement mode",
 	"flash.err.invalid_node":             "unknown node",
+	"flash.err.placement_no_nodes":       "select at least one node for pin/global placement",
+	"flash.err.placement_label_partial":  "Placement saved, but some node labels failed — re-save once the cluster is reachable",
 	"flash.ok.placement_saved":           "Placement saved — applied on next deploy",
 	"flash.ok.db_node_saved":             "Database node saved — redeploy the DB to apply (the volume does not migrate)",
 	"confirm.delete_gitcred":             "Delete git credential %s?",

@@ -135,6 +135,11 @@ func (e *dockerEngine) ServiceState(ctx context.Context, name string) (ServiceSt
 			failed++
 		}
 	}
+	// A global service has no Replicas; Swarm wants one task per matching node,
+	// so the desired-state=running task count IS the desired count.
+	if svc.Spec.Mode.Global != nil {
+		desired = len(tasks)
+	}
 	return ServiceState{Found: true, Running: running, Desired: desired, Failed: failed}, nil
 }
 
@@ -167,7 +172,7 @@ func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude
 	for _, id := range exclude {
 		old[id] = true
 	}
-	running, failed := 0, 0
+	running, failed, fresh := 0, 0, 0
 	ids := make([]string, 0, len(tasks))
 	for _, t := range tasks {
 		ids = append(ids, t.ID)
@@ -177,12 +182,20 @@ func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude
 		if old[t.ID] {
 			continue
 		}
+		fresh++
 		switch t.Status.State {
 		case swarm.TaskStateRunning:
 			running++
 		case swarm.TaskStateFailed, swarm.TaskStateRejected:
 			failed++
 		}
+	}
+	// A global service has no Replicas; Swarm schedules one task per matching
+	// node. The desired count for this deploy is the number of new (non-baseline)
+	// tasks Swarm created — 0 until they appear, so convergence keeps waiting
+	// rather than falsely succeeding off the old tasks.
+	if svc.Spec.Mode.Global != nil {
+		desired = fresh
 	}
 	return ServiceProgress{
 		Found: true, Desired: desired, Running: running, Failed: failed,
@@ -205,6 +218,7 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 	}
 	idToName := map[string]string{}
 	out := map[string]ServiceState{}
+	global := map[string]bool{}
 	for _, s := range svcs {
 		if !want[s.Spec.Name] {
 			continue
@@ -213,6 +227,9 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 		desired := 0
 		if r := s.Spec.Mode.Replicated; r != nil && r.Replicas != nil {
 			desired = int(*r.Replicas)
+		}
+		if s.Spec.Mode.Global != nil {
+			global[s.Spec.Name] = true
 		}
 		out[s.Spec.Name] = ServiceState{Found: true, Desired: desired}
 	}
@@ -228,6 +245,11 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 			continue
 		}
 		st := out[name]
+		// A global service has no Replicas; its desired count is the number of
+		// desired-state=running tasks (one per matching node).
+		if global[name] {
+			st.Desired++
+		}
 		switch t.Status.State {
 		case swarm.TaskStateRunning:
 			st.Running++
@@ -518,10 +540,11 @@ func (e *dockerEngine) ServiceScale(ctx context.Context, name string, replicas u
 		return nil // nothing to scale
 	}
 	spec := cur.Spec
-	if spec.Mode.Replicated == nil {
-		spec.Mode.Replicated = &swarm.ReplicatedService{}
-	}
-	spec.Mode.Replicated.Replicas = &replicas
+	// Force exactly one service mode. A global service has Mode.Global set and
+	// Mode.Replicated nil; setting Replicas without clearing Global would leave
+	// BOTH modes set, which Swarm rejects. Stopping a global app (scale 0) thus
+	// converts it to replicated-0; the next Deploy re-applies Mode.Global.
+	spec.Mode = swarm.ServiceMode{Replicated: &swarm.ReplicatedService{Replicas: &replicas}}
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
 }

@@ -64,7 +64,9 @@ templ DatabaseDetail(c DatabaseCtx) {
 								<select class="k-select" name="node_hostname">
 									<option value="" selected?={ c.NodeHostname == "" }>{ i18n.T(ctx, "dbnode.manager") }</option>
 									for _, n := range c.Nodes {
-										<option value={ n.Hostname } selected?={ c.NodeHostname == n.Hostname }>{ n.Hostname }</option>
+										if !n.Leader {
+											<option value={ n.Hostname } selected?={ c.NodeHostname == n.Hostname }>{ n.Hostname }</option>
+										}
 									}
 								</select>
 								<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "dbnode.hint") }</p>

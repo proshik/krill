@@ -244,9 +244,11 @@ func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
 
 // reconcilePlacementLabels makes the per-app krill.place.<appID> node label
 // present on exactly the selected nodes (idempotent; best-effort per node).
-func (s *Server) reconcilePlacementLabels(r *http.Request, appID int64, selected []string) {
+// Returns the number of nodes whose label could not be set/cleared — a nonzero
+// count means a pinned app may be unschedulable until placement is re-saved.
+func (s *Server) reconcilePlacementLabels(r *http.Request, appID int64, selected []string) int {
 	if s.engine == nil {
-		return
+		return 0
 	}
 	key := fmt.Sprintf("krill.place.%d", appID)
 	sel := map[string]bool{}
@@ -256,17 +258,21 @@ func (s *Server) reconcilePlacementLabels(r *http.Request, appID int64, selected
 	nodes, err := s.engine.Nodes(r.Context())
 	if err != nil {
 		logFrom(r).Error("reconcilePlacementLabels: list nodes failed", "err", err, "app_id", appID)
-		return
+		return len(selected)
 	}
+	failed := 0
 	for _, n := range nodes {
 		if sel[n.ID] {
 			if e := s.engine.NodeSetLabel(r.Context(), n.ID, key, "1"); e != nil {
 				logFrom(r).Error("reconcilePlacementLabels: set label failed", "err", e, "node", n.ID, "app_id", appID)
+				failed++
 			}
 		} else if e := s.engine.NodeDeleteLabel(r.Context(), n.ID, key); e != nil {
 			logFrom(r).Error("reconcilePlacementLabels: delete label failed", "err", e, "node", n.ID, "app_id", appID)
+			failed++
 		}
 	}
+	return failed
 }
 
 // savePlacement sets an app's node placement (any | pin | global + selected
@@ -276,15 +282,20 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	mode := r.FormValue("placement_mode")
+	mode := r.FormValue("placement_mode") // implicitly parses the form
 	if mode != "any" && mode != "pin" && mode != "global" {
 		s.flashErrT(w, r, "flash.err.invalid_placement")
 		return
 	}
-	_ = r.ParseForm()
 	var nodes []string
 	if mode != "any" {
 		nodes = r.PostForm["placement_nodes"]
+		// pin/global with no nodes would emit no constraint and silently behave
+		// as "any" — reject so the stored mode matches the effective behavior.
+		if len(nodes) == 0 {
+			s.flashErrT(w, r, "flash.err.placement_no_nodes")
+			return
+		}
 	}
 	// Validate selected node IDs against the live cluster (when reachable).
 	if s.engine != nil && len(nodes) > 0 {
@@ -307,8 +318,14 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	s.reconcilePlacementLabels(r, c.App.ID, nodes)
-	logFrom(r).Info("application placement saved", "app_id", c.App.ID, "mode", mode, "nodes", len(nodes))
+	failed := s.reconcilePlacementLabels(r, c.App.ID, nodes)
+	logFrom(r).Info("application placement saved", "app_id", c.App.ID, "mode", mode, "nodes", len(nodes), "label_failures", failed)
+	if failed > 0 {
+		// Persisted, but some node labels did not apply — the app may not schedule
+		// onto every selected node until placement is re-saved. Surface it.
+		s.flashErrT(w, r, "flash.err.placement_label_partial")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.placement_saved")
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
@@ -724,6 +741,9 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		if err := s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID)); err != nil {
 			logFrom(r).Error("deleteApp: service remove failed", "err", err, "app_id", c.App.ID)
 		}
+		// Drop the per-app placement labels so removed apps don't orphan
+		// krill.place.<appID> labels on cluster nodes.
+		s.reconcilePlacementLabels(r, c.App.ID, nil)
 	}
 	if r.FormValue("destroy_data") == "on" {
 		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
