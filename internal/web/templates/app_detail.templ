@@ -20,6 +20,27 @@ type AppCtx struct {
 
 	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
 	Destinations  []db.Destination
+
+	DBLinks      []DBLinkView
+	EnvDatabases []EnvDBOption
+}
+
+// DBLinkView is a linked DB row for the Environment tab. Collides is true when
+// VarName is also present in env_text (the link overrides it on deploy).
+type DBLinkView struct {
+	ID       int64
+	Engine   string
+	DBName   string
+	VarName  string
+	Scheme   string
+	Collides bool
+}
+
+// EnvDBOption is one managed DB of the environment for the link dropdown.
+type EnvDBOption struct {
+	Engine string
+	ID     int64
+	Name   string
 }
 
 func (c AppCtx) base() string {
@@ -183,6 +204,64 @@ templ envTab(c AppCtx) {
 				</div>
 			</div>
 		</div>
+		<div class="k-section">{ i18n.T(ctx, "dblink.section") }</div>
+		<p class="k-panel-desc mb-2">{ i18n.T(ctx, "dblink.note") }</p>
+		if len(c.DBLinks) > 0 {
+			<table class="k-table mb-3">
+				<thead><tr>
+					<th>{ i18n.T(ctx, "dblink.var_name") }</th>
+					<th>{ i18n.T(ctx, "dblink.database") }</th>
+					<th>{ i18n.T(ctx, "dblink.scheme") }</th>
+					<th></th>
+				</tr></thead>
+				<tbody>
+					for _, l := range c.DBLinks {
+						<tr>
+							<td class="k-mono">
+								{ l.VarName }
+								if l.Collides {
+									<span class="k-toast k-toast-err" style="display:inline-block;margin-left:.5rem;padding:.1rem .4rem">{ i18n.Tf(ctx, "dblink.collision", l.VarName) }</span>
+								}
+							</td>
+							<td class="k-mono">{ l.Engine } · { l.DBName }</td>
+							<td class="k-mono text-xs">{ l.Scheme }</td>
+							<td>
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/db-links/" + itoa(l.ID) + "/delete") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.delete_dblink", l.VarName) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "dblink.delete") }</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+		if len(c.EnvDatabases) == 0 {
+			<p class="k-muted mb-3">{ i18n.T(ctx, "dblink.no_databases") }</p>
+		} else {
+			<form method="post" action={ templ.SafeURL(c.base() + "/db-links") } class="flex items-end gap-2 flex-wrap mb-4">
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "dblink.database") }</label>
+					<select class="k-select" name="db_ref">
+						for _, d := range c.EnvDatabases {
+							<option value={ d.Engine + ":" + itoa(d.ID) }>{ d.Engine } · { d.Name }</option>
+						}
+					</select>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "dblink.var_name") }</label>
+					<input class="k-input k-mono" name="var_name" placeholder="DATABASE_URL" required/>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "dblink.scheme") }</label>
+					<select class="k-select" name="scheme">
+						<option value="postgresql">postgresql://</option>
+						<option value="postgres">postgres://</option>
+						<option value="redis">redis://</option>
+					</select>
+				</div>
+				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
+			</form>
+		}
 		<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">
 				<div id="env-kv" style="display:none">
 					<div id="env-rows"></div>

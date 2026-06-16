@@ -199,6 +199,35 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		c.Domains = doms
 	}
+	if tab == "env" {
+		links, lerr := s.q.ListDBLinksByApplication(r.Context(), c.App.ID)
+		if lerr != nil {
+			logFrom(r).Error("appDetail: list db links", "err", lerr, "app_id", c.App.ID)
+		}
+		pgs, _ := s.q.ListPostgresByEnvironment(r.Context(), c.Env.ID)
+		redises, _ := s.q.ListRedisByEnvironment(r.Context(), c.Env.ID)
+		pgName := map[int64]string{}
+		for _, pg := range pgs {
+			pgName[pg.ID] = pg.Name
+			c.EnvDatabases = append(c.EnvDatabases, templates.EnvDBOption{Engine: "postgres", ID: pg.ID, Name: pg.Name})
+		}
+		redisName := map[int64]string{}
+		for _, rd := range redises {
+			redisName[rd.ID] = rd.Name
+			c.EnvDatabases = append(c.EnvDatabases, templates.EnvDBOption{Engine: "redis", ID: rd.ID, Name: rd.Name})
+		}
+		envKeys, _ := parseEnv(c.App.EnvText)
+		for _, l := range links {
+			name := pgName[l.DbID]
+			if l.Engine == "redis" {
+				name = redisName[l.DbID]
+			}
+			_, collides := envKeys[l.VarName]
+			c.DBLinks = append(c.DBLinks, templates.DBLinkView{
+				ID: l.ID, Engine: l.Engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Collides: collides,
+			})
+		}
+	}
 	if tab == "volumes" {
 		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
 		if err != nil {
