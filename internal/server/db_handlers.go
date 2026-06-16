@@ -347,6 +347,44 @@ func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {
 	conn.Close(websocket.StatusNormalClosure, "")
 }
 
+// setDBNode pins a managed DB to a chosen node (empty = control-plane/manager).
+// Applied on the DB's next deploy; the data volume does NOT migrate (admin-only).
+func (s *Server) setDBNode(w http.ResponseWriter, r *http.Request) {
+	eng, id, ok := s.loadDBChain(w, r)
+	if !ok {
+		return
+	}
+	node := strings.TrimSpace(r.FormValue("node_hostname"))
+	if node != "" && s.engine != nil {
+		live, _ := s.engine.Nodes(r.Context())
+		valid := false
+		for _, n := range live {
+			if n.Hostname == node {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			s.flashErrT(w, r, "flash.err.invalid_node")
+			return
+		}
+	}
+	var err error
+	if eng == "postgres" {
+		err = s.q.SetPostgresNode(r.Context(), db.SetPostgresNodeParams{ID: id, NodeHostname: node})
+	} else {
+		err = s.q.SetRedisNode(r.Context(), db.SetRedisNodeParams{ID: id, NodeHostname: node})
+	}
+	if err != nil {
+		logFrom(r).Error("setDBNode: update failed", "err", err, "db_id", id, "engine", eng)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	logFrom(r).Info("db node set", "db_id", id, "engine", eng, "node", node)
+	s.flashOK(w, r, "flash.ok.db_node_saved")
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+}
+
 // loadDBChain parses {engine}/{dbID} and verifies it belongs to the org→proj→env chain.
 func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, int64, bool) {
 	o, _, ok := s.loadOrg(w, r)

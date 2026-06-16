@@ -242,6 +242,77 @@ func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 
+// reconcilePlacementLabels makes the per-app krill.place.<appID> node label
+// present on exactly the selected nodes (idempotent; best-effort per node).
+func (s *Server) reconcilePlacementLabels(r *http.Request, appID int64, selected []string) {
+	if s.engine == nil {
+		return
+	}
+	key := fmt.Sprintf("krill.place.%d", appID)
+	sel := map[string]bool{}
+	for _, id := range selected {
+		sel[id] = true
+	}
+	nodes, err := s.engine.Nodes(r.Context())
+	if err != nil {
+		logFrom(r).Error("reconcilePlacementLabels: list nodes failed", "err", err, "app_id", appID)
+		return
+	}
+	for _, n := range nodes {
+		if sel[n.ID] {
+			if e := s.engine.NodeSetLabel(r.Context(), n.ID, key, "1"); e != nil {
+				logFrom(r).Error("reconcilePlacementLabels: set label failed", "err", e, "node", n.ID, "app_id", appID)
+			}
+		} else if e := s.engine.NodeDeleteLabel(r.Context(), n.ID, key); e != nil {
+			logFrom(r).Error("reconcilePlacementLabels: delete label failed", "err", e, "node", n.ID, "app_id", appID)
+		}
+	}
+}
+
+// savePlacement sets an app's node placement (any | pin | global + selected
+// nodes) and reconciles the per-app node labels (admin-only).
+func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	mode := r.FormValue("placement_mode")
+	if mode != "any" && mode != "pin" && mode != "global" {
+		s.flashErrT(w, r, "flash.err.invalid_placement")
+		return
+	}
+	_ = r.ParseForm()
+	var nodes []string
+	if mode != "any" {
+		nodes = r.PostForm["placement_nodes"]
+	}
+	// Validate selected node IDs against the live cluster (when reachable).
+	if s.engine != nil && len(nodes) > 0 {
+		live, _ := s.engine.Nodes(r.Context())
+		valid := map[string]bool{}
+		for _, n := range live {
+			valid[n.ID] = true
+		}
+		for _, id := range nodes {
+			if !valid[id] {
+				s.flashErrT(w, r, "flash.err.invalid_node")
+				return
+			}
+		}
+	}
+	if err := s.q.SetApplicationPlacement(r.Context(), db.SetApplicationPlacementParams{
+		ID: c.App.ID, PlacementMode: mode, PlacementNodes: strings.Join(nodes, ","),
+	}); err != nil {
+		logFrom(r).Error("savePlacement: update failed", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	s.reconcilePlacementLabels(r, c.App.ID, nodes)
+	logFrom(r).Info("application placement saved", "app_id", c.App.ID, "mode", mode, "nodes", len(nodes))
+	s.flashOK(w, r, "flash.ok.placement_saved")
+	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
+}
+
 func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
