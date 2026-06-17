@@ -161,6 +161,11 @@ type MetricSample struct {
 	MemLimitBytes int64     `json:"mem_limit_bytes"`
 }
 
+type NodeLabel struct {
+	SwarmNodeID string `json:"swarm_node_id"`
+	Label       string `json:"label"`
+}
+
 type NotificationChannel struct {
 	ID           int64     `json:"id"`
 	OrgID        int64     `json:"org_id"`

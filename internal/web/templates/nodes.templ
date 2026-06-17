@@ -6,7 +6,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Nodes(org db.Organization, role string, live []docker.SwarmNode, rows []db.ClusterNode) {
+templ Nodes(org db.Organization, role string, live []docker.SwarmNode, rows []db.ClusterNode, labels map[string]string) {
 	@Layout(i18n.T(ctx, "nodes.title"), org, role) {
 		@settingsNav(org.ID)
 		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "nodes.desc") }</p>
@@ -29,9 +29,12 @@ templ Nodes(org db.Organization, role string, live []docker.SwarmNode, rows []db
 					for _, n := range live {
 						<tr>
 							<td class="k-mono">
-								{ n.Hostname }
+								{ nodeDisplay(labels, n.ID, n.Hostname) }
 								if n.Leader {
 									<span class="k-badge">{ i18n.T(ctx, "nodes.leader") }</span>
+								}
+								if labels[n.ID] != "" {
+									<div class="k-muted text-xs">{ n.Hostname }</div>
 								}
 							</td>
 							<td>{ nodeManagedName(rows, n.ID) }</td>
@@ -47,6 +50,10 @@ templ Nodes(org db.Organization, role string, live []docker.SwarmNode, rows []db
 							<td>
 								if role == "owner" || role == "admin" {
 									<div class="flex items-center gap-2 flex-wrap">
+										<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + n.ID + "/label") } class="inline flex items-center gap-1">
+											<input class="k-input" name="label" value={ labels[n.ID] } placeholder={ i18n.T(ctx, "nodes.label_ph") } maxlength="40" style="width:9rem"/>
+											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "common.save") }</button>
+										</form>
 										if n.Availability == "drain" {
 											<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + n.ID + "/availability") } class="inline">
 												<input type="hidden" name="availability" value="active"/>

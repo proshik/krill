@@ -60,6 +60,7 @@ type Querier interface {
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitCredential(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
+	DeleteNodeLabel(ctx context.Context, swarmNodeID string) error
 	DeleteOrganization(ctx context.Context, id int64) error
 	DeletePostgres(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
@@ -113,6 +114,7 @@ type Querier interface {
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
+	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
 	ListPostgresByOrg(ctx context.Context, organizationID int64) ([]ListPostgresByOrgRow, error)
@@ -157,6 +159,7 @@ type Querier interface {
 	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
 	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
 	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
+	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
 }
 

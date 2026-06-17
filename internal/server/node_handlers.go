@@ -49,7 +49,59 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, templates.Nodes(o, role, live, rows))
+	render(w, r, http.StatusOK, templates.Nodes(o, role, live, rows, s.nodeLabelMap(r.Context())))
+}
+
+// nodeLabelMap returns swarm_node_id -> display label. Best-effort: on error it
+// returns an empty map so callers fall back to raw hostnames.
+func (s *Server) nodeLabelMap(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	rows, err := s.q.ListNodeLabels(ctx)
+	if err != nil {
+		return out
+	}
+	for _, l := range rows {
+		out[l.SwarmNodeID] = l.Label
+	}
+	return out
+}
+
+// maxNodeLabelLen bounds the human-readable node display label.
+const maxNodeLabelLen = 40
+
+// setNodeLabel sets (or clears) a node's display label by its Swarm ID
+// (admin-only). An empty label removes the override; the UI then shows the raw
+// hostname.
+func (s *Server) setNodeLabel(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	swarmID := chi.URLParam(r, "nodeID")
+	label := strings.TrimSpace(r.FormValue("label"))
+	if len([]rune(label)) > maxNodeLabelLen {
+		s.flashErrT(w, r, "flash.err.node_label_long")
+		return
+	}
+	// When the cluster is reachable, only label nodes that actually exist.
+	if _, found := s.findSwarmNode(r.Context(), swarmID); s.engine != nil && !found {
+		s.flashErrT(w, r, "flash.err.invalid_node")
+		return
+	}
+	if label == "" {
+		if err := s.q.DeleteNodeLabel(r.Context(), swarmID); err != nil {
+			logFrom(r).Error("setNodeLabel: delete failed", "err", err, "node", swarmID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+	} else if err := s.q.UpsertNodeLabel(r.Context(), db.UpsertNodeLabelParams{SwarmNodeID: swarmID, Label: label}); err != nil {
+		logFrom(r).Error("setNodeLabel: upsert failed", "err", err, "node", swarmID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	logFrom(r).Info("node label set", "node", swarmID, "has_label", label != "")
+	s.flashOK(w, r, "flash.ok.node_label_saved")
+	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
 }
 
 // addNode SSH-joins a worker to the swarm (admin-only). The SSH key and join

@@ -175,6 +175,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/nodes", s.addNode)
 				r.Post("/nodes/{nodeID}/availability", s.setNodeAvailability)
 				r.Post("/nodes/{nodeID}/remove", s.removeNode)
+				r.Post("/nodes/{nodeID}/label", s.setNodeLabel)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -68,6 +69,48 @@ func TestSetNodeAvailabilityInvalid(t *testing.T) {
 	}
 }
 
+// TestSetNodeLabel covers the display-label upsert/clear/validation. The test
+// server wires a nil engine, so node-existence validation is skipped and the
+// label is stored as given.
+func TestSetNodeLabel(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "nodes-label@k.local", "OrgNLBL")
+	const nid = "swarmnode-xyz"
+
+	// set a label -> persisted
+	if rec := postForm(t, h, base+"/nodes/"+nid+"/label", cookie, url.Values{"label": {"worker-fra"}}); rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("set label want 303 ok, got %d err=%v", rec.Code, hasErrFlash(rec))
+	}
+	labels, _ := q.ListNodeLabels(ctx)
+	got := ""
+	for _, l := range labels {
+		if l.SwarmNodeID == nid {
+			got = l.Label
+		}
+	}
+	if got != "worker-fra" {
+		t.Fatalf("label = %q, want worker-fra", got)
+	}
+
+	// too-long label -> err flash, value unchanged
+	long := url.Values{"label": {strings.Repeat("x", 41)}}
+	if rec := postForm(t, h, base+"/nodes/"+nid+"/label", cookie, long); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("too-long label want 303+err, got %d", rec.Code)
+	}
+
+	// empty label -> cleared (row deleted)
+	if rec := postForm(t, h, base+"/nodes/"+nid+"/label", cookie, url.Values{"label": {""}}); rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("clear label want 303 ok, got %d", rec.Code)
+	}
+	labels, _ = q.ListNodeLabels(ctx)
+	for _, l := range labels {
+		if l.SwarmNodeID == nid {
+			t.Fatalf("label not cleared: %q", l.Label)
+		}
+	}
+}
+
 func TestNodesAdminGate(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
@@ -77,7 +120,7 @@ func TestNodesAdminGate(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 	mc := loginAs(t, q, "nodes-gate-member@k.local")
-	for _, target := range []string{base + "/nodes", base + "/nodes/x/availability", base + "/nodes/x/remove"} {
+	for _, target := range []string{base + "/nodes", base + "/nodes/x/availability", base + "/nodes/x/remove", base + "/nodes/x/label"} {
 		rec := postForm(t, h, target, mc, url.Values{"name": {"w"}, "ssh_host": {"h"}, "ssh_user": {"u"}, "ssh_key": {"k"}, "availability": {"drain"}})
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("member POST %s want 403, got %d", target, rec.Code)

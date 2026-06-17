@@ -32,6 +32,15 @@ func nodeManagedName(rows []db.ClusterNode, swarmID string) string {
 	return ""
 }
 
+// nodeDisplay returns the human-readable display label for a Swarm node ID,
+// falling back to the raw hostname when no label is set.
+func nodeDisplay(labels map[string]string, swarmID, hostname string) string {
+	if l := labels[swarmID]; l != "" {
+		return l
+	}
+	return hostname
+}
+
 // basicAuthUsernames extracts the usernames from a newline-separated htpasswd
 // "user:hash" list. Only usernames are exposed to the UI; hashes are never shown.
 func basicAuthUsernames(s string) []string {

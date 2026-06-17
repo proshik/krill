@@ -22,6 +22,7 @@ type AppCtx struct {
 	BuildSecretsPlain string // decrypted build_secrets, set for admins only (never ciphertext)
 	Tasks             []docker.TaskPlacement // running/desired tasks of this app's service + their nodes
 	Nodes             []docker.SwarmNode     // cluster nodes (for the placement picker; admin only)
+	NodeLabels        map[string]string      // swarm_node_id → display label (topology + placement); empty → hostname
 
 	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
 	Destinations  []db.Destination
@@ -118,7 +119,7 @@ templ generalTab(c AppCtx) {
 					for _, t := range c.Tasks {
 						<div class="k-mono text-xs">
 							if t.NodeName != "" {
-								<span class="k-badge">{ t.NodeName }</span>
+								<span class="k-badge">{ nodeDisplay(c.NodeLabels, t.NodeID, t.NodeName) }</span>
 							} else {
 								<span class="k-badge k-badge-idle">—</span>
 							}
@@ -561,7 +562,7 @@ templ advancedTab(c AppCtx) {
 						for _, n := range c.Nodes {
 							<label class="k-label flex items-center gap-2" style="font-weight:normal">
 								<input class="k-check" type="checkbox" name="placement_nodes" value={ n.ID } checked?={ placementHas(c.App.PlacementNodes, n.ID) }/>
-								<span class="k-mono">{ n.Hostname }</span> <span class="k-muted text-xs">{ n.Role }</span>
+								<span class="k-mono">{ nodeDisplay(c.NodeLabels, n.ID, n.Hostname) }</span> <span class="k-muted text-xs">{ n.Role }</span>
 							</label>
 						}
 					</div>

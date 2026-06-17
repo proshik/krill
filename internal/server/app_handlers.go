@@ -357,6 +357,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.engine != nil {
 		c.Tasks, _ = s.engine.ServiceTasks(r.Context(), docker.ServiceName(c.App.ID))
+		c.NodeLabels = s.nodeLabelMap(r.Context())
 		if c.Role == "owner" || c.Role == "admin" {
 			c.Nodes, _ = s.engine.Nodes(r.Context())
 		}
