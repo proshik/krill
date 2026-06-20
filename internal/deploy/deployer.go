@@ -38,6 +38,7 @@ type App struct {
 	RestartMaxAttempts uint64
 	Healthcheck        *docker.HealthcheckSpec
 	Mounts             []docker.MountSpec
+	Ports              []docker.PortSpec // raw host-published L4 ports (host mode), bypassing Traefik
 
 	GitAuth      *builder.GitAuth  // private-repo HTTPS credentials (dockerfile source)
 	BuildArgs    map[string]string // --build-arg (non-secret)
@@ -411,6 +412,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		RestartMaxAttempts: app.RestartMaxAttempts,
 		Healthcheck:        app.Healthcheck,
 		Mounts:             app.Mounts,
+		Ports:              app.Ports,
 	}
 	// Placement: restrict to the chosen node set via the per-app krill.place label
 	// (set on those nodes by the server). pin spreads replicas across them; global

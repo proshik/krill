@@ -620,3 +620,24 @@ func TestSetConvergeTimeout(t *testing.T) {
 		t.Errorf("convergeTimeout after 0 = %v, want unchanged 42s", convergeTimeout)
 	}
 }
+
+func TestBuildSpecPublishesRawPorts(t *testing.T) {
+	d := &Deployer{network: "krill-net"}
+	app := App{
+		ID: 7, Image: "img:1", Domain: "x.example", Port: 8080,
+		Ports: []docker.PortSpec{
+			{Target: 22, Published: 2222, Mode: "host"},
+			{Target: 53, Published: 5353, Mode: "host", UDP: true},
+		},
+	}
+	spec := d.buildSpec(app, "img:1")
+	if len(spec.Ports) != 2 {
+		t.Fatalf("spec.Ports = %d, want 2", len(spec.Ports))
+	}
+	if spec.Ports[0].Published != 2222 || spec.Ports[0].Target != 22 || spec.Ports[0].Mode != "host" {
+		t.Fatalf("tcp port = %+v", spec.Ports[0])
+	}
+	if !spec.Ports[1].UDP || spec.Ports[1].Published != 5353 {
+		t.Fatalf("udp port = %+v", spec.Ports[1])
+	}
+}

@@ -95,6 +95,18 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			Target: v.MountPath,
 		})
 	}
+	ports, perr := s.q.ListAppPorts(ctx, a.ID)
+	if perr != nil {
+		return App{}, perr
+	}
+	for _, p := range ports {
+		out.Ports = append(out.Ports, docker.PortSpec{
+			Target:    uint32(p.ContainerPort),
+			Published: uint32(p.HostPort),
+			Mode:      "host",
+			UDP:       p.Protocol == "udp",
+		})
+	}
 	links, lerr := s.q.ListDBLinksByApplication(ctx, a.ID)
 	if lerr != nil {
 		return App{}, lerr
