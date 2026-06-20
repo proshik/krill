@@ -30,6 +30,10 @@ type AppCtx struct {
 
 	DBLinks      []DBLinkView
 	EnvDatabases []EnvDBOption
+
+	AutoDeploy    bool
+	WebhookSecret string // decrypted; set for admins only
+	WebhookURL    string // full external webhook/deploy-hook URL
 }
 
 // DBLinkView is a linked DB row for the Environment tab. Collides is true when
@@ -223,6 +227,42 @@ templ generalTab(c AppCtx) {
 				<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("http://" + c.App.Domain) } target="_blank">http://{ c.App.Domain }</a>
 				<button type="button" class="k-copy" data-copy={ c.App.Domain } onclick="krillCopyToClip(this.dataset.copy, 'Domain')">{ i18n.T(ctx, "common.copy") }</button>
 			</p>
+		}
+		if c.Role == "owner" || c.Role == "admin" {
+			<div class="k-section">{ i18n.T(ctx, "autodeploy.title") }</div>
+			<p class="k-mono text-xs mb-2">{ i18n.T(ctx, "autodeploy.desc") }</p>
+			if c.AutoDeploy {
+				<div class="mb-2">
+					<label class="k-label">{ i18n.T(ctx, "autodeploy.url") }</label>
+					<div class="flex items-center gap-2">
+						<input class="k-input k-mono" readonly value={ c.WebhookURL }/>
+						<button type="button" class="k-copy" data-copy={ c.WebhookURL } onclick="krillCopyToClip(this.dataset.copy, 'Webhook URL')">{ i18n.T(ctx, "common.copy") }</button>
+					</div>
+					<label class="k-label">{ i18n.T(ctx, "autodeploy.secret") }</label>
+					<div class="flex items-center gap-2">
+						<input class="k-input k-mono" type="password" readonly value={ c.WebhookSecret }/>
+						<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
+						<button type="button" class="k-copy" data-copy={ c.WebhookSecret } onclick="krillCopyToClip(this.dataset.copy, 'Webhook secret')">{ i18n.T(ctx, "common.copy") }</button>
+					</div>
+					if c.App.SourceType == "image" {
+						<p class="k-mono text-xs mt-1">{ i18n.T(ctx, "autodeploy.hint_image") }</p>
+					} else {
+						<p class="k-mono text-xs mt-1">{ i18n.T(ctx, "autodeploy.hint_dockerfile") }</p>
+					}
+				</div>
+				<div class="flex items-center gap-2 flex-wrap">
+					<form method="post" action={ templ.SafeURL(c.base() + "/autodeploy/disable") }>
+						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "autodeploy.disable") }</button>
+					</form>
+					<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/autodeploy/regenerate") } data-confirm={ i18n.T(ctx, "autodeploy.regenerate_warn") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+						<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "autodeploy.regenerate") }</button>
+					</form>
+				</div>
+			} else {
+				<form method="post" action={ templ.SafeURL(c.base() + "/autodeploy/enable") }>
+					<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "autodeploy.enable") }</button>
+				</form>
+			}
 		}
 		if c.Role == "owner" || c.Role == "admin" {
 			<div class="k-section">{ i18n.T(ctx, "app.section_danger") }</div>

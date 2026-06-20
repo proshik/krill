@@ -366,6 +366,15 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	if c.Role == "owner" || c.Role == "admin" {
 		c.BuildSecretsPlain = secret.Dec(c.App.BuildSecrets)
 	}
+	c.AutoDeploy = c.App.AutoDeploy
+	endpoint := "/webhooks/github/"
+	if c.App.SourceType == "image" {
+		endpoint = "/webhooks/deploy/"
+	}
+	c.WebhookURL = s.cfg.BaseURL() + endpoint + strconv.FormatInt(c.App.ID, 10)
+	if c.Role == "owner" || c.Role == "admin" {
+		c.WebhookSecret = secret.Dec(c.App.WebhookSecret)
+	}
 	if n, err := s.q.CountExposedDomainsByApplication(r.Context(), c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: count exposed domains", "err", err, "app_id", c.App.ID)
 	} else {
