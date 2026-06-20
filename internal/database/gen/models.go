@@ -20,6 +20,14 @@ type AppDbLink struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type AppPort struct {
+	ID            int64  `json:"id"`
+	ApplicationID int64  `json:"application_id"`
+	HostPort      int32  `json:"host_port"`
+	ContainerPort int32  `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
 type AppVolume struct {
 	ID            int64     `json:"id"`
 	ApplicationID int64     `json:"application_id"`

@@ -14,6 +14,7 @@ type Querier interface {
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CountAppPortsByHostPort(ctx context.Context, arg CountAppPortsByHostPortParams) (int64, error)
 	CountApplicationsByGitCredential(ctx context.Context, gitCredentialID *int64) (int64, error)
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
@@ -30,6 +31,7 @@ type Querier interface {
 	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
+	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error)
 	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (ClusterNode, error)
@@ -49,6 +51,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
+	DeleteAppPort(ctx context.Context, id int64) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
 	DeleteClusterNode(ctx context.Context, id int64) error
@@ -70,6 +73,7 @@ type Querier interface {
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
+	GetAppPort(ctx context.Context, id int64) (AppPort, error)
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (Backup, error)
@@ -101,6 +105,7 @@ type Querier interface {
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error)
 	ListAllRedis(ctx context.Context) ([]ListAllRedisRow, error)
+	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error)
