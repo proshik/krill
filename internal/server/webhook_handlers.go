@@ -15,16 +15,16 @@ import (
 const maxWebhookBody = 5 << 20 // 5 MiB
 
 // webhookApp loads an app by the {appID} path param and confirms auto-deploy is
-// on. It returns ok=false (and writes a generic 404) on any miss so the public
-// endpoint never reveals whether an app exists.
-func (s *Server) webhookApp(w http.ResponseWriter, r *http.Request) (db.Application, bool) {
+// on and the source type matches. It returns ok=false (and writes a generic 404)
+// on any miss so the public endpoint never reveals whether an app exists.
+func (s *Server) webhookApp(w http.ResponseWriter, r *http.Request, sourceType string) (db.Application, bool) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "appID"), 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
 		return db.Application{}, false
 	}
 	a, err := s.q.GetApplication(r.Context(), id)
-	if err != nil || !a.AutoDeploy {
+	if err != nil || !a.AutoDeploy || a.SourceType != sourceType {
 		http.NotFound(w, r)
 		return db.Application{}, false
 	}
@@ -33,12 +33,8 @@ func (s *Server) webhookApp(w http.ResponseWriter, r *http.Request) (db.Applicat
 
 // githubWebhook handles GitHub push webhooks for Dockerfile/git apps.
 func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
-	a, ok := s.webhookApp(w, r)
+	a, ok := s.webhookApp(w, r, "dockerfile")
 	if !ok {
-		return
-	}
-	if a.SourceType != "dockerfile" {
-		http.NotFound(w, r)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
@@ -78,12 +74,8 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 
 // deployHook handles generic CI deploy hooks for image apps.
 func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
-	a, ok := s.webhookApp(w, r)
+	a, ok := s.webhookApp(w, r, "image")
 	if !ok {
-		return
-	}
-	if a.SourceType != "image" {
-		http.NotFound(w, r)
 		return
 	}
 	tok := r.URL.Query().Get("token")
