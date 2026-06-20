@@ -70,6 +70,9 @@ func (noopEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement,
 }
 func (noopEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
 func (noopEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
+func (noopEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {
+	return ref, nil // tests don't hit a registry; pass the ref through unchanged
+}
 
 type noopBuilder struct{}
 

@@ -14,6 +14,78 @@ import (
 	"github.com/proshik/krill/internal/traefik"
 )
 
+// digestMockEngine is a minimal Engine fake used by TestImageDeployPinsDigest.
+// It only handles ResolveDigest and ServiceDeploy (+ ServiceProgress for
+// convergence); all other methods panic or return zero values.
+type digestMockEngine struct {
+	digest    string
+	digestErr error
+	deployed  []docker.ServiceSpec
+	mu        sync.Mutex
+}
+
+func (f *digestMockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {
+	if f.digestErr != nil {
+		return "", f.digestErr
+	}
+	return f.digest, nil
+}
+func (f *digestMockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deployed = append(f.deployed, s)
+	return nil
+}
+func (f *digestMockEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t1"}}, nil
+}
+func (f *digestMockEngine) NetworkEnsure(context.Context, string) error { return nil }
+func (f *digestMockEngine) ServiceRemove(context.Context, string) error  { return nil }
+func (f *digestMockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
+}
+func (f *digestMockEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	m := map[string]docker.ServiceState{}
+	for _, n := range names {
+		m[n] = docker.ServiceState{Found: true, Running: 1, Desired: 1}
+	}
+	return m, nil
+}
+func (f *digestMockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error       { return nil }
+func (f *digestMockEngine) ServiceRestart(context.Context, string) error             { return nil }
+func (f *digestMockEngine) VolumeRemove(context.Context, string) error               { return nil }
+func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer) error   { return nil }
+func (f *digestMockEngine) VolumeRestore(context.Context, string, io.Reader) error   { return nil }
+func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error       { return nil }
+func (f *digestMockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
+	return nil
+}
+func (f *digestMockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
+	return nil
+}
+func (f *digestMockEngine) ExecInteractive(context.Context, string, []string) (docker.ExecSession, error) {
+	return nil, errors.New("not supported")
+}
+func (f *digestMockEngine) RegistryCheck(context.Context, string, string, string) error { return nil }
+func (f *digestMockEngine) ListContainerStats(context.Context) ([]docker.ContainerStat, error) {
+	return nil, nil
+}
+func (f *digestMockEngine) NodeInfo(context.Context) (docker.NodeInfo, error) {
+	return docker.NodeInfo{}, nil
+}
+func (f *digestMockEngine) Nodes(context.Context) ([]docker.SwarmNode, error)         { return nil, nil }
+func (f *digestMockEngine) NodeSetAvailability(context.Context, string, string) error { return nil }
+func (f *digestMockEngine) NodeRemove(context.Context, string, bool) error            { return nil }
+func (f *digestMockEngine) SwarmWorkerToken(context.Context) (string, error)          { return "", nil }
+func (f *digestMockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
+}
+func (f *digestMockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
+func (f *digestMockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
+
 type mockEngine struct {
 	mu               sync.Mutex
 	deployed         []docker.ServiceSpec
@@ -113,6 +185,9 @@ func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlaceme
 }
 func (m *mockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
 func (m *mockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
+func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {
+	return ref, nil // tests don't hit a registry; pass the ref through unchanged
+}
 
 type mockBuilder struct {
 	mu     sync.Mutex
@@ -639,5 +714,77 @@ func TestBuildSpecPublishesRawPorts(t *testing.T) {
 	}
 	if !spec.Ports[1].UDP || spec.Ports[1].Published != 5353 {
 		t.Fatalf("udp port = %+v", spec.Ports[1])
+	}
+}
+
+// TestImageDeployPinsDigest verifies that resolveImageRef returns the
+// registry-resolved digest-pinned reference on success, and falls back to the
+// plain tag when the engine returns an error.
+func TestImageDeployPinsDigest(t *testing.T) {
+	const pinnedDigest = "docker.io/library/nginx@sha256:abc123"
+
+	// Success path: engine resolves the digest; resolveImageRef must return it.
+	fe := &digestMockEngine{digest: pinnedDigest}
+	app := App{ID: 1, Name: "web", Image: "nginx", Tag: "latest", SourceType: "image"}
+	ref := resolveImageRef(fe, context.Background(), app, "nginx:latest")
+	if ref != pinnedDigest {
+		t.Fatalf("resolveImageRef = %q, want pinned digest %q", ref, pinnedDigest)
+	}
+
+	// Error path: engine cannot reach registry; resolveImageRef must fall back to the plain tag.
+	feErr := &digestMockEngine{digestErr: errors.New("no registry")}
+	fallback := resolveImageRef(feErr, context.Background(), app, "nginx:latest")
+	if fallback != "nginx:latest" {
+		t.Fatalf("fallback resolveImageRef = %q, want plain tag %q", fallback, "nginx:latest")
+	}
+}
+
+// TestImageDeployUsesDigest verifies that a full image deploy (via Enqueue)
+// passes the digest-pinned image reference to ServiceDeploy when ResolveDigest
+// succeeds, and falls back to the plain tag on error.
+func TestImageDeployUsesDigest(t *testing.T) {
+	const pinnedDigest = "docker.io/library/nginx@sha256:abc123"
+
+	// Success path: deployer should pin to digest.
+	eng := &digestMockEngine{digest: pinnedDigest}
+	st := newFakeStore(imageApp()) // imageApp(): Image="nginx", Tag="alpine", SourceType="image"
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+
+	eng.mu.Lock()
+	deployed := eng.deployed
+	eng.mu.Unlock()
+
+	if len(deployed) != 1 {
+		t.Fatalf("expected 1 deploy, got %d", len(deployed))
+	}
+	if deployed[0].Image != pinnedDigest {
+		t.Fatalf("deployed image = %q, want pinned digest %q", deployed[0].Image, pinnedDigest)
+	}
+
+	// Error path: engine ResolveDigest fails → deployer falls back to plain tag.
+	eng2 := &digestMockEngine{digestErr: errors.New("registry unreachable")}
+	st2 := newFakeStore(imageApp())
+	d2 := newDeployer(eng2, &mockBuilder{}, st2)
+	d2.Start(context.Background())
+	defer d2.Stop()
+
+	id2 := d2.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st2.depStatus(id2) == "done" })
+
+	eng2.mu.Lock()
+	deployed2 := eng2.deployed
+	eng2.mu.Unlock()
+
+	if len(deployed2) != 1 {
+		t.Fatalf("expected 1 deploy on fallback, got %d", len(deployed2))
+	}
+	const wantPlain = "nginx:alpine"
+	if deployed2[0].Image != wantPlain {
+		t.Fatalf("fallback deployed image = %q, want %q", deployed2[0].Image, wantPlain)
 	}
 }

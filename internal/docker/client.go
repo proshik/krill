@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -743,6 +744,26 @@ func (e *dockerEngine) NodeDeleteLabel(ctx context.Context, nodeID, key string) 
 	}
 	delete(n.Spec.Annotations.Labels, key)
 	return e.cli.NodeUpdate(ctx, nodeID, n.Version, n.Spec)
+}
+
+// ResolveDigest queries the registry for the current digest of ref (no pull)
+// and returns a digest-pinned reference of the form repo@sha256:…. On any
+// error the caller falls back to the plain tag. encodedAuth is the same
+// X-Registry-Auth blob used for ServiceCreate/Update; pass "" for public images.
+func (e *dockerEngine) ResolveDigest(ctx context.Context, ref, encodedAuth string) (string, error) {
+	di, err := e.cli.DistributionInspect(ctx, ref, encodedAuth)
+	if err != nil {
+		return "", err
+	}
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := reference.WithDigest(reference.TrimNamed(named), di.Descriptor.Digest)
+	if err != nil {
+		return "", err
+	}
+	return reference.FamiliarString(canonical), nil
 }
 
 // statsOneShot reads a single container's stats snapshot.

@@ -142,6 +142,10 @@ type Engine interface {
 	ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error)
 	NodeSetLabel(ctx context.Context, nodeID, key, value string) error
 	NodeDeleteLabel(ctx context.Context, nodeID, key string) error
+	// ResolveDigest returns a digest-pinned reference (repo@sha256:…) for ref by
+	// querying the registry (no pull). encodedAuth is the same X-Registry-Auth
+	// blob used for ServiceCreate/Update; "" for public images.
+	ResolveDigest(ctx context.Context, ref, encodedAuth string) (string, error)
 }
 
 // ServiceName builds the Swarm service name for an application from its id.

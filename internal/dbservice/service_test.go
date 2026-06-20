@@ -101,6 +101,9 @@ func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlaceme
 }
 func (m *mockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
 func (m *mockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
+func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {
+	return ref, nil
+}
 
 type fakeStore struct {
 	mu     sync.Mutex
