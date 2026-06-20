@@ -245,6 +245,8 @@ func (s *Server) Router() http.Handler {
 					r.Post("/volumes/backups/{vbID}/restore", s.restoreVolumeBackup)
 					r.Get("/volumes/backups/{vbID}/objects", s.volumeBackupObjects)
 					r.Get("/volumes/backups/{vbID}/download", s.downloadVolumeBackup)
+					r.Post("/ports", s.addAppPort)
+					r.Post("/ports/{portID}/delete", s.deleteAppPort)
 					r.Get("/terminal/ws", s.appTerminal)
 				})
 			})
