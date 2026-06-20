@@ -72,6 +72,66 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// enableAutoDeploy turns on auto-deploy, generating a secret if none exists.
+func (s *Server) enableAutoDeploy(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if c.App.WebhookSecret == "" {
+		if err := s.q.SetApplicationWebhookSecret(r.Context(), db.SetApplicationWebhookSecretParams{
+			ID: c.App.ID, WebhookSecret: secret.Enc(webhook.NewSecret()),
+		}); err != nil {
+			logFrom(r).Error("enableAutoDeploy: set secret failed", "err", err, "app_id", c.App.ID)
+			s.flashErrT(w, r, "flash.err.autodeploy")
+			return
+		}
+	}
+	if err := s.q.SetApplicationAutoDeploy(r.Context(), db.SetApplicationAutoDeployParams{ID: c.App.ID, AutoDeploy: true}); err != nil {
+		logFrom(r).Error("enableAutoDeploy: enable failed", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, "flash.err.autodeploy")
+		return
+	}
+	logFrom(r).Info("auto-deploy enabled", "app_id", c.App.ID)
+	s.flashOK(w, r, "flash.ok.autodeploy_enabled")
+	http.Redirect(w, r, appURL(c)+"?tab=general", http.StatusSeeOther)
+}
+
+// disableAutoDeploy turns off the toggle; the secret is kept (the endpoint 404s
+// while disabled, so an inert secret is harmless and avoids re-config on re-enable).
+func (s *Server) disableAutoDeploy(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if err := s.q.SetApplicationAutoDeploy(r.Context(), db.SetApplicationAutoDeployParams{ID: c.App.ID, AutoDeploy: false}); err != nil {
+		logFrom(r).Error("disableAutoDeploy failed", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, "flash.err.autodeploy")
+		return
+	}
+	logFrom(r).Info("auto-deploy disabled", "app_id", c.App.ID)
+	s.flashOK(w, r, "flash.ok.autodeploy_disabled")
+	http.Redirect(w, r, appURL(c)+"?tab=general", http.StatusSeeOther)
+}
+
+// regenerateWebhookSecret rotates the secret (the user must update GitHub).
+func (s *Server) regenerateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	if err := s.q.SetApplicationWebhookSecret(r.Context(), db.SetApplicationWebhookSecretParams{
+		ID: c.App.ID, WebhookSecret: secret.Enc(webhook.NewSecret()),
+	}); err != nil {
+		logFrom(r).Error("regenerateWebhookSecret failed", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, "flash.err.autodeploy")
+		return
+	}
+	logFrom(r).Info("webhook secret regenerated", "app_id", c.App.ID)
+	s.flashOK(w, r, "flash.ok.autodeploy_regenerated")
+	http.Redirect(w, r, appURL(c)+"?tab=general", http.StatusSeeOther)
+}
+
 // deployHook handles generic CI deploy hooks for image apps.
 func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 	a, ok := s.webhookApp(w, r, "image")
