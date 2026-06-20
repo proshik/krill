@@ -57,11 +57,16 @@ func (q *Queries) CreateAppPort(ctx context.Context, arg CreateAppPortParams) (A
 }
 
 const deleteAppPort = `-- name: DeleteAppPort :exec
-DELETE FROM app_ports WHERE id = $1
+DELETE FROM app_ports WHERE id = $1 AND application_id = $2
 `
 
-func (q *Queries) DeleteAppPort(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, deleteAppPort, id)
+type DeleteAppPortParams struct {
+	ID            int64 `json:"id"`
+	ApplicationID int64 `json:"application_id"`
+}
+
+func (q *Queries) DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error {
+	_, err := q.db.Exec(ctx, deleteAppPort, arg.ID, arg.ApplicationID)
 	return err
 }
 

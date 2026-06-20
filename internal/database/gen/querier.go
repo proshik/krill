@@ -51,7 +51,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
-	DeleteAppPort(ctx context.Context, id int64) error
+	DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
 	DeleteClusterNode(ctx context.Context, id int64) error

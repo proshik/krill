@@ -105,3 +105,23 @@ func TestDeleteAppPort(t *testing.T) {
 		t.Fatalf("ports after delete = %d, want 0", len(ports))
 	}
 }
+
+func TestDeleteAppPortIDOR(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	baseA, cookieA, _, _, _ := rpFixture(t, h, q, orgSvc, "ports-idor-a@k.local")
+	_, _, appB, _, _ := rpFixture(t, h, q, orgSvc, "ports-idor-b@k.local")
+	pB, err := q.CreateAppPort(ctx, db.CreateAppPortParams{
+		ApplicationID: appB, HostPort: 2299, ContainerPort: 22, Protocol: "tcp",
+	})
+	if err != nil {
+		t.Fatalf("create port: %v", err)
+	}
+	// delete B's port through A's URL -> 404, row survives
+	if rec := postForm(t, h, baseA+"/ports/"+i64(pB.ID)+"/delete", cookieA, url.Values{}); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-app delete want 404, got %d", rec.Code)
+	}
+	if _, err := q.GetAppPort(ctx, pB.ID); err != nil {
+		t.Fatalf("port B should survive cross-app delete attempt: %v", err)
+	}
+}

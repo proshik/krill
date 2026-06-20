@@ -79,7 +79,7 @@ func (s *Server) deleteAppPort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.q.DeleteAppPort(r.Context(), p.ID); err != nil {
+	if err := s.q.DeleteAppPort(r.Context(), db.DeleteAppPortParams{ID: p.ID, ApplicationID: c.App.ID}); err != nil {
 		logFrom(r).Error("deleteAppPort: delete failed", "err", err, "port_id", p.ID)
 		s.flashErrT(w, r, "flash.err.delete_port")
 		return
