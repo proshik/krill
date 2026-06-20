@@ -65,3 +65,22 @@ func TestAcmeDefaults(t *testing.T) {
 		t.Errorf("acme defaults wrong: staging=%v email=%q", c.AcmeStaging, c.AcmeEmail)
 	}
 }
+
+func TestBaseURL(t *testing.T) {
+	cases := []struct {
+		name string
+		c    Config
+		want string
+	}{
+		{"explicit override", Config{PublicURL: "https://krill.example.com", Host: "ignored", CookieSecure: false}, "https://krill.example.com"},
+		{"https from cookie_secure", Config{Host: "krill.example.com", CookieSecure: true}, "https://krill.example.com"},
+		{"http default", Config{Host: "localhost", CookieSecure: false}, "http://localhost"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.c.BaseURL(); got != tc.want {
+				t.Fatalf("BaseURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

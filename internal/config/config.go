@@ -19,6 +19,7 @@ type Config struct {
 	BaseDomain    string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
 	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
 	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
+	PublicURL     string `env:"KRILL_PUBLIC_URL"`
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
 	LogLevel      string `env:"KRILL_LOG_LEVEL" envDefault:"info"`   // debug | info | warn | error
 	LogFormat     string `env:"KRILL_LOG_FORMAT" envDefault:"text"`  // text | json
@@ -50,4 +51,18 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+// BaseURL is the externally reachable base URL used to display webhook URLs.
+// KRILL_PUBLIC_URL wins; otherwise it is derived from KRILL_HOST and the cookie
+// security setting (a reverse proxy terminating TLS implies COOKIE_SECURE=true).
+func (c Config) BaseURL() string {
+	if c.PublicURL != "" {
+		return c.PublicURL
+	}
+	scheme := "http"
+	if c.CookieSecure {
+		scheme = "https"
+	}
+	return scheme + "://" + c.Host
 }
