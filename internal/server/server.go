@@ -141,6 +141,12 @@ func (s *Server) Router() http.Handler {
 	// cross-site top-level navigation terminating the victim's session.
 	r.Post("/logout", s.logout)
 
+	// Public, unauthenticated auto-deploy webhooks (verified by a per-app secret).
+	r.Route("/webhooks", func(r chi.Router) {
+		r.Post("/github/{appID}", s.githubWebhook)
+		r.Post("/deploy/{appID}", s.deployHook)
+	})
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
 		r.Use(s.flashMiddleware)
