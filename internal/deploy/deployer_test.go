@@ -726,14 +726,14 @@ func TestImageDeployPinsDigest(t *testing.T) {
 	// Success path: engine resolves the digest; resolveImageRef must return it.
 	fe := &digestMockEngine{digest: pinnedDigest}
 	app := App{ID: 1, Name: "web", Image: "nginx", Tag: "latest", SourceType: "image"}
-	ref := resolveImageRef(fe, context.Background(), app, "nginx:latest")
+	ref := resolveImageRef(context.Background(), fe, app, "nginx:latest")
 	if ref != pinnedDigest {
 		t.Fatalf("resolveImageRef = %q, want pinned digest %q", ref, pinnedDigest)
 	}
 
 	// Error path: engine cannot reach registry; resolveImageRef must fall back to the plain tag.
 	feErr := &digestMockEngine{digestErr: errors.New("no registry")}
-	fallback := resolveImageRef(feErr, context.Background(), app, "nginx:latest")
+	fallback := resolveImageRef(context.Background(), feErr, app, "nginx:latest")
 	if fallback != "nginx:latest" {
 		t.Fatalf("fallback resolveImageRef = %q, want plain tag %q", fallback, "nginx:latest")
 	}

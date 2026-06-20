@@ -252,7 +252,7 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		}, out)
 	} else {
 		imageTag = app.Image + ":" + app.Tag
-		imageTag = resolveImageRef(d.engine, ctx, app, imageTag)
+		imageTag = resolveImageRef(ctx, d.engine, app, imageTag)
 		fmt.Fprintf(out, "→ deploy image %s\n", imageTag)
 	}
 
@@ -434,9 +434,13 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 // resolveImageRef pins an image app's tag to its current registry digest so a
 // same-tag redeploy actually pulls the new image. Best-effort: on any error it
 // returns the plain tag (Swarm still deploys, just without forced re-pull).
-func resolveImageRef(engine docker.Engine, ctx context.Context, app App, imageTag string) string {
-	if pinned, err := engine.ResolveDigest(ctx, imageTag, app.RegistryAuth); err == nil && pinned != "" {
+func resolveImageRef(ctx context.Context, engine docker.Engine, app App, imageTag string) string {
+	pinned, err := engine.ResolveDigest(ctx, imageTag, app.RegistryAuth)
+	if err == nil && pinned != "" {
 		return pinned
+	}
+	if err != nil {
+		slog.Warn("digest resolve failed, deploying plain tag", "image", imageTag, "err", err)
 	}
 	return imageTag
 }
