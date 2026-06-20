@@ -138,9 +138,11 @@ type Querier interface {
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
+	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
+	SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error

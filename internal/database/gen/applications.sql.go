@@ -24,7 +24,7 @@ func (q *Queries) CountApplicationsByProject(ctx context.Context, projectID int6
 
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env_text, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret
 `
 
 type CreateApplicationParams struct {
@@ -89,6 +89,8 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.BuildSecrets,
 		&i.PlacementMode,
 		&i.PlacementNodes,
+		&i.AutoDeploy,
+		&i.WebhookSecret,
 	)
 	return i, err
 }
@@ -103,7 +105,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -142,6 +144,8 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.BuildSecrets,
 		&i.PlacementMode,
 		&i.PlacementNodes,
+		&i.AutoDeploy,
+		&i.WebhookSecret,
 	)
 	return i, err
 }
@@ -175,7 +179,7 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -220,6 +224,8 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.BuildSecrets,
 			&i.PlacementMode,
 			&i.PlacementNodes,
+			&i.AutoDeploy,
+			&i.WebhookSecret,
 		); err != nil {
 			return nil, err
 		}
@@ -232,7 +238,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -277,6 +283,8 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.BuildSecrets,
 			&i.PlacementMode,
 			&i.PlacementNodes,
+			&i.AutoDeploy,
+			&i.WebhookSecret,
 		); err != nil {
 			return nil, err
 		}
@@ -286,6 +294,20 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 		return nil, err
 	}
 	return items, nil
+}
+
+const setApplicationAutoDeploy = `-- name: SetApplicationAutoDeploy :exec
+UPDATE applications SET auto_deploy = $2, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationAutoDeployParams struct {
+	ID         int64 `json:"id"`
+	AutoDeploy bool  `json:"auto_deploy"`
+}
+
+func (q *Queries) SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error {
+	_, err := q.db.Exec(ctx, setApplicationAutoDeploy, arg.ID, arg.AutoDeploy)
+	return err
 }
 
 const setApplicationGitCredential = `-- name: SetApplicationGitCredential :exec
@@ -328,6 +350,20 @@ type SetApplicationRegistryParams struct {
 
 func (q *Queries) SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error {
 	_, err := q.db.Exec(ctx, setApplicationRegistry, arg.ID, arg.RegistryID)
+	return err
+}
+
+const setApplicationWebhookSecret = `-- name: SetApplicationWebhookSecret :exec
+UPDATE applications SET webhook_secret = $2, updated_at = now() WHERE id = $1
+`
+
+type SetApplicationWebhookSecretParams struct {
+	ID            int64  `json:"id"`
+	WebhookSecret string `json:"webhook_secret"`
+}
+
+func (q *Queries) SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error {
+	_, err := q.db.Exec(ctx, setApplicationWebhookSecret, arg.ID, arg.WebhookSecret)
 	return err
 }
 

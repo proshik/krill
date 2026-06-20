@@ -47,4 +47,19 @@ func TestMigrationsApply(t *testing.T) {
 	if c != 1 {
 		t.Fatalf("expected applications.registry_id column, got %d", c)
 	}
+
+	// Migration 000026: auto_deploy and webhook_secret columns.
+	for _, col := range []string{"auto_deploy", "webhook_secret"} {
+		var exists bool
+		err = pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			 WHERE table_schema='public' AND table_name='applications' AND column_name=$1)`, col,
+		).Scan(&exists)
+		if err != nil {
+			t.Fatalf("query column %s: %v", col, err)
+		}
+		if !exists {
+			t.Fatalf("applications.%s missing after migration", col)
+		}
+	}
 }

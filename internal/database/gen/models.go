@@ -69,6 +69,8 @@ type Application struct {
 	BuildSecrets           string    `json:"build_secrets"`
 	PlacementMode          string    `json:"placement_mode"`
 	PlacementNodes         string    `json:"placement_nodes"`
+	AutoDeploy             bool      `json:"auto_deploy"`
+	WebhookSecret          string    `json:"webhook_secret"`
 }
 
 type Backup struct {
