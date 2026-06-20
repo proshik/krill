@@ -15,6 +15,7 @@ type AppCtx struct {
 	Deps       []db.Deployment
 	Domains    []db.Domain
 	Volumes    []db.AppVolume
+	Ports      []db.AppPort
 	Registries []db.Registry
 	Exposed    bool
 
@@ -574,6 +575,63 @@ templ advancedTab(c AppCtx) {
 			</form>
 		</div>
 	}
+	@appPortsSection(c)
+}
+
+// appPortsSection renders the raw host-port publications (TCP/UDP, host mode),
+// which bypass Traefik. Applied on the next deploy.
+templ appPortsSection(c AppCtx) {
+	<div class="k-card mt-4">
+		<div class="k-panel-title">{ i18n.T(ctx, "ports.title") }</div>
+		<div class="k-panel-desc">{ i18n.T(ctx, "ports.desc") }</div>
+		<div class="k-toast mb-4 mt-2">{ i18n.T(ctx, "ports.applied_on_deploy") }</div>
+		if len(c.Ports) == 0 {
+			<p class="k-muted">{ i18n.T(ctx, "ports.empty") }</p>
+		} else {
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "ports.host") }</th>
+						<th>{ i18n.T(ctx, "ports.container") }</th>
+						<th>{ i18n.T(ctx, "ports.protocol") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, p := range c.Ports {
+						<tr>
+							<td class="k-mono">{ itoa(int64(p.HostPort)) }</td>
+							<td class="k-mono">{ itoa(int64(p.ContainerPort)) }</td>
+							<td class="k-mono">{ p.Protocol }</td>
+							<td>
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/ports/" + itoa(p.ID) + "/delete") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.delete_port", itoa(int64(p.HostPort))) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "ports.delete") }</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+		<form method="post" action={ templ.SafeURL(c.base() + "/ports") } class="mt-4 flex items-end gap-2 flex-wrap">
+			<div>
+				<label class="k-label">{ i18n.T(ctx, "ports.host") }</label>
+				<input class="k-input k-mono" name="host_port" type="number" min="1" max="65535" placeholder="2222" required/>
+			</div>
+			<div>
+				<label class="k-label">{ i18n.T(ctx, "ports.container") }</label>
+				<input class="k-input k-mono" name="container_port" type="number" min="1" max="65535" placeholder="22" required/>
+			</div>
+			<div>
+				<label class="k-label">{ i18n.T(ctx, "ports.protocol") }</label>
+				<select class="k-input k-mono" name="protocol">
+					<option value="tcp">tcp</option>
+					<option value="udp">udp</option>
+				</select>
+			</div>
+			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "ports.add") }</button>
+		</form>
+	</div>
 }
 
 templ volumesTab(c AppCtx) {

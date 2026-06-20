@@ -371,6 +371,11 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.Exposed = n > 0
 	}
+	if ports, err := s.q.ListAppPorts(r.Context(), c.App.ID); err != nil {
+		logFrom(r).Error("appDetail: list app ports", "err", err, "app_id", c.App.ID)
+	} else {
+		c.Ports = ports
+	}
 	if tab == "deployments" {
 		deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
 		if err != nil {
