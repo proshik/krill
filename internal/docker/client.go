@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -24,17 +25,126 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-type dockerEngine struct {
-	cli *client.Client
+type cpuCounters struct{ total, system uint64 }
 
-	// cpuPrev caches each container's previous cumulative CPU counters so
-	// ListContainerStats can compute a delta across sampler ticks with a single
-	// read per container (no second read + 1s sleep). Guarded by cpuMu.
-	cpuMu   sync.Mutex
-	cpuPrev map[string]cpuCounters
+// CPUCache caches each container's previous cumulative CPU counters so a single
+// one-shot read can yield a delta across sampler ticks. One instance per daemon
+// connection (so identical container IDs on different nodes never mix).
+type CPUCache struct {
+	mu   sync.Mutex
+	prev map[string]cpuCounters
 }
 
-type cpuCounters struct{ total, system uint64 }
+func NewCPUCache() *CPUCache { return &CPUCache{prev: map[string]cpuCounters{}} }
+
+// delta returns docker-style %CPU for id given the current counters; 0 on the
+// first sample or after a counter reset (container restart).
+func (c *CPUCache) delta(id string, cur cpuCounters, online uint32) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var pct float64
+	if prev, had := c.prev[id]; had && cur.total >= prev.total && cur.system >= prev.system {
+		pct = cpuPercent(cur.total-prev.total, cur.system-prev.system, online)
+	}
+	c.prev[id] = cur
+	return pct
+}
+
+// retain drops counters for containers no longer present (bounded growth).
+func (c *CPUCache) retain(seen map[string]bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id := range c.prev {
+		if !seen[id] {
+			delete(c.prev, id)
+		}
+	}
+}
+
+// statsCollector holds a docker client + its dedicated CPU cache and implements
+// the ListContainerStats / NodeInfo logic against any *client.Client — local or
+// SSH-tunnelled.
+type statsCollector struct {
+	cli   *client.Client
+	cache *CPUCache
+}
+
+func (sc *statsCollector) listContainerStats(ctx context.Context) ([]ContainerStat, error) {
+	hostname, _ := os.Hostname()
+	ctrs, err := sc.cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(ctrs))
+	out := make([]ContainerStat, 0, len(ctrs))
+	for _, c := range ctrs {
+		s, ok := statsOneShot(ctx, sc.cli, c.ID)
+		if !ok {
+			continue
+		}
+		seen[c.ID] = true
+		online := s.CPUStats.OnlineCPUs
+		if online == 0 {
+			online = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
+		}
+		cur := cpuCounters{total: s.CPUStats.CPUUsage.TotalUsage, system: s.CPUStats.SystemUsage}
+		cpu := sc.cache.delta(c.ID, cur, online)
+		comp := c.Labels["com.docker.swarm.service.name"]
+		if comp == "" && len(c.Names) > 0 {
+			comp = strings.TrimPrefix(c.Names[0], "/")
+		}
+		out = append(out, ContainerStat{
+			Component:     comp,
+			CPUPct:        cpu,
+			MemBytes:      int64(workingSet(s.MemoryStats)),
+			MemLimitBytes: int64(s.MemoryStats.Limit),
+			SelfControl:   hostname != "" && strings.HasPrefix(c.ID, hostname),
+		})
+	}
+	sc.cache.retain(seen)
+	return out, nil
+}
+
+func (sc *statsCollector) nodeInfo(ctx context.Context) (NodeInfo, error) {
+	info, err := sc.cli.Info(ctx)
+	if err != nil {
+		return NodeInfo{}, err
+	}
+	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
+}
+
+// RemoteStats samples a docker daemon reached over a custom dialer (e.g. a
+// worker's unix socket forwarded through SSH). It owns its own CPU cache.
+type RemoteStats struct {
+	cli *client.Client
+	sc  *statsCollector
+}
+
+// NewRemoteStats builds a docker client whose connections come from dial. The
+// dialer's address is the remote unix socket; callers (the metrics sampler)
+// supply a dialer that opens the worker's /var/run/docker.sock over SSH.
+func NewRemoteStats(dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*RemoteStats, error) {
+	cli, err := client.NewClientWithOpts(
+		client.WithDialContext(dial),
+		client.WithHost("unix:///var/run/docker.sock"),
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &RemoteStats{cli: cli, sc: &statsCollector{cli: cli, cache: NewCPUCache()}}, nil
+}
+
+func (r *RemoteStats) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
+	return r.sc.listContainerStats(ctx)
+}
+func (r *RemoteStats) NodeInfo(ctx context.Context) (NodeInfo, error) { return r.sc.nodeInfo(ctx) }
+func (r *RemoteStats) Close() error                                   { return r.cli.Close() }
+
+type dockerEngine struct {
+	cli       *client.Client
+	collector *statsCollector
+}
 
 // NewEngine creates a real Engine. If host is empty → DOCKER_HOST/the default socket is used.
 func NewEngine(host string) (Engine, error) {
@@ -46,7 +156,8 @@ func NewEngine(host string) (Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &dockerEngine{cli: cli}, nil
+	eng := &dockerEngine{cli: cli, collector: &statsCollector{cli: cli, cache: NewCPUCache()}}
+	return eng, nil
 }
 
 func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
@@ -643,11 +754,7 @@ func workingSet(m container.MemoryStats) uint64 {
 }
 
 func (e *dockerEngine) NodeInfo(ctx context.Context) (NodeInfo, error) {
-	info, err := e.cli.Info(ctx)
-	if err != nil {
-		return NodeInfo{}, err
-	}
-	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
+	return e.collector.nodeInfo(ctx)
 }
 
 func (e *dockerEngine) Nodes(ctx context.Context) ([]SwarmNode, error) {
@@ -766,9 +873,9 @@ func (e *dockerEngine) ResolveDigest(ctx context.Context, ref, encodedAuth strin
 	return reference.FamiliarString(canonical), nil
 }
 
-// statsOneShot reads a single container's stats snapshot.
-func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.StatsResponse, bool) {
-	resp, err := e.cli.ContainerStatsOneShot(ctx, id)
+// statsOneShot reads a single container's stats snapshot against the given client.
+func statsOneShot(ctx context.Context, cli *client.Client, id string) (container.StatsResponse, bool) {
+	resp, err := cli.ContainerStatsOneShot(ctx, id)
 	if err != nil {
 		return container.StatsResponse{}, false
 	}
@@ -782,59 +889,7 @@ func (e *dockerEngine) statsOneShot(ctx context.Context, id string) (container.S
 
 // ListContainerStats samples each running container once and derives CPU% from
 // the delta against the PREVIOUS sample (cached per container ID across calls).
-// One-shot stats do not prime PreCPUStats, so a single in-call read cannot yield
-// a delta; caching across the ~30s sampler interval gives a meaningful average
-// with one read per container (no second read, no 1s sleep). The first sample
-// for a container reports 0% (no baseline yet); a container restart resets the
-// cumulative counters, which is detected (current < previous) and reported as 0
-// rather than an astronomical underflow.
+// Delegates to the engine's statsCollector.
 func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
-	hostname, _ := os.Hostname() // in a container this is the short container id
-	ctrs, err := e.cli.ContainerList(ctx, container.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	e.cpuMu.Lock()
-	defer e.cpuMu.Unlock()
-	if e.cpuPrev == nil {
-		e.cpuPrev = map[string]cpuCounters{}
-	}
-	seen := make(map[string]bool, len(ctrs))
-	out := make([]ContainerStat, 0, len(ctrs))
-	for _, c := range ctrs {
-		s, ok := e.statsOneShot(ctx, c.ID)
-		if !ok {
-			continue
-		}
-		seen[c.ID] = true
-		online := s.CPUStats.OnlineCPUs
-		if online == 0 {
-			online = uint32(len(s.CPUStats.CPUUsage.PercpuUsage))
-		}
-		cur := cpuCounters{total: s.CPUStats.CPUUsage.TotalUsage, system: s.CPUStats.SystemUsage}
-		var cpu float64
-		if prev, had := e.cpuPrev[c.ID]; had && cur.total >= prev.total && cur.system >= prev.system {
-			cpu = cpuPercent(cur.total-prev.total, cur.system-prev.system, online)
-		}
-		e.cpuPrev[c.ID] = cur
-		comp := c.Labels["com.docker.swarm.service.name"]
-		if comp == "" && len(c.Names) > 0 {
-			comp = strings.TrimPrefix(c.Names[0], "/")
-		}
-		out = append(out, ContainerStat{
-			Component:     comp,
-			CPUPct:        cpu,
-			MemBytes:      int64(workingSet(s.MemoryStats)),
-			MemLimitBytes: int64(s.MemoryStats.Limit),
-			SelfControl:   hostname != "" && strings.HasPrefix(c.ID, hostname),
-		})
-	}
-	// Drop counters for containers that are gone so the cache can't grow without
-	// bound across deploys.
-	for id := range e.cpuPrev {
-		if !seen[id] {
-			delete(e.cpuPrev, id)
-		}
-	}
-	return out, nil
+	return e.collector.listContainerStats(ctx)
 }
