@@ -17,6 +17,7 @@ var monPalette = []string{"#bef264", "#5b9bd5", "#9ae66e", "#d9a441", "#b794f6",
 // y-axis); both arrays align to monData.X (nil = gap). Note the unit split vs
 // monRow below, whose Mem is raw bytes.
 type monSeries struct {
+	Node      string     `json:"node"`
 	Component string     `json:"component"`
 	Name      string     `json:"name"`
 	Group     string     `json:"group"`
@@ -28,6 +29,7 @@ type monSeries struct {
 // monRow is one component's current snapshot for the table. Mem/MemLimit are
 // raw BYTES (the client formats them); CPU is %.
 type monRow struct {
+	Node      string  `json:"node"`
 	Component string  `json:"component"`
 	Name      string  `json:"name"`
 	Group     string  `json:"group"`
@@ -36,14 +38,20 @@ type monRow struct {
 	Mem       int64   `json:"mem"`
 	MemLimit  int64   `json:"mem_limit"`
 }
-type monHost struct {
+
+// monNode is one cluster node's current summary.
+type monNode struct {
+	Node       string  `json:"node"`
 	CPUPct     float64 `json:"cpu_pct"`
 	MemUsed    int64   `json:"mem_used"`
 	MemTotal   int64   `json:"mem_total"`
+	NCPU       int     `json:"ncpu"`
 	Containers int     `json:"containers"`
+	Stale      bool    `json:"stale"`
 }
+
 type monData struct {
-	Host   monHost     `json:"host"`
+	Nodes  []monNode   `json:"nodes"`
 	X      []float64   `json:"x"`
 	Series []monSeries `json:"series"`
 	Rows   []monRow    `json:"rows"`
@@ -90,26 +98,35 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	x := metrics.GridTimes(start, now, monBuckets)
 
 	samples, _ := s.metrics.Since(r.Context(), start)
+	// Key series by (node, component) so the same component on two nodes is two
+	// distinct series. Use a unit-separator composite key to avoid collisions.
 	cpuPts := map[string][]metrics.Point{}
 	memPts := map[string][]metrics.Point{}
+	nodeByKey := map[string]string{}
+	compByKey := map[string]string{}
 	for _, sm := range samples {
-		cpuPts[sm.Component] = append(cpuPts[sm.Component], metrics.Point{T: sm.TS, V: sm.CPUPct})
-		memPts[sm.Component] = append(memPts[sm.Component], metrics.Point{T: sm.TS, V: float64(sm.MemBytes) / (1 << 20)})
+		key := sm.Node + "\x1f" + sm.Component
+		cpuPts[key] = append(cpuPts[key], metrics.Point{T: sm.TS, V: sm.CPUPct})
+		memPts[key] = append(memPts[key], metrics.Point{T: sm.TS, V: float64(sm.MemBytes) / (1 << 20)})
+		nodeByKey[key] = sm.Node
+		compByKey[key] = sm.Component
 	}
-	comps := make([]string, 0, len(cpuPts))
-	for c := range cpuPts {
-		comps = append(comps, c)
+	keys := make([]string, 0, len(cpuPts))
+	for k := range cpuPts {
+		keys = append(keys, k)
 	}
-	sort.Strings(comps)
-	colorByComp := map[string]string{}
-	series := make([]monSeries, 0, len(comps))
-	for i, c := range comps {
+	sort.Strings(keys)
+	colorByKey := map[string]string{}
+	series := make([]monSeries, 0, len(keys))
+	for i, k := range keys {
+		c := compByKey[k]
+		n := nodeByKey[k]
 		grp, name := metrics.Classify(c, c == selfComp, apps, dbs)
-		colorByComp[c] = monPalette[i%len(monPalette)]
+		colorByKey[k] = monPalette[i%len(monPalette)]
 		series = append(series, monSeries{
-			Component: c, Name: name, Group: grp, Color: colorByComp[c],
-			CPU: metrics.BucketAvg(cpuPts[c], start, now, monBuckets),
-			Mem: metrics.BucketAvg(memPts[c], start, now, monBuckets),
+			Node: n, Component: c, Name: name, Group: grp, Color: colorByKey[k],
+			CPU: metrics.BucketAvg(cpuPts[k], start, now, monBuckets),
+			Mem: metrics.BucketAvg(memPts[k], start, now, monBuckets),
 		})
 	}
 
@@ -121,26 +138,62 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	}
 	latest, _ := s.metrics.Latest(r.Context(), now.Add(-freshness))
 	rows := make([]monRow, 0, len(latest))
-	var sumCPU float64
-	var sumMem int64
 	for _, sm := range latest {
 		grp, name := metrics.Classify(sm.Component, sm.Component == selfComp, apps, dbs)
+		key := sm.Node + "\x1f" + sm.Component
 		rows = append(rows, monRow{
-			Component: sm.Component, Name: name, Group: grp,
-			Color: colorByComp[sm.Component], CPU: sm.CPUPct, Mem: sm.MemBytes, MemLimit: sm.MemLimitBytes,
+			Node: sm.Node, Component: sm.Component, Name: name, Group: grp,
+			Color: colorByKey[key], CPU: sm.CPUPct, Mem: sm.MemBytes, MemLimit: sm.MemLimitBytes,
 		})
-		sumCPU += sm.CPUPct
-		sumMem += sm.MemBytes
 	}
 	sortRows(rows)
-	host := monHost{MemUsed: sumMem, Containers: len(latest)}
-	if ni, err := s.engine.NodeInfo(r.Context()); err == nil {
-		host.MemTotal = ni.MemTotal
-		if ni.NCPU > 0 {
-			host.CPUPct = sumCPU / float64(ni.NCPU)
+
+	// Build per-node summaries from the latest samples + stored capacity.
+	caps, _ := s.metrics.ListCapacity(r.Context())
+	capByNode := map[string]metrics.NodeCapacity{}
+	for _, c := range caps {
+		capByNode[c.Node] = c
+	}
+	staleBefore := now.Add(-freshness)
+	type agg struct {
+		cpu  float64
+		mem  int64
+		n    int
+		last time.Time
+	}
+	byNode := map[string]*agg{}
+	for _, sm := range latest {
+		a := byNode[sm.Node]
+		if a == nil {
+			a = &agg{}
+			byNode[sm.Node] = a
+		}
+		a.cpu += sm.CPUPct
+		a.mem += sm.MemBytes
+		a.n++
+		if sm.TS.After(a.last) {
+			a.last = sm.TS
 		}
 	}
-	body, err := json.Marshal(monData{Host: host, X: x, Series: series, Rows: rows})
+	// Include nodes that have capacity but no fresh samples (stale).
+	for node := range capByNode {
+		if _, ok := byNode[node]; !ok {
+			byNode[node] = &agg{}
+		}
+	}
+	nodes := make([]monNode, 0, len(byNode))
+	for node, a := range byNode {
+		c := capByNode[node]
+		mn := monNode{Node: node, MemUsed: a.mem, NCPU: c.NCPU, MemTotal: c.MemTotal, Containers: a.n}
+		if c.NCPU > 0 {
+			mn.CPUPct = a.cpu / float64(c.NCPU)
+		}
+		mn.Stale = a.n == 0 || a.last.Before(staleBefore)
+		nodes = append(nodes, mn)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Node < nodes[j].Node })
+
+	body, err := json.Marshal(monData{Nodes: nodes, X: x, Series: series, Rows: rows})
 	if err != nil {
 		http.Error(w, "encode failed", http.StatusInternalServerError)
 		return
