@@ -140,6 +140,7 @@ type Querier interface {
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
+	PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error

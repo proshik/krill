@@ -28,3 +28,6 @@ SELECT node, ncpu, mem_total_bytes, sampled_at FROM node_capacity;
 
 -- name: PruneNodeCapacity :exec
 DELETE FROM node_capacity WHERE sampled_at < $1;
+
+-- name: PruneNodeCapacityExcept :exec
+DELETE FROM node_capacity WHERE node <> ALL($1::text[]);

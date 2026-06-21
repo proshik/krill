@@ -70,7 +70,10 @@ func (s *Sampler) SelfComponent() string {
 
 func (s *Sampler) tick(ctx context.Context) {
 	now := time.Now()
-	for _, ns := range s.src.SampleAll(ctx) {
+	samples := s.src.SampleAll(ctx)
+	keep := make([]string, 0, len(samples))
+	for _, ns := range samples {
+		keep = append(keep, ns.Node) // every current node (incl. down → kept, shows stale)
 		if !ns.OK {
 			continue // unreachable node already logged; leave its data stale
 		}
@@ -86,6 +89,13 @@ func (s *Sampler) tick(ctx context.Context) {
 		}
 		if err := s.store.UpsertCapacity(ctx, ns.Node, ns.Capacity.NCPU, ns.Capacity.MemTotal); err != nil {
 			s.log.Warn("metrics: capacity upsert failed", "node", ns.Node, "err", err)
+		}
+	}
+	// Drop capacity for nodes no longer in the cluster (renamed/removed) so they
+	// stop showing as stale phantoms; down-but-still-listed nodes stay in keep.
+	if len(keep) > 0 {
+		if err := s.store.PruneCapacityExcept(ctx, keep); err != nil {
+			s.log.Warn("metrics: orphan capacity prune failed", "err", err)
 		}
 	}
 	s.ticks++

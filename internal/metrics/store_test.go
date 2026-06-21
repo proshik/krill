@@ -90,3 +90,30 @@ func TestStoreCapacityUpsert(t *testing.T) {
 		t.Fatalf("upsert did not overwrite: %+v", caps)
 	}
 }
+
+func TestStoreCapacityPruneExcept(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := metrics.NewDBStore(db.New(pool))
+	ctx := context.Background()
+
+	for _, n := range []string{"control-plane", "worker-1", "old-node"} {
+		if err := st.UpsertCapacity(ctx, n, 1, 1<<30); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Keep only the current cluster; "old-node" (renamed/removed) must be dropped.
+	if err := st.PruneCapacityExcept(ctx, []string{"control-plane", "worker-1"}); err != nil {
+		t.Fatal(err)
+	}
+	caps, err := st.ListCapacity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range caps {
+		got[c.Node] = true
+	}
+	if len(caps) != 2 || !got["control-plane"] || !got["worker-1"] || got["old-node"] {
+		t.Fatalf("PruneCapacityExcept wrong result: %+v", caps)
+	}
+}

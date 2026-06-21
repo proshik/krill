@@ -162,16 +162,10 @@ func run() error {
 	go watcher.Run(ctx)
 
 	// Monitoring: sample container stats into Postgres for the Monitoring page.
-	// Resolve the control-plane node name (swarm manager hostname; fallback host).
-	localName, _ := os.Hostname()
-	if ns, err := engine.Nodes(ctx); err == nil {
-		for _, n := range ns {
-			if n.Leader {
-				localName = n.Hostname
-				break
-			}
-		}
-	}
+	// The control-plane node is labelled "control-plane" (a friendly, stable name
+	// matching the rest of the UI, e.g. the managed-DB node picker) rather than its
+	// raw Swarm hostname; workers keep their cluster_nodes name (e.g. "worker-1").
+	localName := "control-plane"
 	workerLister := func(c context.Context) ([]metrics.Worker, error) {
 		rows, err := q.ListClusterNodes(c)
 		if err != nil {

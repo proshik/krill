@@ -167,6 +167,15 @@ func (q *Queries) PruneNodeCapacity(ctx context.Context, sampledAt time.Time) er
 	return err
 }
 
+const pruneNodeCapacityExcept = `-- name: PruneNodeCapacityExcept :exec
+DELETE FROM node_capacity WHERE node <> ALL($1::text[])
+`
+
+func (q *Queries) PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error {
+	_, err := q.db.Exec(ctx, pruneNodeCapacityExcept, dollar_1)
+	return err
+}
+
 const upsertNodeCapacity = `-- name: UpsertNodeCapacity :exec
 INSERT INTO node_capacity (node, ncpu, mem_total_bytes, sampled_at)
 VALUES ($1, $2, $3, now())

@@ -37,6 +37,10 @@ type Store interface {
 	UpsertCapacity(ctx context.Context, node string, ncpu int, memTotal int64) error
 	ListCapacity(ctx context.Context) ([]NodeCapacity, error)
 	PruneCapacity(ctx context.Context, before time.Time) error
+	// PruneCapacityExcept drops capacity rows for nodes not in keep, so a renamed
+	// or removed node stops appearing (a still-listed but down node is kept, and
+	// shows stale). No-op when keep is empty (guarded by the caller).
+	PruneCapacityExcept(ctx context.Context, keep []string) error
 }
 
 // DBStore implements Store backed by the sqlc-generated queries.
@@ -124,4 +128,8 @@ func (s *DBStore) ListCapacity(ctx context.Context) ([]NodeCapacity, error) {
 
 func (s *DBStore) PruneCapacity(ctx context.Context, before time.Time) error {
 	return s.q.PruneNodeCapacity(ctx, before)
+}
+
+func (s *DBStore) PruneCapacityExcept(ctx context.Context, keep []string) error {
+	return s.q.PruneNodeCapacityExcept(ctx, keep)
 }

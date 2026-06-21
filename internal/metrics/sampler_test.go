@@ -11,10 +11,11 @@ import (
 )
 
 type capStore struct {
-	mu     sync.Mutex
-	ins    []string // "node/comp"
-	caps   map[string]int
-	prunes int // count of Prune calls
+	mu         sync.Mutex
+	ins        []string // "node/comp"
+	caps       map[string]int
+	prunes     int      // count of Prune calls
+	keptExcept []string // last keep set passed to PruneCapacityExcept
 }
 
 func (s *capStore) Insert(ctx context.Context, node, comp string, cpu float64, mem, lim int64) error {
@@ -42,6 +43,12 @@ func (s *capStore) Prune(_ context.Context, _ time.Time) error {
 }
 func (s *capStore) ListCapacity(context.Context) ([]metrics.NodeCapacity, error) { return nil, nil }
 func (s *capStore) PruneCapacity(context.Context, time.Time) error               { return nil }
+func (s *capStore) PruneCapacityExcept(_ context.Context, keep []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.keptExcept = append([]string(nil), keep...)
+	return nil
+}
 
 func TestSamplerTickTagsNodesAndCapacity(t *testing.T) {
 	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 2}}
@@ -68,6 +75,15 @@ func TestSamplerTickTagsNodesAndCapacity(t *testing.T) {
 	}
 	if st.caps["cp"] != 2 || st.caps["w1"] != 4 {
 		t.Fatalf("expected per-node capacity, got %v", st.caps)
+	}
+	// Orphan-capacity prune keeps exactly the current nodes (so a renamed/removed
+	// node's stale capacity row would be dropped).
+	keep := map[string]bool{}
+	for _, n := range st.keptExcept {
+		keep[n] = true
+	}
+	if len(st.keptExcept) != 2 || !keep["cp"] || !keep["w1"] {
+		t.Fatalf("expected PruneCapacityExcept keep={cp,w1}, got %v", st.keptExcept)
 	}
 }
 
