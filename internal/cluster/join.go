@@ -36,22 +36,11 @@ func hostKeyMatches(stored, presented string) bool {
 	return stored == "" || stored == presented
 }
 
-// Join SSHes into the worker, verifies/records the host key (accept-new), and
-// runs the fixed swarm-join command. It returns the command's combined output
-// and the presented host key (which the caller persists so later operations
-// verify it). The private key and token are never logged here.
-func Join(spec JoinSpec) (output, hostKey string, err error) {
+// sshDial builds an SSH client for spec using the given host-key callback.
+func sshDial(spec JoinSpec, cb ssh.HostKeyCallback) (*ssh.Client, error) {
 	signer, err := ssh.ParsePrivateKey(spec.PrivateKey)
 	if err != nil {
-		return "", "", fmt.Errorf("parse ssh key: %w", err)
-	}
-	var seen string
-	cb := func(_ string, _ net.Addr, key ssh.PublicKey) error {
-		seen = string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
-		if !hostKeyMatches(spec.HostKey, seen) {
-			return fmt.Errorf("host key mismatch for %s (possible MITM)", spec.Host)
-		}
-		return nil
+		return nil, fmt.Errorf("parse ssh key: %w", err)
 	}
 	port := spec.Port
 	if port == 0 {
@@ -63,7 +52,36 @@ func Join(spec JoinSpec) (output, hostKey string, err error) {
 		HostKeyCallback: cb,
 		Timeout:         15 * time.Second,
 	}
-	cl, err := ssh.Dial("tcp", net.JoinHostPort(spec.Host, strconv.Itoa(port)), cfg)
+	return ssh.Dial("tcp", net.JoinHostPort(spec.Host, strconv.Itoa(port)), cfg)
+}
+
+// DialVerified opens an SSH client, verifying the presented host key strictly
+// against spec.HostKey (which must already be known). The caller closes it.
+func DialVerified(spec JoinSpec) (*ssh.Client, error) {
+	cb := func(_ string, _ net.Addr, key ssh.PublicKey) error {
+		seen := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
+		if !hostKeyMatches(spec.HostKey, seen) {
+			return fmt.Errorf("host key mismatch for %s (possible MITM)", spec.Host)
+		}
+		return nil
+	}
+	return sshDial(spec, cb)
+}
+
+// Join SSHes into the worker, verifies/records the host key (accept-new), and
+// runs the fixed swarm-join command. It returns the command's combined output
+// and the presented host key (which the caller persists so later operations
+// verify it). The private key and token are never logged here.
+func Join(spec JoinSpec) (output, hostKey string, err error) {
+	var seen string
+	cb := func(_ string, _ net.Addr, key ssh.PublicKey) error {
+		seen = string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
+		if !hostKeyMatches(spec.HostKey, seen) {
+			return fmt.Errorf("host key mismatch for %s (possible MITM)", spec.Host)
+		}
+		return nil
+	}
+	cl, err := sshDial(spec, cb)
 	if err != nil {
 		return "", seen, fmt.Errorf("ssh dial: %w", err)
 	}
