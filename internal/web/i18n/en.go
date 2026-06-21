@@ -512,6 +512,8 @@ var en = map[string]string{
 	"mon.desc":                           "CPU & memory per container on this host",
 	"mon.cpu":                            "CPU %",
 	"mon.memory":                         "Memory (MB)",
+	"mon.node":                           "Node",
+	"mon.stale":                          "stale",
 	"autodeploy.title":                   "Auto-Deploy",
 	"autodeploy.desc":                    "Deploy automatically on a GitHub push (Dockerfile apps) or a CI deploy-hook call (image apps).",
 	"autodeploy.enable":                  "Enable auto-deploy",

@@ -10,9 +10,9 @@ templ Monitoring(org db.Organization, role string) {
 		<link rel="stylesheet" href="/static/uPlot.min.css"/>
 		<h2 class="text-2xl mb-1">{ i18n.T(ctx, "mon.title") }</h2>
 		<p class="mb-3" style="color:var(--color-muted)">{ i18n.T(ctx, "mon.desc") }</p>
-		<div id="mon" class="k-mon" data-url={ "/orgs/" + itoa(org.ID) + "/monitoring/data" }>
+		<div id="mon" class="k-mon" data-url={ "/orgs/" + itoa(org.ID) + "/monitoring/data" } data-i18n-node={ i18n.T(ctx, "mon.node") } data-i18n-stale={ i18n.T(ctx, "mon.stale") }>
 			<div class="k-mon-bar">
-				<div class="k-mon-host" id="mon-host"></div>
+				<div class="k-mon-nodes" id="mon-nodes"></div>
 				<div class="k-seg" id="mon-range">
 					<button type="button" class="k-seg-btn" data-range="1h">1h</button>
 					<button type="button" class="k-seg-btn" data-range="6h">6h</button>

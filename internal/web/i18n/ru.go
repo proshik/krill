@@ -512,6 +512,8 @@ var ru = map[string]string{
 	"mon.desc":                           "CPU и память по контейнерам на этом хосте",
 	"mon.cpu":                            "CPU %",
 	"mon.memory":                         "Память (МБ)",
+	"mon.node":                           "Нода",
+	"mon.stale":                          "устарело",
 	"autodeploy.title":                   "Автодеплой",
 	"autodeploy.desc":                    "Деплой автоматически при push в GitHub (Dockerfile-приложения) или по вызову deploy-hook из CI (image-приложения).",
 	"autodeploy.enable":                  "Включить автодеплой",

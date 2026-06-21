@@ -163,6 +163,7 @@ function mountMonitoring(el) {
   el.dataset.mounted = "1";
   const base = el.dataset.url;
   let range = "24h", cpuU = null, memU = null;
+  const I18N = { node: el.dataset.i18nNode || "Node", stale: el.dataset.i18nStale || "stale" };
   const groupLabel = { control: "Control plane", infra: "Infrastructure", app: "Apps", db: "Databases" };
   const ACTIVE = "k-seg-active"; // must match the template + CSS active class
 
@@ -191,19 +192,17 @@ function mountMonitoring(el) {
     cpuNode.innerHTML=""; memNode.innerHTML="";
     cpuU=mkChart(cpuNode,cpuData,cpuSer); memU=mkChart(memNode,memData,memSer);
 
-    const h=d.host||{}, memPct = h.mem_total ? Math.round(h.mem_used/h.mem_total*100) : 0;
-    el.querySelector("#mon-host").innerHTML =
-      `<span>host cpu <b>${(h.cpu_pct||0).toFixed(0)}%</b></span>`+
-      `<span>host mem <b>${fmtMB((h.mem_used||0)/1048576)} / ${fmtMB((h.mem_total||0)/1048576)} (${memPct}%)</b></span>`+
-      `<span>containers <b>${h.containers||0}</b></span>`;
+    const nodes = d.nodes || [];
+    el.querySelector("#mon-nodes").innerHTML = nodes.map(function(n){
+      const memPct = n.mem_total ? Math.round(n.mem_used/n.mem_total*100) : 0;
+      const stale = n.stale ? ` <span class='k-badge k-badge-warn'>${escapeHtml(I18N.stale)}</span>` : "";
+      return `<span class='k-mon-node'><b>${escapeHtml(n.node)}</b>${stale} cpu ${(n.cpu_pct||0).toFixed(0)}% · mem ${fmtMB((n.mem_used||0)/1048576)} / ${fmtMB((n.mem_total||0)/1048576)} (${memPct}%) · ${n.containers||0}c</span>`;
+    }).join("");
 
-    let html="<table class='k-table'><thead><tr><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", grp="";
+    let html="<table class='k-table'><thead><tr><th>"+escapeHtml(I18N.node)+"</th><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", grp="";
     for (const r of (d.rows||[])) {
-      if (r.group!==grp){ grp=r.group; html+=`<tr class='k-mon-grp'><td colspan='3'>${groupLabel[grp]||grp}</td></tr>`; }
-      const memTxt = (r.mem_limit && h.mem_total && r.mem_limit < h.mem_total)
-        ? `${fmtMB(r.mem/1048576)} <span style='color:var(--color-muted)'>/ ${fmtMB(r.mem_limit/1048576)}</span>`
-        : fmtMB(r.mem/1048576);
-      html+=`<tr><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${memTxt}</td></tr>`;
+      if (r.group!==grp){ grp=r.group; html+=`<tr class='k-mon-grp'><td colspan='4'>${groupLabel[grp]||grp}</td></tr>`; }
+      html+=`<tr><td class='k-mono'>${escapeHtml(r.node||"")}</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${fmtMB(r.mem/1048576)}</td></tr>`;
     }
     el.querySelector("#mon-table").innerHTML = html+"</tbody></table>";
   }
