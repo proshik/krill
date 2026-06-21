@@ -162,15 +162,18 @@ function mountMonitoring(el) {
   if (typeof uPlot === "undefined") { setTimeout(() => mountMonitoring(el), 50); return; }
   el.dataset.mounted = "1";
   const base = el.dataset.url;
-  let range = "24h", cpuU = null, memU = null;
-  const I18N = { node: el.dataset.i18nNode || "Node", stale: el.dataset.i18nStale || "stale" };
-  const groupLabel = { control: "Control plane", infra: "Infrastructure", app: "Apps", db: "Databases" };
+  let range = "24h", cpuU = null, memU = null, nodeFilter = "", lastData = null;
+  const I18N = { stale: el.dataset.i18nStale || "stale", allNodes: el.dataset.i18nAllnodes || "All nodes" };
   const ACTIVE = "k-seg-active"; // must match the template + CSS active class
 
   el.querySelectorAll("#mon-range .k-seg-btn").forEach((b) => b.addEventListener("click", () => {
     el.querySelectorAll("#mon-range .k-seg-btn").forEach((x) => x.classList.remove(ACTIVE));
     b.classList.add(ACTIVE); range = b.dataset.range; load();
   }));
+
+  // Node filter (charts only): re-render from the last fetched data, no re-fetch.
+  const nodeSel = el.querySelector("#mon-node-sel");
+  if (nodeSel) nodeSel.addEventListener("change", () => { nodeFilter = nodeSel.value; if (lastData) build(lastData); });
 
   function fmtMB(mb){ return mb >= 1024 ? (mb/1024).toFixed(1)+" GB" : Math.round(mb)+" MB"; }
   function mkChart(node, data, series){
@@ -180,9 +183,19 @@ function mountMonitoring(el) {
             {stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:42}], series }, data, node);
   }
   function build(d){
+    lastData = d;
     const xs = d.x || [];
+    // Refresh the node filter options, preserving the current selection (fall back to All if that node vanished).
+    if (nodeSel) {
+      const want = nodeFilter;
+      nodeSel.innerHTML = [`<option value="">${escapeHtml(I18N.allNodes)}</option>`]
+        .concat((d.nodes||[]).map((n) => `<option value="${escapeHtml(n.node)}">${escapeHtml(n.node)}</option>`)).join("");
+      nodeSel.value = want;
+      nodeFilter = nodeSel.value;
+    }
     const cpuData=[xs], memData=[xs], cpuSer=[{}], memSer=[{}];
     for (const s of (d.series||[])) {
+      if (nodeFilter && s.node !== nodeFilter) continue; // charts: show only the selected node (All = no filter)
       cpuData.push(s.cpu); memData.push(s.mem);
       cpuSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
       memSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
@@ -199,10 +212,19 @@ function mountMonitoring(el) {
       return `<span class='k-mon-node'><b>${escapeHtml(n.node)}</b>${stale} cpu ${(n.cpu_pct||0).toFixed(0)}% · mem ${fmtMB((n.mem_used||0)/1048576)} / ${fmtMB((n.mem_total||0)/1048576)} (${memPct}%) · ${n.containers||0}c</span>`;
     }).join("");
 
-    let html="<table class='k-table'><thead><tr><th>"+escapeHtml(I18N.node)+"</th><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", grp="";
-    for (const r of (d.rows||[])) {
-      if (r.group!==grp){ grp=r.group; html+=`<tr class='k-mon-grp'><td colspan='4'>${groupLabel[grp]||grp}</td></tr>`; }
-      html+=`<tr><td class='k-mono'>${escapeHtml(r.node||"")}</td><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${fmtMB(r.mem/1048576)}</td></tr>`;
+    // Group by node: a node header, then that node's components ordered by class (control/infra/app/db) then name.
+    const ord = function(g){ return g==="control"?0:g==="infra"?1:g==="app"?2:g==="db"?3:9; };
+    const rows = (d.rows||[]).slice().sort(function(a,b){
+      const an=a.node||"", bn=b.node||"";
+      if (an!==bn) return an<bn?-1:1;
+      const go=ord(a.group)-ord(b.group);
+      return go!==0 ? go : (a.name||"").localeCompare(b.name||"");
+    });
+    let html="<table class='k-table'><thead><tr><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", curNode=null;
+    for (const r of rows) {
+      if (nodeFilter && r.node !== nodeFilter) continue; // node selector also filters the table (All = no filter)
+      if (r.node!==curNode){ curNode=r.node; html+=`<tr class='k-mon-grp'><td colspan='3'>${escapeHtml(curNode||"—")}</td></tr>`; }
+      html+=`<tr><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${fmtMB(r.mem/1048576)}</td></tr>`;
     }
     el.querySelector("#mon-table").innerHTML = html+"</tbody></table>";
   }
