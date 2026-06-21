@@ -87,7 +87,7 @@ func (s *Sampler) tick(ctx context.Context) {
 			s.selfComp = st.Component
 			s.mu.Unlock()
 		}
-		if err := s.store.Insert(ctx, st.Component, st.CPUPct, st.MemBytes, st.MemLimitBytes); err != nil {
+		if err := s.store.Insert(ctx, "", st.Component, st.CPUPct, st.MemBytes, st.MemLimitBytes); err != nil {
 			s.log.Warn("metrics: insert failed", "component", st.Component, "err", err)
 		}
 	}

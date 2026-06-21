@@ -15,10 +15,10 @@ func TestStoreInsertLatestPrune(t *testing.T) {
 	st := metrics.NewDBStore(db.New(pool))
 	ctx := context.Background()
 
-	if err := st.Insert(ctx, "krill-7", 12.5, 200<<20, 512<<20); err != nil {
+	if err := st.Insert(ctx, "node-1", "krill-7", 12.5, 200<<20, 512<<20); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	if err := st.Insert(ctx, "krill-7", 18.0, 220<<20, 512<<20); err != nil {
+	if err := st.Insert(ctx, "node-1", "krill-7", 18.0, 220<<20, 512<<20); err != nil {
 		t.Fatalf("insert2: %v", err)
 	}
 	latest, err := st.Latest(ctx, time.Now().Add(-time.Hour))
@@ -40,5 +40,53 @@ func TestStoreInsertLatestPrune(t *testing.T) {
 	}
 	if since, _ := st.Since(ctx, time.Now().Add(-time.Hour)); len(since) != 0 {
 		t.Fatalf("after prune want 0, got %d", len(since))
+	}
+}
+
+func TestStoreNodeDimension(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := metrics.NewDBStore(db.New(pool))
+	ctx := context.Background()
+
+	// same component name on two different nodes must NOT collapse in Latest
+	if err := st.Insert(ctx, "node-a", "krill-1", 10, 100, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Insert(ctx, "node-b", "krill-1", 20, 200, 0); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := st.Latest(ctx, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest) != 2 {
+		t.Fatalf("want 2 latest (one per node), got %d", len(latest))
+	}
+	nodes := map[string]bool{}
+	for _, s := range latest {
+		nodes[s.Node] = true
+	}
+	if !nodes["node-a"] || !nodes["node-b"] {
+		t.Fatalf("expected both nodes, got %v", nodes)
+	}
+}
+
+func TestStoreCapacityUpsert(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := metrics.NewDBStore(db.New(pool))
+	ctx := context.Background()
+
+	if err := st.UpsertCapacity(ctx, "node-a", 4, 8<<30); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCapacity(ctx, "node-a", 8, 16<<30); err != nil { // overwrite
+		t.Fatal(err)
+	}
+	caps, err := st.ListCapacity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caps) != 1 || caps[0].NCPU != 8 || caps[0].MemTotal != 16<<30 {
+		t.Fatalf("upsert did not overwrite: %+v", caps)
 	}
 }

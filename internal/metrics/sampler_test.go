@@ -21,7 +21,7 @@ type recStore struct {
 	prunedTo []time.Time
 }
 
-func (r *recStore) Insert(_ context.Context, c string, _ float64, _, _ int64) error {
+func (r *recStore) Insert(_ context.Context, _, c string, _ float64, _, _ int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.inserts = append(r.inserts, c)
@@ -35,6 +35,9 @@ func (r *recStore) Prune(_ context.Context, before time.Time) error {
 	r.prunedTo = append(r.prunedTo, before)
 	return nil
 }
+func (r *recStore) UpsertCapacity(context.Context, string, int, int64) error { return nil }
+func (r *recStore) ListCapacity(context.Context) ([]NodeCapacity, error)     { return nil, nil }
+func (r *recStore) PruneCapacity(context.Context, time.Time) error           { return nil }
 
 func TestSamplerTickInsertsAndPrunes(t *testing.T) {
 	src := &fakeSrc{stats: []docker.ContainerStat{
