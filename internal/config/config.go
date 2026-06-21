@@ -42,6 +42,8 @@ type Config struct {
 	MetricsInterval time.Duration `env:"KRILL_METRICS_INTERVAL" envDefault:"30s"`
 	// MetricsRetention is how long metric history is kept before pruning.
 	MetricsRetention time.Duration `env:"KRILL_METRICS_RETENTION" envDefault:"48h"`
+	// MetricsNodeTimeout caps how long the sampler waits per worker node.
+	MetricsNodeTimeout time.Duration `env:"KRILL_METRICS_NODE_TIMEOUT" envDefault:"10s"`
 }
 
 // Load reads the configuration from the environment.

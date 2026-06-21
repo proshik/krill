@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/proshik/krill/internal/docker"
 )
 
 // pruneEvery runs the retention DELETE once per this many ticks (rather than
@@ -14,14 +12,9 @@ import (
 // generating constant small deletes + autovacuum churn on the tiny VPS.
 const pruneEvery = 120 // ~1h at the default 30s interval
 
-// statsSource is the subset of docker.Engine the sampler needs.
-type statsSource interface {
-	ListContainerStats(ctx context.Context) ([]docker.ContainerStat, error)
-}
-
 // Sampler periodically records container stats and prunes old history.
 type Sampler struct {
-	src       statsSource
+	src       *ClusterSource
 	store     Store
 	interval  time.Duration
 	retention time.Duration
@@ -35,7 +28,7 @@ type Sampler struct {
 
 // NewSampler creates a Sampler. Zero/negative interval defaults to 30s;
 // zero/negative retention defaults to 48h.
-func NewSampler(src statsSource, store Store, interval, retention time.Duration) *Sampler {
+func NewSampler(src *ClusterSource, store Store, interval, retention time.Duration) *Sampler {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -76,27 +69,33 @@ func (s *Sampler) SelfComponent() string {
 }
 
 func (s *Sampler) tick(ctx context.Context) {
-	stats, err := s.src.ListContainerStats(ctx)
-	if err != nil {
-		s.log.Warn("metrics: list stats failed", "err", err)
-		return
-	}
-	for _, st := range stats {
-		if st.SelfControl {
-			s.mu.Lock()
-			s.selfComp = st.Component
-			s.mu.Unlock()
+	now := time.Now()
+	for _, ns := range s.src.SampleAll(ctx) {
+		if !ns.OK {
+			continue // unreachable node already logged; leave its data stale
 		}
-		if err := s.store.Insert(ctx, "", st.Component, st.CPUPct, st.MemBytes, st.MemLimitBytes); err != nil {
-			s.log.Warn("metrics: insert failed", "component", st.Component, "err", err)
+		for _, st := range ns.Containers {
+			if st.SelfControl {
+				s.mu.Lock()
+				s.selfComp = st.Component
+				s.mu.Unlock()
+			}
+			if err := s.store.Insert(ctx, ns.Node, st.Component, st.CPUPct, st.MemBytes, st.MemLimitBytes); err != nil {
+				s.log.Warn("metrics: insert failed", "node", ns.Node, "component", st.Component, "err", err)
+			}
+		}
+		if err := s.store.UpsertCapacity(ctx, ns.Node, ns.Capacity.NCPU, ns.Capacity.MemTotal); err != nil {
+			s.log.Warn("metrics: capacity upsert failed", "node", ns.Node, "err", err)
 		}
 	}
-	// Prune once at startup (clear any backlog) and then only every pruneEvery
-	// ticks, not on every tick.
 	s.ticks++
 	if s.ticks == 1 || s.ticks%pruneEvery == 0 {
-		if err := s.store.Prune(ctx, time.Now().Add(-s.retention)); err != nil {
+		before := now.Add(-s.retention)
+		if err := s.store.Prune(ctx, before); err != nil {
 			s.log.Warn("metrics: prune failed", "err", err)
+		}
+		if err := s.store.PruneCapacity(ctx, before); err != nil {
+			s.log.Warn("metrics: capacity prune failed", "err", err)
 		}
 	}
 }

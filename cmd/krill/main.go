@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
+	"github.com/proshik/krill/internal/cluster"
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -160,8 +162,53 @@ func run() error {
 	go watcher.Run(ctx)
 
 	// Monitoring: sample container stats into Postgres for the Monitoring page.
+	// Resolve the control-plane node name (swarm manager hostname; fallback host).
+	localName, _ := os.Hostname()
+	if ns, err := engine.Nodes(ctx); err == nil {
+		for _, n := range ns {
+			if n.Leader {
+				localName = n.Hostname
+				break
+			}
+		}
+	}
+	workerLister := func(c context.Context) ([]metrics.Worker, error) {
+		rows, err := q.ListClusterNodes(c)
+		if err != nil {
+			return nil, err
+		}
+		ws := make([]metrics.Worker, 0, len(rows))
+		for _, row := range rows {
+			row := row
+			ws = append(ws, metrics.Worker{
+				Name: row.Name,
+				Connect: func(cc context.Context) (metrics.NodeStatsSource, func() error, error) {
+					cl, derr := cluster.DialVerified(cluster.JoinSpec{
+						Host:       row.SshHost,
+						Port:       int(row.SshPort),
+						User:       row.SshUser,
+						PrivateKey: []byte(secret.Dec(row.SshKey)),
+						HostKey:    row.HostKey,
+					})
+					if derr != nil {
+						return nil, nil, derr
+					}
+					rs, rerr := docker.NewRemoteStats(func(_ context.Context, _, _ string) (net.Conn, error) {
+						return cl.Dial("unix", "/var/run/docker.sock")
+					})
+					if rerr != nil {
+						_ = cl.Close()
+						return nil, nil, rerr
+					}
+					return rs, func() error { _ = rs.Close(); return cl.Close() }, nil
+				},
+			})
+		}
+		return ws, nil
+	}
 	metricsStore := metrics.NewDBStore(q)
-	metricsSampler := metrics.NewSampler(engine, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention)
+	clusterSrc := metrics.NewClusterSource(localName, engine, workerLister, cfg.MetricsNodeTimeout)
+	metricsSampler := metrics.NewSampler(clusterSrc, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention)
 	go metricsSampler.Run(ctx)
 
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {

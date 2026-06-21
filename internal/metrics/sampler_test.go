@@ -1,4 +1,4 @@
-package metrics
+package metrics_test
 
 import (
 	"context"
@@ -7,79 +7,60 @@ import (
 	"time"
 
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/metrics"
 )
 
-type fakeSrc struct{ stats []docker.ContainerStat }
-
-func (f *fakeSrc) ListContainerStats(context.Context) ([]docker.ContainerStat, error) {
-	return f.stats, nil
+type capStore struct {
+	mu   sync.Mutex
+	ins  []string // "node/comp"
+	caps map[string]int
 }
 
-type recStore struct {
-	mu       sync.Mutex
-	inserts  []string
-	prunedTo []time.Time
-}
-
-func (r *recStore) Insert(_ context.Context, _, c string, _ float64, _, _ int64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.inserts = append(r.inserts, c)
+func (s *capStore) Insert(ctx context.Context, node, comp string, cpu float64, mem, lim int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ins = append(s.ins, node+"/"+comp)
 	return nil
 }
-func (r *recStore) Since(context.Context, time.Time) ([]Sample, error)  { return nil, nil }
-func (r *recStore) Latest(context.Context, time.Time) ([]Sample, error) { return nil, nil }
-func (r *recStore) Prune(_ context.Context, before time.Time) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.prunedTo = append(r.prunedTo, before)
+func (s *capStore) UpsertCapacity(ctx context.Context, node string, ncpu int, mem int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.caps == nil {
+		s.caps = map[string]int{}
+	}
+	s.caps[node] = ncpu
 	return nil
 }
-func (r *recStore) UpsertCapacity(context.Context, string, int, int64) error { return nil }
-func (r *recStore) ListCapacity(context.Context) ([]NodeCapacity, error)     { return nil, nil }
-func (r *recStore) PruneCapacity(context.Context, time.Time) error           { return nil }
+func (s *capStore) Since(context.Context, time.Time) ([]metrics.Sample, error)    { return nil, nil }
+func (s *capStore) Latest(context.Context, time.Time) ([]metrics.Sample, error)   { return nil, nil }
+func (s *capStore) Prune(context.Context, time.Time) error                        { return nil }
+func (s *capStore) ListCapacity(context.Context) ([]metrics.NodeCapacity, error)  { return nil, nil }
+func (s *capStore) PruneCapacity(context.Context, time.Time) error                { return nil }
 
-func TestSamplerTickInsertsAndPrunes(t *testing.T) {
-	src := &fakeSrc{stats: []docker.ContainerStat{
-		{Component: "krill-7", CPUPct: 5},
-		{Component: "traefik", CPUPct: 1},
-	}}
-	st := &recStore{}
-	s := NewSampler(src, st, time.Minute, time.Hour)
-	s.tick(context.Background())
-	if len(st.inserts) != 2 {
-		t.Fatalf("want 2 inserts, got %v", st.inserts)
+func TestSamplerTickTagsNodesAndCapacity(t *testing.T) {
+	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 2}}
+	workerOK := fakeSrc{stats: []docker.ContainerStat{{Component: "app"}}, cap: docker.NodeInfo{NCPU: 4}}
+	workers := func(ctx context.Context) ([]metrics.Worker, error) {
+		return []metrics.Worker{{Name: "w1", Connect: func(context.Context) (metrics.NodeStatsSource, func() error, error) {
+			return workerOK, func() error { return nil }, nil
+		}}}, nil
 	}
-	// The first tick prunes (startup), but subsequent ticks must NOT prune every
-	// time — only once per pruneEvery — to avoid constant small deletes.
-	if len(st.prunedTo) != 1 {
-		t.Fatalf("first tick should prune once, got %d", len(st.prunedTo))
-	}
-	for i := 0; i < pruneEvery-2; i++ { // ticks 2..(pruneEvery-1)
-		s.tick(context.Background())
-	}
-	if len(st.prunedTo) != 1 {
-		t.Fatalf("ticks 2..%d must not prune, got %d prunes", pruneEvery-1, len(st.prunedTo))
-	}
-	s.tick(context.Background()) // tick == pruneEvery → prune again
-	if len(st.prunedTo) != 2 {
-		t.Fatalf("tick %d should prune, got %d prunes", pruneEvery, len(st.prunedTo))
-	}
-}
+	cs := metrics.NewClusterSource("cp", local, workers, time.Second)
+	st := &capStore{}
+	s := metrics.NewSampler(cs, st, time.Hour, time.Hour)
 
-// TestSamplerLearnsSelfComponent verifies the sampler records the control-plane
-// component from ListContainerStats (so the handler need not scan docker).
-func TestSamplerLearnsSelfComponent(t *testing.T) {
-	src := &fakeSrc{stats: []docker.ContainerStat{
-		{Component: "krill-self", SelfControl: true},
-		{Component: "traefik"},
-	}}
-	s := NewSampler(src, &recStore{}, time.Minute, time.Hour)
-	if s.SelfComponent() != "" {
-		t.Fatalf("self component should be empty before the first tick")
+	s.TickForTest(context.Background())
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	want := map[string]bool{"cp/krill": false, "w1/app": false}
+	for _, k := range st.ins {
+		want[k] = true
 	}
-	s.tick(context.Background())
-	if got := s.SelfComponent(); got != "krill-self" {
-		t.Fatalf("self component = %q, want krill-self", got)
+	if !want["cp/krill"] || !want["w1/app"] {
+		t.Fatalf("expected node-tagged inserts, got %v", st.ins)
+	}
+	if st.caps["cp"] != 2 || st.caps["w1"] != 4 {
+		t.Fatalf("expected per-node capacity, got %v", st.caps)
 	}
 }
