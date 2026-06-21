@@ -189,7 +189,7 @@ func run() error {
 						User:       row.SshUser,
 						PrivateKey: []byte(secret.Dec(row.SshKey)),
 						HostKey:    row.HostKey,
-					})
+					}, cfg.MetricsNodeTimeout)
 					if derr != nil {
 						return nil, nil, derr
 					}

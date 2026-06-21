@@ -105,11 +105,11 @@ func (c *ClusterSource) sampleOne(ctx context.Context, name string, src NodeStat
 		c.log.Warn("metrics: node stats failed", "node", name, "err", err)
 		return NodeSample{Node: name}
 	}
-	cap, err := src.NodeInfo(ctx)
+	info, err := src.NodeInfo(ctx)
 	if err != nil {
 		c.log.Warn("metrics: node info failed", "node", name, "err", err)
 		// still report containers; capacity stays zero
 		return NodeSample{Node: name, Containers: stats, OK: true}
 	}
-	return NodeSample{Node: name, Containers: stats, Capacity: cap, OK: true}
+	return NodeSample{Node: name, Containers: stats, Capacity: info, OK: true}
 }

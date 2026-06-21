@@ -70,6 +70,9 @@ type statsCollector struct {
 }
 
 func (sc *statsCollector) listContainerStats(ctx context.Context) ([]ContainerStat, error) {
+	// For a remote (SSH-tunnelled) node this is the control-plane hostname, so
+	// SelfControl is correctly always false for worker containers (Krill never
+	// runs on workers).
 	hostname, _ := os.Hostname()
 	ctrs, err := sc.cli.ContainerList(ctx, container.ListOptions{})
 	if err != nil {

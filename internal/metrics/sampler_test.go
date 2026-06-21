@@ -11,9 +11,10 @@ import (
 )
 
 type capStore struct {
-	mu   sync.Mutex
-	ins  []string // "node/comp"
-	caps map[string]int
+	mu     sync.Mutex
+	ins    []string // "node/comp"
+	caps   map[string]int
+	prunes int // count of Prune calls
 }
 
 func (s *capStore) Insert(ctx context.Context, node, comp string, cpu float64, mem, lim int64) error {
@@ -31,11 +32,16 @@ func (s *capStore) UpsertCapacity(ctx context.Context, node string, ncpu int, me
 	s.caps[node] = ncpu
 	return nil
 }
-func (s *capStore) Since(context.Context, time.Time) ([]metrics.Sample, error)    { return nil, nil }
-func (s *capStore) Latest(context.Context, time.Time) ([]metrics.Sample, error)   { return nil, nil }
-func (s *capStore) Prune(context.Context, time.Time) error                        { return nil }
-func (s *capStore) ListCapacity(context.Context) ([]metrics.NodeCapacity, error)  { return nil, nil }
-func (s *capStore) PruneCapacity(context.Context, time.Time) error                { return nil }
+func (s *capStore) Since(context.Context, time.Time) ([]metrics.Sample, error)   { return nil, nil }
+func (s *capStore) Latest(context.Context, time.Time) ([]metrics.Sample, error)  { return nil, nil }
+func (s *capStore) Prune(_ context.Context, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prunes++
+	return nil
+}
+func (s *capStore) ListCapacity(context.Context) ([]metrics.NodeCapacity, error) { return nil, nil }
+func (s *capStore) PruneCapacity(context.Context, time.Time) error               { return nil }
 
 func TestSamplerTickTagsNodesAndCapacity(t *testing.T) {
 	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 2}}
@@ -62,5 +68,64 @@ func TestSamplerTickTagsNodesAndCapacity(t *testing.T) {
 	}
 	if st.caps["cp"] != 2 || st.caps["w1"] != 4 {
 		t.Fatalf("expected per-node capacity, got %v", st.caps)
+	}
+}
+
+// TestSamplerPruneCadence verifies that Prune fires on tick 1 and then exactly
+// once more on tick pruneEvery (not on intermediate ticks).
+func TestSamplerPruneCadence(t *testing.T) {
+	noWorkers := func(ctx context.Context) ([]metrics.Worker, error) { return nil, nil }
+	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 1}}
+	cs := metrics.NewClusterSource("cp", local, noWorkers, time.Second)
+	st := &capStore{}
+	s := metrics.NewSampler(cs, st, time.Hour, time.Hour)
+
+	ctx := context.Background()
+	// tick 1 — prune must fire
+	s.TickForTest(ctx)
+	st.mu.Lock()
+	after1 := st.prunes
+	st.mu.Unlock()
+	if after1 != 1 {
+		t.Fatalf("prune after tick 1: want 1, got %d", after1)
+	}
+
+	// ticks 2 .. pruneEvery-1 — prune must NOT fire
+	for i := 2; i < metrics.PruneEvery; i++ {
+		s.TickForTest(ctx)
+	}
+	st.mu.Lock()
+	mid := st.prunes
+	st.mu.Unlock()
+	if mid != 1 {
+		t.Fatalf("prune after ticks 2..%d-1: want still 1, got %d", metrics.PruneEvery, mid)
+	}
+
+	// tick pruneEvery — prune must fire again
+	s.TickForTest(ctx)
+	st.mu.Lock()
+	final := st.prunes
+	st.mu.Unlock()
+	if final != 2 {
+		t.Fatalf("prune after tick %d: want 2, got %d", metrics.PruneEvery, final)
+	}
+}
+
+// TestSamplerSelfCompLearned verifies that the sampler learns the control-plane
+// component name from the first container stat that has SelfControl=true.
+func TestSamplerSelfCompLearned(t *testing.T) {
+	noWorkers := func(ctx context.Context) ([]metrics.Worker, error) { return nil, nil }
+	local := fakeSrc{
+		stats: []docker.ContainerStat{{Component: "krill", SelfControl: true}},
+		cap:   docker.NodeInfo{NCPU: 1},
+	}
+	cs := metrics.NewClusterSource("cp", local, noWorkers, time.Second)
+	st := &capStore{}
+	s := metrics.NewSampler(cs, st, time.Hour, time.Hour)
+
+	s.TickForTest(context.Background())
+
+	if got := s.SelfComponent(); got != "krill" {
+		t.Fatalf("SelfComponent() = %q, want %q", got, "krill")
 	}
 }

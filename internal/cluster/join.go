@@ -37,7 +37,8 @@ func hostKeyMatches(stored, presented string) bool {
 }
 
 // sshDial builds an SSH client for spec using the given host-key callback.
-func sshDial(spec JoinSpec, cb ssh.HostKeyCallback) (*ssh.Client, error) {
+// When timeout > 0 it is used as the dial timeout; otherwise 15s is applied.
+func sshDial(spec JoinSpec, cb ssh.HostKeyCallback, timeout time.Duration) (*ssh.Client, error) {
 	signer, err := ssh.ParsePrivateKey(spec.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse ssh key: %w", err)
@@ -46,18 +47,27 @@ func sshDial(spec JoinSpec, cb ssh.HostKeyCallback) (*ssh.Client, error) {
 	if port == 0 {
 		port = 22
 	}
+	dialTimeout := 15 * time.Second
+	if timeout > 0 {
+		dialTimeout = timeout
+	}
 	cfg := &ssh.ClientConfig{
 		User:            spec.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: cb,
-		Timeout:         15 * time.Second,
+		Timeout:         dialTimeout,
 	}
 	return ssh.Dial("tcp", net.JoinHostPort(spec.Host, strconv.Itoa(port)), cfg)
 }
 
 // DialVerified opens an SSH client, verifying the presented host key strictly
-// against spec.HostKey (which must already be known). The caller closes it.
-func DialVerified(spec JoinSpec) (*ssh.Client, error) {
+// against spec.HostKey (which must already be known). spec.HostKey must be
+// non-empty; an empty value is rejected so a misconfigured caller cannot
+// silently accept any key. The caller closes the returned client.
+func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
+	if spec.HostKey == "" {
+		return nil, fmt.Errorf("DialVerified: host key required")
+	}
 	cb := func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		seen := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
 		if !hostKeyMatches(spec.HostKey, seen) {
@@ -65,7 +75,7 @@ func DialVerified(spec JoinSpec) (*ssh.Client, error) {
 		}
 		return nil
 	}
-	return sshDial(spec, cb)
+	return sshDial(spec, cb, timeout)
 }
 
 // Join SSHes into the worker, verifies/records the host key (accept-new), and
@@ -81,7 +91,7 @@ func Join(spec JoinSpec) (output, hostKey string, err error) {
 		}
 		return nil
 	}
-	cl, err := sshDial(spec, cb)
+	cl, err := sshDial(spec, cb, 0)
 	if err != nil {
 		return "", seen, fmt.Errorf("ssh dial: %w", err)
 	}
