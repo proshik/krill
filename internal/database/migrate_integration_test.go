@@ -10,14 +10,14 @@ import (
 func TestMigrationsApply(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 
-	// Expected set covers the full current schema (migrations 000001..000025;
-	// 000025 adds app_ports).
+	// Expected set covers the full current schema (migrations 000001..000027;
+	// 000027 adds node_capacity).
 	expectedTables := []string{
 		"users", "sessions", "organizations", "members", "projects",
 		"environments", "applications", "deployments", "postgres_dbs",
 		"redis_dbs", "domains", "destinations", "backups", "registries",
 		"notification_channels", "metric_samples", "app_volumes", "volume_backups",
-		"app_db_links", "app_ports",
+		"app_db_links", "app_ports", "node_capacity",
 	}
 
 	var n int
@@ -60,6 +60,27 @@ func TestMigrationsApply(t *testing.T) {
 		}
 		if !exists {
 			t.Fatalf("applications.%s missing after migration", col)
+		}
+	}
+
+	// Migration 000027: metric_samples.node column + node_capacity table.
+	{
+		var exists bool
+		if err := pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			 WHERE table_schema='public' AND table_name='metric_samples' AND column_name='node')`).Scan(&exists); err != nil {
+			t.Fatalf("query metric_samples.node: %v", err)
+		}
+		if !exists {
+			t.Fatal("metric_samples.node missing after migration")
+		}
+		if err := pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+			 WHERE table_schema='public' AND table_name='node_capacity')`).Scan(&exists); err != nil {
+			t.Fatalf("query node_capacity: %v", err)
+		}
+		if !exists {
+			t.Fatal("node_capacity table missing after migration")
 		}
 	}
 }

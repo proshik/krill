@@ -119,6 +119,7 @@ type Querier interface {
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
+	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
@@ -138,6 +139,7 @@ type Querier interface {
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
+	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error
@@ -166,6 +168,7 @@ type Querier interface {
 	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
 	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
 	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
+	UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
 }

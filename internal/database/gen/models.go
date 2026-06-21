@@ -169,6 +169,14 @@ type MetricSample struct {
 	CpuPct        float32   `json:"cpu_pct"`
 	MemBytes      int64     `json:"mem_bytes"`
 	MemLimitBytes int64     `json:"mem_limit_bytes"`
+	Node          string    `json:"node"`
+}
+
+type NodeCapacity struct {
+	Node          string    `json:"node"`
+	Ncpu          int32     `json:"ncpu"`
+	MemTotalBytes int64     `json:"mem_total_bytes"`
+	SampledAt     time.Time `json:"sampled_at"`
 }
 
 type NodeLabel struct {

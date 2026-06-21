@@ -11,11 +11,12 @@ import (
 )
 
 const insertMetricSample = `-- name: InsertMetricSample :exec
-INSERT INTO metric_samples (component, cpu_pct, mem_bytes, mem_limit_bytes)
-VALUES ($1, $2, $3, $4)
+INSERT INTO metric_samples (node, component, cpu_pct, mem_bytes, mem_limit_bytes)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertMetricSampleParams struct {
+	Node          string  `json:"node"`
 	Component     string  `json:"component"`
 	CpuPct        float32 `json:"cpu_pct"`
 	MemBytes      int64   `json:"mem_bytes"`
@@ -24,6 +25,7 @@ type InsertMetricSampleParams struct {
 
 func (q *Queries) InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error {
 	_, err := q.db.Exec(ctx, insertMetricSample,
+		arg.Node,
 		arg.Component,
 		arg.CpuPct,
 		arg.MemBytes,
@@ -33,11 +35,14 @@ func (q *Queries) InsertMetricSample(ctx context.Context, arg InsertMetricSample
 }
 
 const latestMetricSamples = `-- name: LatestMetricSamples :many
-SELECT DISTINCT ON (component) component, ts, cpu_pct, mem_bytes, mem_limit_bytes
-FROM metric_samples WHERE ts >= $1 ORDER BY component, ts DESC
+SELECT DISTINCT ON (node, component) node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
+FROM metric_samples
+WHERE ts >= $1
+ORDER BY node, component, ts DESC
 `
 
 type LatestMetricSamplesRow struct {
+	Node          string    `json:"node"`
 	Component     string    `json:"component"`
 	Ts            time.Time `json:"ts"`
 	CpuPct        float32   `json:"cpu_pct"`
@@ -55,6 +60,7 @@ func (q *Queries) LatestMetricSamples(ctx context.Context, ts time.Time) ([]Late
 	for rows.Next() {
 		var i LatestMetricSamplesRow
 		if err := rows.Scan(
+			&i.Node,
 			&i.Component,
 			&i.Ts,
 			&i.CpuPct,
@@ -71,12 +77,44 @@ func (q *Queries) LatestMetricSamples(ctx context.Context, ts time.Time) ([]Late
 	return items, nil
 }
 
+const listNodeCapacity = `-- name: ListNodeCapacity :many
+SELECT node, ncpu, mem_total_bytes, sampled_at FROM node_capacity
+`
+
+func (q *Queries) ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error) {
+	rows, err := q.db.Query(ctx, listNodeCapacity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeCapacity
+	for rows.Next() {
+		var i NodeCapacity
+		if err := rows.Scan(
+			&i.Node,
+			&i.Ncpu,
+			&i.MemTotalBytes,
+			&i.SampledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const metricSamplesSince = `-- name: MetricSamplesSince :many
-SELECT component, ts, cpu_pct, mem_bytes, mem_limit_bytes
-FROM metric_samples WHERE ts >= $1 ORDER BY component, ts
+SELECT node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
+FROM metric_samples
+WHERE ts >= $1
+ORDER BY node, component, ts
 `
 
 type MetricSamplesSinceRow struct {
+	Node          string    `json:"node"`
 	Component     string    `json:"component"`
 	Ts            time.Time `json:"ts"`
 	CpuPct        float32   `json:"cpu_pct"`
@@ -94,6 +132,7 @@ func (q *Queries) MetricSamplesSince(ctx context.Context, ts time.Time) ([]Metri
 	for rows.Next() {
 		var i MetricSamplesSinceRow
 		if err := rows.Scan(
+			&i.Node,
 			&i.Component,
 			&i.Ts,
 			&i.CpuPct,
@@ -116,5 +155,32 @@ DELETE FROM metric_samples WHERE ts < $1
 
 func (q *Queries) PruneMetricSamples(ctx context.Context, ts time.Time) error {
 	_, err := q.db.Exec(ctx, pruneMetricSamples, ts)
+	return err
+}
+
+const pruneNodeCapacity = `-- name: PruneNodeCapacity :exec
+DELETE FROM node_capacity WHERE sampled_at < $1
+`
+
+func (q *Queries) PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error {
+	_, err := q.db.Exec(ctx, pruneNodeCapacity, sampledAt)
+	return err
+}
+
+const upsertNodeCapacity = `-- name: UpsertNodeCapacity :exec
+INSERT INTO node_capacity (node, ncpu, mem_total_bytes, sampled_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (node) DO UPDATE
+  SET ncpu = EXCLUDED.ncpu, mem_total_bytes = EXCLUDED.mem_total_bytes, sampled_at = now()
+`
+
+type UpsertNodeCapacityParams struct {
+	Node          string `json:"node"`
+	Ncpu          int32  `json:"ncpu"`
+	MemTotalBytes int64  `json:"mem_total_bytes"`
+}
+
+func (q *Queries) UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error {
+	_, err := q.db.Exec(ctx, upsertNodeCapacity, arg.Node, arg.Ncpu, arg.MemTotalBytes)
 	return err
 }
