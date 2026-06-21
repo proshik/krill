@@ -2,7 +2,7 @@
 
 A minimal self-hosted PaaS written in Go: deploy containerized apps and managed databases onto a single-node Docker Swarm, routed by Traefik, managed from a dark web control plane.
 
-> **Status:** Early, active development — a learning project. Phases 0–5 are complete (apps, managed databases, S3 backups, domains/TLS), plus a deploy-parity track (private registries, advanced container settings, app lifecycle controls, per-domain route exposure). Not yet production-hardened.
+> **Status:** Active development — a learning project, running in production for the author's bot. Phases 0–7 are complete (image apps, Dockerfile builds, projects/RBAC, managed Postgres/Redis, S3 backups, domains/TLS, and realtime ops: Telegram notifications, web terminal, monitoring, structured log viewer) plus **Phase 6 — GitHub auto-deploy**. The **deploy-parity** track (gaps vs Dokploy for deploying a real private app) is fully closed, and **multi-server** (Swarm worker nodes joined over SSH, with placement) plus **cluster-wide monitoring** work too. Still open: Phase 8 (flexible state placement) and email/Slack channels. Not yet broadly production-hardened.
 
 ## Why Krill
 
@@ -47,6 +47,32 @@ Features below are grouped by capability and tied to the phase that delivered th
 - **Per-domain route exposure (internal by default)** — new apps are not publicly routed; each domain has an **Exposed** toggle and an optional list of public path prefixes. Unexposed services stay on the overlay network only (no Traefik route); exposed domains can be narrowed to specific paths.
 - **Private registries** — org-scoped registry credentials, selectable per app, for pulling private images (see [Private images](#private-images-registries)).
 - **Environment editor** — per-app env vars edited in either a Key-Value grid or a Raw `KEY=value` text mode.
+- **App volumes + backup/restore** — named-volume mounts per app (Volumes tab); volumes back up to S3 (a pinned busybox sidecar tars the volume → gzip → S3, with count retention) and restore (quiescing the app first).
+- **DB→app linking** — link an app to a managed DB in the same environment; Krill injects the live internal connection string into a chosen env var on every deploy (the password is pulled live, never stored in plain env text).
+- **Raw TCP/UDP published ports** — publish host ports straight into a container (host publish mode) for non-HTTP services (Gitea SSH, mail, game/DNS/VPN), independent of Traefik and the overlay HTTP port.
+- **Build secrets/args + private Git** — org-scoped Git credentials (PAT) for private-repo clones, plus non-secret `--build-arg`s and BuildKit `--secret`s for Dockerfile builds (secrets encrypted at rest, never in the build context).
+- **Per-domain route protection** — basic-auth (htpasswd) and/or IP-allowlist (CIDR) middleware on exposed domains — the "who" axis, orthogonal to the path-exposure "what" axis.
+- **Container command override** — an optional CMD args override on the Advanced tab (e.g. `start-dev` for Keycloak), keeping the image ENTRYPOINT.
+
+### GitHub auto-deploy (Phase 6)
+- Per-app, opt-in auto-deploy via **webhook + PAT** (no OAuth / GitHub App needed).
+- **Dockerfile/git apps:** a GitHub push webhook (HMAC-verified `X-Hub-Signature-256`, branch-matched) — push to the configured branch and Krill builds + deploys on the host.
+- **Image apps:** a generic deploy-hook your CI calls *after* `docker push` (Bearer token, optional `?tag=`) — Krill resolves the image digest, re-pulls, and redeploys (so a same-tag push is actually picked up).
+- Enable/disable, masked secret reveal/copy, and regenerate on the app's General tab; webhook-triggered deploys show `trigger=webhook` in the history.
+
+### Realtime & operations (Phase 7)
+- **Telegram notifications** — org-scoped alerts on deploy/backup failures and app down/recovered health transitions (no success spam); the bot token is encrypted and masked.
+- **Web terminal** — admin-only interactive `docker exec` into a running app container (xterm + WebSocket), with a configurable idle timeout.
+- **Structured log viewer** — app/DB runtime logs as a time | level | message table with text search + a level filter; deploy/build logs and the interactive terminal use xterm.
+- **Monitoring** — CPU/memory over time: uPlot charts + a per-component table grouped by control/infra/app/db, sampled into Postgres on an interval with retention.
+
+### Multi-server cluster + cluster-wide monitoring
+- Join Swarm **worker nodes over SSH** from the admin **Nodes** page — one control plane + N workers (not N installs); drain/remove nodes (the control plane is guarded); per-app placement (any / pinned / global).
+- Managed DBs can be pinned to a chosen node (node-local volume; apps reach them over the overlay DNS).
+- **Cluster-wide monitoring** — the metrics sampler tunnels each worker's Docker socket over the stored SSH access and collects per-node stats (no agent, no exposed port); the Monitoring page shows every node, with a node selector that filters both the charts and the table.
+
+### Secrets at rest
+- Set `KRILL_SECRET_KEY` to encrypt stored secrets at rest (AES-256-GCM): DB passwords, registry/Git/destination credentials, webhook + notification tokens. Empty key = legacy plaintext (with a startup warning); previously-plaintext values stay readable after a key is added.
 
 ### Traefik routing (Phases 0+)
 - A pinned Traefik service is bootstrapped into the Swarm and watches the Swarm API.
@@ -55,7 +81,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 ### Dark "Acid Industrial" UI (Phase 2.5)
 - Tailwind CSS v4 design system built with the standalone CLI (no Node).
 - Near-black / lime palette, Space Grotesk + JetBrains Mono, dark full-width layout.
-- Reusable templ components plus an i18n foundation (`i18n.T(ctx, "key")` with an English catalog).
+- Reusable templ components plus a bilingual i18n layer (`i18n.T(ctx, "key")` with English + Russian catalogs; language switcher in Settings).
 - Post-redirect-get flash toasts (success/error) on every form action, copy buttons, named destructive confirmations, button loading states, `hx-boost` navigation, and a blurred-backdrop org-switcher modal. Destinations and Registries live under a single sidebar **Settings** group.
 
 ## Install on a server (VPS)
@@ -132,7 +158,7 @@ The control plane creates and updates Swarm services with label metadata. Traefi
                           host port 80 / domain routing
 ```
 
-State lives in PostgreSQL; there is no clustering. Swarm is always single-node, and all control-plane operations are serialized.
+State lives in PostgreSQL, and all control-plane operations are serialized through a single deploy worker. The control plane itself is a single node (no HA); the Swarm starts single-node but can be **scaled out** — additional worker nodes are joined over SSH from the **Nodes** page, and apps spread across them via placement (any / pinned / global). Stateful services (managed DBs, app volumes) stay node-local.
 
 ## Tech stack
 
@@ -168,6 +194,13 @@ cmd/krill/main.go            Startup wiring: config, migrations, services, Traef
 | `internal/traefik` | Traefik bootstrap (pinned `TraefikVersion = "v3.6.1"`) and dynamic routing-label generation. |
 | `internal/web` | templ templates, HTMX/Tailwind assets, embedded static files, and the i18n catalog. |
 | `internal/database` | Embedded SQL migrations, sqlc-generated query wrappers (`gen/`), and pgx pooling. |
+| `internal/secret` | AES-256-GCM encryption-at-rest for stored secrets (opt-in via `KRILL_SECRET_KEY`). |
+| `internal/backup` | S3/MinIO destinations + scheduled `pg_dump`/restore (cron, retention). |
+| `internal/volume` | App-volume archive/restore to S3 (pinned busybox sidecar). |
+| `internal/metrics` | Monitoring sampler (local + SSH-tunnelled per-node stats), `metric_samples`/`node_capacity` store, chart bucketing. |
+| `internal/cluster` | SSH join of Swarm worker nodes (`DialVerified`, host-key handling). |
+| `internal/notify` | Telegram notification channels + background health watcher. |
+| `internal/webhook` | Pure HMAC verify / push-payload parse / secret helpers for GitHub auto-deploy. |
 | `internal/testutil` | Ephemeral Postgres test databases via testcontainers. |
 
 ## Getting started
@@ -205,6 +238,15 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_LOG_FORMAT` | `text` | No | Log handler format: `text` or `json`. |
 | `KRILL_ACME_EMAIL` | `` | No | Let's Encrypt contact email (falls back to `KRILL_ADMIN_EMAIL`). |
 | `KRILL_ACME_STAGING` | `false` | No | Use the Let's Encrypt staging CA (for testing without rate limits). |
+| `KRILL_SECRET_KEY` | `` | No | Enables AES-256-GCM encryption-at-rest of stored secrets (empty = plaintext + a startup warning). |
+| `KRILL_PUBLIC_URL` | derived | No | Externally reachable base URL shown for webhook URLs (defaults to `scheme://KRILL_HOST`, scheme from `KRILL_COOKIE_SECURE`). |
+| `KRILL_ADVERTISE_ADDR` | — | No | Swarm advertise address used when joining worker nodes (multi-server). |
+| `KRILL_CONVERGE_TIMEOUT` | `180s` | No | Deploy convergence cap (auto-extended by a healthcheck's start period). |
+| `KRILL_HEALTH_POLL_INTERVAL` | `30s` | No | How often the notification watcher polls service health. |
+| `KRILL_TERMINAL_IDLE_TIMEOUT` | `15m` | No | Closes an idle web-terminal session (`0` disables). |
+| `KRILL_METRICS_INTERVAL` | `30s` | No | How often the monitoring sampler records container stats. |
+| `KRILL_METRICS_RETENTION` | `48h` | No | How long metric history is kept before pruning. |
+| `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 
@@ -349,7 +391,7 @@ Notes: credentials are stored plaintext (like other secrets); a single registry 
 
 ## Data model
 
-State is stored in PostgreSQL across ten tables, created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`).
+State is stored in PostgreSQL (28 tables as of migration `000027`), created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`). The core tenancy tables are below; later features added `domains`, `registries`, `git_credentials`, `backups`, `destinations`, `notification_channels`, `metric_samples` + `node_capacity` (monitoring), `app_volumes` + `volume_backups`, `app_db_links`, `app_ports`, and `cluster_nodes` — see [CLAUDE.md §6](CLAUDE.md) for the full list.
 
 | Table | Notes |
 |-------|-------|
@@ -359,7 +401,7 @@ State is stored in PostgreSQL across ten tables, created by embedded migrations 
 | `members` | `role` ∈ {owner, admin, member}; unique `(organization_id, user_id)`. |
 | `projects` | Unique `(organization_id, slug)`. |
 | `environments` | Unique `(project_id, slug)`. |
-| `applications` | Image/tag/domain/port/status, `source_type` ∈ {image, dockerfile}, env as JSONB. |
+| `applications` | Image/tag/domain/port/status, `source_type` ∈ {image, dockerfile}, order-preserving `env_text`, advanced container limits, optional `auto_deploy` + `webhook_secret` (Phase 6). |
 | `deployments` | Immutable history; `status` ∈ {running, done, error}, `trigger` ∈ {manual, webhook, schedule}, with logs. |
 | `postgres_dbs` | Managed Postgres service: `app_name` unique, credentials, optional `external_port`, default image `postgres:17`. |
 | `redis_dbs` | Managed Redis service: `app_name` unique, password, optional `external_port`, default image `redis:7`. |
@@ -368,14 +410,13 @@ State is stored in PostgreSQL across ten tables, created by embedded migrations 
 
 ## Roadmap & status
 
-Phases 0–3 (plus the 2.5 UI foundation) are complete and E2E-verified. See [ROADMAP.md](ROADMAP.md) for the full plan.
+Phases 0–7 are complete and E2E-verified, plus **Phase 6 (GitHub auto-deploy)**, the full **deploy-parity** track, **multi-server** clustering, and **cluster-wide monitoring**. The UI is bilingual (English + Russian). See [ROADMAP.md](ROADMAP.md) for the detailed, living tracker.
 
-What's next:
+What's left:
 
-- **Phase 4 — DB backups to S3:** `destinations` (S3/MinIO) and `backups` (cron + retention); scheduled `pg_dump` / redis-dump uploaded via AWS SDK v2; manual trigger + restore.
-- **Phase 5 — Domains, TLS, routing:** multiple domains per app, path routing, HTTP→HTTPS, Let's Encrypt ACME via Traefik (plus custom certs). This is the critical path for the bot, which needs **HTTPS for its webhook URL**.
-
-Later phases cover GitHub auto-deploy (Phase 6), container logs / web terminal / metrics, and flexible state placement. A second i18n locale is post-MVP (the infrastructure already exists from Phase 2.5).
+- **Phase 8 — flexible state placement:** choose local Postgres/Redis or remote managed instances (via DSN) at install time, instead of always running state containers on the host.
+- **Email / Slack notifications:** extend the notification channels (Telegram alerts on deploy/backup failures + app-health transitions already ship).
+- Assorted deferred items: per-node load alerts and disk/network metrics, SSH deploy-keys, volume-backup encryption, and GitHub OAuth/App (the current auto-deploy uses webhook + PAT).
 
 ## Documentation
 
