@@ -136,7 +136,9 @@ func (s *Server) Router() http.Handler {
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(web.Static())))
 
 	r.Get("/login", s.loginPage)
-	r.Post("/login", s.loginSubmit)
+	// Rate-limit login attempts per source IP to bound online password guessing.
+	loginLimiter := newLoginRateLimiter(10, time.Minute)
+	r.With(loginLimiter.middleware).Post("/login", s.loginSubmit)
 	// POST so csrfGuard + SameSite cover it: a GET /logout is vulnerable to a
 	// cross-site top-level navigation terminating the victim's session.
 	r.Post("/logout", s.logout)
@@ -149,6 +151,7 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
+		r.Use(auth.WithInstanceAdmin(s.auth))
 		r.Use(s.flashMiddleware)
 
 		r.Get("/", s.home)
@@ -165,7 +168,21 @@ func (s *Server) Router() http.Handler {
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
 			r.Get("/git-credentials", s.listGitCredentials)
-			r.Get("/nodes", s.listNodes)
+
+			// Global infrastructure: cluster nodes and the host-wide monitoring
+			// view span every tenant, so they are gated on the instance-operator
+			// flag, NOT org-scoped RoleAdmin (which any user can self-grant by
+			// creating an org via POST /orgs).
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireInstanceAdmin())
+				r.Get("/nodes", s.listNodes)
+				r.Post("/nodes", s.addNode)
+				r.Post("/nodes/{nodeID}/availability", s.setNodeAvailability)
+				r.Post("/nodes/{nodeID}/remove", s.removeNode)
+				r.Post("/nodes/{nodeID}/label", s.setNodeLabel)
+				r.Get("/monitoring", s.monitoring)
+				r.Get("/monitoring/data", s.monitoringData)
+			})
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(auth.RoleAdmin))
@@ -178,15 +195,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
 				r.Post("/git-credentials", s.createGitCredential)
 				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
-				r.Post("/nodes", s.addNode)
-				r.Post("/nodes/{nodeID}/availability", s.setNodeAvailability)
-				r.Post("/nodes/{nodeID}/remove", s.removeNode)
-				r.Post("/nodes/{nodeID}/label", s.setNodeLabel)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)
-				r.Get("/monitoring", s.monitoring)
-				r.Get("/monitoring/data", s.monitoringData)
 				r.Post("/projects", s.createProject)
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)

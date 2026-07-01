@@ -38,23 +38,6 @@ var buildKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // '=', or ',') so it cannot inject into a docker flag.
 func validBuildKey(k string) bool { return buildKeyRe.MatchString(k) }
 
-// cloneURLWithAuth embeds HTTPS credentials into the clone URL. Credentials are
-// only allowed over https; any other scheme with auth is rejected.
-func cloneURLWithAuth(raw string, auth *GitAuth) (string, error) {
-	if auth == nil {
-		return raw, nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", err
-	}
-	if u.Scheme != "https" {
-		return "", errors.New("private clone requires an https git_url")
-	}
-	u.User = url.UserPassword(auth.Username, auth.Token)
-	return u.String(), nil
-}
-
 // sortedKeys returns the map keys in deterministic order (for stable argv).
 func sortedKeys(m map[string]string) []string {
 	ks := make([]string, 0, len(m))

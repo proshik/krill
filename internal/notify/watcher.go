@@ -92,6 +92,24 @@ func (w *Watcher) tick(ctx context.Context) {
 	for _, a := range apps {
 		w.evaluate(ctx, a.AppID, states[docker.ServiceName(a.AppID)])
 	}
+	w.pruneState(apps)
+}
+
+// pruneState drops per-app health entries for apps no longer watched (deleted),
+// so the in-memory state map cannot grow without bound under app churn.
+func (w *Watcher) pruneState(apps []WatchedApp) {
+	if len(w.state) <= len(apps) {
+		return
+	}
+	live := make(map[int64]struct{}, len(apps))
+	for _, a := range apps {
+		live[a.AppID] = struct{}{}
+	}
+	for id := range w.state {
+		if _, ok := live[id]; !ok {
+			delete(w.state, id)
+		}
+	}
 }
 
 func (w *Watcher) evaluate(ctx context.Context, appID int64, st docker.ServiceState) {

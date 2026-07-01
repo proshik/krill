@@ -94,6 +94,27 @@ func TestWatcherGateSkipsWhenNoHealthChannels(t *testing.T) {
 	}
 }
 
+func TestWatcherPrunesDeletedApps(t *testing.T) {
+	n5, n6 := docker.ServiceName(5), docker.ServiceName(6)
+	eng := &scriptEngine{states: map[string]docker.ServiceState{n5: healthyState(), n6: healthyState()}}
+	st := &fakeStore{health: 1, watched: []WatchedApp{{AppID: 5, Name: "a"}, {AppID: 6, Name: "b"}}}
+	w := newTestWatcher(eng, st, &fakeEmitter{})
+	ctx := context.Background()
+	w.tick(ctx)
+	if len(w.state) != 2 {
+		t.Fatalf("want 2 state entries, got %d", len(w.state))
+	}
+	// App 6 deleted → drops out of the watched set; its state entry must be pruned.
+	st.watched = []WatchedApp{{AppID: 5, Name: "a"}}
+	w.tick(ctx)
+	if len(w.state) != 1 {
+		t.Fatalf("want 1 state entry after prune, got %d", len(w.state))
+	}
+	if _, ok := w.state[6]; ok {
+		t.Fatal("deleted app 6 should be pruned from state")
+	}
+}
+
 func TestWatcherInactiveNotAlerted(t *testing.T) {
 	name := docker.ServiceName(5)
 	eng := &scriptEngine{states: map[string]docker.ServiceState{name: healthyState()}}

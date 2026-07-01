@@ -13,6 +13,8 @@ import (
 )
 
 // nodesOrg makes an org owned by email and returns its base URL + owner cookie + id.
+// The owner is promoted to instance admin, since cluster-node management is now
+// gated on that flag (not org-scoped RoleAdmin).
 func nodesOrg(t *testing.T, q *db.Queries, orgSvc *org.Service, email, orgName string) (base string, cookie *http.Cookie, orgID int64) {
 	t.Helper()
 	ownerID := mkUser(t, q, email)
@@ -20,7 +22,41 @@ func nodesOrg(t *testing.T, q *db.Queries, orgSvc *org.Service, email, orgName s
 	if err != nil {
 		t.Fatalf("create org: %v", err)
 	}
+	if err := q.SetUserAdmin(context.Background(), db.SetUserAdminParams{ID: ownerID, IsAdmin: true}); err != nil {
+		t.Fatalf("set instance admin: %v", err)
+	}
 	return "/orgs/" + i64(o.ID), loginAs(t, q, email), o.ID
+}
+
+// TestNodesRequireInstanceAdmin verifies an ordinary org owner (not an instance
+// operator) cannot reach the global cluster-node routes: they 404, closing the
+// self-created-org privilege-escalation path.
+func TestNodesRequireInstanceAdmin(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ownerID := mkUser(t, q, "node-nonadmin@k.local")
+	o, err := orgSvc.CreateOrg(context.Background(), ownerID, "OrgNIA")
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	cookie := loginAs(t, q, "node-nonadmin@k.local")
+	base := "/orgs/" + i64(o.ID)
+	req, _ := http.NewRequest(http.MethodGet, base+"/nodes", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /nodes as non-instance-admin: want 404, got %d", rec.Code)
+	}
+	// A mutation is likewise blocked (and nothing is persisted).
+	rec = postForm(t, h, base+"/nodes", cookie, url.Values{
+		"name": {"w1"}, "ssh_host": {"10.0.0.2"}, "ssh_user": {"root"}, "ssh_key": {"KEY"},
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /nodes as non-instance-admin: want 404, got %d", rec.Code)
+	}
+	if rows, _ := q.ListClusterNodes(context.Background()); len(rows) != 0 {
+		t.Fatalf("expected no cluster_nodes rows, got %d", len(rows))
+	}
 }
 
 func TestListNodesRenders(t *testing.T) {
@@ -120,10 +156,12 @@ func TestNodesAdminGate(t *testing.T) {
 		t.Fatalf("create member: %v", err)
 	}
 	mc := loginAs(t, q, "nodes-gate-member@k.local")
+	// Node routes are instance-operator only: a non-operator (here a plain org
+	// member) gets 404 (not 403) so the capability is not even disclosed.
 	for _, target := range []string{base + "/nodes", base + "/nodes/x/availability", base + "/nodes/x/remove", base + "/nodes/x/label"} {
 		rec := postForm(t, h, target, mc, url.Values{"name": {"w"}, "ssh_host": {"h"}, "ssh_user": {"u"}, "ssh_key": {"k"}, "availability": {"drain"}})
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("member POST %s want 403, got %d", target, rec.Code)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("member POST %s want 404, got %d", target, rec.Code)
 		}
 	}
 }

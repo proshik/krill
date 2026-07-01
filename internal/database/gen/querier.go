@@ -98,6 +98,7 @@ type Querier interface {
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
+	GetUserIsAdmin(ctx context.Context, id int64) (bool, error)
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
@@ -155,6 +156,7 @@ type Querier interface {
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	SetPostgresNode(ctx context.Context, arg SetPostgresNodeParams) error
 	SetRedisNode(ctx context.Context, arg SetRedisNodeParams) error
+	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error

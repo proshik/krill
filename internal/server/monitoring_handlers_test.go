@@ -34,9 +34,27 @@ func TestMonitoringMemberForbidden(t *testing.T) {
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("%s: member want 403, got %d", p, rec.Code)
+		// Host-wide monitoring is instance-admin only; a non-operator gets 404.
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: member want 404, got %d", p, rec.Code)
 		}
+	}
+}
+
+// TestMonitoringOrgAdminForbidden verifies an org owner who is NOT an instance
+// operator cannot read the host-wide monitoring view (cross-tenant leak fix).
+func TestMonitoringOrgAdminForbidden(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	owner := mkUser(t, q, "mon-orgadmin@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, owner, "OrgMA")
+	cookie := loginAs(t, q, "mon-orgadmin@k.local")
+	req := httptest.NewRequest(http.MethodGet, "/orgs/"+i64(o.ID)+"/monitoring/data?range=24h", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("org admin (non-operator) want 404, got %d", rec.Code)
 	}
 }
 
@@ -47,6 +65,10 @@ func monitoringFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (string
 	ctx := context.Background()
 	ownerID := mkUser(t, q, "mon-admin@k.local")
 	o, _ := orgSvc.CreateOrg(ctx, ownerID, "MonOrg")
+	// Host-wide monitoring is instance-admin only.
+	if err := q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: ownerID, IsAdmin: true}); err != nil {
+		t.Fatalf("set instance admin: %v", err)
+	}
 	return "/orgs/" + i64(o.ID), loginAs(t, q, "mon-admin@k.local")
 }
 

@@ -51,7 +51,12 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 		x := int32(n)
 		pgN, _ := s.q.CountPostgresByExternalPort(r.Context(), &x)
 		rdN, _ := s.q.CountRedisByExternalPort(r.Context(), &x)
-		if pgN+rdN > 0 {
+		// Also check raw app published ports: host ports are globally unique
+		// across apps AND managed-DB external ports (addAppPort enforces the same
+		// invariant in the reverse direction). Without this a DB and an app could
+		// claim the same host TCP port and the second to deploy fails to bind.
+		apN, _ := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{HostPort: x, Protocol: "tcp"})
+		if pgN+rdN+apN > 0 {
 			logFrom(r).Warn("createDatabase: external port already in use", "environment_id", e.ID, "engine", engine, "name", name)
 			s.flashErrT(w, r, "flash.err.external_port_in_use")
 			return

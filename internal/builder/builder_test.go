@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,22 +45,50 @@ func TestBuildArgsNoCache(t *testing.T) {
 	}
 }
 
-func TestCloneURLWithAuth(t *testing.T) {
-	got, err := cloneURLWithAuth("https://github.com/me/private.git", &GitAuth{Username: "x-access-token", Token: "ghp_abc"})
+func TestGitAuthSetup(t *testing.T) {
+	// Private https clone: creds go into env + an askpass helper, never the URL.
+	env, cleanup, err := gitAuthSetup("https://github.com/me/private.git", &GitAuth{Username: "x-access-token", Token: "ghp_abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "https://x-access-token:ghp_abc@github.com/me/private.git" {
-		t.Fatalf("got %q", got)
+	defer cleanup()
+
+	var askpass string
+	joined := strings.Join(env, "\n")
+	for _, e := range env {
+		if strings.HasPrefix(e, "GIT_ASKPASS=") {
+			askpass = strings.TrimPrefix(e, "GIT_ASKPASS=")
+		}
 	}
-	if san := sanitizeGitURL(got); san != "https://github.com/me/private.git" {
-		t.Fatalf("token leaked into sanitized URL: %q", san)
+	if askpass == "" {
+		t.Fatalf("no GIT_ASKPASS in env: %v", env)
 	}
-	if _, err := cloneURLWithAuth("http://h/r.git", &GitAuth{Username: "u", Token: "t"}); err == nil {
+	if !strings.Contains(joined, "KRILL_GIT_USERNAME=x-access-token") || !strings.Contains(joined, "KRILL_GIT_PASSWORD=ghp_abc") {
+		t.Fatalf("credentials missing from env: %v", env)
+	}
+	// The clone argv must NOT carry the token (it uses the plain URL).
+	argv := cloneArgs("https://github.com/me/private.git", "main", "/tmp/x")
+	if strings.Contains(strings.Join(argv, " "), "ghp_abc") {
+		t.Fatalf("token leaked into clone argv: %v", argv)
+	}
+	// The helper file itself must not contain the secret (it reads it from env).
+	body, rerr := os.ReadFile(askpass)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if strings.Contains(string(body), "ghp_abc") {
+		t.Fatalf("token leaked into askpass helper: %s", body)
+	}
+
+	// Non-https auth clone is rejected.
+	if _, _, err := gitAuthSetup("http://h/r.git", &GitAuth{Username: "u", Token: "t"}); err == nil {
 		t.Fatal("expected error for non-https auth clone")
 	}
-	if got, _ := cloneURLWithAuth("https://github.com/x/y.git", nil); got != "https://github.com/x/y.git" {
-		t.Fatalf("nil auth changed url: %q", got)
+	// nil auth: no env, no-op cleanup.
+	if env, cl, err := gitAuthSetup("https://github.com/x/y.git", nil); err != nil || env != nil {
+		t.Fatalf("nil auth should return no env: env=%v err=%v", env, err)
+	} else {
+		cl()
 	}
 }
 

@@ -286,13 +286,21 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	cctx, ccancel := context.WithTimeout(ctx, timeout)
 	defer ccancel()
 	converged, crashed, rolledBack := false, false, false
+	firstPoll := true
 	for {
 		st, serr := d.engine.ServiceProgress(cctx, docker.ServiceName(app.ID), baseline)
 		// Swarm rolled the update back (FailureAction=Rollback): the new version
 		// failed and the old one is being restored — that is a failed deploy, and
 		// it must be checked first (the restored old-image task is "new" relative
 		// to the baseline and would otherwise read as converged).
-		if serr == nil && st.Found && strings.HasPrefix(st.UpdateState, "rollback") {
+		//
+		// Skip this on the very first poll: Swarm persists the previous deploy's
+		// UpdateStatus, and ServiceUpdate returning does not guarantee the manager
+		// has transitioned it for THIS update yet — an immediate read could see a
+		// stale "rollback_*" from a prior failed deploy. A genuine rollback of the
+		// current update only appears after its tasks fail (seconds later), well
+		// past the first poll; the post-timeout check below is the backstop.
+		if serr == nil && st.Found && !firstPoll && strings.HasPrefix(st.UpdateState, "rollback") {
 			rolledBack = true
 			break
 		}
@@ -306,6 +314,7 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 			crashed = true
 			break
 		}
+		firstPoll = false
 		select {
 		case <-cctx.Done():
 		case <-time.After(convergePollInterval):

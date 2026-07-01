@@ -20,10 +20,19 @@ type Service struct {
 
 func NewService(q *db.Queries) *Service { return &Service{q: q} }
 
+// dummyHash is a valid bcrypt hash compared against on the unknown-email login
+// path so that path costs the same as a real bcrypt verification. Without it,
+// an unknown email returns in microseconds while a known one spends tens of ms
+// in bcrypt — a measurable oracle for enumerating registered accounts.
+var dummyHash, _ = HashPassword("krill-constant-time-login-placeholder")
+
 // Authenticate verifies email+password and on success creates a session, returning a token.
 func (s *Service) Authenticate(ctx context.Context, email, password string) (string, error) {
 	u, err := s.q.GetUserByEmail(ctx, email)
 	if err != nil {
+		// Spend the same bcrypt time as a real check so known and unknown emails
+		// are indistinguishable by response latency.
+		CheckPassword(dummyHash, password)
 		return "", ErrInvalidCredentials
 	}
 	if !CheckPassword(u.PasswordHash, password) {
@@ -42,6 +51,11 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (str
 		return "", err
 	}
 	return token, nil
+}
+
+// IsInstanceAdmin reports whether the user is an instance-level operator.
+func (s *Service) IsInstanceAdmin(ctx context.Context, userID int64) (bool, error) {
+	return s.q.GetUserIsAdmin(ctx, userID)
 }
 
 // Validate returns userID if the token is valid and has not expired.
@@ -82,6 +96,12 @@ func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 		u, err = s.q.CreateUser(ctx, db.CreateUserParams{Email: email, PasswordHash: hash})
 	}
 	if err != nil {
+		return err
+	}
+
+	// Promote the configured admin to instance operator (idempotent). Global
+	// infrastructure is gated on this flag, not on org-scoped RoleAdmin.
+	if err := s.q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: u.ID, IsAdmin: true}); err != nil {
 		return err
 	}
 

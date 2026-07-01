@@ -18,6 +18,7 @@ const (
 	userIDKey ctxKey = iota
 	orgIDKey
 	roleKey
+	instanceAdminKey
 )
 
 // Validator validates a session token.
@@ -73,6 +74,48 @@ func RequireOrgMember(m MemberResolver) func(http.Handler) http.Handler {
 	}
 }
 
+// InstanceAdminResolver reports whether a user is an instance-level operator.
+type InstanceAdminResolver interface {
+	IsInstanceAdmin(ctx context.Context, userID int64) (bool, error)
+}
+
+// WithInstanceAdmin loads the caller's instance-admin flag once (via the
+// resolver) and stashes it in the context so both RequireInstanceAdmin and the
+// layout can read it without re-querying. Runs inside the authenticated group,
+// after RequireAuth. A resolver error is treated as not-admin (fail closed).
+func WithInstanceAdmin(res InstanceAdminResolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			isAdmin := false
+			if uid := UserID(r.Context()); uid != 0 {
+				if ok, err := res.IsInstanceAdmin(r.Context(), uid); err == nil {
+					isAdmin = ok
+				}
+			}
+			ctx := context.WithValue(r.Context(), instanceAdminKey, isAdmin)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireInstanceAdmin gates global infrastructure (cluster nodes, host-wide
+// monitoring) to instance operators. It reads the flag stashed by
+// WithInstanceAdmin; a non-operator gets 404 so the route is indistinguishable
+// from a non-existent one (no capability disclosure).
+func RequireInstanceAdmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !IsInstanceAdmin(r.Context()) {
+				slog.Warn("instance-admin denied", "user_id", UserID(r.Context()),
+					"org_id", OrgID(r.Context()), "method", r.Method, "path", r.URL.Path)
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireRole requires a role no lower than min, otherwise 403.
 func RequireRole(min Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -110,4 +153,11 @@ func RoleOf(ctx context.Context) Role {
 		return v
 	}
 	return RoleMember
+}
+
+// IsInstanceAdmin reports whether the caller is an instance-level operator
+// (flag stashed by WithInstanceAdmin; false when absent).
+func IsInstanceAdmin(ctx context.Context) bool {
+	v, _ := ctx.Value(instanceAdminKey).(bool)
+	return v
 }

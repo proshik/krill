@@ -120,10 +120,10 @@ func TestGithubWebhook(t *testing.T) {
 		t.Fatalf("want 1 webhook deployment, got %+v", deps)
 	}
 
-	// bad signature → 401, no new deploy
+	// bad signature → 404 (indistinguishable from unknown/disabled app), no new deploy
 	rec = postWebhook(t, h, path, "push", body, map[string]string{"X-Hub-Signature-256": "sha256=bad"})
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bad sig: want 401, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("bad sig: want 404, got %d", rec.Code)
 	}
 
 	// non-matching branch → 200, no new deploy
@@ -182,10 +182,10 @@ func TestDeployHook(t *testing.T) {
 		t.Fatalf("want 1 webhook deployment, got %+v", deps)
 	}
 
-	// bad token → 401
+	// bad token → 404 (indistinguishable from unknown/disabled app)
 	rec = postWebhook(t, h, path+"?token=nope", "", nil, nil)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bad token: want 401, got %d", rec.Code)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("bad token: want 404, got %d", rec.Code)
 	}
 
 	// ?tag=v2 updates the app tag

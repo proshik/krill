@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/flash"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -35,7 +36,7 @@ templ Layout(title string, org db.Organization, role string) {
 					if role == "owner" || role == "admin" {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
 					}
-					if role == "owner" || role == "admin" {
+					if auth.IsInstanceAdmin(ctx) {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "monitoring")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/monitoring") }>{ i18n.T(ctx, "nav.monitoring") }</a>
 					}
 				</nav>
@@ -80,7 +81,9 @@ templ settingsNav(orgID int64) {
 	<div class="k-card flex items-center mb-4 py-2 px-4">
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/registries") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "registries")) }>{ i18n.T(ctx, "reg.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/git-credentials") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "git-credentials")) }>{ i18n.T(ctx, "gitcred.link") }</a>
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
+		if auth.IsInstanceAdmin(ctx) {
+			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
+		}
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/notifications") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "notifications")) }>{ i18n.T(ctx, "notif.link") }</a>
 		<form method="post" hx-boost="false" action="/lang" class="ml-auto flex items-center gap-2">

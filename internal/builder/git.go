@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -20,6 +21,51 @@ func sanitizeGitURL(raw string) string {
 	}
 	u.User = nil
 	return u.String()
+}
+
+// gitAuthSetup, for a private clone, writes a GIT_ASKPASS helper to a temp file
+// and returns the env that feeds credentials to git. The credentials are passed
+// via environment variables (KRILL_GIT_USERNAME/KRILL_GIT_PASSWORD) that the
+// helper echoes on demand — they are NEVER written into the URL, the argv, or
+// the helper file itself, so the token cannot leak into the process list or the
+// member-visible deploy log. cleanup removes the helper file (always safe to call).
+func gitAuthSetup(gitURL string, auth *GitAuth) (env []string, cleanup func(), err error) {
+	cleanup = func() {}
+	if auth == nil {
+		return nil, cleanup, nil
+	}
+	u, perr := url.Parse(gitURL)
+	if perr != nil {
+		return nil, cleanup, perr
+	}
+	if u.Scheme != "https" {
+		return nil, cleanup, errors.New("private clone requires an https git_url")
+	}
+	f, ferr := os.CreateTemp("", "krill-askpass-*.sh")
+	if ferr != nil {
+		return nil, cleanup, ferr
+	}
+	name := f.Name()
+	cleanup = func() { os.Remove(name) }
+	// git calls the askpass helper with the prompt ("Username for ..." /
+	// "Password for ...") as $1; answer from the environment.
+	const script = "#!/bin/sh\ncase \"$1\" in\n*[Uu]sername*) printf '%s' \"$KRILL_GIT_USERNAME\" ;;\n*) printf '%s' \"$KRILL_GIT_PASSWORD\" ;;\nesac\n"
+	if _, werr := f.WriteString(script); werr != nil {
+		f.Close()
+		return nil, cleanup, werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		return nil, cleanup, cerr
+	}
+	if cherr := os.Chmod(name, 0o700); cherr != nil {
+		return nil, cleanup, cherr
+	}
+	env = []string{
+		"GIT_ASKPASS=" + name,
+		"KRILL_GIT_USERNAME=" + auth.Username,
+		"KRILL_GIT_PASSWORD=" + auth.Token,
+	}
+	return env, cleanup, nil
 }
 
 // gitBuilder builds the image: git clone → docker build, via the CLI.
@@ -50,14 +96,20 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 		dockerfile = "Dockerfile"
 	}
 
-	cloneURL, err := cloneURLWithAuth(req.GitURL, req.GitAuth)
+	// Private clones authenticate via a GIT_ASKPASS helper, NOT a token embedded
+	// in the clone URL: that keeps the token out of argv (the process list) and
+	// out of the deploy log (which read-only members can view), where git's own
+	// error output could otherwise surface it.
+	authEnv, authCleanup, err := gitAuthSetup(req.GitURL, req.GitAuth)
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return err
 	}
-	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", sanitizeGitURL(cloneURL), branch)
+	defer authCleanup()
+	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", sanitizeGitURL(req.GitURL), branch)
 	gitEnv := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=http:https")
-	if err := b.run(ctx, out, "git", cloneArgs(cloneURL, branch, dir), gitEnv); err != nil {
+	gitEnv = append(gitEnv, authEnv...)
+	if err := b.run(ctx, out, "git", cloneArgs(req.GitURL, branch, dir), gitEnv); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 

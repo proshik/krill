@@ -10,7 +10,7 @@ import (
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at
+INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at, is_admin
 `
 
 type CreateUserParams struct {
@@ -26,12 +26,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, created_at FROM users WHERE email = $1
+SELECT id, email, password_hash, created_at, is_admin FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -42,12 +43,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Email,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, created_at FROM users WHERE id = $1
+SELECT id, email, password_hash, created_at, is_admin FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -58,12 +60,24 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Email,
 		&i.PasswordHash,
 		&i.CreatedAt,
+		&i.IsAdmin,
 	)
 	return i, err
 }
 
+const getUserIsAdmin = `-- name: GetUserIsAdmin :one
+SELECT is_admin FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUserIsAdmin(ctx context.Context, id int64) (bool, error) {
+	row := q.db.QueryRow(ctx, getUserIsAdmin, id)
+	var is_admin bool
+	err := row.Scan(&is_admin)
+	return is_admin, err
+}
+
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, password_hash, created_at FROM users ORDER BY created_at
+SELECT id, email, password_hash, created_at, is_admin FROM users ORDER BY created_at
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -80,6 +94,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.Email,
 			&i.PasswordHash,
 			&i.CreatedAt,
+			&i.IsAdmin,
 		); err != nil {
 			return nil, err
 		}
@@ -89,4 +104,18 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setUserAdmin = `-- name: SetUserAdmin :exec
+UPDATE users SET is_admin = $2 WHERE id = $1
+`
+
+type SetUserAdminParams struct {
+	ID      int64 `json:"id"`
+	IsAdmin bool  `json:"is_admin"`
+}
+
+func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
+	_, err := q.db.Exec(ctx, setUserAdmin, arg.ID, arg.IsAdmin)
+	return err
 }

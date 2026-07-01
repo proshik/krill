@@ -44,7 +44,10 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if !webhook.VerifyHMAC(secret.Dec(a.WebhookSecret), body, r.Header.Get("X-Hub-Signature-256")) {
 		logFrom(r).Warn("github webhook signature mismatch", "app_id", a.ID)
-		http.Error(w, "bad signature", http.StatusUnauthorized)
+		// 404 (not 401) so a bad signature is indistinguishable from an
+		// unknown/disabled app: the earlier webhookApp checks already 404, and a
+		// 401 here would leak which app IDs have auto-deploy enabled.
+		http.NotFound(w, r)
 		return
 	}
 	switch r.Header.Get("X-GitHub-Event") {
@@ -142,9 +145,15 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 	if tok == "" {
 		tok = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	}
-	if !webhook.ConstantTimeEqual(tok, secret.Dec(a.WebhookSecret)) {
+	want := secret.Dec(a.WebhookSecret)
+	// An empty stored secret must never authenticate: ConstantTimeEqual("","")
+	// is true, so guard it explicitly (defence in depth — enableAutoDeploy always
+	// sets a secret, but a future path must not open a bypass).
+	if want == "" || !webhook.ConstantTimeEqual(tok, want) {
 		logFrom(r).Warn("deploy hook token mismatch", "app_id", a.ID)
-		http.Error(w, "bad token", http.StatusUnauthorized)
+		// 404 (not 401) so a bad token is indistinguishable from an
+		// unknown/disabled app (see githubWebhook).
+		http.NotFound(w, r)
 		return
 	}
 	if tag := r.URL.Query().Get("tag"); tag != "" {
