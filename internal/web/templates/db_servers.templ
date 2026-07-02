@@ -1,0 +1,92 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes []docker.SwarmNode) {
+	@Layout(i18n.T(ctx, "dbi.title"), org, role) {
+		<h2 class="text-2xl mb-3">{ i18n.T(ctx, "dbi.title") }</h2>
+		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "dbi.desc") }</p>
+		if role == "owner" || role == "admin" {
+			<div class="mb-3"><button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-dbi')">+ { i18n.T(ctx, "dbi.new") }</button></div>
+		}
+		if len(insts) == 0 {
+			<div class="k-card"><p class="k-mono">{ i18n.T(ctx, "dbi.empty") }</p></div>
+		} else {
+			<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+				for _, in := range insts {
+					<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers/" + itoa(in.ID)) }>
+						<div class="flex items-center justify-between">
+							<div class="font-semibold text-base">
+								if in.Engine == "postgres" {
+									<span aria-hidden="true">🐘</span>
+								} else {
+									<span aria-hidden="true">🟥</span>
+								}
+								{ in.Name }
+							</div>
+							@StatusBadge(in.Status)
+						</div>
+						<div class="k-mono text-xs">
+							{ in.Image } —
+							if in.NodeHostname != "" {
+								{ i18n.T(ctx, "dbi.node") }: { in.NodeHostname }
+							} else {
+								control-plane
+							}
+						</div>
+					</a>
+				}
+			</div>
+		}
+		if role == "owner" || role == "admin" {
+			<dialog id="new-dbi" class="k-modal">
+				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>
+					<div class="k-modal-head">
+						<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-dbi')">✕</button>
+						<div class="k-modal-title">{ i18n.T(ctx, "dbi.new") }</div>
+					</div>
+					<div class="flex flex-col gap-2">
+						<div>
+							<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.engine") }</label>
+							<select class="k-select" name="engine">
+								<option value="postgres">PostgreSQL</option>
+								<option value="redis">Redis</option>
+							</select>
+						</div>
+						<div>
+							<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.name") }</label>
+							<input class="k-input" name="name" required/>
+						</div>
+						<div>
+							<label class="k-label">{ i18n.T(ctx, "dbi.version") }</label>
+							<input class="k-input" name="version" placeholder="postgres:17 / redis:7"/>
+						</div>
+						<div>
+							<label class="k-label">{ i18n.T(ctx, "dbnode.label") }</label>
+							<select class="k-select" name="node_hostname">
+								<option value="">{ i18n.T(ctx, "dbnode.manager") }</option>
+								for _, n := range nodes {
+									if !n.Leader {
+										<option value={ n.Hostname }>{ n.Hostname }</option>
+									}
+								}
+							</select>
+						</div>
+						<div>
+							<label class="k-label">{ i18n.T(ctx, "dbi.external_port") }</label>
+							<input class="k-input" name="external_port" type="number" min="1" max="65535"/>
+						</div>
+					</div>
+					<div class="k-modal-foot">
+						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-dbi')">{ i18n.T(ctx, "common.cancel") }</button>
+						<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+					</div>
+				</form>
+			</dialog>
+		}
+	}
+}

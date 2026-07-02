@@ -21,8 +21,9 @@ func Path(ctx context.Context) string {
 }
 
 // IsActive reports whether the current path belongs to the given sidebar
-// section ("projects" | "members" | "monitoring" | one of the Settings sections:
-// "destinations" | "registries" | "notifications" | "git-credentials" | "nodes").
+// section ("projects" | "members" | "db-servers" | "monitoring" | one of the
+// Settings sections: "destinations" | "registries" | "notifications" |
+// "git-credentials" | "nodes").
 func IsActive(ctx context.Context, section string) bool {
 	return sectionOf(Path(ctx)) == section
 }
@@ -43,6 +44,8 @@ func sectionOf(path string) string {
 	switch {
 	case strings.Contains(path, "/members"):
 		return "members"
+	case strings.Contains(path, "/db-servers"):
+		return "db-servers"
 	case strings.Contains(path, "/destinations"):
 		return "destinations"
 	case strings.Contains(path, "/git-credentials"):

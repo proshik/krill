@@ -168,6 +168,11 @@ func (s *Server) Router() http.Handler {
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
 			r.Get("/git-credentials", s.listGitCredentials)
+			r.Get("/db-servers", s.listDBInstances)
+			r.Get("/db-servers/{instID}", s.dbInstanceDetail)
+			r.Get("/db-servers/{instID}/status", s.dbInstanceStatus)
+			r.Get("/db-servers/{instID}/logs", s.dbInstanceLogs)
+			r.Get("/db-servers/{instID}/deploy-logs", s.dbInstanceDeployLogs)
 
 			// Global infrastructure: cluster nodes and the host-wide monitoring
 			// view span every tenant, so they are gated on the instance-operator
@@ -195,6 +200,13 @@ func (s *Server) Router() http.Handler {
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
 				r.Post("/git-credentials", s.createGitCredential)
 				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
+				r.Post("/db-servers", s.createDBInstance)
+				r.Post("/db-servers/{instID}/deploy", s.deployDBInstance)
+				r.Post("/db-servers/{instID}/start", s.startDBInstance)
+				r.Post("/db-servers/{instID}/stop", s.stopDBInstance)
+				r.Post("/db-servers/{instID}/version", s.versionDBInstance)
+				r.Post("/db-servers/{instID}/node", s.setDBInstanceNode)
+				r.Post("/db-servers/{instID}/delete", s.deleteDBInstance)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)
