@@ -77,6 +77,7 @@ type Querier interface {
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
 	GetClusterNode(ctx context.Context, id int64) (ClusterNode, error)
+	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (ClusterNode, error)
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)

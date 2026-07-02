@@ -22,3 +22,7 @@ DELETE FROM cluster_nodes WHERE id = $1;
 
 -- name: CountClusterNodesByName :one
 SELECT count(*) FROM cluster_nodes WHERE name = $1;
+
+-- name: GetClusterNodeBySwarmID :one
+SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id, created_at
+FROM cluster_nodes WHERE swarm_node_id = $1;
