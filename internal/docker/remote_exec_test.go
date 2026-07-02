@@ -10,7 +10,7 @@ import (
 
 func TestSelectClient(t *testing.T) {
 	ctx := context.Background()
-	local := &client.Client{}   // sentinel identity, not used for calls
+	local := &client.Client{} // sentinel identity, not used for calls
 	remote := &client.Client{}
 
 	// nil provider → local, noop release
