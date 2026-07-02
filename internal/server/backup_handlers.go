@@ -14,16 +14,12 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// loadBackupChain resolves the org→proj→env→db chain, rejects non-postgres DBs,
-// loads {backupID} and verifies it belongs to that postgres DB. It also returns
-// the DB detail base URL used for redirects and form actions.
+// loadBackupChain resolves the org→proj→env→logical-db chain, loads {backupID}
+// and verifies it belongs to that logical database. It also returns the DB
+// detail base URL used for redirects and form actions.
 func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.GetBackupRow, string, bool) {
-	engine, dbID, ok := s.loadDBChain(w, r)
+	ld, ok := s.loadLogicalDB(w, r)
 	if !ok {
-		return db.GetBackupRow{}, "", false
-	}
-	if engine != "postgres" {
-		http.NotFound(w, r)
 		return db.GetBackupRow{}, "", false
 	}
 	id, ok := pathID(r, "backupID")
@@ -32,39 +28,37 @@ func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.Get
 		return db.GetBackupRow{}, "", false
 	}
 	b, err := s.q.GetBackup(r.Context(), id)
-	if err != nil || b.LogicalDatabaseID == nil || *b.LogicalDatabaseID != dbID {
-		logFrom(r).Info("loadBackupChain: backup not found or db mismatch", "backup_id", id, "db_id", dbID)
+	if err != nil || b.LogicalDatabaseID == nil || *b.LogicalDatabaseID != ld.ID {
+		logFrom(r).Info("loadBackupChain: backup not found or db mismatch", "backup_id", id, "ldb_id", ld.ID)
 		http.NotFound(w, r)
 		return db.GetBackupRow{}, "", false
 	}
-	return b, s.dbBase(r, engine, dbID), true
+	return b, s.dbBase(r, ld.ID), true
 }
 
-// dbBase builds the DB detail URL (same shape loadDBCtx uses for templates.Base)
-// directly from the chi URL params. It is only called after the org→proj→env→db
-// chain has already been validated, so re-running the w-taking loaders (which
-// would need a ResponseWriter to report errors) is unnecessary.
-func (s *Server) dbBase(r *http.Request, engine string, dbID int64) string {
+// dbBase builds the logical-DB detail URL (same shape logicalDatabaseDetail
+// uses for templates.LogicalDBCtx.Base) directly from the chi URL params. It is
+// only called after the org→proj→env→db chain has already been validated, so
+// re-running the w-taking loaders (which would need a ResponseWriter to report
+// errors) is unnecessary.
+func (s *Server) dbBase(r *http.Request, ldbID int64) string {
 	orgID, _ := pathID(r, "orgID")
 	projID, _ := pathID(r, "projID")
 	envID, _ := pathID(r, "envID")
-	return envURL(orgID, projID, envID) + "/databases/" + engine + "/" + strconv.FormatInt(dbID, 10)
+	return envURL(orgID, projID, envID) + "/databases/" + strconv.FormatInt(ldbID, 10)
 }
 
-// addBackup creates a backup config for a postgres DB (admin-only).
+// addBackup creates a backup config for a logical database (admin-only).
 func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
-	engine, dbID, ok := s.loadDBChain(w, r)
+	ld, ok := s.loadLogicalDB(w, r)
 	if !ok {
 		return
 	}
-	if engine != "postgres" {
-		http.NotFound(w, r)
-		return
-	}
+	dbID := ld.ID
 
 	destID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("destination_id")), 10, 64)
 	if err != nil {

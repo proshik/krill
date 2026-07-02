@@ -12,23 +12,13 @@ import (
 	"github.com/proshik/krill/internal/testutil"
 )
 
-// backupFixture creates an org with a postgres DB and an accessible MinIO
-// destination, returning everything the backup handler tests need.
-//
-// Backups now target a logical database (backups.logical_database_id FKs to
-// logical_databases.id), so this seeds a db_instance + logical_database via
-// CreateDBInstance/CreateLogicalDatabase instead of relying on the legacy
-// postgres_dbs row alone. Routing (loadDBChain) still resolves through the
-// legacy postgres_dbs table until Task 7 rewires the DB-detail page onto
-// logical databases, and the backup handlers reuse that same path {dbID} as
-// the backup's logical_database_id (a documented transitional inconsistency
-// — see the Task 5 brief), so this postgres_dbs row's ID must line up with
-// the logical database's ID. Both are the very first row inserted into their
-// respective (initially empty) table in this test's fresh container, so they
-// get the same BIGSERIAL value; the fixture asserts that rather than relying
-// on it silently, so a future seeding change fails loudly here instead of a
-// confusing 404 downstream.
-func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Organization, projID, envID, pgID, destID int64, cookie *http.Cookie) {
+// backupFixture creates an org with a postgres db_instance + logical database
+// and an accessible MinIO destination, returning everything the backup
+// handler tests need. Backups target a logical database
+// (backups.logical_database_id FKs to logical_databases.id), and routing
+// (loadBackupChain → loadLogicalDB) resolves {dbID} as the logical database's
+// own id, so the returned id is ldb.ID.
+func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Organization, projID, envID, ldbID, destID int64, cookie *http.Cookie) {
 	t.Helper()
 	ctx := context.Background()
 	ownerID := mkUser(t, q, "owner@k.local")
@@ -50,17 +40,6 @@ func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Or
 		t.Fatalf("create logical database: %v", err)
 	}
 
-	pg, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID: e.ID, Name: "maindb", AppName: "krill-postgres-maindb",
-		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "secret", Image: "postgres:17",
-	})
-	if err != nil {
-		t.Fatalf("create postgres: %v", err)
-	}
-	if pg.ID != ldb.ID {
-		t.Fatalf("test fixture assumption broken: postgres_dbs.id=%d != logical_databases.id=%d", pg.ID, ldb.ID)
-	}
-
 	minio := testutil.NewMinio(t)
 	dst := backup.Destination{Endpoint: minio.Endpoint, Bucket: "test", Region: minio.Region, AccessKey: minio.AccessKey, SecretKey: minio.SecretKey}
 	if err := backup.CreateBucket(ctx, dst); err != nil {
@@ -73,26 +52,26 @@ func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Or
 	if err != nil {
 		t.Fatalf("create destination: %v", err)
 	}
-	return o, p.ID, e.ID, pg.ID, d.ID, loginAs(t, q, "owner@k.local")
+	return o, p.ID, e.ID, ldb.ID, d.ID, loginAs(t, q, "owner@k.local")
 }
 
-func backupsBase(orgID, projID, envID, pgID int64) string {
-	return "/orgs/" + i64(orgID) + "/projects/" + i64(projID) + "/environments/" + i64(envID) + "/databases/postgres/" + i64(pgID) + "/backups"
+func backupsBase(orgID, projID, envID, ldbID int64) string {
+	return "/orgs/" + i64(orgID) + "/projects/" + i64(projID) + "/environments/" + i64(envID) + "/databases/" + i64(ldbID) + "/backups"
 }
 
 func TestAddBackupSucceeds(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
-	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
+	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 
-	base := backupsBase(o.ID, projID, envID, pgID)
+	base := backupsBase(o.ID, projID, envID, ldbID)
 	form := url.Values{"destination_id": {i64(destID)}, "schedule": {"0 3 * * *"}, "retention": {"7"}, "prefix": {"daily"}}
 	rec := postForm(t, h, base, cookie, form)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("add backup want 303, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	bks, err := q.ListBackupsByLogicalDB(ctx, &pgID)
+	bks, err := q.ListBackupsByLogicalDB(ctx, &ldbID)
 	if err != nil {
 		t.Fatalf("list backups: %v", err)
 	}
@@ -104,7 +83,7 @@ func TestAddBackupSucceeds(t *testing.T) {
 func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
-	o, projID, envID, pgID, _, cookie := backupFixture(t, q, orgSvc)
+	o, projID, envID, ldbID, _, cookie := backupFixture(t, q, orgSvc)
 
 	// A destination owned by a different org.
 	otherOwner := mkUser(t, q, "other@k.local")
@@ -117,7 +96,7 @@ func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 		t.Fatalf("create other destination: %v", err)
 	}
 
-	base := backupsBase(o.ID, projID, envID, pgID)
+	base := backupsBase(o.ID, projID, envID, ldbID)
 	form := url.Values{"destination_id": {i64(otherDest.ID)}, "schedule": {"0 3 * * *"}, "retention": {"7"}}
 	rec := postForm(t, h, base, cookie, form)
 	if rec.Code != http.StatusSeeOther {
@@ -126,7 +105,7 @@ func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("cross-org destination want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByLogicalDB(ctx, &pgID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, &ldbID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -134,9 +113,9 @@ func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 func TestAddBackupZeroRetentionFlash(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
-	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
+	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 
-	base := backupsBase(o.ID, projID, envID, pgID)
+	base := backupsBase(o.ID, projID, envID, ldbID)
 	form := url.Values{"destination_id": {i64(destID)}, "schedule": {"0 3 * * *"}, "retention": {"0"}}
 	rec := postForm(t, h, base, cookie, form)
 	if rec.Code != http.StatusSeeOther {
@@ -145,7 +124,7 @@ func TestAddBackupZeroRetentionFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("retention 0 want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByLogicalDB(ctx, &pgID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, &ldbID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -153,15 +132,15 @@ func TestAddBackupZeroRetentionFlash(t *testing.T) {
 func TestToggleBackupFlipsEnabled(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
-	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
+	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: &ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
 	}
 
-	base := backupsBase(o.ID, projID, envID, pgID)
+	base := backupsBase(o.ID, projID, envID, ldbID)
 	rec := postForm(t, h, base+"/"+i64(b.ID)+"/toggle", cookie, url.Values{})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("toggle want 303, got %d (%s)", rec.Code, rec.Body.String())
@@ -175,15 +154,15 @@ func TestToggleBackupFlipsEnabled(t *testing.T) {
 func TestDeleteBackupRemovesIt(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
-	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
+	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: &ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
 	}
 
-	base := backupsBase(o.ID, projID, envID, pgID)
+	base := backupsBase(o.ID, projID, envID, ldbID)
 	rec := postForm(t, h, base+"/"+i64(b.ID)+"/delete", cookie, url.Values{})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("delete want 303, got %d (%s)", rec.Code, rec.Body.String())
@@ -200,10 +179,10 @@ func TestBackupCrossTenantIsolation(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 
-	// --- Org-A: owner userA, project, environment, postgres DB, destination, backup ---
-	orgA, projA, envA, pgA, destA, _ := backupFixture(t, q, orgSvc)
+	// --- Org-A: owner userA, project, environment, instance, logical DB, destination, backup ---
+	orgA, projA, envA, ldbA, destA, _ := backupFixture(t, q, orgSvc)
 	aBackup, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &pgA,
+		LogicalDatabaseID: &ldbA,
 		DestinationID:     destA,
 		Schedule:          "0 2 * * *",
 		Prefix:            "daily",
@@ -218,27 +197,28 @@ func TestBackupCrossTenantIsolation(t *testing.T) {
 	_ = projA
 	_ = envA
 
-	// --- Org-B: owner userB, project, environment, postgres DB ---
+	// --- Org-B: owner userB, project, environment, instance, logical DB ---
 	userBID := mkUser(t, q, "userb-ct@k.local")
 	orgB, _ := orgSvc.CreateOrg(ctx, userBID, "OrgB-CT")
 	projB, _ := orgSvc.CreateProject(ctx, orgB.ID, "ProjB", "")
 	envB, _ := orgSvc.CreateEnvironment(ctx, projB.ID, "prod-b")
-	pgB, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID:    envB.ID,
-		Name:             "db-b",
-		AppName:          "krill-postgres-db-b",
-		DatabaseName:     "app",
-		DatabaseUser:     "postgres",
-		DatabasePassword: "secret",
-		Image:            "postgres:17",
+	instB, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: orgB.ID, Engine: "postgres", Name: "pg-b", AppName: "krill-postgres-pg-b",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "secret",
 	})
 	if err != nil {
-		t.Fatalf("create org-B postgres: %v", err)
+		t.Fatalf("create org-B db instance: %v", err)
+	}
+	ldbB, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: instB.ID, EnvironmentID: envB.ID, Name: "db-b", DbName: "db_b", Username: "db_b", Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("create org-B logical database: %v", err)
 	}
 	cookieB := loginAs(t, q, "userb-ct@k.local")
 
 	// Base path: org-B's full DB chain but with org-A's backup ID.
-	base := backupsBase(orgB.ID, projB.ID, envB.ID, pgB.ID)
+	base := backupsBase(orgB.ID, projB.ID, envB.ID, ldbB.ID)
 
 	routes := []string{
 		"/" + i64(aBackupID) + "/toggle",

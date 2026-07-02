@@ -16,16 +16,13 @@ templ CardStatus(id, status string, oob bool) {
 	}
 }
 
-// EnvStatuses renders the OOB badge updates for every app/db in an environment
-// (the live-refresh fragment).
-templ EnvStatuses(apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
+// EnvStatuses renders the OOB badge updates for every app/logical-db in an
+// environment (the live-refresh fragment).
+templ EnvStatuses(apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow) {
 	for _, a := range apps {
 		@CardStatus("cs-app-"+itoa(a.ID), a.Status, true)
 	}
-	for _, p := range pgs {
-		@CardStatus("cs-pg-"+itoa(p.ID), p.Status, true)
-	}
-	for _, r := range redises {
-		@CardStatus("cs-redis-"+itoa(r.ID), r.Status, true)
+	for _, d := range ldbs {
+		@CardStatus("cs-ldb-"+itoa(d.ID), d.InstanceStatus, true)
 	}
 }

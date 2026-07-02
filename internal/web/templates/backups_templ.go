@@ -14,7 +14,7 @@ import (
 )
 
 // BackupObjects renders the list of stored backup objects for one backup config.
-// base is the DB detail URL (e.g. .../databases/postgres/42); backupID scopes the
+// base is the logical-DB detail URL (e.g. .../databases/42); backupID scopes the
 // restore/download actions to this config.
 func BackupObjects(base string, backupID int64, objs []backup.Object) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {

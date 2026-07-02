@@ -196,9 +196,9 @@ func CardStatus(id, status string, oob bool) templ.Component {
 	})
 }
 
-// EnvStatuses renders the OOB badge updates for every app/db in an environment
-// (the live-refresh fragment).
-func EnvStatuses(apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) templ.Component {
+// EnvStatuses renders the OOB badge updates for every app/logical-db in an
+// environment (the live-refresh fragment).
+func EnvStatuses(apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -225,14 +225,8 @@ func EnvStatuses(apps []db.Application, pgs []db.PostgresDb, redises []db.RedisD
 				return templ_7745c5c3_Err
 			}
 		}
-		for _, p := range pgs {
-			templ_7745c5c3_Err = CardStatus("cs-pg-"+itoa(p.ID), p.Status, true).Render(ctx, templ_7745c5c3_Buffer)
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		for _, r := range redises {
-			templ_7745c5c3_Err = CardStatus("cs-redis-"+itoa(r.ID), r.Status, true).Render(ctx, templ_7745c5c3_Buffer)
+		for _, d := range ldbs {
+			templ_7745c5c3_Err = CardStatus("cs-ldb-"+itoa(d.ID), d.InstanceStatus, true).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

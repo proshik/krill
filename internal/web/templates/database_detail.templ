@@ -2,79 +2,45 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
-	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// DatabaseCtx holds the database detail-page data (engine + one of the rows + connection strings + base URL).
-type DatabaseCtx struct {
-	Org      db.Organization
-	Role     string
-	Project  db.Project
-	Env      db.Environment
-	Engine   string // "postgres" | "redis"
-	ID       int64
-	Name     string
-	Image    string
-	Status   string
+// LogicalDBCtx holds the logical-database detail-page data (the row + its
+// instance + connection strings + base URL). Lifecycle (deploy/start/stop/
+// version/node/logs) lives on the instance detail page, not here.
+type LogicalDBCtx struct {
+	Org     db.Organization
+	Role    string
+	Project db.Project
+	Env     db.Environment
+	LDB     db.LogicalDatabase
+	Inst    db.DbInstance
+
 	Internal string
 	External string
-	Base     string // path to /databases/{engine}/{id}
-	Tab      string
+	Base     string // path to /databases/{id}
 
-	Backups      []db.ListBackupsByLogicalDBRow // postgres only: configured backups
-	Destinations []db.Destination               // postgres only: org S3 destinations
-
-	NodeHostname string             // pinned node ("" = control-plane/manager)
-	Nodes        []docker.SwarmNode // cluster nodes (for the node picker; admin only)
+	Backups      []db.ListBackupsByLogicalDBRow // configured backups
+	Destinations []db.Destination               // org S3 destinations
 }
 
-templ DatabaseDetail(c DatabaseCtx) {
-	@Layout(c.Name, c.Org, c.Role) {
+templ DatabaseDetail(c LogicalDBCtx) {
+	@Layout(c.LDB.Name, c.Org, c.Role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID)) }>{ c.Project.Name }</a> /
-			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID) + "/environments/" + itoa(c.Env.ID)) }>{ c.Env.Name }</a> / { c.Name }
+			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID) + "/environments/" + itoa(c.Env.ID)) }>{ c.Env.Name }</a> / { c.LDB.Name }
 		</p>
 		<div class="k-frame"><div class="k-panel">
 			<div class="k-panel-head">
-				<div><div class="k-panel-title">{ c.Name }</div><div class="k-panel-desc k-mono">{ c.Image }</div></div>
+				<div><div class="k-panel-title">{ c.LDB.Name }</div><div class="k-panel-desc k-mono">{ c.LDB.DbName + " @ " + c.Inst.Name }</div></div>
 				<div class="flex items-center gap-2">
-					<span hx-get={ c.Base + "/status" } hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">@StatusBadge(c.Status)</span>
+					<span hx-get={ "/orgs/" + itoa(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID) + "/status" } hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">@StatusBadge(c.Inst.Status)</span>
 				</div>
 			</div>
 			<div class="k-panel-body flex flex-col gap-4">
-				if c.Role == "owner" || c.Role == "admin" {
-					<div class="flex gap-2 flex-wrap">
-						<form method="post" action={ templ.SafeURL(c.Base + "/deploy") } onsubmit="krillBusy(this.querySelector('button'), 'Deploying…')"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "db.deploy") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/start") } onsubmit="krillBusy(this.querySelector('button'), 'Starting…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.start") }</button></form>
-						<form method="post" action={ templ.SafeURL(c.Base + "/stop") } onsubmit="krillBusy(this.querySelector('button'), 'Stopping…')"><button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.stop") }</button></form>
-						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm-keep={ i18n.Tf(ctx, "confirm.delete_db_keep", c.Name) } data-confirm-destroy={ i18n.Tf(ctx, "confirm.delete_db_destroy", c.Name) } onsubmit="return krillConfirmDbDelete(this)" class="flex items-center gap-2">
-							<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
-							<label class="k-label"><input class="k-check" type="checkbox" name="destroy_data"/> { i18n.T(ctx, "db.delete.destroyData") }</label>
-						</form>
-					</div>
-					<form method="post" action={ templ.SafeURL(c.Base + "/version") } onsubmit="krillBusy(this.querySelector('button'), 'Updating…')" class="flex items-end gap-2">
-						<div class="flex-1"><label class="k-label">{ i18n.T(ctx, "db.change_version") }</label><input class="k-input" name="image" value={ c.Image }/></div>
-						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
-					</form>
-					if len(c.Nodes) > 0 {
-						<form method="post" action={ templ.SafeURL(c.Base + "/node") } class="flex items-end gap-2">
-							<div class="flex-1">
-								<label class="k-label">{ i18n.T(ctx, "dbnode.label") }</label>
-								<select class="k-select" name="node_hostname">
-									<option value="" selected?={ c.NodeHostname == "" }>{ i18n.T(ctx, "dbnode.manager") }</option>
-									for _, n := range c.Nodes {
-										if !n.Leader {
-											<option value={ n.Hostname } selected?={ c.NodeHostname == n.Hostname }>{ n.Hostname }</option>
-										}
-									}
-								</select>
-								<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "dbnode.hint") }</p>
-							</div>
-							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbnode.save") }</button>
-						</form>
-					}
-				}
+				<p class="k-mono text-xs">
+					<a class="underline" href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID)) }>{ i18n.T(ctx, "ldb.view_instance") }</a>
+				</p>
 				if c.Role == "owner" || c.Role == "admin" {
 					<div>
 						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
@@ -92,20 +58,17 @@ templ DatabaseDetail(c DatabaseCtx) {
 							</div>
 						}
 					</div>
-				}
-				<div>
-					<div class="k-label">{ i18n.T(ctx, "common.logs") }</div>
-					@logViewer(c.Base + "/logs")
-				</div>
-				if c.Engine == "postgres" && (c.Role == "owner" || c.Role == "admin") {
 					@backupsSection(c)
+					<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_ldb", c.LDB.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+						<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
+					</form>
 				}
 			</div>
 		</div></div>
 	}
 }
 
-templ backupsSection(c DatabaseCtx) {
+templ backupsSection(c LogicalDBCtx) {
 	<div>
 		<div class="k-label">{ i18n.T(ctx, "backup.section") }</div>
 		if len(c.Backups) == 0 {
