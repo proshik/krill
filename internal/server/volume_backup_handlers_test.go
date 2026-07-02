@@ -60,7 +60,7 @@ func appBase(orgID, appID int64, q *db.Queries) string {
 }
 
 func TestAddVolumeBackupHappyPath(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 	o, appID, volID, destID, cookie := volumeBackupFixture(t, q, orgSvc)
 
@@ -121,7 +121,7 @@ func TestAddVolumeBackupHappyPath(t *testing.T) {
 // rejects an attempt by org-B to act on org-A's volume backup via org-B's app
 // chain: the mutation must 404 and org-A's row must survive.
 func TestVolumeBackupCrossTenantIsolation(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 
 	// --- Org-A: app + volume + volume_backup ---

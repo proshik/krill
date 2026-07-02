@@ -102,7 +102,7 @@ func dockerfileAppFixture(t *testing.T, q *db.Queries, orgSvc *org.Service, bran
 }
 
 func TestGithubWebhook(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	// dockerfile app on branch main
 	appID := dockerfileAppFixture(t, q, orgSvc, "main")
 	const sec = "topsecret"
@@ -146,7 +146,7 @@ func TestGithubWebhook(t *testing.T) {
 }
 
 func TestGithubWebhookDisabledAndWrongSource(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	// disabled app
 	off := dockerfileAppFixture(t, q, orgSvc, "main")
 	body := []byte(`{"ref":"refs/heads/main"}`)
@@ -166,7 +166,7 @@ func TestGithubWebhookDisabledAndWrongSource(t *testing.T) {
 }
 
 func TestDeployHook(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	appID := imageAppFixture(t, q, orgSvc)
 	const sec = "tok123"
 	seedAutoDeploy(t, q, appID, sec)

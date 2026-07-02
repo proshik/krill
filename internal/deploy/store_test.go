@@ -89,19 +89,6 @@ func TestStrDeref(t *testing.T) {
 	}
 }
 
-func TestBuildDBURL(t *testing.T) {
-	cases := []struct{ engine, scheme, user, pass, host, dbn, want string }{
-		{"postgres", "postgresql", "u", "p", "krill-postgres-x", "app", "postgresql://u:p@krill-postgres-x:5432/app"},
-		{"postgres", "postgres", "u", "p", "krill-postgres-x", "app", "postgres://u:p@krill-postgres-x:5432/app"},
-		{"redis", "redis", "", "secret", "krill-redis-y", "", "redis://default:secret@krill-redis-y:6379"},
-	}
-	for _, c := range cases {
-		if got := buildDBURL(c.engine, c.scheme, c.user, c.pass, c.host, c.dbn); got != c.want {
-			t.Errorf("buildDBURL(%q,%q,...) = %q, want %q", c.engine, c.scheme, got, c.want)
-		}
-	}
-}
-
 func TestGetApplicationInjectsDBLinks(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -131,35 +118,37 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create app: %v", err)
 	}
-	pg, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID:    e.ID,
-		Name:             "db",
-		AppName:          "krill-postgres-db",
-		DatabaseName:     "appdb",
-		DatabaseUser:     "appuser",
-		DatabasePassword: "secretpw",
-		Image:            "postgres:16-alpine",
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-db",
+		Image: "postgres:16-alpine", Superuser: "appuser", SuperuserPassword: "secretpw",
 	})
 	if err != nil {
-		t.Fatalf("create postgres: %v", err)
+		t.Fatalf("create db instance: %v", err)
+	}
+	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "db", DbName: "appdb", Username: "appuser", Password: "secretpw",
+	})
+	if err != nil {
+		t.Fatalf("create logical database: %v", err)
 	}
 
 	// Link DB_URL -> pg with scheme "postgres" (overrides env_text DB_URL).
 	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
-		ApplicationID: app.ID, Engine: "postgres", DbID: pg.ID, VarName: "DB_URL", Scheme: "postgres",
+		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DB_URL", Scheme: "postgres",
 	}); err != nil {
 		t.Fatalf("create db link: %v", err)
 	}
 
 	// A redis link exercises resolveDBLinkURL's redis branch end-to-end.
-	rd, err := q.CreateRedis(ctx, db.CreateRedisParams{
-		EnvironmentID: e.ID, Name: "cache", AppName: "krill-redis-cache", Password: "rpw", Image: "redis:7-alpine",
+	redisInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-cache",
+		Image: "redis:7-alpine", SuperuserPassword: "rpw",
 	})
 	if err != nil {
-		t.Fatalf("create redis: %v", err)
+		t.Fatalf("create redis instance: %v", err)
 	}
 	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
-		ApplicationID: app.ID, Engine: "redis", DbID: rd.ID, VarName: "REDIS_URL", Scheme: "redis",
+		ApplicationID: app.ID, InstanceID: &redisInst.ID, VarName: "REDIS_URL", Scheme: "redis",
 	}); err != nil {
 		t.Fatalf("create redis db link: %v", err)
 	}
@@ -180,9 +169,10 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 		t.Errorf("redis link not injected: got %q", got.Env["REDIS_URL"])
 	}
 
-	// Delete the DB -> link skipped, env_text value restored, not fatal.
-	if err := q.DeletePostgres(ctx, pg.ID); err != nil {
-		t.Fatalf("delete postgres: %v", err)
+	// Delete the logical DB -> the link cascades away (FK ON DELETE CASCADE),
+	// env_text value restored, not fatal.
+	if err := q.DeleteLogicalDatabase(ctx, ldb.ID); err != nil {
+		t.Fatalf("delete logical database: %v", err)
 	}
 	got2, err := NewDBStore(q).GetApplication(ctx, app.ID)
 	if err != nil {

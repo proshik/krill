@@ -9,7 +9,7 @@ import (
 
 // TestDeployAppEnqueues: POST /deploy redirects 303 and creates a deployment row.
 func TestDeployAppEnqueues(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	base, cookie, appID := domainFixture(t, h, q, orgSvc, "deploy1.example.com")
 
 	rec := postForm(t, h, base+"/deploy", cookie, url.Values{})
@@ -27,7 +27,7 @@ func TestDeployAppEnqueues(t *testing.T) {
 
 // TestRebuildAppEnqueues: POST /rebuild redirects 303 and creates a deployment.
 func TestRebuildAppEnqueues(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	base, cookie, appID := domainFixture(t, h, q, orgSvc, "deploy2.example.com")
 
 	rec := postForm(t, h, base+"/rebuild", cookie, url.Values{})
@@ -45,7 +45,7 @@ func TestRebuildAppEnqueues(t *testing.T) {
 
 // TestReloadAppRedirects: POST /reload redirects 303 (restart, no new deployment).
 func TestReloadAppRedirects(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	base, cookie, _ := domainFixture(t, h, q, orgSvc, "deploy3.example.com")
 
 	rec := postForm(t, h, base+"/reload", cookie, url.Values{})

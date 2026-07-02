@@ -10,7 +10,7 @@ import (
 )
 
 func TestDeleteDatabaseRemovesDBLinks(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, pool := newDeployServer(t)
 	ctx := context.Background()
 	uid := mkUser(t, q, "dbl-del@k.local")
 	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
@@ -24,7 +24,14 @@ func TestDeleteDatabaseRemovesDBLinks(t *testing.T) {
 		EnvironmentID: e.ID, Name: "maindb", AppName: "krill-postgres-maindb",
 		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "pw", Image: "postgres:17",
 	})
-	_, _ = q.CreateDBLink(ctx, db.CreateDBLinkParams{ApplicationID: app.ID, Engine: "postgres", DbID: pg.ID, VarName: "DATABASE_URL", Scheme: "postgres"})
+	// A legacy-style link (engine/db_id columns): CreateDBLink no longer writes
+	// these (it only sets logical_database_id/instance_id), but the columns
+	// still exist and deleteDatabase's cleanup still matches on them, so insert
+	// one directly to exercise that legacy cleanup path.
+	if _, err := pool.Exec(ctx, `INSERT INTO app_db_links (application_id, engine, db_id, var_name, scheme) VALUES ($1, $2, $3, $4, $5)`,
+		app.ID, "postgres", pg.ID, "DATABASE_URL", "postgres"); err != nil {
+		t.Fatalf("insert legacy db link: %v", err)
+	}
 	cookie := loginAs(t, q, "dbl-del@k.local")
 	delURL := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) +
 		"/databases/postgres/" + i64(pg.ID) + "/delete"

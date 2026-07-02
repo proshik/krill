@@ -7,41 +7,50 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const createDBLink = `-- name: CreateDBLink :one
-INSERT INTO app_db_links (application_id, engine, db_id, var_name, scheme)
+INSERT INTO app_db_links (application_id, logical_database_id, instance_id, var_name, scheme)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id
+RETURNING id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
 `
 
 type CreateDBLinkParams struct {
-	ApplicationID int64  `json:"application_id"`
-	Engine        string `json:"engine"`
-	DbID          int64  `json:"db_id"`
-	VarName       string `json:"var_name"`
-	Scheme        string `json:"scheme"`
+	ApplicationID     int64  `json:"application_id"`
+	LogicalDatabaseID *int64 `json:"logical_database_id"`
+	InstanceID        *int64 `json:"instance_id"`
+	VarName           string `json:"var_name"`
+	Scheme            string `json:"scheme"`
 }
 
-func (q *Queries) CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (AppDbLink, error) {
+type CreateDBLinkRow struct {
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	LogicalDatabaseID *int64    `json:"logical_database_id"`
+	InstanceID        *int64    `json:"instance_id"`
+	VarName           string    `json:"var_name"`
+	Scheme            string    `json:"scheme"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+func (q *Queries) CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (CreateDBLinkRow, error) {
 	row := q.db.QueryRow(ctx, createDBLink,
 		arg.ApplicationID,
-		arg.Engine,
-		arg.DbID,
+		arg.LogicalDatabaseID,
+		arg.InstanceID,
 		arg.VarName,
 		arg.Scheme,
 	)
-	var i AppDbLink
+	var i CreateDBLinkRow
 	err := row.Scan(
 		&i.ID,
 		&i.ApplicationID,
-		&i.Engine,
-		&i.DbID,
+		&i.LogicalDatabaseID,
+		&i.InstanceID,
 		&i.VarName,
 		&i.Scheme,
 		&i.CreatedAt,
-		&i.LogicalDatabaseID,
-		&i.InstanceID,
 	)
 	return i, err
 }
@@ -70,49 +79,67 @@ func (q *Queries) DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBPa
 }
 
 const getDBLink = `-- name: GetDBLink :one
-SELECT id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id FROM app_db_links WHERE id = $1
+SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
+FROM app_db_links WHERE id = $1
 `
 
-func (q *Queries) GetDBLink(ctx context.Context, id int64) (AppDbLink, error) {
+type GetDBLinkRow struct {
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	LogicalDatabaseID *int64    `json:"logical_database_id"`
+	InstanceID        *int64    `json:"instance_id"`
+	VarName           string    `json:"var_name"`
+	Scheme            string    `json:"scheme"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error) {
 	row := q.db.QueryRow(ctx, getDBLink, id)
-	var i AppDbLink
+	var i GetDBLinkRow
 	err := row.Scan(
 		&i.ID,
 		&i.ApplicationID,
-		&i.Engine,
-		&i.DbID,
+		&i.LogicalDatabaseID,
+		&i.InstanceID,
 		&i.VarName,
 		&i.Scheme,
 		&i.CreatedAt,
-		&i.LogicalDatabaseID,
-		&i.InstanceID,
 	)
 	return i, err
 }
 
 const listDBLinksByApplication = `-- name: ListDBLinksByApplication :many
-SELECT id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id FROM app_db_links WHERE application_id = $1 ORDER BY var_name
+SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
+FROM app_db_links WHERE application_id = $1 ORDER BY var_name
 `
 
-func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]AppDbLink, error) {
+type ListDBLinksByApplicationRow struct {
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	LogicalDatabaseID *int64    `json:"logical_database_id"`
+	InstanceID        *int64    `json:"instance_id"`
+	VarName           string    `json:"var_name"`
+	Scheme            string    `json:"scheme"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error) {
 	rows, err := q.db.Query(ctx, listDBLinksByApplication, applicationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AppDbLink
+	var items []ListDBLinksByApplicationRow
 	for rows.Next() {
-		var i AppDbLink
+		var i ListDBLinksByApplicationRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ApplicationID,
-			&i.Engine,
-			&i.DbID,
+			&i.LogicalDatabaseID,
+			&i.InstanceID,
 			&i.VarName,
 			&i.Scheme,
 			&i.CreatedAt,
-			&i.LogicalDatabaseID,
-			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}

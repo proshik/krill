@@ -298,7 +298,7 @@ function krillMountDBLink() {
       schemeSel.appendChild(opt);
     });
     if (Array.from(schemeSel.options).some((o) => o.value === prev)) schemeSel.value = prev;
-    if (hint) hint.style.display = engine === "postgres" ? "" : "none";
+    if (hint) hint.style.display = engine === "pg" ? "" : "none";
   };
   dbSel.addEventListener("change", apply);
   apply();

@@ -12,7 +12,7 @@ import (
 )
 
 func TestAddVolumeHappyPath(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 	uid := mkUser(t, q, "vol-owner@k.local")
 	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
@@ -61,7 +61,7 @@ func TestAddVolumeHappyPath(t *testing.T) {
 }
 
 func TestVolumeCrossTenantIsolation(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 
 	uidA := mkUser(t, q, "vol-a@k.local")

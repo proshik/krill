@@ -12,7 +12,7 @@ import (
 )
 
 func TestAddDBLinkHappyPath(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 	uid := mkUser(t, q, "dbl-owner@k.local")
 	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
@@ -22,15 +22,18 @@ func TestAddDBLinkHappyPath(t *testing.T) {
 		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine", Domain: "web.x", Port: 80,
 		EnvText: "FOO=bar", SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
-	pg, _ := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID: e.ID, Name: "maindb", AppName: "krill-postgres-maindb",
-		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "pw", Image: "postgres:17",
+	inst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "pg1", AppName: "krill-postgres-pg1-t1",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	ldb, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "maindb", DbName: "maindb", Username: "maindb", Password: "pw",
 	})
 	cookie := loginAs(t, q, "dbl-owner@k.local")
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)
 
 	rec := postForm(t, h, base+"/db-links", cookie, url.Values{
-		"db_ref": {"postgres:" + i64(pg.ID)}, "var_name": {"DATABASE_URL"}, "scheme": {"postgres"},
+		"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"DATABASE_URL"}, "scheme": {"postgres"},
 	})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("addDBLink: got %d, want 303", rec.Code)
@@ -39,21 +42,25 @@ func TestAddDBLinkHappyPath(t *testing.T) {
 	if len(links) != 1 || links[0].VarName != "DATABASE_URL" || links[0].Scheme != "postgres" {
 		t.Fatalf("link not persisted: %+v", links)
 	}
+	if links[0].LogicalDatabaseID == nil || *links[0].LogicalDatabaseID != ldb.ID || links[0].InstanceID != nil {
+		t.Fatalf("link FK mismatch: %+v", links[0])
+	}
 	// redis happy path (scheme forced to "redis" server-side)
-	rd, _ := q.CreateRedis(ctx, db.CreateRedisParams{
-		EnvironmentID: e.ID, Name: "cache", AppName: "krill-redis-cache", Password: "rpw", Image: "redis:7-alpine",
+	redisInst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-cache-t1",
+		Image: "redis:7-alpine", SuperuserPassword: "rpw",
 	})
-	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"redis:" + i64(rd.ID)}, "var_name": {"REDIS_URL"}, "scheme": {"redis"}}); rec.Code != http.StatusSeeOther {
+	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"redis:" + i64(redisInst.ID)}, "var_name": {"REDIS_URL"}, "scheme": {"redis"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("addDBLink redis: got %d, want 303", rec.Code)
 	}
 	// reject: invalid scheme for postgres
-	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"postgres:" + i64(pg.ID)}, "var_name": {"OTHER_URL"}, "scheme": {"mysql"}})
+	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"OTHER_URL"}, "scheme": {"mysql"}})
 	// reject: var already in env_text
-	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"postgres:" + i64(pg.ID)}, "var_name": {"FOO"}, "scheme": {"postgres"}})
+	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"FOO"}, "scheme": {"postgres"}})
 	// reject: invalid var name
-	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"postgres:" + i64(pg.ID)}, "var_name": {"bad name"}, "scheme": {"postgres"}})
+	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"bad name"}, "scheme": {"postgres"}})
 	// reject: duplicate var name
-	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"postgres:" + i64(pg.ID)}, "var_name": {"DATABASE_URL"}, "scheme": {"postgres"}})
+	postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"DATABASE_URL"}, "scheme": {"postgres"}})
 	// only the two valid links (DATABASE_URL + REDIS_URL) persist
 	if links, _ := q.ListDBLinksByApplication(ctx, app.ID); len(links) != 2 {
 		t.Fatalf("expected 2 persisted links, have %d", len(links))
@@ -61,7 +68,7 @@ func TestAddDBLinkHappyPath(t *testing.T) {
 }
 
 func TestDBLinkCrossTenantIsolation(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 	uidA := mkUser(t, q, "dbl-a@k.local")
 	oA, _ := orgSvc.CreateOrg(ctx, uidA, "OrgA")
@@ -71,11 +78,18 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 		EnvironmentID: eA.ID, Name: "a", Image: "nginx", Tag: "alpine", Domain: "a.x", Port: 80,
 		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
 	})
-	pgA, _ := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID: eA.ID, Name: "dba", AppName: "krill-postgres-dba",
-		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "pw", Image: "postgres:17",
+	instA, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: oA.ID, Engine: "postgres", Name: "dba", AppName: "krill-postgres-dba-t2",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
 	})
-	linkA, _ := q.CreateDBLink(ctx, db.CreateDBLinkParams{ApplicationID: appA.ID, Engine: "postgres", DbID: pgA.ID, VarName: "DATABASE_URL", Scheme: "postgres"})
+	ldbA, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: instA.ID, EnvironmentID: eA.ID, Name: "dba", DbName: "app", Username: "postgres", Password: "pw",
+	})
+	linkA, _ := q.CreateDBLink(ctx, db.CreateDBLinkParams{ApplicationID: appA.ID, LogicalDatabaseID: &ldbA.ID, VarName: "DATABASE_URL", Scheme: "postgres"})
+	redisInstA, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: oA.ID, Engine: "redis", Name: "cache-a", AppName: "krill-redis-cache-a-t2",
+		Image: "redis:7-alpine", SuperuserPassword: "rpw",
+	})
 
 	uidB := mkUser(t, q, "dbl-b@k.local")
 	oB, _ := orgSvc.CreateOrg(ctx, uidB, "OrgB")
@@ -100,13 +114,23 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 		t.Fatalf("SECURITY: org-A link affected by cross-tenant request: %v", err)
 	}
 
-	// cross-env confinement: org-B must not be able to link org-A's DB (which
-	// lives in another environment) to its own app, even by supplying the raw id.
+	// cross-env confinement: org-B must not be able to link org-A's logical DB
+	// (which lives in another environment) to its own app, even by supplying
+	// the raw id.
 	baseB := "/orgs/" + i64(oB.ID) + "/projects/" + i64(pB.ID) + "/environments/" + i64(eB.ID) + "/apps/" + i64(appB.ID)
 	postForm(t, h, baseB+"/db-links", cookieB, url.Values{
-		"db_ref": {"postgres:" + i64(pgA.ID)}, "var_name": {"X_URL"}, "scheme": {"postgres"},
+		"db_ref": {"pg:" + i64(ldbA.ID)}, "var_name": {"X_URL"}, "scheme": {"postgres"},
 	})
 	if links, _ := q.ListDBLinksByApplication(ctx, appB.ID); len(links) != 0 {
-		t.Fatalf("SECURITY: org-B linked org-A's DB by id, have %d links", len(links))
+		t.Fatalf("SECURITY: org-B linked org-A's logical DB by id, have %d links", len(links))
+	}
+
+	// cross-org confinement: org-B must not be able to link org-A's redis
+	// instance either, even by supplying the raw id.
+	postForm(t, h, baseB+"/db-links", cookieB, url.Values{
+		"db_ref": {"redis:" + i64(redisInstA.ID)}, "var_name": {"Y_URL"}, "scheme": {"redis"},
+	})
+	if links, _ := q.ListDBLinksByApplication(ctx, appB.ID); len(links) != 0 {
+		t.Fatalf("SECURITY: org-B linked org-A's redis instance by id, have %d links", len(links))
 	}
 }

@@ -18,6 +18,8 @@ import (
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // noopEngine is a docker.Engine that does nothing and always reports a single
@@ -80,7 +82,9 @@ func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer)
 
 // newDeployServer is like newServer but wires a real deployer with a no-op
 // engine/builder, so the deploy/reload/rebuild success paths are exercisable.
-func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
+// The returned pool is the same connection the server/queries use, for tests
+// that need to poke rows sqlc has no typed query for (e.g. legacy columns).
+func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -94,5 +98,5 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q)), func() {})
-	return srv.Router(), q, orgSvc
+	return srv.Router(), q, orgSvc, pool
 }
