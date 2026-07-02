@@ -50,28 +50,29 @@ func TestSavePlacement(t *testing.T) {
 	}
 }
 
-func TestSetDBNode(t *testing.T) {
+// TestSetDBInstanceNode exercises setDBInstanceNode — node pinning for a DB
+// instance now lives on the org-level /db-servers page (moved off the
+// env-level DB detail page in the logical-databases rework).
+func TestSetDBInstanceNode(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	ownerID := mkUser(t, q, "dbnode@k.local")
 	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgDBN")
-	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
-	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "prod")
-	pg, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID: e.ID, Name: "db", AppName: "krill-postgres-dbn",
-		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "pw", Image: "postgres:17",
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-dbn",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
 	})
 	if err != nil {
-		t.Fatalf("create postgres: %v", err)
+		t.Fatalf("create db instance: %v", err)
 	}
 	cookie := loginAs(t, q, "dbnode@k.local")
-	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/databases/postgres/" + i64(pg.ID)
+	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
 
 	// node="" (control-plane) -> persisted empty
 	if rec := postForm(t, h, base+"/node", cookie, url.Values{"node_hostname": {""}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("manager node want 303, got %d body %s", rec.Code, rec.Body.String())
 	}
-	got, _ := q.GetPostgres(ctx, pg.ID)
+	got, _ := q.GetDBInstance(ctx, inst.ID)
 	if got.NodeHostname != "" {
 		t.Errorf("node_hostname want empty, got %q", got.NodeHostname)
 	}

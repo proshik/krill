@@ -29,7 +29,7 @@ func orgIDFromBase(t *testing.T, base string) int64 {
 }
 
 func TestAutoDeployAdminGate(t *testing.T) {
-	h, q, orgSvc := newDeployServer(t)
+	h, q, orgSvc, _ := newDeployServer(t)
 	base, ownerCookie, appID := domainFixture(t, h, q, orgSvc, "ad.example.com")
 
 	// owner enable → 303 + auto_deploy true + secret set

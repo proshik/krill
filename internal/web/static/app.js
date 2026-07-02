@@ -298,7 +298,7 @@ function krillMountDBLink() {
       schemeSel.appendChild(opt);
     });
     if (Array.from(schemeSel.options).some((o) => o.value === prev)) schemeSel.value = prev;
-    if (hint) hint.style.display = engine === "postgres" ? "" : "none";
+    if (hint) hint.style.display = engine === "pg" ? "" : "none";
   };
   dbSel.addEventListener("change", apply);
   apply();
@@ -422,14 +422,6 @@ window.krillDismissToast = function (el) {
   el.dataset.gone = "1";
   el.classList.add("k-toast-out");
   setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
-};
-
-// Confirm DB deletion, reflecting whether the data volume will be destroyed.
-// The two i18n'd messages are rendered server-side into data attributes.
-window.krillConfirmDbDelete = function (form) {
-  const destroy = !!(form.querySelector('[name="destroy_data"]') || {}).checked;
-  const msg = destroy ? form.dataset.confirmDestroy : form.dataset.confirmKeep;
-  return krillConfirm(form, msg, "Delete");
 };
 
 // Disable a submit button on form submit to prevent double-submits and signal activity.

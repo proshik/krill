@@ -1,15 +1,10 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/coder/websocket"
-	"github.com/go-chi/chi/v5"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -18,8 +13,10 @@ import (
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// createDatabase creates Postgres or Redis (form: engine, name, version, external_port?).
-func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
+// createLogicalDatabase creates a database inside a running postgres instance of
+// this org (form: instance_id, name, db_name?, username?). The physical DB and
+// its owner user are provisioned synchronously via psql exec.
+func (s *Server) createLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
 		return
@@ -32,477 +29,181 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	engine := r.FormValue("engine")
+	instID, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("instance_id")), 10, 64)
+	if err != nil {
+		s.flashErrT(w, r, "flash.err.invalid_database")
+		return
+	}
+	inst, err := s.q.GetDBInstance(r.Context(), instID)
+	if err != nil || inst.OrganizationID != o.ID {
+		logFrom(r).Info("createLogicalDatabase: instance not in org", "instance_id", instID, "org_id", o.ID)
+		http.NotFound(w, r)
+		return
+	}
+	if inst.Engine != "postgres" {
+		s.flashErrT(w, r, "flash.err.ldb_postgres_only")
+		return
+	}
 	name := strings.TrimSpace(r.FormValue("name"))
-	version := strings.TrimSpace(r.FormValue("version"))
-	if name == "" || (engine != "postgres" && engine != "redis") {
-		logFrom(r).Info("createDatabase: engine and name are required", "environment_id", e.ID, "engine", engine)
+	if name == "" {
 		s.flashErrT(w, r, "flash.err.engine_name_required")
 		return
 	}
-	var extPort *int32
-	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 65535 {
-			logFrom(r).Info("createDatabase: invalid external_port", "environment_id", e.ID, "engine", engine, "name", name)
-			s.flashErrT(w, r, "flash.err.invalid_external_port")
-			return
-		}
-		x := int32(n)
-		pgN, _ := s.q.CountPostgresByExternalPort(r.Context(), &x)
-		rdN, _ := s.q.CountRedisByExternalPort(r.Context(), &x)
-		// Also check raw app published ports: host ports are globally unique
-		// across apps AND managed-DB external ports (addAppPort enforces the same
-		// invariant in the reverse direction). Without this a DB and an app could
-		// claim the same host TCP port and the second to deploy fails to bind.
-		apN, _ := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{HostPort: x, Protocol: "tcp"})
-		if pgN+rdN+apN > 0 {
-			logFrom(r).Warn("createDatabase: external port already in use", "environment_id", e.ID, "engine", engine, "name", name)
-			s.flashErrT(w, r, "flash.err.external_port_in_use")
-			return
-		}
-		extPort = &x
+	dbName := strings.TrimSpace(r.FormValue("db_name"))
+	if dbName == "" {
+		dbName = dbservice.SanitizeIdent(name)
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	if username == "" {
+		username = dbName
+	}
+	if !dbservice.ValidIdent(dbName) || !dbservice.ValidIdent(username) {
+		s.flashErrT(w, r, "flash.err.ldb_bad_ident")
+		return
+	}
+	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+	if !s.dbsvc.InstanceRunning(r.Context(), di) {
+		s.flashErrT(w, r, "flash.err.ldb_instance_down")
+		return
 	}
 	pw, err := genPassword()
 	if err != nil {
-		logFrom(r).Error("createDatabase: failed to generate password", "err", err, "environment_id", e.ID, "engine", engine, "name", name)
+		logFrom(r).Error("createLogicalDatabase: password generation failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	switch engine {
-	case "postgres":
-		if version == "" {
-			version = "postgres:17"
-		}
-		app := dbservice.GenerateAppName("postgres", name)
-		_, err := s.q.CreatePostgres(r.Context(), db.CreatePostgresParams{
-			EnvironmentID: e.ID, Name: name, AppName: app,
-			DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: secret.Enc(pw),
-			Image: version, ExternalPort: extPort,
-		})
-		if err != nil {
-			logFrom(r).Error("createDatabase: failed to create postgres", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
-			s.flashErrErr(w, r, "flash.err.create_generic", err)
-			return
-		}
-		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
-	case "redis":
-		if version == "" {
-			version = "redis:7"
-		}
-		app := dbservice.GenerateAppName("redis", name)
-		_, err := s.q.CreateRedis(r.Context(), db.CreateRedisParams{
-			EnvironmentID: e.ID, Name: name, AppName: app, Password: secret.Enc(pw), Image: version, ExternalPort: extPort,
-		})
-		if err != nil {
-			logFrom(r).Error("createDatabase: failed to create redis", "err", err, "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
-			s.flashErrErr(w, r, "flash.err.create_generic", err)
-			return
-		}
-		logFrom(r).Info("database created", "environment_id", e.ID, "engine", engine, "name", name, "app_name", app)
+	ld, err := s.q.CreateLogicalDatabase(r.Context(), db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: name, DbName: dbName, Username: username, Password: secret.Enc(pw),
+	})
+	if err != nil {
+		logFrom(r).Error("createLogicalDatabase: insert failed", "err", err, "environment_id", e.ID, "instance_id", inst.ID, "db_name", dbName)
+		s.flashErrErr(w, r, "flash.err.create_generic", err)
+		return
 	}
+	if err := s.dbsvc.ProvisionLogicalDB(r.Context(), di, dbservice.LogicalDB{DBName: dbName, Username: username, Password: pw}); err != nil {
+		// The row is useless without the physical DB — roll it back and surface the error.
+		if derr := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); derr != nil {
+			logFrom(r).Error("createLogicalDatabase: rollback row failed", "err", derr, "ldb_id", ld.ID)
+		}
+		logFrom(r).Error("createLogicalDatabase: provisioning failed", "err", err, "instance_id", inst.ID, "db_name", dbName)
+		s.flashErrErr(w, r, "flash.err.ldb_provision", err)
+		return
+	}
+	logFrom(r).Info("logical database created", "ldb_id", ld.ID, "environment_id", e.ID, "instance_id", inst.ID, "db_name", dbName)
 	s.flashOK(w, r, "flash.ok.db_created")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
 
-func (s *Server) deployDatabase(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
+// loadLogicalDB parses {dbID} and verifies the logical database belongs to the
+// org→proj→env chain (404 on any mismatch).
+func (s *Server) loadLogicalDB(w http.ResponseWriter, r *http.Request) (db.LogicalDatabase, bool) {
+	_, _, ok := s.loadOrg(w, r)
 	if !ok {
-		return
+		return db.LogicalDatabase{}, false
 	}
-	if eng == "postgres" {
-		s.dbsvc.DeployPostgres(id)
-	} else {
-		s.dbsvc.DeployRedis(id)
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return db.LogicalDatabase{}, false
 	}
-	logFrom(r).Info("database deploy requested", "db_id", id, "engine", eng)
-	s.flashOK(w, r, "flash.ok.deploy_queued")
-	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+	e, ok := s.loadEnvironment(w, r, p.ID)
+	if !ok {
+		return db.LogicalDatabase{}, false
+	}
+	id, ok := pathID(r, "dbID")
+	if !ok {
+		http.NotFound(w, r)
+		return db.LogicalDatabase{}, false
+	}
+	ld, err := s.q.GetLogicalDatabase(r.Context(), id)
+	if err != nil || ld.EnvironmentID != e.ID {
+		logFrom(r).Info("loadLogicalDB: not found in environment", "ldb_id", id, "environment_id", e.ID)
+		http.NotFound(w, r)
+		return db.LogicalDatabase{}, false
+	}
+	return ld, true
 }
 
-func (s *Server) startDatabase(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
+func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
+	o, role, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
-	var err error
-	if eng == "postgres" {
-		err = s.dbsvc.StartPostgres(r.Context(), id)
-	} else {
-		err = s.dbsvc.StartRedis(r.Context(), id)
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
 	}
+	e, ok := s.loadEnvironment(w, r, p.ID)
+	if !ok {
+		return
+	}
+	ld, ok := s.loadLogicalDB(w, r)
+	if !ok {
+		return
+	}
+	inst, err := s.q.GetDBInstance(r.Context(), ld.InstanceID)
 	if err != nil {
-		logFrom(r).Error("startDatabase: failed to start database", "err", err, "db_id", id, "engine", eng)
-		s.flashErrT(w, r, "flash.err.start_database")
+		logFrom(r).Error("logicalDatabaseDetail: instance missing", "err", err, "ldb_id", ld.ID)
+		http.NotFound(w, r)
 		return
 	}
-	logFrom(r).Info("database started", "db_id", id, "engine", eng)
-	s.flashOK(w, r, "flash.ok.start_requested")
-	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
-}
-
-func (s *Server) stopDatabase(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return
+	base := envURL(o.ID, p.ID, e.ID) + "/databases/" + strconv.FormatInt(ld.ID, 10)
+	c := templates.LogicalDBCtx{Org: o, Role: role, Project: p, Env: e, LDB: ld, Inst: inst, Base: base}
+	di := dbservice.Instance{AppName: inst.AppName, ExternalPort: inst.ExternalPort}
+	dl := dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username, Password: secret.Dec(ld.Password)}
+	c.Internal = dbservice.PostgresURL("postgresql", di, dl)
+	if inst.ExternalPort != nil {
+		c.External = dbservice.PostgresExternalURL(di, dl, s.cfg.Host)
 	}
-	var err error
-	if eng == "postgres" {
-		err = s.dbsvc.StopPostgres(r.Context(), id)
-	} else {
-		err = s.dbsvc.StopRedis(r.Context(), id)
+	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), ld.ID); err == nil {
+		c.Backups = backups
 	}
-	if err != nil {
-		logFrom(r).Error("stopDatabase: failed to stop database", "err", err, "db_id", id, "engine", eng)
-		s.flashErrT(w, r, "flash.err.stop_database")
-		return
-	}
-	logFrom(r).Info("database stopped", "db_id", id, "engine", eng)
-	s.flashOK(w, r, "flash.ok.stop_requested")
-	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
-}
-
-func (s *Server) versionDatabase(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return
-	}
-	image := strings.TrimSpace(r.FormValue("image"))
-	if image != "" {
-		var err error
-		if eng == "postgres" {
-			err = s.q.UpdatePostgresImage(r.Context(), db.UpdatePostgresImageParams{ID: id, Image: image})
-		} else {
-			err = s.q.UpdateRedisImage(r.Context(), db.UpdateRedisImageParams{ID: id, Image: image})
-		}
-		if err != nil {
-			logFrom(r).Error("versionDatabase: failed to update image", "err", err, "db_id", id, "engine", eng, "image", image)
-			s.flashErrT(w, r, "flash.err.update_image")
-			return
-		}
-		logFrom(r).Info("database version updated", "db_id", id, "engine", eng, "image", image)
-	}
-	if eng == "postgres" {
-		s.dbsvc.DeployPostgres(id)
-	} else {
-		s.dbsvc.DeployRedis(id)
-	}
-	s.flashOK(w, r, "flash.ok.version_queued")
-	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
-}
-
-func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return
-	}
-	o, _, _ := s.loadOrg(w, r)
-	p, _ := s.loadProject(w, r)
-	e, _ := s.loadEnvironment(w, r, p.ID)
-	destroy := r.FormValue("destroy_data") == "on"
-	var err error
-	if eng == "postgres" {
-		err = s.dbsvc.DeletePostgres(r.Context(), id, destroy)
-	} else {
-		err = s.dbsvc.DeleteRedis(r.Context(), id, destroy)
-	}
-	if err != nil {
-		logFrom(r).Error("deleteDatabase: failed to delete database", "err", err, "db_id", id, "engine", eng, "destroy_data", destroy)
-		s.flashErrT(w, r, "flash.err.delete_database")
-		return
-	}
-	if derr := s.q.DeleteDBLinksByDB(r.Context(), db.DeleteDBLinksByDBParams{Engine: eng, DbID: id}); derr != nil {
-		logFrom(r).Error("deleteDatabase: failed to remove db links", "err", derr, "db_id", id, "engine", eng)
-	}
-	logFrom(r).Info("database deleted", "db_id", id, "engine", eng, "destroy_data", destroy)
-	s.flashOK(w, r, "flash.ok.db_deleted")
-	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
-}
-
-func (s *Server) databaseDetail(w http.ResponseWriter, r *http.Request) {
-	c, ok := s.loadDBCtx(w, r)
-	if !ok {
-		return
-	}
-	// Node pinning is admin-only: current pinned node + the cluster node list.
-	if c.Role == "owner" || c.Role == "admin" {
-		if c.Engine == "postgres" {
-			if pg, err := s.q.GetPostgres(r.Context(), c.ID); err == nil {
-				c.NodeHostname = pg.NodeHostname
-			}
-		} else if rd, err := s.q.GetRedis(r.Context(), c.ID); err == nil {
-			c.NodeHostname = rd.NodeHostname
-		}
-		if s.engine != nil {
-			c.Nodes, _ = s.engine.Nodes(r.Context())
-		}
+	if dests, err := s.q.ListDestinationsByOrg(r.Context(), o.ID); err == nil {
+		c.Destinations = dests
 	}
 	render(w, r, http.StatusOK, templates.DatabaseDetail(c))
 }
 
-func (s *Server) databaseStatus(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
+func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
-	var status, appName string
-	if eng == "postgres" {
-		pg, err := s.q.GetPostgres(r.Context(), id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		status = pg.Status
-		appName = pg.AppName
-	} else {
-		rd, err := s.q.GetRedis(r.Context(), id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		status = rd.Status
-		appName = rd.AppName
-	}
-	if s.engine != nil {
-		if st, err := s.engine.ServiceState(r.Context(), appName); err == nil && st.Found {
-			if st.Running >= st.Desired && st.Desired > 0 {
-				status = "running"
-			}
-		} else if err != nil {
-			logFrom(r).Error("databaseStatus: engine service state failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
-		}
-	}
-	render(w, r, http.StatusOK, templates.StatusBadge(status))
-}
-
-func (s *Server) databaseLogs(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
+	p, ok := s.loadProject(w, r)
 	if !ok {
 		return
 	}
-	if s.engine == nil {
-		logFrom(r).Error("databaseLogs: engine unavailable", "db_id", id, "engine", eng)
-		http.Error(w, "engine unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	var appName string
-	if eng == "postgres" {
-		pg, err := s.q.GetPostgres(r.Context(), id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		appName = pg.AppName
-	} else {
-		rd, err := s.q.GetRedis(r.Context(), id)
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		appName = rd.AppName
-	}
-	release, ok := s.acquireLogSlot()
+	e, ok := s.loadEnvironment(w, r, p.ID)
 	if !ok {
-		http.Error(w, "too many live log streams, try again shortly", http.StatusServiceUnavailable)
 		return
 	}
-	defer release()
-	conn, err := websocket.Accept(w, r, nil)
+	ld, ok := s.loadLogicalDB(w, r)
+	if !ok {
+		return
+	}
+	inst, err := s.q.GetDBInstance(r.Context(), ld.InstanceID)
 	if err != nil {
-		logFrom(r).Error("databaseLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
-		return
-	}
-	defer conn.CloseNow()
-	ctx := conn.CloseRead(context.Background())
-	rc, err := s.engine.ServiceLogs(ctx, appName, true)
-	if err != nil {
-		logFrom(r).Error("databaseLogs: engine service logs failed", "err", err, "db_id", id, "engine", eng, "app_name", appName)
-		conn.Close(websocket.StatusInternalError, "logs unavailable")
-		return
-	}
-	defer rc.Close()
-	streamParsedLogsToWS(ctx, conn, rc)
-}
-
-func (s *Server) databaseDeployLogs(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return
-	}
-	feed := dbservice.PgFeedID(id)
-	if eng == "redis" {
-		feed = dbservice.RedisFeedID(id)
-	}
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		logFrom(r).Error("databaseDeployLogs: websocket accept failed", "err", err, "db_id", id, "engine", eng)
-		return
-	}
-	defer conn.CloseNow()
-	ctx := conn.CloseRead(context.Background())
-	if s.logHub != nil && s.logHub.Active(feed) {
-		sub := s.logHub.Subscribe(feed)
-		defer s.logHub.Unsubscribe(feed, sub)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case line, open := <-sub:
-				if !open {
-					conn.Close(websocket.StatusNormalClosure, "")
-					return
-				}
-				wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				if err := conn.Write(wctx, websocket.MessageText, []byte(line)); err != nil {
-					cancel()
-					return
-				}
-				cancel()
-			}
-		}
-	}
-	conn.Write(ctx, websocket.MessageText, []byte("(no active deploy)\n"))
-	conn.Close(websocket.StatusNormalClosure, "")
-}
-
-// setDBNode pins a managed DB to a chosen node (empty = control-plane/manager).
-// Applied on the DB's next deploy; the data volume does NOT migrate (admin-only).
-func (s *Server) setDBNode(w http.ResponseWriter, r *http.Request) {
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return
-	}
-	node := strings.TrimSpace(r.FormValue("node_hostname"))
-	if node != "" && s.engine != nil {
-		live, _ := s.engine.Nodes(r.Context())
-		valid := false
-		for _, n := range live {
-			if n.Hostname == node {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			s.flashErrT(w, r, "flash.err.invalid_node")
-			return
-		}
-	}
-	var err error
-	if eng == "postgres" {
-		err = s.q.SetPostgresNode(r.Context(), db.SetPostgresNodeParams{ID: id, NodeHostname: node})
-	} else {
-		err = s.q.SetRedisNode(r.Context(), db.SetRedisNodeParams{ID: id, NodeHostname: node})
-	}
-	if err != nil {
-		logFrom(r).Error("setDBNode: update failed", "err", err, "db_id", id, "engine", eng)
+		logFrom(r).Error("deleteLogicalDatabase: instance missing", "err", err, "ldb_id", ld.ID)
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	logFrom(r).Info("db node set", "db_id", id, "engine", eng, "node", node)
-	s.flashOK(w, r, "flash.ok.db_node_saved")
-	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
-}
-
-// loadDBChain parses {engine}/{dbID} and verifies it belongs to the org→proj→env chain.
-func (s *Server) loadDBChain(w http.ResponseWriter, r *http.Request) (string, int64, bool) {
-	o, _, ok := s.loadOrg(w, r)
-	if !ok {
-		return "", 0, false
+	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+	if !s.dbsvc.InstanceRunning(r.Context(), di) {
+		s.flashErrT(w, r, "flash.err.ldb_instance_down")
+		return
 	}
-	p, ok := s.loadProject(w, r)
-	if !ok {
-		return "", 0, false
+	if err := s.dbsvc.DropLogicalDB(r.Context(), di, dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username}); err != nil {
+		logFrom(r).Error("deleteLogicalDatabase: drop failed", "err", err, "ldb_id", ld.ID)
+		s.flashErrErr(w, r, "flash.err.delete_database", err)
+		return
 	}
-	e, ok := s.loadEnvironment(w, r, p.ID)
-	if !ok {
-		return "", 0, false
+	if err := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); err != nil {
+		logFrom(r).Error("deleteLogicalDatabase: row delete failed", "err", err, "ldb_id", ld.ID)
+		s.flashErrT(w, r, "flash.err.delete_database")
+		return
 	}
-	engine := chi.URLParam(r, "engine")
-	id, err := strconv.ParseInt(chi.URLParam(r, "dbID"), 10, 64)
-	if err != nil || (engine != "postgres" && engine != "redis") {
-		http.NotFound(w, r)
-		return "", 0, false
-	}
-	// verify it belongs to the environment
-	var envID int64
-	if engine == "postgres" {
-		row, err := s.q.GetPostgres(r.Context(), id)
-		if err != nil {
-			logFrom(r).Info("loadDBChain: database not found", "db_id", id, "engine", engine, "environment_id", e.ID)
-			http.NotFound(w, r)
-			return "", 0, false
-		}
-		envID = row.EnvironmentID
-	} else {
-		row, err := s.q.GetRedis(r.Context(), id)
-		if err != nil {
-			logFrom(r).Info("loadDBChain: database not found", "db_id", id, "engine", engine, "environment_id", e.ID)
-			http.NotFound(w, r)
-			return "", 0, false
-		}
-		envID = row.EnvironmentID
-	}
-	if envID != e.ID {
-		logFrom(r).Info("loadDBChain: environment mismatch", "db_id", id, "engine", engine, "environment_id", e.ID, "db_environment_id", envID)
-		http.NotFound(w, r)
-		return "", 0, false
-	}
-	_ = o
-	return engine, id, true
-}
-
-// loadDBCtx loads the chain + the DB row and assembles DatabaseCtx (connection strings).
-func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.DatabaseCtx, bool) {
-	o, role, ok := s.loadOrg(w, r)
-	if !ok {
-		return templates.DatabaseCtx{}, false
-	}
-	p, ok := s.loadProject(w, r)
-	if !ok {
-		return templates.DatabaseCtx{}, false
-	}
-	e, ok := s.loadEnvironment(w, r, p.ID)
-	if !ok {
-		return templates.DatabaseCtx{}, false
-	}
-	eng, id, ok := s.loadDBChain(w, r)
-	if !ok {
-		return templates.DatabaseCtx{}, false
-	}
-	base := envURL(o.ID, p.ID, e.ID) + "/databases/" + eng + "/" + strconv.FormatInt(id, 10)
-	c := templates.DatabaseCtx{Org: o, Role: role, Project: p, Env: e, Engine: eng, ID: id, Base: base}
-	if eng == "postgres" {
-		row, _ := s.q.GetPostgres(r.Context(), id)
-		pg := dbservice.PostgresDB{AppName: row.AppName, DatabaseName: row.DatabaseName, DatabaseUser: row.DatabaseUser, DatabasePassword: secret.Dec(row.DatabasePassword), ExternalPort: row.ExternalPort}
-		c.Name = row.Name
-		c.Image = row.Image
-		c.Status = row.Status
-		c.Internal = dbservice.PostgresInternalURL(pg)
-		if row.ExternalPort != nil {
-			c.External = dbservice.PostgresExternalURL(pg, s.cfg.Host)
-		}
-		if backups, err := s.q.ListBackupsByDB(r.Context(), id); err != nil {
-			logFrom(r).Error("loadDBCtx: failed to list backups", "err", err, "db_id", id)
-		} else {
-			c.Backups = backups
-		}
-		if dests, err := s.q.ListDestinationsByOrg(r.Context(), o.ID); err != nil {
-			logFrom(r).Error("loadDBCtx: failed to list destinations", "err", err, "org_id", o.ID)
-		} else {
-			c.Destinations = dests
-		}
-	} else {
-		row, _ := s.q.GetRedis(r.Context(), id)
-		rd := dbservice.RedisDB{AppName: row.AppName, Password: secret.Dec(row.Password), ExternalPort: row.ExternalPort}
-		c.Name = row.Name
-		c.Image = row.Image
-		c.Status = row.Status
-		c.Internal = dbservice.RedisInternalURL(rd)
-		if row.ExternalPort != nil {
-			c.External = dbservice.RedisExternalURL(rd, s.cfg.Host)
-		}
-	}
-	return c, true
+	logFrom(r).Info("logical database deleted", "ldb_id", ld.ID, "db_name", ld.DbName)
+	s.flashOK(w, r, "flash.ok.db_deleted")
+	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
 }
 
 func genPassword() (string, error) {

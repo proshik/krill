@@ -7,32 +7,35 @@ import (
 	"strconv"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// removeEnvDatabases deletes the managed databases (Swarm service + volume +
-// row) of an environment. Used by environment/project delete so their DB
-// services and volumes are not orphaned — without this the DB rows cascade-
-// delete while the containers and volumes linger with no UI to clean them.
+// removeEnvDatabases drops the environment's logical databases inside their
+// instances (best-effort: an unreachable instance leaves a physical orphan,
+// logged; the rows cascade with the environment). Instances are org-level and
+// are NOT touched.
 func (s *Server) removeEnvDatabases(ctx context.Context, envID int64) {
 	if s.dbsvc == nil {
 		return
 	}
-	pgs, _ := s.q.ListPostgresByEnvironment(ctx, envID)
-	for _, pg := range pgs {
-		if err := s.dbsvc.DeletePostgres(ctx, pg.ID, true); err != nil {
-			slog.Error("removeEnvDatabases: postgres", "db", pg.ID, "err", err)
+	ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(ctx, envID)
+	for _, ld := range ldbs {
+		inst, err := s.q.GetDBInstance(ctx, ld.InstanceID)
+		if err != nil {
+			slog.Error("removeEnvDatabases: instance lookup", "ldb", ld.ID, "err", err)
+			continue
 		}
-		_ = s.q.DeleteDBLinksByDB(ctx, db.DeleteDBLinksByDBParams{Engine: "postgres", DbID: pg.ID})
-	}
-	redises, _ := s.q.ListRedisByEnvironment(ctx, envID)
-	for _, rd := range redises {
-		if err := s.dbsvc.DeleteRedis(ctx, rd.ID, true); err != nil {
-			slog.Error("removeEnvDatabases: redis", "db", rd.ID, "err", err)
+		di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+		if err := s.dbsvc.DropLogicalDB(ctx, di, dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username}); err != nil {
+			slog.Error("removeEnvDatabases: drop logical db (physical orphan left)", "ldb", ld.ID, "db_name", ld.DbName, "err", err)
 		}
-		_ = s.q.DeleteDBLinksByDB(ctx, db.DeleteDBLinksByDBParams{Engine: "redis", DbID: rd.ID})
+		if err := s.q.DeleteLogicalDatabase(ctx, ld.ID); err != nil {
+			slog.Error("removeEnvDatabases: delete row", "ldb", ld.ID, "err", err)
+		}
 	}
 }
 
@@ -195,39 +198,47 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		active = envs[0]
 	}
 	var apps []db.Application
-	var pgs []db.PostgresDb
-	var redises []db.RedisDb
+	var dbs []db.ListLogicalDatabasesByEnvironmentRow
 	if active.ID != 0 {
 		apps, _ = s.q.ListApplicationsByEnvironment(r.Context(), active.ID)
-		pgs, _ = s.q.ListPostgresByEnvironment(r.Context(), active.ID)
-		redises, _ = s.q.ListRedisByEnvironment(r.Context(), active.ID)
+		dbs, _ = s.q.ListLogicalDatabasesByEnvironment(r.Context(), active.ID)
 		// Reflect the LIVE Swarm state on the cards (the stored status can be
 		// stale) — one bulk call, not one per card.
-		s.deriveCardStatuses(r.Context(), apps, pgs, redises)
+		s.deriveCardStatuses(r.Context(), apps, dbs)
 	}
 	registries, err := s.q.ListRegistriesByOrg(r.Context(), o.ID)
 	if err != nil {
 		logFrom(r).Error("projectPage: list registries", "err", err, "org_id", o.ID)
 	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, pgs, redises, registries))
+	var pgInsts []db.DbInstance
+	if all, err := s.q.ListDBInstancesByOrg(r.Context(), o.ID); err == nil {
+		for _, in := range all {
+			if in.Engine == "postgres" {
+				pgInsts = append(pgInsts, in)
+			}
+		}
+	} else {
+		logFrom(r).Error("projectPage: list db instances", "err", err, "org_id", o.ID)
+	}
+	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries))
 }
 
-// deriveCardStatuses replaces each app/db stored status with the LIVE Swarm
-// status using a single bulk ServiceStates call (instead of one per card).
-// Engine-nil-safe; unknown services keep their stored status (DeriveStatus).
-func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb) {
+// deriveCardStatuses replaces each app/logical-db stored status with the LIVE
+// Swarm status of its underlying service, using a single bulk ServiceStates
+// call (instead of one per card). Engine-nil-safe; unknown services keep their
+// stored status (DeriveStatus). A logical database's card reflects the status
+// of its instance's service (InstanceAppName), shared by every database on
+// that instance.
+func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow) {
 	if s.engine == nil {
 		return
 	}
-	names := make([]string, 0, len(apps)+len(pgs)+len(redises))
+	names := make([]string, 0, len(apps)+len(ldbs))
 	for _, a := range apps {
 		names = append(names, dockerName(a.ID))
 	}
-	for _, p := range pgs {
-		names = append(names, p.AppName)
-	}
-	for _, rd := range redises {
-		names = append(names, rd.AppName)
+	for _, ld := range ldbs {
+		names = append(names, ld.InstanceAppName)
 	}
 	states, err := s.engine.ServiceStates(ctx, names)
 	if err != nil {
@@ -237,11 +248,8 @@ func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, 
 	for i := range apps {
 		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
 	}
-	for i := range pgs {
-		pgs[i].Status = deploy.DeriveStatus(states[pgs[i].AppName], pgs[i].Status)
-	}
-	for i := range redises {
-		redises[i].Status = deploy.DeriveStatus(states[redises[i].AppName], redises[i].Status)
+	for i := range ldbs {
+		ldbs[i].InstanceStatus = deploy.DeriveStatus(states[ldbs[i].InstanceAppName], ldbs[i].InstanceStatus)
 	}
 }
 
@@ -260,10 +268,9 @@ func (s *Server) envStatuses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apps, _ := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
-	pgs, _ := s.q.ListPostgresByEnvironment(r.Context(), e.ID)
-	redises, _ := s.q.ListRedisByEnvironment(r.Context(), e.ID)
-	s.deriveCardStatuses(r.Context(), apps, pgs, redises)
-	render(w, r, http.StatusOK, templates.EnvStatuses(apps, pgs, redises))
+	ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(r.Context(), e.ID)
+	s.deriveCardStatuses(r.Context(), apps, ldbs)
+	render(w, r, http.StatusOK, templates.EnvStatuses(apps, ldbs))
 }
 
 func projURL(orgID, projID int64) string {

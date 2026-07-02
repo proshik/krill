@@ -44,14 +44,13 @@ func (s *Server) addAppPort(w http.ResponseWriter, r *http.Request) {
 	// Cross-check against managed-DB external ports (those are TCP host ports).
 	if protocol == "tcp" {
 		hp := int32(hostPort)
-		pgN, perr := s.q.CountPostgresByExternalPort(r.Context(), &hp)
-		rdN, rerr := s.q.CountRedisByExternalPort(r.Context(), &hp)
-		if perr != nil || rerr != nil {
-			logFrom(r).Error("addAppPort: count db external ports failed", "err_pg", perr, "err_redis", rerr, "app_id", c.App.ID)
+		n, err := s.q.CountDBInstancesByExternalPort(r.Context(), &hp)
+		if err != nil {
+			logFrom(r).Error("addAppPort: count db external ports failed", "err", err, "app_id", c.App.ID)
 			s.flashErrT(w, r, "flash.err.internal")
 			return
 		}
-		if pgN > 0 || rdN > 0 {
+		if n > 0 {
 			s.flashErrT(w, r, "flash.err.port_in_use")
 			return
 		}

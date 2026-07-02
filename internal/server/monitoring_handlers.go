@@ -282,14 +282,9 @@ func (s *Server) metricLabels(r *http.Request, orgID int64) (apps, dbs map[strin
 			apps[dockerName(a.AppID)] = metrics.Labeled{Name: a.AppName, Detail: a.ProjectName + "/" + a.EnvName}
 		}
 	}
-	if pgs, err := s.q.ListPostgresByOrg(r.Context(), orgID); err == nil {
-		for _, p := range pgs {
-			dbs[p.AppName] = metrics.Labeled{Name: p.Name, Detail: "postgres"}
-		}
-	}
-	if rds, err := s.q.ListRedisByOrg(r.Context(), orgID); err == nil {
-		for _, d := range rds {
-			dbs[d.AppName] = metrics.Labeled{Name: d.Name, Detail: "redis"}
+	if insts, err := s.q.ListDBInstancesByOrg(r.Context(), orgID); err == nil {
+		for _, in := range insts {
+			dbs[in.AppName] = metrics.Labeled{Name: in.Name, Detail: in.Engine}
 		}
 	}
 	return apps, dbs

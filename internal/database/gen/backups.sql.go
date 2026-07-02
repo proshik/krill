@@ -7,38 +7,53 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createBackup = `-- name: CreateBackup :one
-INSERT INTO backups (postgres_db_id, destination_id, schedule, prefix, retention, enabled)
+INSERT INTO backups (logical_database_id, destination_id, schedule, prefix, retention, enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+RETURNING id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 `
 
 type CreateBackupParams struct {
-	PostgresDbID  int64  `json:"postgres_db_id"`
-	DestinationID int64  `json:"destination_id"`
-	Schedule      string `json:"schedule"`
-	Prefix        string `json:"prefix"`
-	Retention     int32  `json:"retention"`
-	Enabled       bool   `json:"enabled"`
+	LogicalDatabaseID int64  `json:"logical_database_id"`
+	DestinationID     int64  `json:"destination_id"`
+	Schedule          string `json:"schedule"`
+	Prefix            string `json:"prefix"`
+	Retention         int32  `json:"retention"`
+	Enabled           bool   `json:"enabled"`
 }
 
-func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (Backup, error) {
+type CreateBackupRow struct {
+	ID                int64              `json:"id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
+func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error) {
 	row := q.db.QueryRow(ctx, createBackup,
-		arg.PostgresDbID,
+		arg.LogicalDatabaseID,
 		arg.DestinationID,
 		arg.Schedule,
 		arg.Prefix,
 		arg.Retention,
 		arg.Enabled,
 	)
-	var i Backup
+	var i CreateBackupRow
 	err := row.Scan(
 		&i.ID,
-		&i.PostgresDbID,
+		&i.LogicalDatabaseID,
 		&i.DestinationID,
 		&i.Schedule,
 		&i.Prefix,
@@ -62,16 +77,30 @@ func (q *Queries) DeleteBackup(ctx context.Context, id int64) error {
 }
 
 const getBackup = `-- name: GetBackup :one
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 FROM backups WHERE id = $1
 `
 
-func (q *Queries) GetBackup(ctx context.Context, id int64) (Backup, error) {
+type GetBackupRow struct {
+	ID                int64              `json:"id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
+func (q *Queries) GetBackup(ctx context.Context, id int64) (GetBackupRow, error) {
 	row := q.db.QueryRow(ctx, getBackup, id)
-	var i Backup
+	var i GetBackupRow
 	err := row.Scan(
 		&i.ID,
-		&i.PostgresDbID,
+		&i.LogicalDatabaseID,
 		&i.DestinationID,
 		&i.Schedule,
 		&i.Prefix,
@@ -85,23 +114,37 @@ func (q *Queries) GetBackup(ctx context.Context, id int64) (Backup, error) {
 	return i, err
 }
 
-const listBackupsByDB = `-- name: ListBackupsByDB :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE postgres_db_id = $1 ORDER BY created_at
+const listBackupsByLogicalDB = `-- name: ListBackupsByLogicalDB :many
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+FROM backups WHERE logical_database_id = $1 ORDER BY created_at
 `
 
-func (q *Queries) ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error) {
-	rows, err := q.db.Query(ctx, listBackupsByDB, postgresDbID)
+type ListBackupsByLogicalDBRow struct {
+	ID                int64              `json:"id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
+func (q *Queries) ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error) {
+	rows, err := q.db.Query(ctx, listBackupsByLogicalDB, logicalDatabaseID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Backup
+	var items []ListBackupsByLogicalDBRow
 	for rows.Next() {
-		var i Backup
+		var i ListBackupsByLogicalDBRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.PostgresDbID,
+			&i.LogicalDatabaseID,
 			&i.DestinationID,
 			&i.Schedule,
 			&i.Prefix,
@@ -123,22 +166,36 @@ func (q *Queries) ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Ba
 }
 
 const listEnabledBackups = `-- name: ListEnabledBackups :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 FROM backups WHERE enabled = true
 `
 
-func (q *Queries) ListEnabledBackups(ctx context.Context) ([]Backup, error) {
+type ListEnabledBackupsRow struct {
+	ID                int64              `json:"id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
+func (q *Queries) ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsRow, error) {
 	rows, err := q.db.Query(ctx, listEnabledBackups)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Backup
+	var items []ListEnabledBackupsRow
 	for rows.Next() {
-		var i Backup
+		var i ListEnabledBackupsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.PostgresDbID,
+			&i.LogicalDatabaseID,
 			&i.DestinationID,
 			&i.Schedule,
 			&i.Prefix,

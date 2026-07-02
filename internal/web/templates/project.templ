@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, pgs []db.PostgresDb, redises []db.RedisDb, registries []db.Registry) {
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry) {
 	@Layout(project.Name, org, role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
@@ -68,20 +68,14 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						if active.ID != 0 && (role == "owner" || role == "admin") {
 							<div class="mb-3"><button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-db')">+ { i18n.T(ctx, "db.new") }</button></div>
 						}
-						if len(pgs) == 0 && len(redises) == 0 {
+						if len(dbs) == 0 {
 							<div class="k-card"><p class="k-mono">{ i18n.T(ctx, "db.empty") }</p></div>
 						} else {
 							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
-								for _, pg := range pgs {
-									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/postgres/" + itoa(pg.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { pg.Name }</div>@CardStatus("cs-pg-"+itoa(pg.ID), pg.Status, false)</div>
-										<div class="k-mono text-xs">{ pg.Image }</div>
-									</a>
-								}
-								for _, rd := range redises {
-									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/redis/" + itoa(rd.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🟥</span> { rd.Name }</div>@CardStatus("cs-redis-"+itoa(rd.ID), rd.Status, false)</div>
-										<div class="k-mono text-xs">{ rd.Image }</div>
+								for _, d := range dbs {
+									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/" + itoa(d.ID)) }>
+										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { d.Name }</div>@CardStatus("cs-ldb-"+itoa(d.ID), d.InstanceStatus, false)</div>
+										<div class="k-mono text-xs">{ d.DbName + " @ " + d.InstanceName }</div>
 									</a>
 								}
 							</div>
@@ -124,24 +118,25 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						<div class="k-modal-head"><button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-db')">✕</button><div class="k-modal-title">{ i18n.T(ctx, "db.new") }</div></div>
 						<div class="k-modal-body">
 							<div>
-								<label class="k-label">{ i18n.T(ctx, "db.engine") }</label>
-								<select class="k-select" name="engine" onchange="krillDbVersion(this.value)">
-									<option value="postgres">PostgreSQL</option>
-									<option value="redis">Redis</option>
+								<label class="k-label k-label-required">{ i18n.T(ctx, "ldb.instance") }</label>
+								<select class="k-select" name="instance_id" required>
+									for _, in := range pgInsts {
+										<option value={ itoa(in.ID) }>{ in.Name } ({ in.Image })</option>
+									}
 								</select>
+								if len(pgInsts) == 0 {
+									<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "ldb.no_instances") } <a class="underline" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx, "dbi.title") }</a></p>
+								}
 							</div>
-							<div><label class="k-label k-label-required">{ i18n.T(ctx, "common.name") }</label><input class="k-input" name="name" required placeholder="db"/></div>
-							<div><label class="k-label">{ i18n.T(ctx, "db.version") }</label><input class="k-input" name="version" id="db-version" value="postgres:17"/></div>
-							<div><label class="k-label">{ i18n.T(ctx, "db.external_port") }</label><input class="k-input" name="external_port" type="number" placeholder=""/></div>
+							<div><label class="k-label k-label-required">{ i18n.T(ctx, "dbi.name") }</label><input class="k-input" name="name" required/></div>
+							<div><label class="k-label">{ i18n.T(ctx, "ldb.db_name") }</label><input class="k-input k-mono" name="db_name" placeholder={ i18n.T(ctx, "ldb.auto") }/></div>
+							<div><label class="k-label">{ i18n.T(ctx, "ldb.username") }</label><input class="k-input k-mono" name="username" placeholder={ i18n.T(ctx, "ldb.auto") }/></div>
 						</div>
 						<div class="k-modal-foot">
 							<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-db')">{ i18n.T(ctx, "common.cancel") }</button>
 							<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
 						</div>
 					</form>
-					<script>
-						window.krillDbVersion = function(eng){ document.getElementById('db-version').value = eng === 'redis' ? 'redis:7' : 'postgres:17'; };
-					</script>
 				</dialog>
 			}
 		}

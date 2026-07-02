@@ -28,8 +28,9 @@ type AppCtx struct {
 	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
 	Destinations  []db.Destination
 
-	DBLinks      []DBLinkView
-	EnvDatabases []EnvDBOption
+	DBLinks        []DBLinkView
+	Ldbs           []db.ListLogicalDatabasesByEnvironmentRow // logical DBs of this environment (pg link options)
+	RedisInstances []db.DbInstance                           // redis instances of this org (redis link options)
 
 	AutoDeploy    bool
 	WebhookSecret string // decrypted; set for admins only
@@ -45,13 +46,6 @@ type DBLinkView struct {
 	VarName  string
 	Scheme   string
 	Collides bool
-}
-
-// EnvDBOption is one managed DB of the environment for the link dropdown.
-type EnvDBOption struct {
-	Engine string
-	ID     int64
-	Name   string
 }
 
 func (c AppCtx) base() string {
@@ -320,15 +314,18 @@ templ envTab(c AppCtx) {
 				</tbody>
 			</table>
 		}
-		if len(c.EnvDatabases) == 0 {
+		if len(c.Ldbs) == 0 && len(c.RedisInstances) == 0 {
 			<p class="k-muted mb-3">{ i18n.T(ctx, "dblink.no_databases") }</p>
 		} else {
 			<form method="post" action={ templ.SafeURL(c.base() + "/db-links") } class="flex items-end gap-2 flex-wrap mb-4">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.database") }</label>
 					<select id="dblink-db" class="k-select" name="db_ref">
-						for _, d := range c.EnvDatabases {
-							<option value={ d.Engine + ":" + itoa(d.ID) }>{ d.Engine } · { d.Name }</option>
+						for _, ldb := range c.Ldbs {
+							<option value={ "pg:" + itoa(ldb.ID) }>🐘 { ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")" }</option>
+						}
+						for _, inst := range c.RedisInstances {
+							<option value={ "redis:" + itoa(inst.ID) }>🟥 { inst.Name }</option>
 						}
 					</select>
 				</div>
@@ -339,8 +336,8 @@ templ envTab(c AppCtx) {
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.scheme") }</label>
 					<select id="dblink-scheme" class="k-select" name="scheme">
-						<option value="postgresql" data-engine="postgres">postgresql://</option>
-						<option value="postgres" data-engine="postgres">postgres://</option>
+						<option value="postgresql" data-engine="pg">postgresql://</option>
+						<option value="postgres" data-engine="pg">postgres://</option>
 						<option value="redis" data-engine="redis">redis://</option>
 					</select>
 				</div>

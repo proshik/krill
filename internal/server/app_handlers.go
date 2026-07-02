@@ -408,27 +408,37 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		if lerr != nil {
 			logFrom(r).Error("appDetail: list db links", "err", lerr, "app_id", c.App.ID)
 		}
-		pgs, _ := s.q.ListPostgresByEnvironment(r.Context(), c.Env.ID)
-		redises, _ := s.q.ListRedisByEnvironment(r.Context(), c.Env.ID)
-		pgName := map[int64]string{}
-		for _, pg := range pgs {
-			pgName[pg.ID] = pg.Name
-			c.EnvDatabases = append(c.EnvDatabases, templates.EnvDBOption{Engine: "postgres", ID: pg.ID, Name: pg.Name})
+		ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(r.Context(), c.Env.ID)
+		var redisInsts []db.DbInstance
+		if insts, err := s.q.ListDBInstancesByOrg(r.Context(), c.Org.ID); err == nil {
+			for _, in := range insts {
+				if in.Engine == "redis" {
+					redisInsts = append(redisInsts, in)
+				}
+			}
+		}
+		c.Ldbs = ldbs
+		c.RedisInstances = redisInsts
+		ldbName := map[int64]string{}
+		for _, ldb := range ldbs {
+			ldbName[ldb.ID] = ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")"
 		}
 		redisName := map[int64]string{}
-		for _, rd := range redises {
-			redisName[rd.ID] = rd.Name
-			c.EnvDatabases = append(c.EnvDatabases, templates.EnvDBOption{Engine: "redis", ID: rd.ID, Name: rd.Name})
+		for _, inst := range redisInsts {
+			redisName[inst.ID] = inst.Name
 		}
 		envKeys, _ := parseEnv(c.App.EnvText)
 		for _, l := range links {
-			name := pgName[l.DbID]
-			if l.Engine == "redis" {
-				name = redisName[l.DbID]
+			var engine, name string
+			switch {
+			case l.LogicalDatabaseID != nil:
+				engine, name = "postgres", ldbName[*l.LogicalDatabaseID]
+			case l.InstanceID != nil:
+				engine, name = "redis", redisName[*l.InstanceID]
 			}
 			_, collides := envKeys[l.VarName]
 			c.DBLinks = append(c.DBLinks, templates.DBLinkView{
-				ID: l.ID, Engine: l.Engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Collides: collides,
+				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Collides: collides,
 			})
 		}
 	}

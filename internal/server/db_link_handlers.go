@@ -24,8 +24,8 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_database")
 		return
 	}
-	engine := ref[0]
-	dbID, err := strconv.ParseInt(ref[1], 10, 64)
+	kind := ref[0]
+	refID, err := strconv.ParseInt(ref[1], 10, 64)
 	if err != nil {
 		s.flashErrT(w, r, "flash.err.invalid_database")
 		return
@@ -36,38 +36,30 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_var_name")
 		return
 	}
-	switch engine {
-	case "postgres":
+	var ldbID, instID *int64
+	switch kind {
+	case "pg":
 		if scheme != "postgresql" && scheme != "postgres" {
 			s.flashErrT(w, r, "flash.err.invalid_pg_scheme")
 			return
 		}
+		ld, gerr := s.q.GetLogicalDatabase(r.Context(), refID)
+		if gerr != nil || ld.EnvironmentID != c.Env.ID {
+			logFrom(r).Info("addDBLink: db not in app environment", "logical_database_id", refID, "app_id", c.App.ID)
+			s.flashErrT(w, r, "flash.err.db_not_in_env")
+			return
+		}
+		ldbID = &ld.ID
 	case "redis":
 		scheme = "redis"
+		inst, gerr := s.q.GetDBInstance(r.Context(), refID)
+		if gerr != nil || inst.OrganizationID != c.Org.ID || inst.Engine != "redis" {
+			s.flashErrT(w, r, "flash.err.db_not_found")
+			return
+		}
+		instID = &inst.ID
 	default:
 		s.flashErrT(w, r, "flash.err.invalid_database")
-		return
-	}
-	// the DB must belong to this app's environment
-	var envID int64
-	if engine == "postgres" {
-		pg, gerr := s.q.GetPostgres(r.Context(), dbID)
-		if gerr != nil {
-			s.flashErrT(w, r, "flash.err.db_not_found")
-			return
-		}
-		envID = pg.EnvironmentID
-	} else {
-		rd, gerr := s.q.GetRedis(r.Context(), dbID)
-		if gerr != nil {
-			s.flashErrT(w, r, "flash.err.db_not_found")
-			return
-		}
-		envID = rd.EnvironmentID
-	}
-	if envID != c.Env.ID {
-		logFrom(r).Info("addDBLink: db not in app environment", "db_id", dbID, "engine", engine, "app_id", c.App.ID)
-		s.flashErrT(w, r, "flash.err.db_not_in_env")
 		return
 	}
 	// var must not already be set in env_text: the link would override it at
@@ -78,13 +70,13 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.q.CreateDBLink(r.Context(), db.CreateDBLinkParams{
-		ApplicationID: c.App.ID, Engine: engine, DbID: dbID, VarName: varName, Scheme: scheme,
+		ApplicationID: c.App.ID, LogicalDatabaseID: ldbID, InstanceID: instID, VarName: varName, Scheme: scheme,
 	}); err != nil {
 		logFrom(r).Error("addDBLink: create failed", "err", err, "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.link_var_exists")
 		return
 	}
-	logFrom(r).Info("db link created", "app_id", c.App.ID, "engine", engine, "db_id", dbID, "var", varName)
+	logFrom(r).Info("db link created", "app_id", c.App.ID, "kind", kind, "ref_id", refID, "var", varName)
 	s.flashOK(w, r, "flash.ok.db_linked")
 	http.Redirect(w, r, appURL(c)+"?tab=env", http.StatusSeeOther)
 }
@@ -109,17 +101,17 @@ func (s *Server) deleteDBLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadDBLink parses {linkID} and verifies it belongs to the given application.
-func (s *Server) loadDBLink(w http.ResponseWriter, r *http.Request, appID int64) (db.AppDbLink, bool) {
+func (s *Server) loadDBLink(w http.ResponseWriter, r *http.Request, appID int64) (db.GetDBLinkRow, bool) {
 	id, ok := pathID(r, "linkID")
 	if !ok {
 		http.NotFound(w, r)
-		return db.AppDbLink{}, false
+		return db.GetDBLinkRow{}, false
 	}
 	l, err := s.q.GetDBLink(r.Context(), id)
 	if err != nil || l.ApplicationID != appID {
 		logFrom(r).Info("loadDBLink: not found in app", "link_id", id, "app_id", appID)
 		http.NotFound(w, r)
-		return db.AppDbLink{}, false
+		return db.GetDBLinkRow{}, false
 	}
 	return l, true
 }

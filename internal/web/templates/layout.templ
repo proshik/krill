@@ -33,6 +33,7 @@ templ Layout(title string, org db.Organization, role string) {
 				</div>
 				<nav>
 					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "projects")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ i18n.T(ctx, "nav.projects") }</a>
+					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "db-servers")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx, "nav.dbservers") }</a>
 					if role == "owner" || role == "admin" {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
 					}

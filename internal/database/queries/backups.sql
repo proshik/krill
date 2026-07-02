@@ -1,18 +1,18 @@
 -- name: CreateBackup :one
-INSERT INTO backups (postgres_db_id, destination_id, schedule, prefix, retention, enabled)
+INSERT INTO backups (logical_database_id, destination_id, schedule, prefix, retention, enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at;
+RETURNING id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at;
 
 -- name: GetBackup :one
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 FROM backups WHERE id = $1;
 
--- name: ListBackupsByDB :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE postgres_db_id = $1 ORDER BY created_at;
+-- name: ListBackupsByLogicalDB :many
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+FROM backups WHERE logical_database_id = $1 ORDER BY created_at;
 
 -- name: ListEnabledBackups :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+SELECT id, logical_database_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 FROM backups WHERE enabled = true;
 
 -- name: SetBackupEnabled :exec
