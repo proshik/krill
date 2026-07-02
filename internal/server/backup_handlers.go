@@ -17,25 +17,25 @@ import (
 // loadBackupChain resolves the org→proj→env→db chain, rejects non-postgres DBs,
 // loads {backupID} and verifies it belongs to that postgres DB. It also returns
 // the DB detail base URL used for redirects and form actions.
-func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.Backup, string, bool) {
+func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.GetBackupRow, string, bool) {
 	engine, dbID, ok := s.loadDBChain(w, r)
 	if !ok {
-		return db.Backup{}, "", false
+		return db.GetBackupRow{}, "", false
 	}
 	if engine != "postgres" {
 		http.NotFound(w, r)
-		return db.Backup{}, "", false
+		return db.GetBackupRow{}, "", false
 	}
 	id, ok := pathID(r, "backupID")
 	if !ok {
 		http.NotFound(w, r)
-		return db.Backup{}, "", false
+		return db.GetBackupRow{}, "", false
 	}
 	b, err := s.q.GetBackup(r.Context(), id)
-	if err != nil || b.PostgresDbID != dbID {
+	if err != nil || b.LogicalDatabaseID == nil || *b.LogicalDatabaseID != dbID {
 		logFrom(r).Info("loadBackupChain: backup not found or db mismatch", "backup_id", id, "db_id", dbID)
 		http.NotFound(w, r)
-		return db.Backup{}, "", false
+		return db.GetBackupRow{}, "", false
 	}
 	return b, s.dbBase(r, engine, dbID), true
 }
@@ -91,12 +91,12 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := s.q.CreateBackup(r.Context(), db.CreateBackupParams{
-		PostgresDbID:  dbID,
-		DestinationID: destID,
-		Schedule:      schedule,
-		Prefix:        prefix,
-		Retention:     int32(retention),
-		Enabled:       true,
+		LogicalDatabaseID: &dbID,
+		DestinationID:     destID,
+		Schedule:          schedule,
+		Prefix:            prefix,
+		Retention:         int32(retention),
+		Enabled:           true,
 	})
 	if err != nil {
 		logFrom(r).Error("addBackup: create failed", "err", err, "db_id", dbID, "destination_id", destID)
@@ -122,7 +122,7 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_backup")
 		return
 	}
-	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", b.PostgresDbID)
+	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
@@ -141,7 +141,7 @@ func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.update_backup")
 		return
 	}
-	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.PostgresDbID, "enabled", !b.Enabled)
+	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "enabled", !b.Enabled)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
@@ -163,7 +163,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 	// Run asynchronously with a detached context: a backup can take minutes, so
 	// it must not tie up the request and must finish even if the client
 	// disconnects. RunBackup records the outcome on the row's last_status.
-	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", b.PostgresDbID)
+	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -192,7 +192,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Run asynchronously with a detached context: the S3→psql restore can take
 	// minutes, so a client disconnect must not abort a half-done restore.
-	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -216,7 +216,7 @@ func (s *Server) backupObjects(w http.ResponseWriter, r *http.Request) {
 	}
 	objs, err := s.backupSvc.ListObjects(r.Context(), b.ID)
 	if err != nil {
-		logFrom(r).Error("backupObjects: list failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID)
+		logFrom(r).Error("backupObjects: list failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
 		http.Error(w, "failed to list backups", http.StatusInternalServerError)
 		return
 	}
@@ -240,7 +240,7 @@ func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, err := s.backupSvc.OpenObject(r.Context(), b.ID, key)
 	if err != nil {
-		logFrom(r).Error("downloadBackup: open failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+		logFrom(r).Error("downloadBackup: open failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
 		http.Error(w, "failed to download backup", http.StatusInternalServerError)
 		return
 	}
@@ -248,6 +248,6 @@ func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+path.Base(key))
 	if _, err := io.Copy(w, rc); err != nil {
-		logFrom(r).Error("downloadBackup: copy failed", "err", err, "backup_id", b.ID, "db_id", b.PostgresDbID, "key", key)
+		logFrom(r).Error("downloadBackup: copy failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
 	}
 }

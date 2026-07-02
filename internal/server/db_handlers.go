@@ -481,7 +481,7 @@ func (s *Server) loadDBCtx(w http.ResponseWriter, r *http.Request) (templates.Da
 		if row.ExternalPort != nil {
 			c.External = dbservice.PostgresExternalURLLegacy(pg, s.cfg.Host)
 		}
-		if backups, err := s.q.ListBackupsByDB(r.Context(), id); err != nil {
+		if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), &id); err != nil {
 			logFrom(r).Error("loadDBCtx: failed to list backups", "err", err, "db_id", id)
 		} else {
 			c.Backups = backups

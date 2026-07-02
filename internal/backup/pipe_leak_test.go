@@ -15,7 +15,7 @@ import (
 type leakStore struct{}
 
 func (leakStore) GetBackup(_ context.Context, id int64) (BackupRow, error) {
-	return BackupRow{ID: id, PostgresDbID: 1, DestinationID: 1, Prefix: "", Retention: 7}, nil
+	return BackupRow{ID: id, LogicalDatabaseID: 1, DestinationID: 1, Prefix: "", Retention: 7}, nil
 }
 func (leakStore) GetPGTarget(_ context.Context, _ int64) (PGTarget, error) {
 	return PGTarget{AppName: "db", DatabaseName: "db", DatabaseUser: "u", DatabasePassword: "p"}, nil

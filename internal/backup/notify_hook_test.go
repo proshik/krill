@@ -12,7 +12,7 @@ import (
 type hookStore struct{ lastStatus string }
 
 func (h *hookStore) GetBackup(_ context.Context, id int64) (BackupRow, error) {
-	return BackupRow{ID: id, PostgresDbID: 1, DestinationID: 1, Prefix: "", Retention: 7}, nil
+	return BackupRow{ID: id, LogicalDatabaseID: 1, DestinationID: 1, Prefix: "", Retention: 7}, nil
 }
 func (h *hookStore) GetPGTarget(_ context.Context, _ int64) (PGTarget, error) {
 	return PGTarget{}, errors.New("pg gone")

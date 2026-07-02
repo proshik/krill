@@ -58,15 +58,19 @@ func objectsToDelete(objs []Object, keep int) []Object {
 	return objs[keep:]
 }
 
-func prefixDir(prefix, appName string) string {
+// prefixDir: one directory per logical database — retention must not mix dumps
+// of different databases sharing an instance. Legacy dumps stay under the old
+// <prefix>/<appName>/ path: intact in the bucket, but no longer listed by the UI
+// nor counted by retention (documented one-time conversion cost).
+func prefixDir(prefix, appName, dbName string) string {
 	if prefix != "" {
-		return prefix + "/" + appName + "/"
+		return prefix + "/" + appName + "/" + dbName + "/"
 	}
-	return appName + "/"
+	return appName + "/" + dbName + "/"
 }
 
-func keyFor(prefix, appName string, now time.Time) string {
-	return prefixDir(prefix, appName) + now.UTC().Format("2006-01-02T15-04-05Z") + ".sql.gz"
+func keyFor(prefix, appName, dbName string, now time.Time) string {
+	return prefixDir(prefix, appName, dbName) + now.UTC().Format("2006-01-02T15-04-05Z") + ".sql.gz"
 }
 
 // RunBackup dumps the DB, uploads it, then enforces count-based retention.
@@ -90,7 +94,7 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 	if err != nil {
 		return err
 	}
-	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	pg, err := s.store.GetPGTarget(ctx, b.LogicalDatabaseID)
 	if err != nil {
 		return s.fail(ctx, backupID, now, err)
 	}
@@ -98,7 +102,7 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 	if err != nil {
 		return s.fail(ctx, backupID, now, err)
 	}
-	key := keyFor(b.Prefix, pg.AppName, now)
+	key := keyFor(b.Prefix, pg.AppName, pg.DatabaseName, now)
 
 	pr, pw := io.Pipe()
 	go func() {
@@ -124,7 +128,7 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 		return s.fail(ctx, backupID, now, uerr)
 	}
 
-	if objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName)); lerr == nil {
+	if objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName)); lerr == nil {
 		for _, o := range objectsToDelete(objs, b.Retention) {
 			if derr := Delete(ctx, dst, o.Key); derr != nil {
 				slog.Warn("backup retention delete failed", "key", o.Key, "err", derr)
@@ -150,7 +154,7 @@ func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, er
 	if err != nil {
 		return nil, err
 	}
-	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	pg, err := s.store.GetPGTarget(ctx, b.LogicalDatabaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +162,7 @@ func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, er
 	if err != nil {
 		return nil, err
 	}
-	return List(ctx, dst, prefixDir(b.Prefix, pg.AppName))
+	return List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName))
 }
 
 // RestoreByID restores object `key` of a backup config into its DB.
@@ -167,11 +171,11 @@ func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) e
 	if err != nil {
 		return err
 	}
-	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	pg, err := s.store.GetPGTarget(ctx, b.LogicalDatabaseID)
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName)) {
+	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName)) {
 		return ErrKeyOutsideBackup
 	}
 	dst, err := s.store.GetDestination(ctx, b.DestinationID)
@@ -187,11 +191,11 @@ func (s *Service) OpenObject(ctx context.Context, backupID int64, key string) (i
 	if err != nil {
 		return nil, err
 	}
-	pg, err := s.store.GetPGTarget(ctx, b.PostgresDbID)
+	pg, err := s.store.GetPGTarget(ctx, b.LogicalDatabaseID)
 	if err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName)) {
+	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName)) {
 		return nil, ErrKeyOutsideBackup
 	}
 	dst, err := s.store.GetDestination(ctx, b.DestinationID)

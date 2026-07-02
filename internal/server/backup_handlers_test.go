@@ -14,6 +14,20 @@ import (
 
 // backupFixture creates an org with a postgres DB and an accessible MinIO
 // destination, returning everything the backup handler tests need.
+//
+// Backups now target a logical database (backups.logical_database_id FKs to
+// logical_databases.id), so this seeds a db_instance + logical_database via
+// CreateDBInstance/CreateLogicalDatabase instead of relying on the legacy
+// postgres_dbs row alone. Routing (loadDBChain) still resolves through the
+// legacy postgres_dbs table until Task 7 rewires the DB-detail page onto
+// logical databases, and the backup handlers reuse that same path {dbID} as
+// the backup's logical_database_id (a documented transitional inconsistency
+// — see the Task 5 brief), so this postgres_dbs row's ID must line up with
+// the logical database's ID. Both are the very first row inserted into their
+// respective (initially empty) table in this test's fresh container, so they
+// get the same BIGSERIAL value; the fixture asserts that rather than relying
+// on it silently, so a future seeding change fails loudly here instead of a
+// confusing 404 downstream.
 func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Organization, projID, envID, pgID, destID int64, cookie *http.Cookie) {
 	t.Helper()
 	ctx := context.Background()
@@ -21,12 +35,30 @@ func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Or
 	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
 	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
 	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "maindb-inst", AppName: "krill-postgres-maindb-inst",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "secret",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "maindb", DbName: "app", Username: "postgres", Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("create logical database: %v", err)
+	}
+
 	pg, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
 		EnvironmentID: e.ID, Name: "maindb", AppName: "krill-postgres-maindb",
 		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "secret", Image: "postgres:17",
 	})
 	if err != nil {
 		t.Fatalf("create postgres: %v", err)
+	}
+	if pg.ID != ldb.ID {
+		t.Fatalf("test fixture assumption broken: postgres_dbs.id=%d != logical_databases.id=%d", pg.ID, ldb.ID)
 	}
 
 	minio := testutil.NewMinio(t)
@@ -60,7 +92,7 @@ func TestAddBackupSucceeds(t *testing.T) {
 		t.Fatalf("add backup want 303, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	bks, err := q.ListBackupsByDB(ctx, pgID)
+	bks, err := q.ListBackupsByLogicalDB(ctx, &pgID)
 	if err != nil {
 		t.Fatalf("list backups: %v", err)
 	}
@@ -94,7 +126,7 @@ func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("cross-org destination want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByDB(ctx, pgID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, &pgID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -113,7 +145,7 @@ func TestAddBackupZeroRetentionFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("retention 0 want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByDB(ctx, pgID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, &pgID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -123,7 +155,7 @@ func TestToggleBackupFlipsEnabled(t *testing.T) {
 	ctx := context.Background()
 	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		PostgresDbID: pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: &pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
@@ -145,7 +177,7 @@ func TestDeleteBackupRemovesIt(t *testing.T) {
 	ctx := context.Background()
 	o, projID, envID, pgID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		PostgresDbID: pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: &pgID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
@@ -171,12 +203,12 @@ func TestBackupCrossTenantIsolation(t *testing.T) {
 	// --- Org-A: owner userA, project, environment, postgres DB, destination, backup ---
 	orgA, projA, envA, pgA, destA, _ := backupFixture(t, q, orgSvc)
 	aBackup, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		PostgresDbID:  pgA,
-		DestinationID: destA,
-		Schedule:      "0 2 * * *",
-		Prefix:        "daily",
-		Retention:     7,
-		Enabled:       true,
+		LogicalDatabaseID: &pgA,
+		DestinationID:     destA,
+		Schedule:          "0 2 * * *",
+		Prefix:            "daily",
+		Retention:         7,
+		Enabled:           true,
 	})
 	if err != nil {
 		t.Fatalf("create org-A backup: %v", err)

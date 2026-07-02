@@ -30,8 +30,8 @@ type DatabaseCtx struct {
 	Base     string // path to /databases/{engine}/{id}
 	Tab      string
 
-	Backups      []db.Backup      // postgres only: configured backups
-	Destinations []db.Destination // postgres only: org S3 destinations
+	Backups      []db.ListBackupsByLogicalDBRow // postgres only: configured backups
+	Destinations []db.Destination               // postgres only: org S3 destinations
 
 	NodeHostname string             // pinned node ("" = control-plane/manager)
 	Nodes        []docker.SwarmNode // cluster nodes (for the node picker; admin only)
