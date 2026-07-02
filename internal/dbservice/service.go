@@ -18,6 +18,10 @@ type Store interface {
 	SetRedisStatus(ctx context.Context, id int64, status string) error
 	DeletePostgresRow(ctx context.Context, id int64) error
 	DeleteRedisRow(ctx context.Context, id int64) error
+
+	GetInstance(ctx context.Context, id int64) (Instance, error)
+	SetInstanceStatus(ctx context.Context, id int64, status string) error
+	DeleteInstanceRow(ctx context.Context, id int64) error
 }
 
 // Service — DB lifecycle on top of Engine + Store, with a live log via DeployLogHub.

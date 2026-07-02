@@ -1,6 +1,9 @@
 package dbservice
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/proshik/krill/internal/docker"
@@ -95,4 +98,82 @@ func RedisExternalURL2(inst Instance, host string) string {
 		p = strconv.Itoa(int(*inst.ExternalPort))
 	}
 	return "redis://default:" + inst.SuperuserPassword + "@" + host + ":" + p
+}
+
+// DeployInstance: pull → deploy, detached (see DeployPostgres for rationale).
+func (s *Service) DeployInstance(id int64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)
+		defer cancel()
+		s.deployInstance(ctx, id)
+	}()
+}
+
+func (s *Service) deployInstance(ctx context.Context, id int64) {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		slog.Error("get db instance", "err", err)
+		return
+	}
+	feed := InstanceFeedID(id)
+	var out interface{ Write([]byte) (int, error) } = nopWriter{}
+	if s.hub != nil {
+		s.hub.Open(feed)
+		out = s.hub.Writer(feed)
+		defer s.hub.Close(feed)
+	}
+	fmt.Fprintf(out, "→ pull %s\n", inst.Image)
+	if err := s.engine.ImagePull(ctx, inst.Image, out); err != nil {
+		fmt.Fprintf(out, "❌ pull failed: %v\n", err)
+		slog.Error("db instance deploy: image pull failed", "err", err, "instance_id", id, "image", inst.Image)
+		_ = s.store.SetInstanceStatus(ctx, id, "error")
+		return
+	}
+	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
+	if err := s.engine.ServiceDeploy(ctx, instanceSpec(inst, s.network)); err != nil {
+		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
+		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
+		_ = s.store.SetInstanceStatus(ctx, id, "error")
+		return
+	}
+	fmt.Fprintf(out, "✅ deployed %s\n", inst.AppName)
+	_ = s.store.SetInstanceStatus(ctx, id, "running")
+}
+
+func (s *Service) StartInstance(ctx context.Context, id int64) error {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.engine.ServiceScale(ctx, inst.AppName, 1); err != nil {
+		return err
+	}
+	return s.store.SetInstanceStatus(ctx, id, "running")
+}
+
+func (s *Service) StopInstance(ctx context.Context, id int64) error {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.engine.ServiceScale(ctx, inst.AppName, 0); err != nil {
+		return err
+	}
+	return s.store.SetInstanceStatus(ctx, id, "idle")
+}
+
+// DeleteInstance removes the Swarm service (engine-gated: nil engine → row-only
+// delete, tests only) and optionally the data volume, then the row.
+func (s *Service) DeleteInstance(ctx context.Context, id int64, destroyData bool) error {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+	if s.engine != nil {
+		_ = s.engine.ServiceRemove(ctx, inst.AppName) // volume preserved by default
+		if destroyData {
+			s.removeVolume(ctx, volumeName(inst.AppName))
+		}
+	}
+	return s.store.DeleteInstanceRow(ctx, id)
 }

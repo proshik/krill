@@ -49,3 +49,24 @@ func (s *DBStore) DeletePostgresRow(ctx context.Context, id int64) error {
 func (s *DBStore) DeleteRedisRow(ctx context.Context, id int64) error {
 	return s.q.DeleteRedis(ctx, id)
 }
+
+func (s *DBStore) GetInstance(ctx context.Context, id int64) (Instance, error) {
+	r, err := s.q.GetDBInstance(ctx, id)
+	if err != nil {
+		return Instance{}, err
+	}
+	return Instance{
+		ID: r.ID, OrganizationID: r.OrganizationID, Engine: r.Engine, Name: r.Name,
+		AppName: r.AppName, Image: r.Image, Superuser: r.Superuser,
+		SuperuserPassword: secret.Dec(r.SuperuserPassword),
+		ExternalPort:      r.ExternalPort, Status: r.Status, NodeHostname: r.NodeHostname,
+	}, nil
+}
+
+func (s *DBStore) SetInstanceStatus(ctx context.Context, id int64, status string) error {
+	return s.q.UpdateDBInstanceStatus(ctx, db.UpdateDBInstanceStatusParams{ID: id, Status: status})
+}
+
+func (s *DBStore) DeleteInstanceRow(ctx context.Context, id int64) error {
+	return s.q.DeleteDBInstance(ctx, id)
+}

@@ -106,10 +106,11 @@ func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, er
 }
 
 type fakeStore struct {
-	mu     sync.Mutex
-	pg     PostgresDB
-	redis  RedisDB
-	status map[int64]string
+	mu       sync.Mutex
+	pg       PostgresDB
+	redis    RedisDB
+	instance Instance
+	status   map[int64]string
 }
 
 func newFakeStore(pg PostgresDB) *fakeStore                                      { return &fakeStore{pg: pg, status: map[int64]string{}} }
@@ -129,6 +130,19 @@ func (f *fakeStore) SetPostgresStatus(_ context.Context, id int64, s string) err
 func (f *fakeStore) SetRedisStatus(_ context.Context, id int64, s string) error { return nil }
 func (f *fakeStore) DeletePostgresRow(_ context.Context, id int64) error        { return nil }
 func (f *fakeStore) DeleteRedisRow(_ context.Context, id int64) error           { return nil }
+func (f *fakeStore) GetInstance(_ context.Context, id int64) (Instance, error) {
+	if f.instance.AppName == "" {
+		return Instance{}, errors.New("n/a")
+	}
+	return f.instance, nil
+}
+func (f *fakeStore) SetInstanceStatus(_ context.Context, id int64, s string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.status[id] = s
+	return nil
+}
+func (f *fakeStore) DeleteInstanceRow(_ context.Context, id int64) error { return nil }
 func (f *fakeStore) st(id int64) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
