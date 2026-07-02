@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 )
@@ -74,8 +75,9 @@ func (s *Service) InstanceRunning(ctx context.Context, inst Instance) bool {
 
 // ProvisionLogicalDB creates the database + its owner user inside a running
 // postgres instance. REVOKE CONNECT FROM PUBLIC isolates it from the instance's
-// other users. On mid-way failure the created user is dropped (compensation),
-// so a retry is safe. Engine-gated (nil engine → no-op, tests only).
+// other users. On mid-way failure a full drop (database then user, both IF
+// EXISTS) compensates whichever objects got created, so a retry is safe.
+// Engine-gated (nil engine → no-op, tests only).
 func (s *Service) ProvisionLogicalDB(ctx context.Context, inst Instance, ldb LogicalDB) error {
 	if s.engine == nil {
 		return nil
@@ -88,7 +90,16 @@ func (s *Service) ProvisionLogicalDB(ctx context.Context, inst Instance, ldb Log
 	}
 	var buf bytes.Buffer
 	if err := s.psqlExec(ctx, inst, createDBSQL(ldb.DBName, ldb.Username, ldb.Password), &buf); err != nil {
-		_ = s.psqlExec(ctx, inst, fmt.Sprintf("DROP USER IF EXISTS %q;\n", ldb.Username), io.Discard)
+		// Compensation must cover all three DDL statements, not just CREATE USER:
+		// a failure at REVOKE leaves both the user AND the database created, with
+		// the user owning the database, so DROP USER alone fails (Postgres refuses
+		// to drop a role that owns a database) and a retry would then fail forever
+		// at CREATE USER. dropDBSQL runs DROP DATABASE before DROP USER (both IF
+		// EXISTS, so it's still a no-op for failure points where objects were never
+		// created), which is safe to compensate every failure point above.
+		if cerr := s.psqlExec(ctx, inst, dropDBSQL(ldb.DBName, ldb.Username), io.Discard); cerr != nil {
+			slog.Warn("logical db provisioning compensation failed", "db_name", ldb.DBName, "user", ldb.Username, "err", cerr)
+		}
 		return fmt.Errorf("provision database %s: %w: %s", ldb.DBName, err, strings.TrimSpace(buf.String()))
 	}
 	return nil
