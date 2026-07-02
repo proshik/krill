@@ -92,6 +92,28 @@ func (q *Queries) GetClusterNode(ctx context.Context, id int64) (ClusterNode, er
 	return i, err
 }
 
+const getClusterNodeBySwarmID = `-- name: GetClusterNodeBySwarmID :one
+SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id, created_at
+FROM cluster_nodes WHERE swarm_node_id = $1
+`
+
+func (q *Queries) GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (ClusterNode, error) {
+	row := q.db.QueryRow(ctx, getClusterNodeBySwarmID, swarmNodeID)
+	var i ClusterNode
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.SshHost,
+		&i.SshPort,
+		&i.SshUser,
+		&i.SshKey,
+		&i.HostKey,
+		&i.SwarmNodeID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listClusterNodes = `-- name: ListClusterNodes :many
 SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id, created_at
 FROM cluster_nodes ORDER BY name

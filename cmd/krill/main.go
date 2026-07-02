@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/client"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/proshik/krill/internal/auth"
@@ -204,6 +206,37 @@ func run() error {
 	clusterSrc := metrics.NewClusterSource(localName, engine, workerLister, cfg.MetricsNodeTimeout)
 	metricsSampler := metrics.NewSampler(clusterSrc, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention)
 	go metricsSampler.Run(ctx)
+
+	// Cross-node exec: route provisioning/backup/restore/terminal to the docker
+	// daemon of the node a container runs on. cluster_nodes holds only workers
+	// (matched by swarm_node_id); a task on any other node is on the control plane
+	// → local exec. Reuses the monitoring SSH-tunnel wiring.
+	if rc, ok := engine.(docker.RemoteExecConfigurable); ok {
+		rc.SetRemoteClientProvider(func(ctx context.Context, nodeID string) (*client.Client, func() error, error) {
+			row, err := q.GetClusterNodeBySwarmID(ctx, nodeID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, nil, nil // control-plane / not a registered worker → local
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			cl, derr := cluster.DialVerified(cluster.JoinSpec{
+				Host: row.SshHost, Port: int(row.SshPort), User: row.SshUser,
+				PrivateKey: []byte(secret.Dec(row.SshKey)), HostKey: row.HostKey,
+			}, cfg.MetricsNodeTimeout)
+			if derr != nil {
+				return nil, nil, derr
+			}
+			cli, cerr := docker.NewRemoteClient(func(_ context.Context, _, _ string) (net.Conn, error) {
+				return cl.Dial("unix", "/var/run/docker.sock")
+			})
+			if cerr != nil {
+				_ = cl.Close()
+				return nil, nil, cerr
+			}
+			return cli, func() error { cli.Close(); return cl.Close() }, nil
+		})
+	}
 
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
 		// Bound scheduled runs like the manual path (backup_handlers.go) — an

@@ -148,6 +148,13 @@ type Engine interface {
 	ResolveDigest(ctx context.Context, ref, encodedAuth string) (string, error)
 }
 
+// RemoteExecConfigurable is the optional capability to route exec to the node a
+// container runs on. Only the real *dockerEngine implements it; main.go
+// type-asserts, so the Engine interface and its test fakes stay unchanged.
+type RemoteExecConfigurable interface {
+	SetRemoteClientProvider(p RemoteClientProvider)
+}
+
 // ServiceName builds the Swarm service name for an application from its id.
 func ServiceName(appID int64) string {
 	return "krill-" + strconv.FormatInt(appID, 10)

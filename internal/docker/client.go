@@ -144,9 +144,65 @@ func (r *RemoteStats) ListContainerStats(ctx context.Context) ([]ContainerStat, 
 func (r *RemoteStats) NodeInfo(ctx context.Context) (NodeInfo, error) { return r.sc.nodeInfo(ctx) }
 func (r *RemoteStats) Close() error                                   { return r.cli.Close() }
 
+// RemoteClientProvider returns a docker client for the daemon of the node a
+// container runs on. Contract: (nil,nil,nil) => the node is local (control
+// plane / not a registered worker); the caller uses the local client.
+// (cli,closeFn,nil) => a worker reached over SSH; the caller MUST call closeFn.
+// (nil,nil,err) => the node is unreachable; the exec must fail.
+type RemoteClientProvider func(ctx context.Context, nodeID string) (cli *client.Client, closeFn func() error, err error)
+
+// NewRemoteClient builds a full docker client whose connections come from dial
+// (e.g. a worker's /var/run/docker.sock forwarded over SSH). Mirrors
+// NewRemoteStats but returns the general client for exec.
+func NewRemoteClient(dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*client.Client, error) {
+	return client.NewClientWithOpts(
+		client.WithDialContext(dial),
+		client.WithHost("unix:///var/run/docker.sock"),
+		client.WithAPIVersionNegotiation(),
+	)
+}
+
+// selectClient picks the docker client for a container's node: the local client
+// when there is no provider or the provider reports a local node, otherwise the
+// remote client (whose release closes the SSH tunnel). release is always
+// non-nil and safe to call.
+func selectClient(ctx context.Context, local *client.Client, provider RemoteClientProvider, nodeID string) (cli *client.Client, release func(), err error) {
+	if provider == nil {
+		return local, func() {}, nil
+	}
+	rcli, closeFn, perr := provider(ctx, nodeID)
+	if perr != nil {
+		return nil, func() {}, perr
+	}
+	if rcli == nil {
+		return local, func() {}, nil
+	}
+	return rcli, func() { _ = closeFn() }, nil
+}
+
+// SetRemoteClientProvider injects the node→docker-client provider (wired in
+// main.go). Nil (default) means every exec runs against the local daemon.
+func (e *dockerEngine) SetRemoteClientProvider(p RemoteClientProvider) { e.remoteProvider = p }
+
+// clientForContainer resolves serviceName's running container and returns the
+// docker client for the node it runs on (local or remote-over-SSH). release
+// must always be called (no-op for local).
+func (e *dockerEngine) clientForContainer(ctx context.Context, serviceName string) (cli *client.Client, containerID string, release func(), err error) {
+	containerID, nodeID, err := e.runningContainerID(ctx, serviceName)
+	if err != nil {
+		return nil, "", func() {}, err
+	}
+	cli, release, err = selectClient(ctx, e.cli, e.remoteProvider, nodeID)
+	if err != nil {
+		return nil, "", func() {}, fmt.Errorf("reach node for service %s: %w", serviceName, err)
+	}
+	return cli, containerID, release, nil
+}
+
 type dockerEngine struct {
-	cli       *client.Client
-	collector *statsCollector
+	cli            *client.Client
+	collector      *statsCollector
+	remoteProvider RemoteClientProvider
 }
 
 // NewEngine creates a real Engine. If host is empty → DOCKER_HOST/the default socket is used.
@@ -579,8 +635,9 @@ func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, lab
 	return err
 }
 
-// runningContainerID returns the container ID of a running task of serviceName.
-func (e *dockerEngine) runningContainerID(ctx context.Context, serviceName string) (string, error) {
+// runningContainerID returns the container ID of a running task of serviceName,
+// along with the ID of the node that task is running on (for exec routing).
+func (e *dockerEngine) runningContainerID(ctx context.Context, serviceName string) (containerID, nodeID string, err error) {
 	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
 		Filters: filters.NewArgs(
 			filters.Arg("service", serviceName),
@@ -588,21 +645,22 @@ func (e *dockerEngine) runningContainerID(ctx context.Context, serviceName strin
 		),
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, t := range tasks {
 		if t.Status.ContainerStatus != nil && t.Status.ContainerStatus.ContainerID != "" {
-			return t.Status.ContainerStatus.ContainerID, nil
+			return t.Status.ContainerStatus.ContainerID, t.NodeID, nil
 		}
 	}
-	return "", fmt.Errorf("no running container for service %s", serviceName)
+	return "", "", fmt.Errorf("no running container for service %s", serviceName)
 }
 
 // dockerExecSession adapts a hijacked exec attach to ExecSession.
 type dockerExecSession struct {
-	cli    *client.Client
-	att    types.HijackedResponse
-	execID string
+	cli     *client.Client
+	att     types.HijackedResponse
+	execID  string
+	release func() // tears down the SSH tunnel; no-op for a local session
 }
 
 func (s *dockerExecSession) Read(p []byte) (int, error)  { return s.att.Reader.Read(p) }
@@ -610,15 +668,21 @@ func (s *dockerExecSession) Write(p []byte) (int, error) { return s.att.Conn.Wri
 func (s *dockerExecSession) Resize(ctx context.Context, rows, cols uint) error {
 	return s.cli.ContainerExecResize(ctx, s.execID, container.ResizeOptions{Height: rows, Width: cols})
 }
-func (s *dockerExecSession) Close() error { s.att.Close(); return nil }
+func (s *dockerExecSession) Close() error {
+	s.att.Close()
+	if s.release != nil {
+		s.release()
+	}
+	return nil
+}
 
 // ExecInteractive starts an interactive TTY exec of cmd in a running container.
 func (e *dockerEngine) ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error) {
-	containerID, err := e.runningContainerID(ctx, serviceName)
+	cli, containerID, release, err := e.clientForContainer(ctx, serviceName)
 	if err != nil {
 		return nil, err
 	}
-	idResp, err := e.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	idResp, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,
 		Tty:          true,
 		AttachStdin:  true,
@@ -626,21 +690,24 @@ func (e *dockerEngine) ExecInteractive(ctx context.Context, serviceName string, 
 		AttachStderr: true,
 	})
 	if err != nil {
+		release()
 		return nil, err
 	}
-	att, err := e.cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{Tty: true})
+	att, err := cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{Tty: true})
 	if err != nil {
+		release()
 		return nil, err
 	}
-	return &dockerExecSession{cli: e.cli, att: att, execID: idResp.ID}, nil
+	return &dockerExecSession{cli: cli, att: att, execID: idResp.ID, release: release}, nil
 }
 
 func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error {
-	containerID, err := e.runningContainerID(ctx, serviceName)
+	cli, containerID, release, err := e.clientForContainer(ctx, serviceName)
 	if err != nil {
 		return err
 	}
-	idResp, err := e.cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	defer release()
+	idResp, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          cmd,
 		Env:          env,
 		AttachStdout: true,
@@ -650,7 +717,7 @@ func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []strin
 	if err != nil {
 		return err
 	}
-	att, err := e.cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{})
+	att, err := cli.ContainerExecAttach(ctx, idResp.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return err
 	}
@@ -665,7 +732,7 @@ func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []strin
 	if _, err := stdcopy.StdCopy(stdout, &stderr, att.Reader); err != nil {
 		return err
 	}
-	insp, err := e.cli.ContainerExecInspect(ctx, idResp.ID)
+	insp, err := cli.ContainerExecInspect(ctx, idResp.ID)
 	if err != nil {
 		return err
 	}
