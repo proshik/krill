@@ -1,19 +1,16 @@
 -- name: CreateBackup :one
 INSERT INTO backups (postgres_db_id, destination_id, schedule, prefix, retention, enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at;
+RETURNING *;
 
 -- name: GetBackup :one
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE id = $1;
+SELECT * FROM backups WHERE id = $1;
 
 -- name: ListBackupsByDB :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE postgres_db_id = $1 ORDER BY created_at;
+SELECT * FROM backups WHERE postgres_db_id = $1 ORDER BY created_at;
 
 -- name: ListEnabledBackups :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE enabled = true;
+SELECT * FROM backups WHERE enabled = true;
 
 -- name: SetBackupEnabled :exec
 UPDATE backups SET enabled = $2 WHERE id = $1;

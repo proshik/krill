@@ -12,7 +12,7 @@ import (
 const createDBLink = `-- name: CreateDBLink :one
 INSERT INTO app_db_links (application_id, engine, db_id, var_name, scheme)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, engine, db_id, var_name, scheme, created_at
+RETURNING id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id
 `
 
 type CreateDBLinkParams struct {
@@ -40,6 +40,8 @@ func (q *Queries) CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (App
 		&i.VarName,
 		&i.Scheme,
 		&i.CreatedAt,
+		&i.LogicalDatabaseID,
+		&i.InstanceID,
 	)
 	return i, err
 }
@@ -68,8 +70,7 @@ func (q *Queries) DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBPa
 }
 
 const getDBLink = `-- name: GetDBLink :one
-SELECT id, application_id, engine, db_id, var_name, scheme, created_at
-FROM app_db_links WHERE id = $1
+SELECT id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id FROM app_db_links WHERE id = $1
 `
 
 func (q *Queries) GetDBLink(ctx context.Context, id int64) (AppDbLink, error) {
@@ -83,13 +84,14 @@ func (q *Queries) GetDBLink(ctx context.Context, id int64) (AppDbLink, error) {
 		&i.VarName,
 		&i.Scheme,
 		&i.CreatedAt,
+		&i.LogicalDatabaseID,
+		&i.InstanceID,
 	)
 	return i, err
 }
 
 const listDBLinksByApplication = `-- name: ListDBLinksByApplication :many
-SELECT id, application_id, engine, db_id, var_name, scheme, created_at
-FROM app_db_links WHERE application_id = $1 ORDER BY var_name
+SELECT id, application_id, engine, db_id, var_name, scheme, created_at, logical_database_id, instance_id FROM app_db_links WHERE application_id = $1 ORDER BY var_name
 `
 
 func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]AppDbLink, error) {
@@ -109,6 +111,8 @@ func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID in
 			&i.VarName,
 			&i.Scheme,
 			&i.CreatedAt,
+			&i.LogicalDatabaseID,
+			&i.InstanceID,
 		); err != nil {
 			return nil, err
 		}

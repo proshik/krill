@@ -11,13 +11,15 @@ import (
 )
 
 type AppDbLink struct {
-	ID            int64     `json:"id"`
-	ApplicationID int64     `json:"application_id"`
-	Engine        string    `json:"engine"`
-	DbID          int64     `json:"db_id"`
-	VarName       string    `json:"var_name"`
-	Scheme        string    `json:"scheme"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	Engine            string    `json:"engine"`
+	DbID              int64     `json:"db_id"`
+	VarName           string    `json:"var_name"`
+	Scheme            string    `json:"scheme"`
+	CreatedAt         time.Time `json:"created_at"`
+	LogicalDatabaseID *int64    `json:"logical_database_id"`
+	InstanceID        *int64    `json:"instance_id"`
 }
 
 type AppPort struct {
@@ -74,17 +76,18 @@ type Application struct {
 }
 
 type Backup struct {
-	ID            int64              `json:"id"`
-	PostgresDbID  int64              `json:"postgres_db_id"`
-	DestinationID int64              `json:"destination_id"`
-	Schedule      string             `json:"schedule"`
-	Prefix        string             `json:"prefix"`
-	Retention     int32              `json:"retention"`
-	Enabled       bool               `json:"enabled"`
-	LastRunAt     pgtype.Timestamptz `json:"last_run_at"`
-	LastStatus    string             `json:"last_status"`
-	LastError     string             `json:"last_error"`
-	CreatedAt     time.Time          `json:"created_at"`
+	ID                int64              `json:"id"`
+	PostgresDbID      int64              `json:"postgres_db_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+	LogicalDatabaseID *int64             `json:"logical_database_id"`
 }
 
 type ClusterNode struct {
@@ -97,6 +100,24 @@ type ClusterNode struct {
 	HostKey     string    `json:"host_key"`
 	SwarmNodeID string    `json:"swarm_node_id"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+type DbInstance struct {
+	ID                int64     `json:"id"`
+	OrganizationID    int64     `json:"organization_id"`
+	Engine            string    `json:"engine"`
+	Name              string    `json:"name"`
+	AppName           string    `json:"app_name"`
+	Image             string    `json:"image"`
+	Superuser         string    `json:"superuser"`
+	SuperuserPassword string    `json:"superuser_password"`
+	ExternalPort      *int32    `json:"external_port"`
+	NodeHostname      string    `json:"node_hostname"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	LegacyPgID        *int64    `json:"legacy_pg_id"`
+	LegacyRedisID     *int64    `json:"legacy_redis_id"`
 }
 
 type Deployment struct {
@@ -152,6 +173,18 @@ type GitCredential struct {
 	Username       string    `json:"username"`
 	Token          string    `json:"token"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+type LogicalDatabase struct {
+	ID            int64     `json:"id"`
+	InstanceID    int64     `json:"instance_id"`
+	EnvironmentID int64     `json:"environment_id"`
+	Name          string    `json:"name"`
+	DbName        string    `json:"db_name"`
+	Username      string    `json:"username"`
+	Password      string    `json:"password"`
+	CreatedAt     time.Time `json:"created_at"`
+	LegacyPgID    *int64    `json:"legacy_pg_id"`
 }
 
 type Member struct {

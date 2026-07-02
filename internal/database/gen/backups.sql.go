@@ -14,7 +14,7 @@ import (
 const createBackup = `-- name: CreateBackup :one
 INSERT INTO backups (postgres_db_id, destination_id, schedule, prefix, retention, enabled)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
+RETURNING id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at, logical_database_id
 `
 
 type CreateBackupParams struct {
@@ -48,6 +48,7 @@ func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) (Bac
 		&i.LastStatus,
 		&i.LastError,
 		&i.CreatedAt,
+		&i.LogicalDatabaseID,
 	)
 	return i, err
 }
@@ -62,8 +63,7 @@ func (q *Queries) DeleteBackup(ctx context.Context, id int64) error {
 }
 
 const getBackup = `-- name: GetBackup :one
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE id = $1
+SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at, logical_database_id FROM backups WHERE id = $1
 `
 
 func (q *Queries) GetBackup(ctx context.Context, id int64) (Backup, error) {
@@ -81,13 +81,13 @@ func (q *Queries) GetBackup(ctx context.Context, id int64) (Backup, error) {
 		&i.LastStatus,
 		&i.LastError,
 		&i.CreatedAt,
+		&i.LogicalDatabaseID,
 	)
 	return i, err
 }
 
 const listBackupsByDB = `-- name: ListBackupsByDB :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE postgres_db_id = $1 ORDER BY created_at
+SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at, logical_database_id FROM backups WHERE postgres_db_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Backup, error) {
@@ -111,6 +111,7 @@ func (q *Queries) ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Ba
 			&i.LastStatus,
 			&i.LastError,
 			&i.CreatedAt,
+			&i.LogicalDatabaseID,
 		); err != nil {
 			return nil, err
 		}
@@ -123,8 +124,7 @@ func (q *Queries) ListBackupsByDB(ctx context.Context, postgresDbID int64) ([]Ba
 }
 
 const listEnabledBackups = `-- name: ListEnabledBackups :many
-SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
-FROM backups WHERE enabled = true
+SELECT id, postgres_db_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at, logical_database_id FROM backups WHERE enabled = true
 `
 
 func (q *Queries) ListEnabledBackups(ctx context.Context) ([]Backup, error) {
@@ -148,6 +148,7 @@ func (q *Queries) ListEnabledBackups(ctx context.Context) ([]Backup, error) {
 			&i.LastStatus,
 			&i.LastError,
 			&i.CreatedAt,
+			&i.LogicalDatabaseID,
 		); err != nil {
 			return nil, err
 		}
