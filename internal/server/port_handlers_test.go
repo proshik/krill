@@ -66,19 +66,17 @@ func TestAddAppPortConflictsWithDBExternalPort(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
 	base, cookie, _, _, _ := rpFixture(t, h, q, orgSvc, "ports-db@k.local")
-	// CountPostgresByExternalPort is global (no env filter), so the conflicting DB
-	// can live in its own org/env — only its external_port matters.
+	// CountDBInstancesByExternalPort is global (no env/org filter), so the
+	// conflicting instance can live in its own org — only its external_port matters.
 	dbOwner := mkUser(t, q, "ports-db-owner@k.local")
 	o2, _ := orgSvc.CreateOrg(ctx, dbOwner, "OrgPortsDB")
-	p2, _ := orgSvc.CreateProject(ctx, o2.ID, "P", "")
-	e2, _ := orgSvc.CreateEnvironment(ctx, p2.ID, "prod")
 	ep := int32(5599)
-	if _, err := q.CreatePostgres(ctx, db.CreatePostgresParams{
-		EnvironmentID: e2.ID, Name: "db", AppName: "krill-pg-ports",
-		DatabaseName: "app", DatabaseUser: "postgres", DatabasePassword: "pw",
-		Image: "postgres:17", ExternalPort: &ep,
+	if _, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o2.ID, Engine: "postgres", Name: "db", AppName: "krill-pg-ports",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+		ExternalPort: &ep,
 	}); err != nil {
-		t.Fatalf("create postgres: %v", err)
+		t.Fatalf("create db instance: %v", err)
 	}
 	// TCP host port colliding with the DB external port -> err flash
 	if rec := postForm(t, h, base+"/ports", cookie, url.Values{

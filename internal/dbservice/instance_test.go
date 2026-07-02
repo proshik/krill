@@ -56,10 +56,10 @@ func TestInstanceURLs(t *testing.T) {
 		t.Fatalf("external url: %s", got)
 	}
 	r := Instance{AppName: "rd-inst", SuperuserPassword: "pw", ExternalPort: int32p(56001)}
-	if got := RedisInternalURL2(r); got != "redis://default:pw@rd-inst:6379" {
+	if got := RedisInternalURL(r); got != "redis://default:pw@rd-inst:6379" {
 		t.Fatalf("redis internal: %s", got)
 	}
-	if got := RedisExternalURL2(r, "example.com"); got != "redis://default:pw@example.com:56001" {
+	if got := RedisExternalURL(r, "example.com"); got != "redis://default:pw@example.com:56001" {
 		t.Fatalf("redis external: %s", got)
 	}
 }

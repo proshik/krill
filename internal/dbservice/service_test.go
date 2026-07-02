@@ -107,29 +107,13 @@ func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, er
 
 type fakeStore struct {
 	mu       sync.Mutex
-	pg       PostgresDB
-	redis    RedisDB
 	instance Instance
 	status   map[int64]string
 }
 
-func newFakeStore(pg PostgresDB) *fakeStore                                      { return &fakeStore{pg: pg, status: map[int64]string{}} }
-func (f *fakeStore) GetPostgres(_ context.Context, id int64) (PostgresDB, error) { return f.pg, nil }
-func (f *fakeStore) GetRedis(_ context.Context, id int64) (RedisDB, error) {
-	if f.redis.AppName == "" {
-		return RedisDB{}, errors.New("n/a")
-	}
-	return f.redis, nil
+func newFakeStore(inst Instance) *fakeStore {
+	return &fakeStore{instance: inst, status: map[int64]string{}}
 }
-func (f *fakeStore) SetPostgresStatus(_ context.Context, id int64, s string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.status[id] = s
-	return nil
-}
-func (f *fakeStore) SetRedisStatus(_ context.Context, id int64, s string) error { return nil }
-func (f *fakeStore) DeletePostgresRow(_ context.Context, id int64) error        { return nil }
-func (f *fakeStore) DeleteRedisRow(_ context.Context, id int64) error           { return nil }
 func (f *fakeStore) GetInstance(_ context.Context, id int64) (Instance, error) {
 	if f.instance.AppName == "" {
 		return Instance{}, errors.New("n/a")
@@ -156,29 +140,21 @@ func TestDBNodeConstraint(t *testing.T) {
 	if c := dbConstraint("worker1"); c != "node.hostname==worker1" {
 		t.Errorf("worker node = %q", c)
 	}
-	sp := postgresSpec(PostgresDB{AppName: "pg", Image: "postgres:17", NodeHostname: "worker1"}, "net")
-	if len(sp.Constraints) != 1 || sp.Constraints[0] != "node.hostname==worker1" {
-		t.Errorf("postgres spec constraint = %v", sp.Constraints)
-	}
-	rs := redisSpec(RedisDB{AppName: "rd", Image: "redis:7"}, "net")
-	if len(rs.Constraints) != 1 || rs.Constraints[0] != "node.role==manager" {
-		t.Errorf("redis default constraint = %v", rs.Constraints)
-	}
 }
 
-func samplePG() PostgresDB {
-	return PostgresDB{ID: 1, AppName: "krill-pg-x", DatabaseName: "a", DatabaseUser: "u", DatabasePassword: "p", Image: "postgres:17"}
+func samplePGInstance() Instance {
+	return Instance{ID: 1, Engine: "postgres", AppName: "krill-pg-x", Superuser: "u", SuperuserPassword: "p", Image: "postgres:17"}
 }
 
 func newSvc(eng docker.Engine, st Store) *Service {
 	return New(eng, st, nil, "krill-net")
 }
 
-func TestDeployPostgresPullsAndDeploys(t *testing.T) {
+func TestDeployInstancePullsAndDeploys(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	svc.DeployPostgres(1)
+	svc.DeployInstance(1)
 	waitFor(t, func() bool { return st.st(1) == "running" })
 	if len(eng.pulled) != 1 || eng.pulled[0] != "postgres:17" {
 		t.Errorf("pulled = %+v", eng.pulled)
@@ -188,23 +164,23 @@ func TestDeployPostgresPullsAndDeploys(t *testing.T) {
 	}
 }
 
-func TestDeployPostgresPullFailMarksError(t *testing.T) {
+func TestDeployInstancePullFailMarksError(t *testing.T) {
 	eng := newMockEngine()
 	eng.failPull = true
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	svc.DeployPostgres(1)
+	svc.DeployInstance(1)
 	waitFor(t, func() bool { return st.st(1) == "error" })
 	if len(eng.deployed) != 0 {
 		t.Error("must not deploy if pull fails")
 	}
 }
 
-func TestStartStopPostgres(t *testing.T) {
+func TestStartStopInstance(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	if err := svc.StartPostgres(context.Background(), 1); err != nil {
+	if err := svc.StartInstance(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if eng.scaled["krill-pg-x"] != 1 {
@@ -213,7 +189,7 @@ func TestStartStopPostgres(t *testing.T) {
 	if st.st(1) != "running" {
 		t.Errorf("status after start = %q", st.st(1))
 	}
-	if err := svc.StopPostgres(context.Background(), 1); err != nil {
+	if err := svc.StopInstance(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if eng.scaled["krill-pg-x"] != 0 {
@@ -224,11 +200,11 @@ func TestStartStopPostgres(t *testing.T) {
 	}
 }
 
-func TestDeletePostgresRemovesService(t *testing.T) {
+func TestDeleteInstanceRemovesService(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	if err := svc.DeletePostgres(context.Background(), 1, false); err != nil {
+	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
@@ -236,11 +212,11 @@ func TestDeletePostgresRemovesService(t *testing.T) {
 	}
 }
 
-func TestDeletePostgresKeepsVolumeByDefault(t *testing.T) {
+func TestDeleteInstanceKeepsVolumeByDefault(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	if err := svc.DeletePostgres(context.Background(), 1, false); err != nil {
+	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
@@ -251,11 +227,11 @@ func TestDeletePostgresKeepsVolumeByDefault(t *testing.T) {
 	}
 }
 
-func TestDeletePostgresDestroysVolume(t *testing.T) {
+func TestDeleteInstanceDestroysVolume(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
+	st := newFakeStore(samplePGInstance())
 	svc := newSvc(eng, st)
-	if err := svc.DeletePostgres(context.Background(), 1, true); err != nil {
+	if err := svc.DeleteInstance(context.Background(), 1, true); err != nil {
 		t.Fatal(err)
 	}
 	want := volumeName("krill-pg-x")
@@ -264,16 +240,15 @@ func TestDeletePostgresDestroysVolume(t *testing.T) {
 	}
 }
 
-func sampleRedis() RedisDB {
-	return RedisDB{ID: 1, AppName: "krill-redis-x", Password: "p", Image: "redis:7"}
+func sampleRedisInstance() Instance {
+	return Instance{ID: 1, Engine: "redis", AppName: "krill-redis-x", SuperuserPassword: "p", Image: "redis:7"}
 }
 
-func TestDeleteRedisKeepsVolumeByDefault(t *testing.T) {
+func TestDeleteRedisInstanceKeepsVolumeByDefault(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
-	st.redis = sampleRedis()
+	st := newFakeStore(sampleRedisInstance())
 	svc := newSvc(eng, st)
-	if err := svc.DeleteRedis(context.Background(), 1, false); err != nil {
+	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.removed) != 1 || eng.removed[0] != "krill-redis-x" {
@@ -284,12 +259,11 @@ func TestDeleteRedisKeepsVolumeByDefault(t *testing.T) {
 	}
 }
 
-func TestDeleteRedisDestroysVolume(t *testing.T) {
+func TestDeleteRedisInstanceDestroysVolume(t *testing.T) {
 	eng := newMockEngine()
-	st := newFakeStore(samplePG())
-	st.redis = sampleRedis()
+	st := newFakeStore(sampleRedisInstance())
 	svc := newSvc(eng, st)
-	if err := svc.DeleteRedis(context.Background(), 1, true); err != nil {
+	if err := svc.DeleteInstance(context.Background(), 1, true); err != nil {
 		t.Fatal(err)
 	}
 	want := volumeName("krill-redis-x")

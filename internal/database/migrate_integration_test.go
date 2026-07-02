@@ -10,12 +10,12 @@ import (
 func TestMigrationsApply(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 
-	// Expected set covers the full current schema (migrations 000001..000027;
-	// 000027 adds node_capacity).
+	// Expected set covers the full current schema (migrations 000001..000030;
+	// 000029/000030 replace postgres_dbs/redis_dbs with db_instances/logical_databases).
 	expectedTables := []string{
 		"users", "sessions", "organizations", "members", "projects",
-		"environments", "applications", "deployments", "postgres_dbs",
-		"redis_dbs", "domains", "destinations", "backups", "registries",
+		"environments", "applications", "deployments", "db_instances",
+		"logical_databases", "domains", "destinations", "backups", "registries",
 		"notification_channels", "metric_samples", "app_volumes", "volume_backups",
 		"app_db_links", "app_ports", "node_capacity",
 	}
@@ -81,6 +81,17 @@ func TestMigrationsApply(t *testing.T) {
 		}
 		if !exists {
 			t.Fatal("node_capacity table missing after migration")
+		}
+	}
+
+	// Migration 000030: backups now reference logical_databases directly
+	// (postgres_dbs/redis_dbs are dropped).
+	{
+		var exists bool
+		if err := pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			 WHERE table_schema='public' AND table_name='backups' AND column_name='logical_database_id')`).Scan(&exists); err != nil || !exists {
+			t.Fatalf("backups.logical_database_id missing (err=%v)", err)
 		}
 	}
 }

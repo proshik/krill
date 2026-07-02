@@ -30,8 +30,6 @@ type Querier interface {
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
-	CountPostgresByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
-	CountRedisByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
@@ -47,9 +45,7 @@ type Querier interface {
 	CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDatabaseParams) (LogicalDatabase, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
-	CreatePostgres(ctx context.Context, arg CreatePostgresParams) (PostgresDb, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
-	CreateRedis(ctx context.Context, arg CreateRedisParams) (RedisDb, error)
 	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
@@ -61,7 +57,6 @@ type Querier interface {
 	DeleteClusterNode(ctx context.Context, id int64) error
 	DeleteDBInstance(ctx context.Context, id int64) error
 	DeleteDBLink(ctx context.Context, id int64) error
-	DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBParams) error
 	DeleteDestination(ctx context.Context, id int64) error
 	DeleteDomain(ctx context.Context, id int64) error
 	DeleteEnvironment(ctx context.Context, id int64) error
@@ -71,9 +66,7 @@ type Querier interface {
 	DeleteMember(ctx context.Context, id int64) error
 	DeleteNodeLabel(ctx context.Context, swarmNodeID string) error
 	DeleteOrganization(ctx context.Context, id int64) error
-	DeletePostgres(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
-	DeleteRedis(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	DeleteVolume(ctx context.Context, id int64) error
@@ -97,11 +90,7 @@ type Querier interface {
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
-	GetPostgres(ctx context.Context, id int64) (PostgresDb, error)
-	GetPostgresChain(ctx context.Context, id int64) (GetPostgresChainRow, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
-	GetRedis(ctx context.Context, id int64) (RedisDb, error)
-	GetRedisChain(ctx context.Context, id int64) (GetRedisChainRow, error)
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
@@ -113,12 +102,10 @@ type Querier interface {
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAllDBInstances(ctx context.Context) ([]ListAllDBInstancesRow, error)
-	ListAllPostgres(ctx context.Context) ([]ListAllPostgresRow, error)
-	ListAllRedis(ctx context.Context) ([]ListAllRedisRow, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
-	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID *int64) ([]ListBackupsByLogicalDBRow, error)
+	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListClusterNodes(ctx context.Context) ([]ClusterNode, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
@@ -135,14 +122,10 @@ type Querier interface {
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
-	ListPostgresByEnvironment(ctx context.Context, environmentID int64) ([]PostgresDb, error)
-	ListPostgresByOrg(ctx context.Context, organizationID int64) ([]ListPostgresByOrgRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	// One aggregate query for the org dashboard (replaces a 2N+1 per-project count
 	// loop). DISTINCT on environments because the app join multiplies env rows.
 	ListProjectsWithCounts(ctx context.Context, organizationID int64) ([]ListProjectsWithCountsRow, error)
-	ListRedisByEnvironment(ctx context.Context, environmentID int64) ([]RedisDb, error)
-	ListRedisByOrg(ctx context.Context, organizationID int64) ([]ListRedisByOrgRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
@@ -167,8 +150,6 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
-	SetPostgresNode(ctx context.Context, arg SetPostgresNodeParams) error
-	SetRedisNode(ctx context.Context, arg SetRedisNodeParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
@@ -182,10 +163,6 @@ type Querier interface {
 	UpdateDBInstanceStatus(ctx context.Context, arg UpdateDBInstanceStatusParams) error
 	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
-	UpdatePostgresImage(ctx context.Context, arg UpdatePostgresImageParams) error
-	UpdatePostgresStatus(ctx context.Context, arg UpdatePostgresStatusParams) error
-	UpdateRedisImage(ctx context.Context, arg UpdateRedisImageParams) error
-	UpdateRedisStatus(ctx context.Context, arg UpdateRedisStatusParams) error
 	UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)

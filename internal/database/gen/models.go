@@ -13,8 +13,6 @@ import (
 type AppDbLink struct {
 	ID                int64     `json:"id"`
 	ApplicationID     int64     `json:"application_id"`
-	Engine            string    `json:"engine"`
-	DbID              int64     `json:"db_id"`
 	VarName           string    `json:"var_name"`
 	Scheme            string    `json:"scheme"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -77,7 +75,6 @@ type Application struct {
 
 type Backup struct {
 	ID                int64              `json:"id"`
-	PostgresDbID      int64              `json:"postgres_db_id"`
 	DestinationID     int64              `json:"destination_id"`
 	Schedule          string             `json:"schedule"`
 	Prefix            string             `json:"prefix"`
@@ -87,7 +84,7 @@ type Backup struct {
 	LastStatus        string             `json:"last_status"`
 	LastError         string             `json:"last_error"`
 	CreatedAt         time.Time          `json:"created_at"`
-	LogicalDatabaseID *int64             `json:"logical_database_id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
 }
 
 type ClusterNode struct {
@@ -116,8 +113,6 @@ type DbInstance struct {
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
-	LegacyPgID        *int64    `json:"legacy_pg_id"`
-	LegacyRedisID     *int64    `json:"legacy_redis_id"`
 }
 
 type Deployment struct {
@@ -184,7 +179,6 @@ type LogicalDatabase struct {
 	Username      string    `json:"username"`
 	Password      string    `json:"password"`
 	CreatedAt     time.Time `json:"created_at"`
-	LegacyPgID    *int64    `json:"legacy_pg_id"`
 }
 
 type Member struct {
@@ -239,22 +233,6 @@ type Organization struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type PostgresDb struct {
-	ID               int64     `json:"id"`
-	EnvironmentID    int64     `json:"environment_id"`
-	Name             string    `json:"name"`
-	AppName          string    `json:"app_name"`
-	DatabaseName     string    `json:"database_name"`
-	DatabaseUser     string    `json:"database_user"`
-	DatabasePassword string    `json:"database_password"`
-	Image            string    `json:"image"`
-	ExternalPort     *int32    `json:"external_port"`
-	Status           string    `json:"status"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	NodeHostname     string    `json:"node_hostname"`
-}
-
 type Project struct {
 	ID             int64     `json:"id"`
 	OrganizationID int64     `json:"organization_id"`
@@ -262,20 +240,6 @@ type Project struct {
 	Slug           string    `json:"slug"`
 	Description    string    `json:"description"`
 	CreatedAt      time.Time `json:"created_at"`
-}
-
-type RedisDb struct {
-	ID            int64     `json:"id"`
-	EnvironmentID int64     `json:"environment_id"`
-	Name          string    `json:"name"`
-	AppName       string    `json:"app_name"`
-	Password      string    `json:"password"`
-	Image         string    `json:"image"`
-	ExternalPort  *int32    `json:"external_port"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	NodeHostname  string    `json:"node_hostname"`
 }
 
 type Registry struct {

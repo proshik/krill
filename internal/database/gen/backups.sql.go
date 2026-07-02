@@ -19,7 +19,7 @@ RETURNING id, logical_database_id, destination_id, schedule, prefix, retention, 
 `
 
 type CreateBackupParams struct {
-	LogicalDatabaseID *int64 `json:"logical_database_id"`
+	LogicalDatabaseID int64  `json:"logical_database_id"`
 	DestinationID     int64  `json:"destination_id"`
 	Schedule          string `json:"schedule"`
 	Prefix            string `json:"prefix"`
@@ -29,7 +29,7 @@ type CreateBackupParams struct {
 
 type CreateBackupRow struct {
 	ID                int64              `json:"id"`
-	LogicalDatabaseID *int64             `json:"logical_database_id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
 	DestinationID     int64              `json:"destination_id"`
 	Schedule          string             `json:"schedule"`
 	Prefix            string             `json:"prefix"`
@@ -83,7 +83,7 @@ FROM backups WHERE id = $1
 
 type GetBackupRow struct {
 	ID                int64              `json:"id"`
-	LogicalDatabaseID *int64             `json:"logical_database_id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
 	DestinationID     int64              `json:"destination_id"`
 	Schedule          string             `json:"schedule"`
 	Prefix            string             `json:"prefix"`
@@ -121,7 +121,7 @@ FROM backups WHERE logical_database_id = $1 ORDER BY created_at
 
 type ListBackupsByLogicalDBRow struct {
 	ID                int64              `json:"id"`
-	LogicalDatabaseID *int64             `json:"logical_database_id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
 	DestinationID     int64              `json:"destination_id"`
 	Schedule          string             `json:"schedule"`
 	Prefix            string             `json:"prefix"`
@@ -133,7 +133,7 @@ type ListBackupsByLogicalDBRow struct {
 	CreatedAt         time.Time          `json:"created_at"`
 }
 
-func (q *Queries) ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID *int64) ([]ListBackupsByLogicalDBRow, error) {
+func (q *Queries) ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error) {
 	rows, err := q.db.Query(ctx, listBackupsByLogicalDB, logicalDatabaseID)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ FROM backups WHERE enabled = true
 
 type ListEnabledBackupsRow struct {
 	ID                int64              `json:"id"`
-	LogicalDatabaseID *int64             `json:"logical_database_id"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
 	DestinationID     int64              `json:"destination_id"`
 	Schedule          string             `json:"schedule"`
 	Prefix            string             `json:"prefix"`

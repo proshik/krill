@@ -71,7 +71,7 @@ func TestAddBackupSucceeds(t *testing.T) {
 		t.Fatalf("add backup want 303, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	bks, err := q.ListBackupsByLogicalDB(ctx, &ldbID)
+	bks, err := q.ListBackupsByLogicalDB(ctx, ldbID)
 	if err != nil {
 		t.Fatalf("list backups: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestAddBackupCrossOrgDestinationFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("cross-org destination want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByLogicalDB(ctx, &ldbID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, ldbID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -124,7 +124,7 @@ func TestAddBackupZeroRetentionFlash(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatalf("retention 0 want err flash, got %q", flashCookieValue(rec))
 	}
-	if bks, _ := q.ListBackupsByLogicalDB(ctx, &ldbID); len(bks) != 0 {
+	if bks, _ := q.ListBackupsByLogicalDB(ctx, ldbID); len(bks) != 0 {
 		t.Fatalf("expected no backup created, got %d", len(bks))
 	}
 }
@@ -134,7 +134,7 @@ func TestToggleBackupFlipsEnabled(t *testing.T) {
 	ctx := context.Background()
 	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
@@ -156,7 +156,7 @@ func TestDeleteBackupRemovesIt(t *testing.T) {
 	ctx := context.Background()
 	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 	b, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
+		LogicalDatabaseID: ldbID, DestinationID: destID, Schedule: "0 3 * * *", Prefix: "", Retention: 5, Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("create backup: %v", err)
@@ -182,7 +182,7 @@ func TestBackupCrossTenantIsolation(t *testing.T) {
 	// --- Org-A: owner userA, project, environment, instance, logical DB, destination, backup ---
 	orgA, projA, envA, ldbA, destA, _ := backupFixture(t, q, orgSvc)
 	aBackup, err := q.CreateBackup(ctx, db.CreateBackupParams{
-		LogicalDatabaseID: &ldbA,
+		LogicalDatabaseID: ldbA,
 		DestinationID:     destA,
 		Schedule:          "0 2 * * *",
 		Prefix:            "daily",

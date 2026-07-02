@@ -40,21 +40,12 @@ type DBStore struct{ q *db.Queries }
 
 func NewDBStore(q *db.Queries) *DBStore { return &DBStore{q: q} }
 
-// derefI64 is a nil-guard for the nullable backups.logical_database_id column
-// (NOT NULL lands in a later migration once Task 8 finishes the cutover).
-func derefI64(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
-}
-
 func (s *DBStore) GetBackup(ctx context.Context, id int64) (BackupRow, error) {
 	b, err := s.q.GetBackup(ctx, id)
 	if err != nil {
 		return BackupRow{}, err
 	}
-	return BackupRow{ID: b.ID, LogicalDatabaseID: derefI64(b.LogicalDatabaseID), DestinationID: b.DestinationID, Prefix: b.Prefix, Retention: int(b.Retention)}, nil
+	return BackupRow{ID: b.ID, LogicalDatabaseID: b.LogicalDatabaseID, DestinationID: b.DestinationID, Prefix: b.Prefix, Retention: int(b.Retention)}, nil
 }
 
 // GetPGTarget resolves a logical database + its instance into dump/restore

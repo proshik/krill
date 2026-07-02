@@ -148,7 +148,7 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 	if inst.ExternalPort != nil {
 		c.External = dbservice.PostgresExternalURL(di, dl, s.cfg.Host)
 	}
-	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), &ld.ID); err == nil {
+	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), ld.ID); err == nil {
 		c.Backups = backups
 	}
 	if dests, err := s.q.ListDestinationsByOrg(r.Context(), o.ID); err == nil {

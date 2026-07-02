@@ -13,6 +13,3 @@ FROM app_db_links WHERE application_id = $1 ORDER BY var_name;
 
 -- name: DeleteDBLink :exec
 DELETE FROM app_db_links WHERE id = $1;
-
--- name: DeleteDBLinksByDB :exec
-DELETE FROM app_db_links WHERE engine = $1 AND db_id = $2;

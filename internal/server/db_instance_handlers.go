@@ -157,9 +157,9 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 		if inst.Engine == "postgres" {
 			c.SuperuserURL = dbservice.PostgresURL("postgresql", di, dbservice.LogicalDB{DBName: "postgres", Username: di.Superuser, Password: di.SuperuserPassword})
 		} else {
-			c.SuperuserURL = dbservice.RedisInternalURL2(di)
+			c.SuperuserURL = dbservice.RedisInternalURL(di)
 			if inst.ExternalPort != nil {
-				c.ExternalURL = dbservice.RedisExternalURL2(di, s.cfg.Host)
+				c.ExternalURL = dbservice.RedisExternalURL(di, s.cfg.Host)
 			}
 		}
 	}

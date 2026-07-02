@@ -12,7 +12,7 @@ import (
 
 const createLogicalDatabase = `-- name: CreateLogicalDatabase :one
 INSERT INTO logical_databases (instance_id, environment_id, name, db_name, username, password)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, instance_id, environment_id, name, db_name, username, password, created_at, legacy_pg_id
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, instance_id, environment_id, name, db_name, username, password, created_at
 `
 
 type CreateLogicalDatabaseParams struct {
@@ -43,7 +43,6 @@ func (q *Queries) CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDa
 		&i.Username,
 		&i.Password,
 		&i.CreatedAt,
-		&i.LegacyPgID,
 	)
 	return i, err
 }
@@ -58,7 +57,7 @@ func (q *Queries) DeleteLogicalDatabase(ctx context.Context, id int64) error {
 }
 
 const getLogicalDatabase = `-- name: GetLogicalDatabase :one
-SELECT id, instance_id, environment_id, name, db_name, username, password, created_at, legacy_pg_id FROM logical_databases WHERE id = $1
+SELECT id, instance_id, environment_id, name, db_name, username, password, created_at FROM logical_databases WHERE id = $1
 `
 
 func (q *Queries) GetLogicalDatabase(ctx context.Context, id int64) (LogicalDatabase, error) {
@@ -73,13 +72,12 @@ func (q *Queries) GetLogicalDatabase(ctx context.Context, id int64) (LogicalData
 		&i.Username,
 		&i.Password,
 		&i.CreatedAt,
-		&i.LegacyPgID,
 	)
 	return i, err
 }
 
 const listLogicalDatabasesByEnvironment = `-- name: ListLogicalDatabasesByEnvironment :many
-SELECT ld.id, ld.instance_id, ld.environment_id, ld.name, ld.db_name, ld.username, ld.password, ld.created_at, ld.legacy_pg_id, di.name AS instance_name, di.app_name AS instance_app_name,
+SELECT ld.id, ld.instance_id, ld.environment_id, ld.name, ld.db_name, ld.username, ld.password, ld.created_at, di.name AS instance_name, di.app_name AS instance_app_name,
        di.status AS instance_status, di.image AS instance_image,
        di.node_hostname AS instance_node, di.external_port AS instance_external_port
 FROM logical_databases ld
@@ -96,7 +94,6 @@ type ListLogicalDatabasesByEnvironmentRow struct {
 	Username             string    `json:"username"`
 	Password             string    `json:"password"`
 	CreatedAt            time.Time `json:"created_at"`
-	LegacyPgID           *int64    `json:"legacy_pg_id"`
 	InstanceName         string    `json:"instance_name"`
 	InstanceAppName      string    `json:"instance_app_name"`
 	InstanceStatus       string    `json:"instance_status"`
@@ -123,7 +120,6 @@ func (q *Queries) ListLogicalDatabasesByEnvironment(ctx context.Context, environ
 			&i.Username,
 			&i.Password,
 			&i.CreatedAt,
-			&i.LegacyPgID,
 			&i.InstanceName,
 			&i.InstanceAppName,
 			&i.InstanceStatus,
@@ -142,7 +138,7 @@ func (q *Queries) ListLogicalDatabasesByEnvironment(ctx context.Context, environ
 }
 
 const listLogicalDatabasesByInstance = `-- name: ListLogicalDatabasesByInstance :many
-SELECT ld.id, ld.instance_id, ld.environment_id, ld.name, ld.db_name, ld.username, ld.password, ld.created_at, ld.legacy_pg_id, e.name AS env_name, p.name AS project_name, p.id AS project_id
+SELECT ld.id, ld.instance_id, ld.environment_id, ld.name, ld.db_name, ld.username, ld.password, ld.created_at, e.name AS env_name, p.name AS project_name, p.id AS project_id
 FROM logical_databases ld
 JOIN environments e ON e.id = ld.environment_id
 JOIN projects p     ON p.id = e.project_id
@@ -158,7 +154,6 @@ type ListLogicalDatabasesByInstanceRow struct {
 	Username      string    `json:"username"`
 	Password      string    `json:"password"`
 	CreatedAt     time.Time `json:"created_at"`
-	LegacyPgID    *int64    `json:"legacy_pg_id"`
 	EnvName       string    `json:"env_name"`
 	ProjectName   string    `json:"project_name"`
 	ProjectID     int64     `json:"project_id"`
@@ -182,7 +177,6 @@ func (q *Queries) ListLogicalDatabasesByInstance(ctx context.Context, instanceID
 			&i.Username,
 			&i.Password,
 			&i.CreatedAt,
-			&i.LegacyPgID,
 			&i.EnvName,
 			&i.ProjectName,
 			&i.ProjectID,

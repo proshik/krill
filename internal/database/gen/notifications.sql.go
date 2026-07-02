@@ -37,10 +37,11 @@ func (q *Queries) AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTarge
 }
 
 const backupNotifyTarget = `-- name: BackupNotifyTarget :one
-SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, pg.app_name AS db_name
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, di.app_name AS db_name
 FROM backups b
-JOIN postgres_dbs pg ON b.postgres_db_id = pg.id
-JOIN environments e ON pg.environment_id = e.id
+JOIN logical_databases ld ON b.logical_database_id = ld.id
+JOIN db_instances di ON ld.instance_id = di.id
+JOIN environments e ON ld.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE b.id = $1
 `

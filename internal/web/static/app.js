@@ -424,14 +424,6 @@ window.krillDismissToast = function (el) {
   setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
 };
 
-// Confirm DB deletion, reflecting whether the data volume will be destroyed.
-// The two i18n'd messages are rendered server-side into data attributes.
-window.krillConfirmDbDelete = function (form) {
-  const destroy = !!(form.querySelector('[name="destroy_data"]') || {}).checked;
-  const msg = destroy ? form.dataset.confirmDestroy : form.dataset.confirmKeep;
-  return krillConfirm(form, msg, "Delete");
-};
-
 // Disable a submit button on form submit to prevent double-submits and signal activity.
 window.krillBusy = function (btn, label) {
   if (!btn) return;

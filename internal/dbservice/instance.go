@@ -86,13 +86,13 @@ func PostgresExternalURL(inst Instance, ldb LogicalDB, host string) string {
 	return "postgresql://" + ldb.Username + ":" + ldb.Password + "@" + host + ":" + p + "/" + ldb.DBName
 }
 
-// RedisInternalURL2/RedisExternalURL2 — instance-model URL builders. The "2"
-// suffix avoids clashing with the legacy builders; renamed when those go away.
-func RedisInternalURL2(inst Instance) string {
+// RedisInternalURL/RedisExternalURL — connection string builders for a Redis
+// instance (internal overlay DNS / external host port).
+func RedisInternalURL(inst Instance) string {
 	return "redis://default:" + inst.SuperuserPassword + "@" + inst.AppName + ":6379"
 }
 
-func RedisExternalURL2(inst Instance, host string) string {
+func RedisExternalURL(inst Instance, host string) string {
 	p := ""
 	if inst.ExternalPort != nil {
 		p = strconv.Itoa(int(*inst.ExternalPort))
@@ -100,7 +100,9 @@ func RedisExternalURL2(inst Instance, host string) string {
 	return "redis://default:" + inst.SuperuserPassword + "@" + host + ":" + p
 }
 
-// DeployInstance: pull → deploy, detached (see DeployPostgres for rationale).
+// DeployInstance: pull → deploy, in a goroutine, detached from the triggering
+// HTTP request (which returns immediately with a redirect) so the deploy
+// outlives it.
 func (s *Service) DeployInstance(id int64) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)

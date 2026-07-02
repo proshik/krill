@@ -28,7 +28,7 @@ func (s *Server) loadBackupChain(w http.ResponseWriter, r *http.Request) (db.Get
 		return db.GetBackupRow{}, "", false
 	}
 	b, err := s.q.GetBackup(r.Context(), id)
-	if err != nil || b.LogicalDatabaseID == nil || *b.LogicalDatabaseID != ld.ID {
+	if err != nil || b.LogicalDatabaseID != ld.ID {
 		logFrom(r).Info("loadBackupChain: backup not found or db mismatch", "backup_id", id, "ldb_id", ld.ID)
 		http.NotFound(w, r)
 		return db.GetBackupRow{}, "", false
@@ -85,7 +85,7 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := s.q.CreateBackup(r.Context(), db.CreateBackupParams{
-		LogicalDatabaseID: &dbID,
+		LogicalDatabaseID: dbID,
 		DestinationID:     destID,
 		Schedule:          schedule,
 		Prefix:            prefix,
@@ -116,7 +116,7 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_backup")
 		return
 	}
-	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
+	logFrom(r).Info("backup deleted", "backup_id", b.ID, "db_id", b.LogicalDatabaseID)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
@@ -135,7 +135,7 @@ func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.update_backup")
 		return
 	}
-	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "enabled", !b.Enabled)
+	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "enabled", !b.Enabled)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}
@@ -157,7 +157,7 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 	// Run asynchronously with a detached context: a backup can take minutes, so
 	// it must not tie up the request and must finish even if the client
 	// disconnects. RunBackup records the outcome on the row's last_status.
-	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
+	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", b.LogicalDatabaseID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -186,7 +186,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Run asynchronously with a detached context: the S3→psql restore can take
 	// minutes, so a client disconnect must not abort a half-done restore.
-	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
+	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "key", key)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -210,7 +210,7 @@ func (s *Server) backupObjects(w http.ResponseWriter, r *http.Request) {
 	}
 	objs, err := s.backupSvc.ListObjects(r.Context(), b.ID)
 	if err != nil {
-		logFrom(r).Error("backupObjects: list failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID)
+		logFrom(r).Error("backupObjects: list failed", "err", err, "backup_id", b.ID, "db_id", b.LogicalDatabaseID)
 		http.Error(w, "failed to list backups", http.StatusInternalServerError)
 		return
 	}
@@ -234,7 +234,7 @@ func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	rc, err := s.backupSvc.OpenObject(r.Context(), b.ID, key)
 	if err != nil {
-		logFrom(r).Error("downloadBackup: open failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
+		logFrom(r).Error("downloadBackup: open failed", "err", err, "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "key", key)
 		http.Error(w, "failed to download backup", http.StatusInternalServerError)
 		return
 	}
@@ -242,6 +242,6 @@ func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", "attachment; filename="+path.Base(key))
 	if _, err := io.Copy(w, rc); err != nil {
-		logFrom(r).Error("downloadBackup: copy failed", "err", err, "backup_id", b.ID, "db_id", *b.LogicalDatabaseID, "key", key)
+		logFrom(r).Error("downloadBackup: copy failed", "err", err, "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "key", key)
 	}
 }

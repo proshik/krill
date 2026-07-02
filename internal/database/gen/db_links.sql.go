@@ -64,20 +64,6 @@ func (q *Queries) DeleteDBLink(ctx context.Context, id int64) error {
 	return err
 }
 
-const deleteDBLinksByDB = `-- name: DeleteDBLinksByDB :exec
-DELETE FROM app_db_links WHERE engine = $1 AND db_id = $2
-`
-
-type DeleteDBLinksByDBParams struct {
-	Engine string `json:"engine"`
-	DbID   int64  `json:"db_id"`
-}
-
-func (q *Queries) DeleteDBLinksByDB(ctx context.Context, arg DeleteDBLinksByDBParams) error {
-	_, err := q.db.Exec(ctx, deleteDBLinksByDB, arg.Engine, arg.DbID)
-	return err
-}
-
 const getDBLink = `-- name: GetDBLink :one
 SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
 FROM app_db_links WHERE id = $1

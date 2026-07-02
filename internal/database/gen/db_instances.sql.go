@@ -33,7 +33,7 @@ func (q *Queries) CountLogicalDatabasesByInstance(ctx context.Context, instanceI
 
 const createDBInstance = `-- name: CreateDBInstance :one
 INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, legacy_pg_id, legacy_redis_id
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at
 `
 
 type CreateDBInstanceParams struct {
@@ -75,8 +75,6 @@ func (q *Queries) CreateDBInstance(ctx context.Context, arg CreateDBInstancePara
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LegacyPgID,
-		&i.LegacyRedisID,
 	)
 	return i, err
 }
@@ -91,7 +89,7 @@ func (q *Queries) DeleteDBInstance(ctx context.Context, id int64) error {
 }
 
 const getDBInstance = `-- name: GetDBInstance :one
-SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, legacy_pg_id, legacy_redis_id FROM db_instances WHERE id = $1
+SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE id = $1
 `
 
 func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, error) {
@@ -111,8 +109,6 @@ func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, erro
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.LegacyPgID,
-		&i.LegacyRedisID,
 	)
 	return i, err
 }
@@ -154,7 +150,7 @@ func (q *Queries) ListAllDBInstances(ctx context.Context) ([]ListAllDBInstancesR
 }
 
 const listDBInstancesByOrg = `-- name: ListDBInstancesByOrg :many
-SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, legacy_pg_id, legacy_redis_id FROM db_instances WHERE organization_id = $1 ORDER BY created_at
+SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE organization_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error) {
@@ -180,8 +176,6 @@ func (q *Queries) ListDBInstancesByOrg(ctx context.Context, organizationID int64
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.LegacyPgID,
-			&i.LegacyRedisID,
 		); err != nil {
 			return nil, err
 		}
