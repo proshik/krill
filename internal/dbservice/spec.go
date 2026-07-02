@@ -94,7 +94,7 @@ func PostgresInternalURL(pg PostgresDB) string {
 	return "postgresql://" + pg.DatabaseUser + ":" + pg.DatabasePassword + "@" + pg.AppName + ":5432/" + pg.DatabaseName
 }
 
-func PostgresExternalURL(pg PostgresDB, host string) string {
+func PostgresExternalURLLegacy(pg PostgresDB, host string) string {
 	p := ""
 	if pg.ExternalPort != nil {
 		p = strconv.Itoa(int(*pg.ExternalPort))

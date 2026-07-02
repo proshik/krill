@@ -55,7 +55,7 @@ func TestConnectionStrings(t *testing.T) {
 	if got := PostgresInternalURL(pg); got != "postgresql://user:pw@krill-pg-x:5432/app" {
 		t.Errorf("pg internal = %q", got)
 	}
-	if got := PostgresExternalURL(pg, "1.2.3.4"); got != "postgresql://user:pw@1.2.3.4:54320/app" {
+	if got := PostgresExternalURLLegacy(pg, "1.2.3.4"); got != "postgresql://user:pw@1.2.3.4:54320/app" {
 		t.Errorf("pg external = %q", got)
 	}
 	r := RedisDB{AppName: "krill-redis-x", Password: "secret", ExternalPort: &port}
