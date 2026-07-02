@@ -8,9 +8,6 @@ SELECT * FROM db_instances WHERE id = $1;
 -- name: ListDBInstancesByOrg :many
 SELECT * FROM db_instances WHERE organization_id = $1 ORDER BY created_at;
 
--- name: ListAllDBInstances :many
-SELECT id, engine, name, app_name FROM db_instances;
-
 -- name: UpdateDBInstanceStatus :exec
 UPDATE db_instances SET status = $2, updated_at = now() WHERE id = $1;
 

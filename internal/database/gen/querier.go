@@ -101,7 +101,6 @@ type Querier interface {
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
-	ListAllDBInstances(ctx context.Context) ([]ListAllDBInstancesRow, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)

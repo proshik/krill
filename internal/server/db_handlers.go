@@ -128,8 +128,14 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, _ := s.loadProject(w, r)
-	e, _ := s.loadEnvironment(w, r, p.ID)
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	e, ok := s.loadEnvironment(w, r, p.ID)
+	if !ok {
+		return
+	}
 	ld, ok := s.loadLogicalDB(w, r)
 	if !ok {
 		return
@@ -162,8 +168,14 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, _ := s.loadProject(w, r)
-	e, _ := s.loadEnvironment(w, r, p.ID)
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	e, ok := s.loadEnvironment(w, r, p.ID)
+	if !ok {
+		return
+	}
 	ld, ok := s.loadLogicalDB(w, r)
 	if !ok {
 		return

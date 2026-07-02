@@ -113,42 +113,6 @@ func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, erro
 	return i, err
 }
 
-const listAllDBInstances = `-- name: ListAllDBInstances :many
-SELECT id, engine, name, app_name FROM db_instances
-`
-
-type ListAllDBInstancesRow struct {
-	ID      int64  `json:"id"`
-	Engine  string `json:"engine"`
-	Name    string `json:"name"`
-	AppName string `json:"app_name"`
-}
-
-func (q *Queries) ListAllDBInstances(ctx context.Context) ([]ListAllDBInstancesRow, error) {
-	rows, err := q.db.Query(ctx, listAllDBInstances)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListAllDBInstancesRow
-	for rows.Next() {
-		var i ListAllDBInstancesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Engine,
-			&i.Name,
-			&i.AppName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listDBInstancesByOrg = `-- name: ListDBInstancesByOrg :many
 SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE organization_id = $1 ORDER BY created_at
 `
