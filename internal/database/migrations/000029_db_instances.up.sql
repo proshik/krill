@@ -41,33 +41,45 @@ CREATE TABLE logical_databases (
 CREATE INDEX logical_databases_env_id_idx ON logical_databases(environment_id);
 CREATE INDEX logical_databases_instance_id_idx ON logical_databases(instance_id);
 
--- Convert every legacy postgres container into an instance. POSTGRES_USER in the
--- official image is the server superuser, so its creds become the instance creds
--- (ciphertext moved as-is). Instance names get a -<id> suffix only on collision
--- (legacy uniqueness was per-environment, instance uniqueness is per-org).
+-- Convert every legacy container (postgres + redis) into an instance in a
+-- single INSERT over a UNION ALL of both legacy tables. POSTGRES_USER in the
+-- official image is the server superuser, so its creds become the instance
+-- creds (ciphertext moved as-is); redis has no superuser concept, so
+-- `superuser` stays ''. The union must happen BEFORE the collision window
+-- function runs so it sees every name in the org across BOTH engines:
+-- db_instances has UNIQUE(organization_id, name) spanning postgres AND
+-- redis, so computing the window per engine (two separate INSERTs, as an
+-- earlier version of this migration did) misses a same-org, same-name
+-- collision between a postgres db and a redis db and dies on the UNIQUE
+-- violation. The suffix itself must be engine-qualified, not just `-<id>`:
+-- a bare `-<id>` can still collide across engines (postgres id=5 and redis
+-- id=5, both named 'cache', would otherwise both become 'cache-5').
 INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser,
                           superuser_password, external_port, node_hostname, status,
-                          created_at, updated_at, legacy_pg_id)
-SELECT p.organization_id, 'postgres',
-       CASE WHEN count(*) OVER (PARTITION BY p.organization_id, pd.name) > 1
-            THEN pd.name || '-' || pd.id::text ELSE pd.name END,
-       pd.app_name, pd.image, pd.database_user, pd.database_password,
-       pd.external_port, pd.node_hostname, pd.status, pd.created_at, pd.updated_at, pd.id
-FROM postgres_dbs pd
-JOIN environments e ON e.id = pd.environment_id
-JOIN projects p     ON p.id = e.project_id;
-
-INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser,
-                          superuser_password, external_port, node_hostname, status,
-                          created_at, updated_at, legacy_redis_id)
-SELECT p.organization_id, 'redis',
-       CASE WHEN count(*) OVER (PARTITION BY p.organization_id, rd.name) > 1
-            THEN rd.name || '-' || rd.id::text ELSE rd.name END,
-       rd.app_name, rd.image, '', rd.password,
-       rd.external_port, rd.node_hostname, rd.status, rd.created_at, rd.updated_at, rd.id
-FROM redis_dbs rd
-JOIN environments e ON e.id = rd.environment_id
-JOIN projects p     ON p.id = e.project_id;
+                          created_at, updated_at, legacy_pg_id, legacy_redis_id)
+SELECT organization_id, engine,
+       CASE WHEN count(*) OVER (PARTITION BY organization_id, name) > 1
+            THEN name || '-' || engine || '-' || COALESCE(legacy_pg_id, legacy_redis_id)::text
+            ELSE name END,
+       app_name, image, superuser, superuser_password, external_port, node_hostname,
+       status, created_at, updated_at, legacy_pg_id, legacy_redis_id
+FROM (
+    SELECT p.organization_id, 'postgres' AS engine, pd.name, pd.app_name, pd.image,
+           pd.database_user AS superuser, pd.database_password AS superuser_password,
+           pd.external_port, pd.node_hostname, pd.status, pd.created_at, pd.updated_at,
+           pd.id AS legacy_pg_id, NULL::bigint AS legacy_redis_id
+    FROM postgres_dbs pd
+    JOIN environments e ON e.id = pd.environment_id
+    JOIN projects p     ON p.id = e.project_id
+    UNION ALL
+    SELECT p.organization_id, 'redis' AS engine, rd.name, rd.app_name, rd.image,
+           '' AS superuser, rd.password AS superuser_password,
+           rd.external_port, rd.node_hostname, rd.status, rd.created_at, rd.updated_at,
+           NULL::bigint AS legacy_pg_id, rd.id AS legacy_redis_id
+    FROM redis_dbs rd
+    JOIN environments e ON e.id = rd.environment_id
+    JOIN projects p     ON p.id = e.project_id
+) legacy;
 
 -- One logical database per converted postgres container (same creds as the
 -- superuser — matches today's behavior, no regression).
