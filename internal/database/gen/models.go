@@ -34,6 +34,7 @@ type AppVolume struct {
 	Name          string    `json:"name"`
 	MountPath     string    `json:"mount_path"`
 	CreatedAt     time.Time `json:"created_at"`
+	Owner         *string   `json:"owner"`
 }
 
 type Application struct {

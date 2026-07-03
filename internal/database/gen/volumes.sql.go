@@ -10,19 +10,25 @@ import (
 )
 
 const createVolume = `-- name: CreateVolume :one
-INSERT INTO app_volumes (application_id, name, mount_path)
-VALUES ($1, $2, $3)
-RETURNING id, application_id, name, mount_path, created_at
+INSERT INTO app_volumes (application_id, name, mount_path, owner)
+VALUES ($1, $2, $3, $4)
+RETURNING id, application_id, name, mount_path, created_at, owner
 `
 
 type CreateVolumeParams struct {
-	ApplicationID int64  `json:"application_id"`
-	Name          string `json:"name"`
-	MountPath     string `json:"mount_path"`
+	ApplicationID int64   `json:"application_id"`
+	Name          string  `json:"name"`
+	MountPath     string  `json:"mount_path"`
+	Owner         *string `json:"owner"`
 }
 
 func (q *Queries) CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error) {
-	row := q.db.QueryRow(ctx, createVolume, arg.ApplicationID, arg.Name, arg.MountPath)
+	row := q.db.QueryRow(ctx, createVolume,
+		arg.ApplicationID,
+		arg.Name,
+		arg.MountPath,
+		arg.Owner,
+	)
 	var i AppVolume
 	err := row.Scan(
 		&i.ID,
@@ -30,6 +36,7 @@ func (q *Queries) CreateVolume(ctx context.Context, arg CreateVolumeParams) (App
 		&i.Name,
 		&i.MountPath,
 		&i.CreatedAt,
+		&i.Owner,
 	)
 	return i, err
 }
@@ -44,7 +51,7 @@ func (q *Queries) DeleteVolume(ctx context.Context, id int64) error {
 }
 
 const getVolume = `-- name: GetVolume :one
-SELECT id, application_id, name, mount_path, created_at
+SELECT id, application_id, name, mount_path, created_at, owner
 FROM app_volumes WHERE id = $1
 `
 
@@ -57,12 +64,13 @@ func (q *Queries) GetVolume(ctx context.Context, id int64) (AppVolume, error) {
 		&i.Name,
 		&i.MountPath,
 		&i.CreatedAt,
+		&i.Owner,
 	)
 	return i, err
 }
 
 const listVolumesByApplication = `-- name: ListVolumesByApplication :many
-SELECT id, application_id, name, mount_path, created_at
+SELECT id, application_id, name, mount_path, created_at, owner
 FROM app_volumes WHERE application_id = $1 ORDER BY created_at
 `
 
@@ -81,6 +89,7 @@ func (q *Queries) ListVolumesByApplication(ctx context.Context, applicationID in
 			&i.Name,
 			&i.MountPath,
 			&i.CreatedAt,
+			&i.Owner,
 		); err != nil {
 			return nil, err
 		}
@@ -90,4 +99,18 @@ func (q *Queries) ListVolumesByApplication(ctx context.Context, applicationID in
 		return nil, err
 	}
 	return items, nil
+}
+
+const setVolumeOwner = `-- name: SetVolumeOwner :exec
+UPDATE app_volumes SET owner = $2 WHERE id = $1
+`
+
+type SetVolumeOwnerParams struct {
+	ID    int64   `json:"id"`
+	Owner *string `json:"owner"`
+}
+
+func (q *Queries) SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error {
+	_, err := q.db.Exec(ctx, setVolumeOwner, arg.ID, arg.Owner)
+	return err
 }

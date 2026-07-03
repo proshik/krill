@@ -153,6 +153,7 @@ type Querier interface {
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
+	SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationBuild(ctx context.Context, arg UpdateApplicationBuildParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
