@@ -37,8 +37,17 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
+	if oerr != nil {
+		s.flashErr(w, r, oerr.Error())
+		return
+	}
+	var ownerCol *string
+	if normOwner != "" {
+		ownerCol = &normOwner
+	}
 	if _, err := s.q.CreateVolume(r.Context(), db.CreateVolumeParams{
-		ApplicationID: c.App.ID, Name: name, MountPath: mountPath,
+		ApplicationID: c.App.ID, Name: name, MountPath: mountPath, Owner: ownerCol,
 	}); err != nil {
 		logFrom(r).Error("addVolume: create failed", "err", err, "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.add_volume")
@@ -68,6 +77,36 @@ func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("volume deleted", "app_id", c.App.ID, "volume_id", v.ID, "name", v.Name)
 	s.flashOK(w, r, "flash.ok.volume_removed")
+	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
+}
+
+// setVolumeOwner sets (or clears, when empty) the uid:gid the volume is chowned
+// to before each deploy. Applied on the next deploy.
+func (s *Server) setVolumeOwner(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	v, ok := s.loadVolume(w, r, c.App.ID)
+	if !ok {
+		return
+	}
+	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
+	if oerr != nil {
+		s.flashErr(w, r, oerr.Error())
+		return
+	}
+	var ownerCol *string
+	if normOwner != "" {
+		ownerCol = &normOwner
+	}
+	if err := s.q.SetVolumeOwner(r.Context(), db.SetVolumeOwnerParams{ID: v.ID, Owner: ownerCol}); err != nil {
+		logFrom(r).Error("setVolumeOwner: update failed", "err", err, "volume_id", v.ID)
+		s.flashErrT(w, r, "flash.err.set_volume_owner")
+		return
+	}
+	logFrom(r).Info("volume owner set", "app_id", c.App.ID, "volume_id", v.ID, "owner", normOwner)
+	s.flashOK(w, r, "flash.ok.volume_owner_set")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }
 

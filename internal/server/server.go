@@ -260,6 +260,7 @@ func (s *Server) Router() http.Handler {
 					r.Post("/advanced", s.saveAdvanced)
 					r.Post("/volumes", s.addVolume)
 					r.Post("/volumes/{volID}/delete", s.deleteVolume)
+					r.Post("/volumes/{volID}/owner", s.setVolumeOwner)
 					r.Post("/db-links", s.addDBLink)
 					r.Post("/db-links/{linkID}/delete", s.deleteDBLink)
 					r.Post("/volumes/{volID}/backups", s.addVolumeBackup)
