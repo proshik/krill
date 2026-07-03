@@ -128,8 +128,12 @@ type RemoteStats struct {
 // supply a dialer that opens the worker's /var/run/docker.sock over SSH.
 func NewRemoteStats(dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*RemoteStats, error) {
 	cli, err := client.NewClientWithOpts(
-		client.WithDialContext(dial),
+		// WithHost MUST come before WithDialContext: for a unix host WithHost
+		// calls sockets.ConfigureTransport which sets a local-socket DialContext,
+		// overwriting ours. Set the tunnel dialer last so it wins — otherwise the
+		// "remote" client silently talks to the LOCAL daemon.
 		client.WithHost("unix:///var/run/docker.sock"),
+		client.WithDialContext(dial),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
@@ -156,8 +160,11 @@ type RemoteClientProvider func(ctx context.Context, nodeID string) (cli *client.
 // NewRemoteStats but returns the general client for exec.
 func NewRemoteClient(dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*client.Client, error) {
 	return client.NewClientWithOpts(
-		client.WithDialContext(dial),
+		// WithHost before WithDialContext (see NewRemoteStats): a unix host's
+		// WithHost overwrites transport.DialContext, so the tunnel dialer must be
+		// set last or the client silently talks to the LOCAL daemon.
 		client.WithHost("unix:///var/run/docker.sock"),
+		client.WithDialContext(dial),
 		client.WithAPIVersionNegotiation(),
 	)
 }
