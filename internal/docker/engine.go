@@ -29,6 +29,7 @@ type MountSpec struct {
 	Source   string
 	Target   string
 	ReadOnly bool
+	Owner    string // "uid:gid" to chown the volume to before deploy; "" => skip
 }
 
 // ServiceSpec — our neutral description of a Swarm service.
@@ -129,6 +130,7 @@ type Engine interface {
 	VolumeRemove(ctx context.Context, name string) error
 	VolumeArchive(ctx context.Context, volumeName string, out io.Writer) error
 	VolumeRestore(ctx context.Context, volumeName string, in io.Reader) error
+	VolumeChown(ctx context.Context, volumeName string, uid, gid int, swarmNodeID string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 	ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error)

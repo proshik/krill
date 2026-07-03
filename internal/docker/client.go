@@ -508,13 +508,18 @@ const busyboxImage = "busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739
 
 // ensureImage pulls ref if no local image matches it.
 func (e *dockerEngine) ensureImage(ctx context.Context, ref string) error {
-	imgs, err := e.cli.ImageList(ctx, image.ListOptions{
+	return ensureImageOn(ctx, e.cli, ref)
+}
+
+// ensureImageOn pulls ref on the given client if it has no matching local image.
+func ensureImageOn(ctx context.Context, cli *client.Client, ref string) error {
+	imgs, err := cli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", ref)),
 	})
 	if err == nil && len(imgs) > 0 {
 		return nil
 	}
-	rc, perr := e.cli.ImagePull(ctx, ref, image.PullOptions{})
+	rc, perr := cli.ImagePull(ctx, ref, image.PullOptions{})
 	if perr != nil {
 		return perr
 	}
@@ -611,6 +616,52 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 		return fmt.Errorf("stream archive to %s: %w", volumeName, ce)
 	}
 	return nil
+}
+
+// VolumeChown runs a short root busybox sidecar that chowns a named volume's
+// contents to uid:gid. It runs on the node given by swarmNodeID: an empty id (or
+// a node that is not a registered worker → the control plane) uses the local
+// daemon; a registered worker is reached over the SSH tunnel (via the same
+// selectClient path as Exec). Fresh named volumes are created root:root 0755, so
+// a non-root app cannot write until this runs (the deployer runs it before
+// ServiceDeploy). chown -R is instant on a fresh empty volume.
+func (e *dockerEngine) VolumeChown(ctx context.Context, volumeName string, uid, gid int, swarmNodeID string) error {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	if err != nil {
+		return fmt.Errorf("reach node for volume chown %s: %w", volumeName, err)
+	}
+	defer release()
+	if err := ensureImageOn(ctx, cli, busyboxImage); err != nil {
+		return err
+	}
+	resp, err := cli.ContainerCreate(ctx,
+		&container.Config{
+			Image: busyboxImage,
+			Cmd:   []string{"chown", "-R", fmt.Sprintf("%d:%d", uid, gid), "/vol"},
+		},
+		&container.HostConfig{
+			Mounts:      []mount.Mount{{Type: mount.TypeVolume, Source: volumeName, Target: "/vol"}},
+			NetworkMode: "none",
+		}, nil, nil, "")
+	if err != nil {
+		return err
+	}
+	cid := resp.ID
+	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+
+	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		return err
+	}
+	defer att.Close()
+	if err := cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(io.Discard, &stderr, att.Reader); err != nil {
+		return err
+	}
+	return waitContainer(ctx, cli, cid, "volume chown "+volumeName, &stderr)
 }
 
 // waitContainer blocks until the container exits and returns an error on a

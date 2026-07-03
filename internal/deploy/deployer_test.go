@@ -40,7 +40,7 @@ func (f *digestMockEngine) ServiceProgress(context.Context, string, []string) (d
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t1"}}, nil
 }
 func (f *digestMockEngine) NetworkEnsure(context.Context, string) error { return nil }
-func (f *digestMockEngine) ServiceRemove(context.Context, string) error  { return nil }
+func (f *digestMockEngine) ServiceRemove(context.Context, string) error { return nil }
 func (f *digestMockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
@@ -54,12 +54,13 @@ func (f *digestMockEngine) ServiceStates(_ context.Context, names []string) (map
 func (f *digestMockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error       { return nil }
-func (f *digestMockEngine) ServiceRestart(context.Context, string) error             { return nil }
-func (f *digestMockEngine) VolumeRemove(context.Context, string) error               { return nil }
-func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer) error   { return nil }
-func (f *digestMockEngine) VolumeRestore(context.Context, string, io.Reader) error   { return nil }
-func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error       { return nil }
+func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
+func (f *digestMockEngine) ServiceRestart(context.Context, string) error                { return nil }
+func (f *digestMockEngine) VolumeRemove(context.Context, string) error                  { return nil }
+func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer) error      { return nil }
+func (f *digestMockEngine) VolumeRestore(context.Context, string, io.Reader) error      { return nil }
+func (f *digestMockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
+func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error          { return nil }
 func (f *digestMockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
@@ -154,12 +155,13 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (m *mockEngine) ServiceScale(context.Context, string, uint64) error       { return nil }
-func (m *mockEngine) ServiceRestart(context.Context, string) error             { return nil }
-func (m *mockEngine) VolumeRemove(context.Context, string) error               { return nil }
-func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error   { return nil }
-func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error   { return nil }
-func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error { return nil }
+func (m *mockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
+func (m *mockEngine) ServiceRestart(context.Context, string) error                { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error                  { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error      { return nil }
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error      { return nil }
+func (m *mockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
+func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error    { return nil }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
