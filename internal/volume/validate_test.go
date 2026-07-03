@@ -44,3 +44,42 @@ func TestValidateAppVolume(t *testing.T) {
 		}
 	}
 }
+
+func TestParseOwner(t *testing.T) {
+	cases := []struct {
+		in               string
+		wantUID, wantGID int
+		wantNorm         string
+		wantErr          bool
+	}{
+		{"", 0, 0, "", false},
+		{"   ", 0, 0, "", false},
+		{"1000:0", 1000, 0, "1000:0", false},
+		{"1000", 1000, 1000, "1000:1000", false},
+		{"0:0", 0, 0, "0:0", false},
+		{"65535:65535", 65535, 65535, "65535:65535", false},
+		{"abc", 0, 0, "", true},
+		{"1000:", 0, 0, "", true},
+		{":0", 0, 0, "", true},
+		{"-1:0", 0, 0, "", true},
+		{"65536:0", 0, 0, "", true},
+		{"1:2:3", 0, 0, "", true},
+	}
+	for _, c := range cases {
+		uid, gid, norm, err := ParseOwner(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ParseOwner(%q): want error, got nil", c.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseOwner(%q): unexpected error %v", c.in, err)
+			continue
+		}
+		if uid != c.wantUID || gid != c.wantGID || norm != c.wantNorm {
+			t.Errorf("ParseOwner(%q) = (%d,%d,%q), want (%d,%d,%q)",
+				c.in, uid, gid, norm, c.wantUID, c.wantGID, c.wantNorm)
+		}
+	}
+}

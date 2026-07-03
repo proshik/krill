@@ -4,8 +4,10 @@ package volume
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -52,4 +54,39 @@ func ValidateAppVolume(name, mountPath string) error {
 		}
 	}
 	return nil
+}
+
+// ParseOwner validates an optional volume-owner string. Accepts "uid:gid" or a
+// bare "uid" (which means uid:uid). Empty input is valid and yields normalized
+// "" (no chown). uid and gid must be integers in 0..65535. Returns the parsed
+// ids and the normalized "uid:gid" string. The error is user-facing (flash).
+func ParseOwner(s string) (uid, gid int, normalized string, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, "", nil
+	}
+	uidStr, gidStr := s, s
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		uidStr, gidStr = s[:i], s[i+1:]
+	}
+	uid, err = parseIDField(uidStr)
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("owner UID: %w", err)
+	}
+	gid, err = parseIDField(gidStr)
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("owner GID: %w", err)
+	}
+	return uid, gid, strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
+}
+
+func parseIDField(s string) (int, error) {
+	n, convErr := strconv.Atoi(strings.TrimSpace(s))
+	if convErr != nil {
+		return 0, errors.New("must be a number")
+	}
+	if n < 0 || n > 65535 {
+		return 0, errors.New("must be in 0..65535")
+	}
+	return n, nil
 }
