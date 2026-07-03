@@ -684,6 +684,7 @@ templ volumesTab(c AppCtx) {
 					<tr>
 						<th>{ i18n.T(ctx, "volumes.name") }</th>
 						<th>{ i18n.T(ctx, "volumes.mount_path") }</th>
+						<th>{ i18n.T(ctx, "volumes.owner") }</th>
 						<th>{ i18n.T(ctx, "volumes.docker_name") }</th>
 						<th></th>
 					</tr>
@@ -693,6 +694,12 @@ templ volumesTab(c AppCtx) {
 						<tr>
 							<td class="k-mono">{ v.Name }</td>
 							<td class="k-mono">{ v.MountPath }</td>
+							<td>
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/volumes/" + itoa(v.ID) + "/owner") } class="inline flex items-center gap-1">
+									<input class="k-input k-mono w-24" name="owner" value={ ownerValue(v) } placeholder={ i18n.T(ctx, "volumes.owner_placeholder") }/>
+									<button type="submit" class="k-btn">{ i18n.T(ctx, "volumes.owner_save") }</button>
+								</form>
+							</td>
 							<td class="k-mono text-xs">{ docker.VolumeName(c.App.ID, v.Name) }</td>
 							<td>
 								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/volumes/" + itoa(v.ID) + "/delete") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.delete_volume", v.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
@@ -712,6 +719,10 @@ templ volumesTab(c AppCtx) {
 			<div>
 				<label class="k-label">{ i18n.T(ctx, "volumes.mount_path") }</label>
 				<input class="k-input k-mono" name="mount_path" placeholder="/data" required/>
+			</div>
+			<div>
+				<label class="k-label">{ i18n.T(ctx, "volumes.owner") }</label>
+				<input class="k-input k-mono" name="owner" placeholder={ i18n.T(ctx, "volumes.owner_placeholder") }/>
 			</div>
 			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "volumes.add") }</button>
 		</form>

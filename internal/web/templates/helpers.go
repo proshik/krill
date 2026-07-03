@@ -61,6 +61,14 @@ func strv(p *string) string {
 	return *p
 }
 
+// ownerValue returns the volume owner string for an input value ("" when unset).
+func ownerValue(v db.AppVolume) string {
+	if v.Owner == nil {
+		return ""
+	}
+	return *v.Owner
+}
+
 // i32v formats a *int32 as a decimal string, returning "" when nil.
 func i32v(p *int32) string {
 	if p == nil {
