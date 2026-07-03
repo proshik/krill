@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,6 +257,13 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 		fmt.Fprintf(out, "→ deploy image %s\n", imageTag)
 	}
 
+	// Chown owned volumes to the app's runtime uid:gid before the task starts
+	// (fresh named volumes are root:root; a non-root app can't write). Runs on
+	// the app's placement node(s); a failure fails the deploy.
+	if err == nil {
+		err = d.chownOwnedVolumes(ctx, app, out)
+	}
+
 	// Baseline task set BEFORE the deploy: convergence below only counts tasks
 	// outside it, so the old StartFirst task of a rolling update can never
 	// satisfy it (it kept redeploys reporting instant false success).
@@ -438,6 +446,54 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		}
 	}
 	return spec
+}
+
+// chownNodes returns the swarm node IDs on which owned volumes must be chowned
+// before deploy: the app's pinned nodes, or [""] (the local/control-plane
+// daemon) otherwise. "" is resolved to the local client by selectClient.
+func chownNodes(app App) []string {
+	if app.PlacementMode == "pin" && len(app.PlacementNodes) > 0 {
+		return app.PlacementNodes
+	}
+	return []string{""}
+}
+
+// splitOwner parses a normalized "uid:gid" (as stored by volume.ParseOwner).
+func splitOwner(s string) (uid, gid int, ok bool) {
+	a, b, found := strings.Cut(s, ":")
+	if !found {
+		return 0, 0, false
+	}
+	ui, e1 := strconv.Atoi(a)
+	gi, e2 := strconv.Atoi(b)
+	if e1 != nil || e2 != nil {
+		return 0, 0, false
+	}
+	return ui, gi, true
+}
+
+// chownOwnedVolumes runs the pre-start chown sidecar for every mount that has an
+// Owner set, on each node the app is placed on. Any failure fails the deploy —
+// chowning before the task starts is what makes a non-root app's volume writable
+// and avoids the crash-loop → rollback cycle.
+func (d *Deployer) chownOwnedVolumes(ctx context.Context, app App, out io.Writer) error {
+	nodes := chownNodes(app)
+	for _, m := range app.Mounts {
+		if m.Owner == "" {
+			continue
+		}
+		uid, gid, ok := splitOwner(m.Owner)
+		if !ok {
+			return fmt.Errorf("volume %s: malformed owner %q", m.Source, m.Owner)
+		}
+		for _, node := range nodes {
+			fmt.Fprintf(out, "→ preparing volume ownership (%s → %d:%d)\n", m.Source, uid, gid)
+			if err := d.engine.VolumeChown(ctx, m.Source, uid, gid, node); err != nil {
+				return fmt.Errorf("chown volume %s: %w", m.Source, err)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveImageRef pins an image app's tag to its current registry digest so a

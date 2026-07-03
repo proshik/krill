@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strconv"
 	"sync"
 	"testing"
@@ -96,6 +97,14 @@ type mockEngine struct {
 	crashLooping     bool
 	rollingBack      bool // swarm rolled the update back (FailureAction=Rollback)
 	updateInProgress bool // StartFirst update: only the OLD task is running
+	chownCalls       []chownCall
+	chownErr         error
+}
+
+type chownCall struct {
+	vol      string
+	uid, gid int
+	node     string
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
@@ -155,13 +164,16 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (m *mockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
-func (m *mockEngine) ServiceRestart(context.Context, string) error                { return nil }
-func (m *mockEngine) VolumeRemove(context.Context, string) error                  { return nil }
-func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error      { return nil }
-func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error      { return nil }
-func (m *mockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
-func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error    { return nil }
+func (m *mockEngine) ServiceScale(context.Context, string, uint64) error     { return nil }
+func (m *mockEngine) ServiceRestart(context.Context, string) error           { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error             { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error { return nil }
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error { return nil }
+func (m *mockEngine) VolumeChown(_ context.Context, vol string, uid, gid int, node string) error {
+	m.chownCalls = append(m.chownCalls, chownCall{vol, uid, gid, node})
+	return m.chownErr
+}
+func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error { return nil }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
@@ -788,5 +800,48 @@ func TestImageDeployUsesDigest(t *testing.T) {
 	const wantPlain = "nginx:alpine"
 	if deployed2[0].Image != wantPlain {
 		t.Fatalf("fallback deployed image = %q, want %q", deployed2[0].Image, wantPlain)
+	}
+}
+
+func TestChownNodes(t *testing.T) {
+	if got := chownNodes(App{PlacementMode: "pin", PlacementNodes: []string{"a", "b"}}); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Fatalf("pin: got %v", got)
+	}
+	if got := chownNodes(App{PlacementMode: "any"}); !reflect.DeepEqual(got, []string{""}) {
+		t.Fatalf("any: got %v", got)
+	}
+	if got := chownNodes(App{PlacementMode: "pin", PlacementNodes: nil}); !reflect.DeepEqual(got, []string{""}) {
+		t.Fatalf("pin-empty: got %v", got)
+	}
+}
+
+func TestChownOwnedVolumes(t *testing.T) {
+	m := &mockEngine{}
+	d := &Deployer{engine: m}
+	app := App{
+		PlacementMode:  "pin",
+		PlacementNodes: []string{"node-x"},
+		Mounts: []docker.MountSpec{
+			{Type: "volume", Source: "krill-vol-1-data", Target: "/data", Owner: "1000:0"},
+			{Type: "volume", Source: "krill-vol-1-plain", Target: "/x"}, // no owner → skipped
+		},
+	}
+	if err := d.chownOwnedVolumes(context.Background(), app, io.Discard); err != nil {
+		t.Fatalf("chownOwnedVolumes: %v", err)
+	}
+	if len(m.chownCalls) != 1 {
+		t.Fatalf("want 1 chown call, got %d (%+v)", len(m.chownCalls), m.chownCalls)
+	}
+	if got := m.chownCalls[0]; got != (chownCall{"krill-vol-1-data", 1000, 0, "node-x"}) {
+		t.Fatalf("chown call = %+v", got)
+	}
+}
+
+func TestChownOwnedVolumesFailsDeploy(t *testing.T) {
+	m := &mockEngine{chownErr: errors.New("boom")}
+	d := &Deployer{engine: m}
+	app := App{Mounts: []docker.MountSpec{{Source: "v", Owner: "1000:1000"}}}
+	if err := d.chownOwnedVolumes(context.Background(), app, io.Discard); err == nil {
+		t.Fatal("want error when VolumeChown fails")
 	}
 }

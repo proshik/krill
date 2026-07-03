@@ -93,6 +93,7 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			Type:   "volume",
 			Source: docker.VolumeName(a.ID, v.Name),
 			Target: v.MountPath,
+			Owner:  strDeref(v.Owner),
 		})
 	}
 	ports, perr := s.q.ListAppPorts(ctx, a.ID)
