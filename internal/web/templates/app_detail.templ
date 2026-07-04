@@ -603,6 +603,12 @@ templ advancedTab(c AppCtx) {
 								<span class="k-mono">{ nodeDisplay(c.NodeLabels, n.ID, n.Hostname) }</span> <span class="k-muted text-xs">{ n.Role }</span>
 							</label>
 						}
+						for _, id := range orphanedPlacementNodes(c.App.PlacementNodes, c.Nodes) {
+							<label class="k-label flex items-center gap-2" style="font-weight:normal">
+								<input class="k-check" type="checkbox" checked disabled/>
+								<span class="k-mono">{ id }</span> <span class="k-muted text-xs">{ i18n.T(ctx, "placement.node_removed") }</span>
+							</label>
+						}
 					</div>
 				} else {
 					<p class="k-muted text-xs">{ i18n.T(ctx, "placement.no_nodes") }</p>

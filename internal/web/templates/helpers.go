@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 )
 
 // itoa formats an int64 for interpolation into URLs inside templates.
@@ -116,6 +117,32 @@ func dbiStatus(statuses map[int64]string, in db.DbInstance) string {
 		return s
 	}
 	return in.Status
+}
+
+// hostnameInNodes reports whether hostname matches a live swarm node.
+func hostnameInNodes(nodes []docker.SwarmNode, hostname string) bool {
+	for _, n := range nodes {
+		if n.Hostname == hostname {
+			return true
+		}
+	}
+	return false
+}
+
+// orphanedPlacementNodes returns the swarm IDs in a placement_nodes CSV that are
+// no longer present in the live node list.
+func orphanedPlacementNodes(csv string, nodes []docker.SwarmNode) []string {
+	live := map[string]bool{}
+	for _, n := range nodes {
+		live[n.ID] = true
+	}
+	var out []string
+	for _, p := range strings.Split(csv, ",") {
+		if p = strings.TrimSpace(p); p != "" && !live[p] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // humanSize renders a byte count as a short human-readable string.

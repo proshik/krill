@@ -297,18 +297,15 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Validate selected node IDs against the live cluster (when reachable).
+	// Keep only submitted node IDs that exist in the live cluster; drop removed/
+	// unknown ones (a non-live ID can't schedule and labels nothing anyway).
+	droppedNodes := 0
 	if s.engine != nil && len(nodes) > 0 {
 		live, _ := s.engine.Nodes(r.Context())
-		valid := map[string]bool{}
-		for _, n := range live {
-			valid[n.ID] = true
-		}
-		for _, id := range nodes {
-			if !valid[id] {
-				s.flashErrT(w, r, "flash.err.invalid_node")
-				return
-			}
+		nodes, droppedNodes = filterLiveNodes(nodes, live)
+		if mode != "any" && len(nodes) == 0 {
+			s.flashErrT(w, r, "flash.err.no_live_node")
+			return
 		}
 	}
 	if err := s.q.SetApplicationPlacement(r.Context(), db.SetApplicationPlacementParams{
@@ -326,7 +323,11 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.placement_label_partial")
 		return
 	}
-	s.flashOK(w, r, "flash.ok.placement_saved")
+	if droppedNodes > 0 {
+		s.flashOK(w, r, "flash.warn.dropped_dead_nodes")
+	} else {
+		s.flashOK(w, r, "flash.ok.placement_saved")
+	}
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 

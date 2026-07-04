@@ -58,6 +58,9 @@ templ DBServerDetail(c DBServerCtx) {
 											<option value={ n.Hostname } selected?={ c.Inst.NodeHostname == n.Hostname }>{ n.Hostname }</option>
 										}
 									}
+									if c.Inst.NodeHostname != "" && !hostnameInNodes(c.Nodes, c.Inst.NodeHostname) {
+										<option value={ c.Inst.NodeHostname } selected>{ c.Inst.NodeHostname } — { i18n.T(ctx, "dbnode.removed") }</option>
+									}
 								</select>
 								<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "dbnode.hint") }</p>
 							</div>
