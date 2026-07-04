@@ -18,6 +18,7 @@ type AppDbLink struct {
 	CreatedAt         time.Time `json:"created_at"`
 	LogicalDatabaseID *int64    `json:"logical_database_id"`
 	InstanceID        *int64    `json:"instance_id"`
+	Field             string    `json:"field"`
 }
 
 type AppPort struct {

@@ -65,7 +65,7 @@ func (q *Queries) DeleteDBLink(ctx context.Context, id int64) error {
 }
 
 const getDBLink = `-- name: GetDBLink :one
-SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
+SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at
 FROM app_db_links WHERE id = $1
 `
 
@@ -76,6 +76,7 @@ type GetDBLinkRow struct {
 	InstanceID        *int64    `json:"instance_id"`
 	VarName           string    `json:"var_name"`
 	Scheme            string    `json:"scheme"`
+	Field             string    `json:"field"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -89,13 +90,14 @@ func (q *Queries) GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 		&i.InstanceID,
 		&i.VarName,
 		&i.Scheme,
+		&i.Field,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listDBLinksByApplication = `-- name: ListDBLinksByApplication :many
-SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
+SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at
 FROM app_db_links WHERE application_id = $1 ORDER BY var_name
 `
 
@@ -106,6 +108,7 @@ type ListDBLinksByApplicationRow struct {
 	InstanceID        *int64    `json:"instance_id"`
 	VarName           string    `json:"var_name"`
 	Scheme            string    `json:"scheme"`
+	Field             string    `json:"field"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -125,6 +128,7 @@ func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID in
 			&i.InstanceID,
 			&i.VarName,
 			&i.Scheme,
+			&i.Field,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
