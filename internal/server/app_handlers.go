@@ -479,6 +479,8 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			logFrom(r).Error("appStatus: failed to query engine service state", "err", err, "app_id", c.App.ID)
 		}
+		live, _ := s.engine.Nodes(r.Context())
+		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live)
 	}
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
 }

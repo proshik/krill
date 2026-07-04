@@ -53,10 +53,26 @@ func (s *Server) listDBInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var nodes []docker.SwarmNode
-	if (role == "owner" || role == "admin") && s.engine != nil {
+	statuses := map[int64]string{}
+	if s.engine != nil {
+		// Fetched for every viewer (not just admin/owner): the honest status badge
+		// needs the live node list to detect node_down/node_removed regardless of
+		// role. The node-picker in the template still only renders for admin/owner.
 		nodes, _ = s.engine.Nodes(r.Context())
+		names := make([]string, 0, len(insts))
+		for _, in := range insts {
+			names = append(names, in.AppName)
+		}
+		states, _ := s.engine.ServiceStates(r.Context(), names)
+		for _, in := range insts {
+			running := false
+			if st, ok := states[in.AppName]; ok {
+				running = st.Found && st.Desired > 0 && st.Running >= st.Desired
+			}
+			statuses[in.ID] = displayInstanceStatus(running, in.NodeHostname, nodes, in.Status)
+		}
 	}
-	render(w, r, http.StatusOK, templates.DBServers(o, role, insts, nodes))
+	render(w, r, http.StatusOK, templates.DBServers(o, role, insts, nodes, statuses))
 }
 
 func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
@@ -314,11 +330,12 @@ func (s *Server) dbInstanceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	status := inst.Status
 	if s.engine != nil {
+		running := false
 		if st, err := s.engine.ServiceState(r.Context(), inst.AppName); err == nil && st.Found {
-			if st.Running >= st.Desired && st.Desired > 0 {
-				status = "running"
-			}
+			running = st.Running >= st.Desired && st.Desired > 0
 		}
+		live, _ := s.engine.Nodes(r.Context())
+		status = displayInstanceStatus(running, inst.NodeHostname, live, inst.Status)
 	}
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
 }

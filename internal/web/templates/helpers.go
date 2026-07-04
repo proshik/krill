@@ -109,6 +109,15 @@ func statusLabel(s string) string {
 	}
 }
 
+// dbiStatus returns the computed display status for an instance, falling back to
+// its stored status when no computed entry exists (engine unavailable).
+func dbiStatus(statuses map[int64]string, in db.DbInstance) string {
+	if s, ok := statuses[in.ID]; ok {
+		return s
+	}
+	return in.Status
+}
+
 // humanSize renders a byte count as a short human-readable string.
 func humanSize(n int64) string {
 	const unit = 1024

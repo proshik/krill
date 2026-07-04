@@ -6,7 +6,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes []docker.SwarmNode) {
+templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes []docker.SwarmNode, statuses map[int64]string) {
 	@Layout(i18n.T(ctx, "dbi.title"), org, role) {
 		<h2 class="text-2xl mb-3">{ i18n.T(ctx, "dbi.title") }</h2>
 		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "dbi.desc") }</p>
@@ -28,7 +28,7 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 								}
 								{ in.Name }
 							</div>
-							@StatusBadge(in.Status)
+							@StatusBadge(dbiStatus(statuses, in))
 						</div>
 						<div class="k-mono text-xs">
 							{ in.Image } —
