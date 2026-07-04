@@ -76,6 +76,8 @@
   .k-badge-deploying { background:rgba(245,158,11,.14); color:#fcd34d; } .k-badge-deploying .k-dot { background:var(--color-warn); box-shadow:0 0 8px var(--color-warn); }
   .k-badge-error { background:rgba(239,68,68,.14); color:#fca5a5; } .k-badge-error .k-dot { background:var(--color-err); box-shadow:0 0 8px var(--color-err); }
   .k-badge-idle { background:#202024; color:var(--color-faint); } .k-badge-idle .k-dot { background:var(--color-faint); }
+  .k-badge-node_down { background:rgba(245,158,11,.14); color:#fcd34d; } .k-badge-node_down .k-dot { background:var(--color-warn); box-shadow:0 0 8px var(--color-warn); }
+  .k-badge-node_removed { background:rgba(239,68,68,.14); color:#fca5a5; } .k-badge-node_removed .k-dot { background:var(--color-err); box-shadow:0 0 8px var(--color-err); }
 
   .k-table { width:100%; border-collapse:collapse; }
   .k-table th { text-align:left; font-family:var(--font-mono); font-size:11px; letter-spacing:.05em; text-transform:uppercase;

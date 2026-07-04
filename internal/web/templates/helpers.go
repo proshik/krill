@@ -95,6 +95,20 @@ func tsStr(t pgtype.Timestamptz) string {
 	return t.Time.Format("2006-01-02 15:04")
 }
 
+// statusLabel prettifies computed status values for display. Badges render the
+// raw status string (English by convention); the node-unavailable states get a
+// friendlier label.
+func statusLabel(s string) string {
+	switch s {
+	case "node_down":
+		return "node down"
+	case "node_removed":
+		return "node removed"
+	default:
+		return s
+	}
+}
+
 // humanSize renders a byte count as a short human-readable string.
 func humanSize(n int64) string {
 	const unit = 1024

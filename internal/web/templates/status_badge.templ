@@ -3,16 +3,16 @@ package templates
 import db "github.com/proshik/krill/internal/database/gen"
 
 templ StatusBadge(status string) {
-	<span id="status-badge" class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
+	<span id="status-badge" class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ statusLabel(status) }</span>
 }
 
 // CardStatus is a status badge for a project-page card. It has a stable id so
 // it can be refreshed out-of-band; pass oob=true in the refresh fragment.
 templ CardStatus(id, status string, oob bool) {
 	if oob {
-		<span id={ id } class={ "k-badge", "k-badge-" + status } hx-swap-oob="true"><span class="k-dot"></span>{ status }</span>
+		<span id={ id } class={ "k-badge", "k-badge-" + status } hx-swap-oob="true"><span class="k-dot"></span>{ statusLabel(status) }</span>
 	} else {
-		<span id={ id } class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
+		<span id={ id } class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ statusLabel(status) }</span>
 	}
 }
 
