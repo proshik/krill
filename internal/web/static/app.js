@@ -286,6 +286,8 @@ function krillMountDBLink() {
   if (!dbSel || !schemeSel || schemeSel.dataset.mounted) return;
   schemeSel.dataset.mounted = "1";
   const hint = document.getElementById("dblink-scheme-hint");
+  const fieldSel = document.getElementById("dblink-field");
+  const schemeWrap = document.getElementById("dblink-scheme-wrap");
   const all = Array.from(schemeSel.options).map((o) => ({ value: o.value, label: o.textContent, engine: o.dataset.engine }));
   const apply = () => {
     const engine = dbSel.value.split(":")[0] || "";
@@ -298,20 +300,14 @@ function krillMountDBLink() {
       schemeSel.appendChild(opt);
     });
     if (Array.from(schemeSel.options).some((o) => o.value === prev)) schemeSel.value = prev;
-    if (hint) hint.style.display = engine === "pg" ? "" : "none";
+    // Scheme and its hint only apply to the "url" field of a postgres DB.
+    const isUrl = !fieldSel || fieldSel.value === "url";
+    if (schemeWrap) schemeWrap.style.display = isUrl ? "" : "none";
+    if (hint) hint.style.display = (isUrl && engine === "pg") ? "" : "none";
   };
   dbSel.addEventListener("change", apply);
+  if (fieldSel) fieldSel.addEventListener("change", apply);
   apply();
-
-  // Hide the whole "Scheme" field when the injected field is not "url" (the
-  // scheme is only used to build the full connection URL).
-  const fieldSel = document.getElementById("dblink-field");
-  const schemeWrap = document.getElementById("dblink-scheme-wrap");
-  if (fieldSel && schemeWrap) {
-    const toggleScheme = () => { schemeWrap.style.display = fieldSel.value === "url" ? "" : "none"; };
-    fieldSel.addEventListener("change", toggleScheme);
-    toggleScheme();
-  }
 }
 
 // Toggle periodic status refresh: when checked, click the refresh button every

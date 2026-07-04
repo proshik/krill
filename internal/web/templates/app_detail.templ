@@ -334,7 +334,6 @@ templ envTab(c AppCtx) {
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.var_name") }</label>
 					<input class="k-input k-mono" name="var_name" placeholder="DATABASE_URL" required/>
-					<p class="k-muted text-xs mt-1">{ i18n.T(ctx, "dblink.var_hint") }</p>
 				</div>
 				<div id="dblink-scheme-wrap">
 					<label class="k-label">{ i18n.T(ctx, "dblink.scheme") }</label>
@@ -354,9 +353,10 @@ templ envTab(c AppCtx) {
 						<option value="user">user</option>
 						<option value="dbname">dbname</option>
 					</select>
-					<p class="k-muted text-xs mt-1">{ i18n.T(ctx, "dblink.field_hint") }</p>
 				</div>
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
+				<p class="k-muted text-xs mt-1" style="flex-basis:100%">{ i18n.T(ctx, "dblink.var_hint") }</p>
+				<p class="k-muted text-xs mt-1" style="flex-basis:100%">{ i18n.T(ctx, "dblink.field_hint") }</p>
 				<p id="dblink-scheme-hint" class="k-muted text-xs mt-1" style="flex-basis:100%;display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
 			</form>
 		}
