@@ -163,7 +163,7 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 		t.Fatalf("create db link: %v", err)
 	}
 
-	// A redis link exercises resolveDBLinkURL's redis branch end-to-end.
+	// A redis link exercises resolveDBLinkValue's redis branch end-to-end.
 	redisInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
 		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-cache",
 		Image: "redis:7-alpine", SuperuserPassword: "rpw",
