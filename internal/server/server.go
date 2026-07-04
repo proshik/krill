@@ -191,6 +191,7 @@ func (s *Server) Router() http.Handler {
 
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole(auth.RoleAdmin))
+				r.Get("/topology", s.topology)
 				r.Get("/topology/data", s.topologyData)
 				r.Post("/members", s.createMember)
 				r.Post("/members/{mID}/role", s.updateMemberRole)

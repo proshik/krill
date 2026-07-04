@@ -13,7 +13,18 @@ import (
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates"
 )
+
+// topology renders the org-scoped cluster topology page. The graph itself is
+// fetched client-side from topologyData.
+func (s *Server) topology(w http.ResponseWriter, r *http.Request) {
+	o, role, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	render(w, r, http.StatusOK, templates.Topology(o, role))
+}
 
 // topologyData serves the org-scoped cluster topology as JSON (nodes, the org's
 // apps/DB instances placed on them, logical DBs, and app->DB links). Org-admin

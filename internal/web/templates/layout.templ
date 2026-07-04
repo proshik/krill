@@ -36,6 +36,7 @@ templ Layout(title string, org db.Organization, role string) {
 					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "db-servers")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx, "nav.dbservers") }</a>
 					if role == "owner" || role == "admin" {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "topology")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/topology") }>{ i18n.T(ctx, "nav.topology") }</a>
 					}
 					if auth.IsInstanceAdmin(ctx) {
 						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "monitoring")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/monitoring") }>{ i18n.T(ctx, "nav.monitoring") }</a>

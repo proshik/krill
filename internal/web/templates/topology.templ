@@ -1,0 +1,24 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+templ Topology(org db.Organization, role string) {
+	@Layout(i18n.T(ctx, "topo.title"), org, role) {
+		<h2 class="text-2xl mb-1">{ i18n.T(ctx, "topo.title") }</h2>
+		<p class="mb-3" style="color:var(--color-muted)">{ i18n.T(ctx, "topo.desc") }</p>
+		<div class="k-topo-bar">
+			<button type="button" class="k-btn k-btn-secondary k-topo-refresh">{ i18n.T(ctx, "topo.refresh") }</button>
+			<div class="k-topo-legend">
+				<span><span class="k-topo-sw" style="border-top-color:var(--color-postgres)"></span>{ i18n.T(ctx, "topo.legend.postgres") }</span>
+				<span><span class="k-topo-sw" style="border-top-color:var(--color-redis)"></span>{ i18n.T(ctx, "topo.legend.redis") }</span>
+				<span><span class="k-topo-sw k-topo-sw-dash" style="border-top-color:var(--color-muted)"></span>{ i18n.T(ctx, "topo.legend.crossnode") }</span>
+			</div>
+		</div>
+		<div id="topo" class="k-topo" data-url={ "/orgs/" + itoa(org.ID) + "/topology/data" } data-i18n-empty={ i18n.T(ctx, "topo.empty") } data-i18n-crossnode={ i18n.T(ctx, "topo.crossnode") }>
+			<div class="k-topo-scroll"><div class="k-topo-canvas"></div></div>
+		</div>
+	}
+}

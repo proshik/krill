@@ -56,6 +56,8 @@ func sectionOf(path string) string {
 		return "registries"
 	case strings.Contains(path, "/notifications"):
 		return "notifications"
+	case strings.Contains(path, "/topology"):
+		return "topology"
 	case strings.Contains(path, "/monitoring"):
 		return "monitoring"
 	default:

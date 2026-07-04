@@ -117,3 +117,37 @@ func TestTopologyDataCrossTenant(t *testing.T) {
 		t.Errorf("org B's own app missing from its topology")
 	}
 }
+
+func TestTopologyPageOwnerOK(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-page-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "topo-page-owner@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner want 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `class="k-topo"`) {
+		t.Errorf("topology island missing from page HTML")
+	}
+	if !strings.Contains(rec.Body.String(), "/topology/data") {
+		t.Errorf("island data-url missing from page HTML")
+	}
+}
+
+func TestTopologyPageMemberForbidden(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-page-owner2@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	memberID := mkUser(t, q, "topo-page-member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	cookie := loginAs(t, q, "topo-page-member@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology", cookie)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("member want 403, got %d", rec.Code)
+	}
+}
