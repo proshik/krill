@@ -107,6 +107,7 @@ type Querier interface {
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListClusterNodes(ctx context.Context) ([]ClusterNode, error)
+	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
@@ -122,6 +123,7 @@ type Querier interface {
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
+	ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
 	// One aggregate query for the org dashboard (replaces a 2N+1 per-project count
 	// loop). DISTINCT on environments because the app join multiplies env rows.

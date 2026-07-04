@@ -296,6 +296,43 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 	return items, nil
 }
 
+const listPinnedApplications = `-- name: ListPinnedApplications :many
+SELECT id, name, placement_mode, placement_nodes FROM applications
+WHERE placement_mode IN ('pin','global') AND placement_nodes <> ''
+`
+
+type ListPinnedApplicationsRow struct {
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	PlacementMode  string `json:"placement_mode"`
+	PlacementNodes string `json:"placement_nodes"`
+}
+
+func (q *Queries) ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error) {
+	rows, err := q.db.Query(ctx, listPinnedApplications)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPinnedApplicationsRow
+	for rows.Next() {
+		var i ListPinnedApplicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PlacementMode,
+			&i.PlacementNodes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setApplicationAutoDeploy = `-- name: SetApplicationAutoDeploy :exec
 UPDATE applications SET auto_deploy = $2, updated_at = now() WHERE id = $1
 `

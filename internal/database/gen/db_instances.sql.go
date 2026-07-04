@@ -113,6 +113,44 @@ func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, erro
 	return i, err
 }
 
+const listDBInstancesByNodeHostname = `-- name: ListDBInstancesByNodeHostname :many
+SELECT id, organization_id, name, engine, node_hostname FROM db_instances WHERE node_hostname = $1 ORDER BY name
+`
+
+type ListDBInstancesByNodeHostnameRow struct {
+	ID             int64  `json:"id"`
+	OrganizationID int64  `json:"organization_id"`
+	Name           string `json:"name"`
+	Engine         string `json:"engine"`
+	NodeHostname   string `json:"node_hostname"`
+}
+
+func (q *Queries) ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error) {
+	rows, err := q.db.Query(ctx, listDBInstancesByNodeHostname, nodeHostname)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDBInstancesByNodeHostnameRow
+	for rows.Next() {
+		var i ListDBInstancesByNodeHostnameRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.Engine,
+			&i.NodeHostname,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDBInstancesByOrg = `-- name: ListDBInstancesByOrg :many
 SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE organization_id = $1 ORDER BY created_at
 `

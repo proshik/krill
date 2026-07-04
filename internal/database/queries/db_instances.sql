@@ -25,3 +25,6 @@ SELECT count(*) FROM db_instances WHERE external_port = $1;
 
 -- name: CountLogicalDatabasesByInstance :one
 SELECT count(*) FROM logical_databases WHERE instance_id = $1;
+
+-- name: ListDBInstancesByNodeHostname :many
+SELECT id, organization_id, name, engine, node_hostname FROM db_instances WHERE node_hostname = $1 ORDER BY name;

@@ -72,3 +72,7 @@ UPDATE applications SET auto_deploy = $2, updated_at = now() WHERE id = $1;
 
 -- name: SetApplicationWebhookSecret :exec
 UPDATE applications SET webhook_secret = $2, updated_at = now() WHERE id = $1;
+
+-- name: ListPinnedApplications :many
+SELECT id, name, placement_mode, placement_nodes FROM applications
+WHERE placement_mode IN ('pin','global') AND placement_nodes <> '';

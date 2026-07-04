@@ -1,0 +1,42 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// NodeRemoveConfirm warns that a node still has pinned DB instances / apps that
+// will be orphaned, and requires an explicit "remove anyway" (force=1).
+templ NodeRemoveConfirm(org db.Organization, role string, node docker.SwarmNode, insts []db.ListDBInstancesByNodeHostnameRow, apps []db.ListPinnedApplicationsRow) {
+	@Layout(i18n.T(ctx, "nodes.remove_confirm_title"), org, role) {
+		@settingsNav(org.ID)
+		<div class="k-card">
+			<div class="k-panel-title">{ i18n.T(ctx, "nodes.remove_confirm_title") }</div>
+			<p class="k-toast k-toast-err mt-2 mb-4">{ i18n.Tf(ctx, "nodes.remove_confirm_warn", node.Hostname) }</p>
+			if len(insts) > 0 {
+				<div class="k-section">{ i18n.T(ctx, "nodes.affected_dbs") }</div>
+				<ul class="list-none p-0 m-0 mb-3">
+					for _, in := range insts {
+						<li class="k-mono py-1">{ in.Name } <span class="k-muted">({ in.Engine })</span></li>
+					}
+				</ul>
+			}
+			if len(apps) > 0 {
+				<div class="k-section">{ i18n.T(ctx, "nodes.affected_apps") }</div>
+				<ul class="list-none p-0 m-0 mb-3">
+					for _, a := range apps {
+						<li class="k-mono py-1">{ a.Name }</li>
+					}
+				</ul>
+			}
+			<div class="flex gap-2 mt-4">
+				<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes/" + node.ID + "/remove") }>
+					<input type="hidden" name="force" value="1"/>
+					<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "nodes.remove_anyway") }</button>
+				</form>
+				<a class="k-btn k-btn-secondary" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/nodes") }>{ i18n.T(ctx, "common.cancel") }</a>
+			</div>
+		</div>
+	}
+}

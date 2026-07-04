@@ -222,7 +222,7 @@ func (s *Server) setNodeAvailability(w http.ResponseWriter, r *http.Request) {
 // removeNode removes a node from the swarm (best-effort) and deletes its managed
 // row (admin-only). The row is deleted even if the node is unreachable.
 func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
-	o, _, ok := s.loadOrg(w, r)
+	o, role, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
@@ -231,6 +231,33 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 	if n, ok := s.findSwarmNode(r.Context(), swarmID); ok && n.Leader {
 		s.flashErrT(w, r, "flash.err.protect_manager")
 		return
+	}
+	// Preflight: unless the operator already confirmed (force=1), warn about any
+	// DB instances/apps still pinned to this node instead of silently orphaning
+	// them.
+	force := r.FormValue("force") == "1"
+	if !force {
+		var hostname string
+		if n, ok := s.findSwarmNode(r.Context(), swarmID); ok {
+			hostname = n.Hostname
+		}
+		var insts []db.ListDBInstancesByNodeHostnameRow
+		if hostname != "" {
+			insts, _ = s.q.ListDBInstancesByNodeHostname(r.Context(), hostname)
+		}
+		var affectedApps []db.ListPinnedApplicationsRow
+		if pinned, err := s.q.ListPinnedApplications(r.Context()); err == nil {
+			for _, a := range pinned {
+				if placementContainsNode(a.PlacementNodes, swarmID) {
+					affectedApps = append(affectedApps, a)
+				}
+			}
+		}
+		if len(insts) > 0 || len(affectedApps) > 0 {
+			node, _ := s.findSwarmNode(r.Context(), swarmID)
+			render(w, r, http.StatusOK, templates.NodeRemoveConfirm(o, role, node, insts, affectedApps))
+			return
+		}
 	}
 	if s.engine != nil {
 		if err := s.engine.NodeRemove(r.Context(), swarmID, true); err != nil {
