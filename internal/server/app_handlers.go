@@ -439,7 +439,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			}
 			_, collides := envKeys[l.VarName]
 			c.DBLinks = append(c.DBLinks, templates.DBLinkView{
-				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Collides: collides,
+				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Field: l.Field, Collides: collides,
 			})
 		}
 	}

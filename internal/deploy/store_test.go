@@ -158,7 +158,7 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 
 	// Link DB_URL -> pg with scheme "postgres" (overrides env_text DB_URL).
 	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
-		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DB_URL", Scheme: "postgres",
+		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DB_URL", Scheme: "postgres", Field: "url",
 	}); err != nil {
 		t.Fatalf("create db link: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 		t.Fatalf("create redis instance: %v", err)
 	}
 	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
-		ApplicationID: app.ID, InstanceID: &redisInst.ID, VarName: "REDIS_URL", Scheme: "redis",
+		ApplicationID: app.ID, InstanceID: &redisInst.ID, VarName: "REDIS_URL", Scheme: "redis", Field: "url",
 	}); err != nil {
 		t.Fatalf("create redis db link: %v", err)
 	}

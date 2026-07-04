@@ -1,7 +1,7 @@
 -- name: CreateDBLink :one
-INSERT INTO app_db_links (application_id, logical_database_id, instance_id, var_name, scheme)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, logical_database_id, instance_id, var_name, scheme, created_at;
+INSERT INTO app_db_links (application_id, logical_database_id, instance_id, var_name, scheme, field)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at;
 
 -- name: GetDBLink :one
 SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at

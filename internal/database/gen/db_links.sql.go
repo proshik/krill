@@ -11,9 +11,9 @@ import (
 )
 
 const createDBLink = `-- name: CreateDBLink :one
-INSERT INTO app_db_links (application_id, logical_database_id, instance_id, var_name, scheme)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, logical_database_id, instance_id, var_name, scheme, created_at
+INSERT INTO app_db_links (application_id, logical_database_id, instance_id, var_name, scheme, field)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at
 `
 
 type CreateDBLinkParams struct {
@@ -22,6 +22,7 @@ type CreateDBLinkParams struct {
 	InstanceID        *int64 `json:"instance_id"`
 	VarName           string `json:"var_name"`
 	Scheme            string `json:"scheme"`
+	Field             string `json:"field"`
 }
 
 type CreateDBLinkRow struct {
@@ -31,6 +32,7 @@ type CreateDBLinkRow struct {
 	InstanceID        *int64    `json:"instance_id"`
 	VarName           string    `json:"var_name"`
 	Scheme            string    `json:"scheme"`
+	Field             string    `json:"field"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -41,6 +43,7 @@ func (q *Queries) CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (Cre
 		arg.InstanceID,
 		arg.VarName,
 		arg.Scheme,
+		arg.Field,
 	)
 	var i CreateDBLinkRow
 	err := row.Scan(
@@ -50,6 +53,7 @@ func (q *Queries) CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (Cre
 		&i.InstanceID,
 		&i.VarName,
 		&i.Scheme,
+		&i.Field,
 		&i.CreatedAt,
 	)
 	return i, err

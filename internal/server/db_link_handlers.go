@@ -36,6 +36,16 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_var_name")
 		return
 	}
+	field := r.FormValue("field")
+	if field == "" {
+		field = "url"
+	}
+	switch field {
+	case "url", "password", "host", "port", "user", "dbname":
+	default:
+		s.flashErrT(w, r, "flash.err.invalid_field")
+		return
+	}
 	var ldbID, instID *int64
 	switch kind {
 	case "pg":
@@ -52,6 +62,10 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		ldbID = &ld.ID
 	case "redis":
 		scheme = "redis"
+		if field == "dbname" {
+			s.flashErrT(w, r, "flash.err.redis_no_dbname")
+			return
+		}
 		inst, gerr := s.q.GetDBInstance(r.Context(), refID)
 		if gerr != nil || inst.OrganizationID != c.Org.ID || inst.Engine != "redis" {
 			s.flashErrT(w, r, "flash.err.db_not_found")
@@ -70,7 +84,7 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.q.CreateDBLink(r.Context(), db.CreateDBLinkParams{
-		ApplicationID: c.App.ID, LogicalDatabaseID: ldbID, InstanceID: instID, VarName: varName, Scheme: scheme,
+		ApplicationID: c.App.ID, LogicalDatabaseID: ldbID, InstanceID: instID, VarName: varName, Scheme: scheme, Field: field,
 	}); err != nil {
 		logFrom(r).Error("addDBLink: create failed", "err", err, "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.link_var_exists")

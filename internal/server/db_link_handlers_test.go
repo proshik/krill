@@ -85,7 +85,7 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 	ldbA, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
 		InstanceID: instA.ID, EnvironmentID: eA.ID, Name: "dba", DbName: "app", Username: "postgres", Password: "pw",
 	})
-	linkA, _ := q.CreateDBLink(ctx, db.CreateDBLinkParams{ApplicationID: appA.ID, LogicalDatabaseID: &ldbA.ID, VarName: "DATABASE_URL", Scheme: "postgres"})
+	linkA, _ := q.CreateDBLink(ctx, db.CreateDBLinkParams{ApplicationID: appA.ID, LogicalDatabaseID: &ldbA.ID, VarName: "DATABASE_URL", Scheme: "postgres", Field: "url"})
 	redisInstA, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
 		OrganizationID: oA.ID, Engine: "redis", Name: "cache-a", AppName: "krill-redis-cache-a-t2",
 		Image: "redis:7-alpine", SuperuserPassword: "rpw",
@@ -132,5 +132,58 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 	})
 	if links, _ := q.ListDBLinksByApplication(ctx, appB.ID); len(links) != 0 {
 		t.Fatalf("SECURITY: org-B linked org-A's redis instance by id, have %d links", len(links))
+	}
+}
+
+func TestAddDBLinkPerField(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	uid := mkUser(t, q, "dblf@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "wf.x", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	inst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "pg", AppName: "krill-postgres-x",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	ld, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "app", DbName: "app", Username: "app", Password: "pw",
+	})
+	redis, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "redis", Name: "rd", AppName: "krill-redis-x",
+		Image: "redis:7", Superuser: "default", SuperuserPassword: "pw",
+	})
+	cookie := loginAs(t, q, "dblf@k.local")
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)
+
+	// per-field postgres password link persists field=password
+	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"pg:" + i64(ld.ID)}, "var_name": {"DB_PASSWORD"}, "scheme": {"postgres"}, "field": {"password"},
+	}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add password link: got %d", rec.Code)
+	}
+	links, _ := q.ListDBLinksByApplication(ctx, app.ID)
+	if len(links) != 1 || links[0].Field != "password" || links[0].VarName != "DB_PASSWORD" {
+		t.Fatalf("link not persisted with field: %+v", links)
+	}
+
+	// redis + field=dbname is rejected (redis has no dbname)
+	postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"redis:" + i64(redis.ID)}, "var_name": {"R_DB"}, "scheme": {"redis"}, "field": {"dbname"},
+	})
+	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 1 {
+		t.Fatalf("redis dbname should be rejected, have %d links", len(ls))
+	}
+
+	// invalid field rejected
+	postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"pg:" + i64(ld.ID)}, "var_name": {"BAD"}, "scheme": {"postgres"}, "field": {"bogus"},
+	})
+	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 1 {
+		t.Fatalf("invalid field should be rejected, have %d links", len(ls))
 	}
 }

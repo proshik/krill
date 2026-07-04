@@ -38,7 +38,7 @@ func TestDeleteLogicalDatabaseCascadesDBLinks(t *testing.T) {
 		t.Fatalf("create logical database: %v", err)
 	}
 	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
-		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DATABASE_URL", Scheme: "postgres",
+		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DATABASE_URL", Scheme: "postgres", Field: "url",
 	}); err != nil {
 		t.Fatalf("create db link: %v", err)
 	}

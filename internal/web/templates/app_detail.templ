@@ -45,6 +45,7 @@ type DBLinkView struct {
 	DBName   string
 	VarName  string
 	Scheme   string
+	Field    string
 	Collides bool
 }
 
@@ -298,6 +299,7 @@ templ envTab(c AppCtx) {
 						<tr>
 							<td class="k-mono">
 								{ l.VarName }
+								<span class="k-muted text-xs">· { l.Field }</span>
 								if l.Collides {
 									<span class="k-toast k-toast-err" style="display:inline-block;margin-left:.5rem;padding:.1rem .4rem">{ i18n.Tf(ctx, "dblink.collision", l.VarName) }</span>
 								}
@@ -339,6 +341,17 @@ templ envTab(c AppCtx) {
 						<option value="postgresql" data-engine="pg">postgresql://</option>
 						<option value="postgres" data-engine="pg">postgres://</option>
 						<option value="redis" data-engine="redis">redis://</option>
+					</select>
+				</div>
+				<div>
+					<label class="k-label">{ i18n.T(ctx, "dblink.field") }</label>
+					<select class="k-select" name="field">
+						<option value="url">url</option>
+						<option value="password">password</option>
+						<option value="host">host</option>
+						<option value="port">port</option>
+						<option value="user">user</option>
+						<option value="dbname">dbname</option>
 					</select>
 				</div>
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
