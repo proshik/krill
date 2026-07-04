@@ -255,6 +255,7 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(insts) > 0 || len(affectedApps) > 0 {
 			node, _ := s.findSwarmNode(r.Context(), swarmID)
+			node.ID = swarmID // ensure the confirm form action always targets a valid node id
 			render(w, r, http.StatusOK, templates.NodeRemoveConfirm(o, role, node, insts, affectedApps))
 			return
 		}
