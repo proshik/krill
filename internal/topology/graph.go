@@ -127,6 +127,7 @@ func Build(in Inputs) Graph {
 		Nodes:    make([]GNode, 0, len(in.Nodes)),
 		Services: make([]GService, 0, len(in.Services)),
 		Dbs:      make([]GDB, 0, len(in.Dbs)),
+		Links:    make([]GLink, 0, len(in.Links)),
 	}
 	for _, n := range in.Nodes {
 		g.Nodes = append(g.Nodes, GNode{ID: n.ID, Name: n.Name, Role: n.Role, State: n.State, Leader: n.Leader})

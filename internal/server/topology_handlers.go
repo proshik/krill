@@ -61,9 +61,11 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	// ---- nodes (lanes) ----
 	leaderID := ""
 	nodeByHost := map[string]string{}
+	liveID := make(map[string]bool, len(live))
 	nodes := make([]topology.NodeInput, 0, len(live))
 	for _, n := range live {
 		nodeByHost[n.Hostname] = n.ID
+		liveID[n.ID] = true
 		if (n.Leader || n.Role == "manager") && leaderID == "" {
 			leaderID = n.ID
 		}
@@ -115,9 +117,11 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		svcName := docker.ServiceName(a.ID)
 		node := ""
 		if got := running[svcName]; len(got) > 0 {
-			node = got[0]
+			node = got[0] // a spread app (replicas>1 across nodes) is shown on its first node's lane only (per spec §14)
 		} else if a.PlacementMode == "pin" && a.PlacementNodes != "" {
-			node = firstCSV(a.PlacementNodes)
+			if id := firstCSV(a.PlacementNodes); liveID[id] {
+				node = id
+			} // else: pinned to a since-removed node -> node stays "" -> unplaced below
 		} else {
 			node = leaderID
 		}
