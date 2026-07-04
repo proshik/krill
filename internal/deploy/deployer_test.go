@@ -85,6 +85,7 @@ func (f *digestMockEngine) SwarmWorkerToken(context.Context) (string, error)    
 func (f *digestMockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
 	return nil, nil
 }
+func (f *digestMockEngine) Tasks(context.Context) ([]docker.TaskInfo, error)           { return nil, nil }
 func (f *digestMockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
 func (f *digestMockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
 
@@ -197,6 +198,7 @@ func (m *mockEngine) SwarmWorkerToken(context.Context) (string, error)          
 func (m *mockEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
 	return nil, nil
 }
+func (m *mockEngine) Tasks(context.Context) ([]docker.TaskInfo, error)           { return nil, nil }
 func (m *mockEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
 func (m *mockEngine) NodeDeleteLabel(context.Context, string, string) error      { return nil }
 func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {

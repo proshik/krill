@@ -66,6 +66,18 @@ type SwarmNode struct {
 // TaskPlacement is one task of a service and the node it runs on.
 type TaskPlacement struct{ NodeID, NodeName, State, Desired string }
 
+// TaskInfo is one Swarm task tagged with its owning service and node. Unlike
+// TaskPlacement (which is per-service and carries no service identity), Tasks()
+// returns TaskInfo across ALL services in one sweep, so the topology view can
+// place every app/DB on the cluster without an API call per service.
+type TaskInfo struct {
+	ServiceName string // Swarm service name (krill-<appID> or db_instances.app_name)
+	NodeID      string
+	NodeName    string // swarm hostname; "" if the task is not yet scheduled
+	State       string
+	Desired     string
+}
+
 // HealthcheckSpec configures the container healthcheck.
 type HealthcheckSpec struct {
 	Test        []string // e.g. ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
@@ -142,6 +154,7 @@ type Engine interface {
 	NodeRemove(ctx context.Context, nodeID string, force bool) error
 	SwarmWorkerToken(ctx context.Context) (string, error)
 	ServiceTasks(ctx context.Context, name string) ([]TaskPlacement, error)
+	Tasks(ctx context.Context) ([]TaskInfo, error) // every running task across all services, for the topology view
 	NodeSetLabel(ctx context.Context, nodeID, key, value string) error
 	NodeDeleteLabel(ctx context.Context, nodeID, key string) error
 	// ResolveDigest returns a digest-pinned reference (repo@sha256:…) for ref by

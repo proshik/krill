@@ -954,6 +954,47 @@ func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPla
 	return out, nil
 }
 
+// Tasks returns every desired-state=running task across all services, tagged
+// with the owning service name and node hostname. Three API calls total
+// (ServiceList + NodeList + TaskList), independent of the number of services.
+func (e *dockerEngine) Tasks(ctx context.Context) ([]TaskInfo, error) {
+	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	id2svc := make(map[string]string, len(svcs))
+	for _, s := range svcs {
+		id2svc[s.ID] = s.Spec.Name
+	}
+	id2node := map[string]string{}
+	if nodes, nerr := e.Nodes(ctx); nerr == nil { // degrade to raw IDs if unresolved
+		for _, n := range nodes {
+			id2node[n.ID] = n.Hostname
+		}
+	}
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("desired-state", "running")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TaskInfo, 0, len(tasks))
+	for _, t := range tasks {
+		name, ok := id2svc[t.ServiceID]
+		if !ok {
+			continue // task of a service we didn't list (race); skip
+		}
+		out = append(out, TaskInfo{
+			ServiceName: name,
+			NodeID:      t.NodeID,
+			NodeName:    id2node[t.NodeID],
+			State:       string(t.Status.State),
+			Desired:     string(t.DesiredState),
+		})
+	}
+	return out, nil
+}
+
 func (e *dockerEngine) NodeSetLabel(ctx context.Context, nodeID, key, value string) error {
 	n, _, err := e.cli.NodeInspectWithRaw(ctx, nodeID)
 	if err != nil {
