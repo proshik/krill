@@ -178,7 +178,6 @@ var en = map[string]string{
 	"volumes.owner":                      "Owner",
 	"volumes.owner_placeholder":          "e.g. 1000:0",
 	"volumes.owner_hint":                 "Leave empty if the app runs as root.",
-	"volumes.owner_none":                 "—",
 	"volumes.owner_save":                 "Save",
 	"volumes.docker_name":                "Docker volume",
 	"volumes.add":                        "Add volume",

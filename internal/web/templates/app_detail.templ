@@ -723,6 +723,7 @@ templ volumesTab(c AppCtx) {
 			<div>
 				<label class="k-label">{ i18n.T(ctx, "volumes.owner") }</label>
 				<input class="k-input k-mono" name="owner" placeholder={ i18n.T(ctx, "volumes.owner_placeholder") }/>
+				<p class="k-muted text-xs mt-1">{ i18n.T(ctx, "volumes.owner_hint") }</p>
 			</div>
 			<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "volumes.add") }</button>
 		</form>

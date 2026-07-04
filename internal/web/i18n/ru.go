@@ -178,7 +178,6 @@ var ru = map[string]string{
 	"volumes.owner":                      "Владелец",
 	"volumes.owner_placeholder":          "напр. 1000:0",
 	"volumes.owner_hint":                 "Оставьте пустым, если приложение работает от root.",
-	"volumes.owner_none":                 "—",
 	"volumes.owner_save":                 "Сохранить",
 	"volumes.docker_name":                "Docker-том",
 	"volumes.add":                        "Добавить том",
