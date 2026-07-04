@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,10 +26,16 @@ func (s *Server) topologyData(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	live, _ := s.engine.Nodes(ctx) // degrade to empty lanes on error
 	tasks, _ := s.engine.Tasks(ctx)
-	graph := s.buildTopology(ctx, o.ID, live, tasks, s.nodeLabelMap(ctx))
+	graph, err := s.buildTopology(ctx, o.ID, live, tasks, s.nodeLabelMap(ctx))
+	if err != nil {
+		logFrom(r).Error("topology: build failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	body, err := json.Marshal(graph)
 	if err != nil {
+		logFrom(r).Error("topology: encode failed", "err", err)
 		http.Error(w, "encode failed", http.StatusInternalServerError)
 		return
 	}
@@ -39,7 +46,7 @@ func (s *Server) topologyData(w http.ResponseWriter, r *http.Request) {
 // buildTopology gathers the org's resources, resolves each service's node from
 // live tasks (falling back to placement pins / control-plane), and returns the
 // assembled graph.
-func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.SwarmNode, tasks []docker.TaskInfo, labels map[string]string) topology.Graph {
+func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.SwarmNode, tasks []docker.TaskInfo, labels map[string]string) (topology.Graph, error) {
 	// ---- nodes (lanes) ----
 	leaderID := ""
 	nodeByHost := map[string]string{}
@@ -68,12 +75,18 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	)
 
 	// ---- apps: org -> projects -> envs -> apps ----
-	projects, _ := s.q.ListProjectsWithCounts(ctx, orgID)
+	projects, err := s.q.ListProjectsWithCounts(ctx, orgID)
+	if err != nil {
+		return topology.Graph{}, fmt.Errorf("topology: list projects failed: %w", err)
+	}
 	type envInfo struct{ Env, Proj string }
 	envMeta := map[int64]envInfo{}
 	var envIDs []int64
 	for _, p := range projects {
-		envs, _ := s.q.ListEnvironments(ctx, p.ID)
+		envs, err := s.q.ListEnvironments(ctx, p.ID)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list environments failed: %w", err)
+		}
 		for _, e := range envs {
 			envMeta[e.ID] = envInfo{Env: e.Name, Proj: p.Name}
 			envIDs = append(envIDs, e.ID)
@@ -81,7 +94,10 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	}
 	var apps []db.Application
 	if len(envIDs) > 0 {
-		apps, _ = s.q.ListApplicationsByEnvironmentIDs(ctx, envIDs)
+		apps, err = s.q.ListApplicationsByEnvironmentIDs(ctx, envIDs)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list applications failed: %w", err)
+		}
 	}
 	for _, a := range apps {
 		sid := "app-" + strconv.FormatInt(a.ID, 10)
@@ -106,7 +122,10 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		services = append(services, topology.ServiceInput{
 			ID: sid, Kind: "app", NodeID: node, Label: a.Name, Sub: m.Proj + " / " + m.Env, Status: status,
 		})
-		dblinks, _ := s.q.ListDBLinksByApplication(ctx, a.ID)
+		dblinks, err := s.q.ListDBLinksByApplication(ctx, a.ID)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list db links failed: %w", err)
+		}
 		for _, l := range dblinks {
 			li := topology.LinkInput{From: sid, VarName: l.VarName, Field: l.Field}
 			switch {
@@ -126,7 +145,10 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	}
 
 	// ---- DB instances ----
-	insts, _ := s.q.ListDBInstancesByOrg(ctx, orgID)
+	insts, err := s.q.ListDBInstancesByOrg(ctx, orgID)
+	if err != nil {
+		return topology.Graph{}, fmt.Errorf("topology: list db instances failed: %w", err)
+	}
 	instEngine := map[int64]string{}
 	for _, in := range insts {
 		instEngine[in.ID] = in.Engine
@@ -161,7 +183,10 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	}
 	var dbs []topology.DBInput
 	for _, eid := range envIDs {
-		lds, _ := s.q.ListLogicalDatabasesByEnvironment(ctx, eid)
+		lds, err := s.q.ListLogicalDatabasesByEnvironment(ctx, eid)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list logical databases failed: %w", err)
+		}
 		for _, ld := range lds {
 			isid := "db-" + strconv.FormatInt(ld.InstanceID, 10)
 			dbs = append(dbs, topology.DBInput{
@@ -188,7 +213,7 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		nodes = append(nodes, topology.NodeInput{ID: "unplaced", Name: i18n.T(ctx, "topo.unplaced")})
 	}
 
-	return topology.Build(topology.Inputs{Nodes: nodes, Services: services, Dbs: dbs, Links: links})
+	return topology.Build(topology.Inputs{Nodes: nodes, Services: services, Dbs: dbs, Links: links}), nil
 }
 
 // nodeDisplayName matches the Monitoring/DB-servers convention: the manager is
