@@ -302,6 +302,16 @@ function krillMountDBLink() {
   };
   dbSel.addEventListener("change", apply);
   apply();
+
+  // Hide the whole "Scheme" field when the injected field is not "url" (the
+  // scheme is only used to build the full connection URL).
+  const fieldSel = document.getElementById("dblink-field");
+  const schemeWrap = document.getElementById("dblink-scheme-wrap");
+  if (fieldSel && schemeWrap) {
+    const toggleScheme = () => { schemeWrap.style.display = fieldSel.value === "url" ? "" : "none"; };
+    fieldSel.addEventListener("change", toggleScheme);
+    toggleScheme();
+  }
 }
 
 // Toggle periodic status refresh: when checked, click the refresh button every
