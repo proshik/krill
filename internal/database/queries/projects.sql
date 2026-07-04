@@ -24,5 +24,8 @@ ORDER BY p.created_at;
 -- name: DeleteProject :exec
 DELETE FROM projects WHERE id = $1;
 
+-- name: UpdateProjectName :exec
+UPDATE projects SET name = $2 WHERE id = $1;
+
 -- name: CountEnvironments :one
 SELECT count(*) FROM environments WHERE project_id = $1;

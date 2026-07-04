@@ -163,3 +163,17 @@ func (q *Queries) ListProjectsWithCounts(ctx context.Context, organizationID int
 	}
 	return items, nil
 }
+
+const updateProjectName = `-- name: UpdateProjectName :exec
+UPDATE projects SET name = $2 WHERE id = $1
+`
+
+type UpdateProjectNameParams struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) UpdateProjectName(ctx context.Context, arg UpdateProjectNameParams) error {
+	_, err := q.db.Exec(ctx, updateProjectName, arg.ID, arg.Name)
+	return err
+}

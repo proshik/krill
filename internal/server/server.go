@@ -212,6 +212,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/notifications/test", s.testNotification)
 				r.Post("/projects", s.createProject)
 				r.Post("/projects/{projID}/delete", s.deleteProject)
+				r.Post("/projects/{projID}/rename", s.renameProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/delete", s.deleteEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)

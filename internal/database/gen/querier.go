@@ -166,6 +166,7 @@ type Querier interface {
 	UpdateDBInstanceStatus(ctx context.Context, arg UpdateDBInstanceStatusParams) error
 	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
+	UpdateProjectName(ctx context.Context, arg UpdateProjectNameParams) error
 	UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)

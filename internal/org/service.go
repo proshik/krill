@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -16,6 +17,9 @@ var ErrNotFound = errors.New("not found")
 
 // ErrSlugTaken — slug already taken within the parent.
 var ErrSlugTaken = errors.New("slug already taken")
+
+// ErrEmptyName — a required display name was blank after trimming.
+var ErrEmptyName = errors.New("name is required")
 
 // Service — business logic for organizations and nested resources on top of sqlc.
 type Service struct {
@@ -69,6 +73,17 @@ func (s *Service) CreateProject(ctx context.Context, orgID int64, name, descript
 		return db.Project{}, mapUniqueErr(err)
 	}
 	return p, nil
+}
+
+// RenameProject updates a project's display name. The slug is left unchanged —
+// it is the stable internal key (not shown in URLs, which use the id), and
+// regenerating it could collide with a sibling project's slug.
+func (s *Service) RenameProject(ctx context.Context, projID int64, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrEmptyName
+	}
+	return s.q.UpdateProjectName(ctx, db.UpdateProjectNameParams{ID: projID, Name: name})
 }
 
 // CreateEnvironment creates an environment in the project.

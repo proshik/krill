@@ -72,6 +72,25 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
+func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	p, ok := s.loadProject(w, r)
+	if !ok {
+		return
+	}
+	if err := s.org.RenameProject(r.Context(), p.ID, r.FormValue("name")); err != nil {
+		logFrom(r).Info("renameProject: rejected", "err", err, "project_id", p.ID)
+		s.flashErrErr(w, r, "flash.err.rename_project", err)
+		return
+	}
+	logFrom(r).Info("project renamed", "project_id", p.ID, "org_id", o.ID)
+	s.flashOK(w, r, "flash.ok.project_renamed")
+	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/projects/"+strconv.FormatInt(p.ID, 10), http.StatusSeeOther)
+}
+
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
