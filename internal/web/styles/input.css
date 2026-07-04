@@ -24,6 +24,8 @@
   --color-accent-fg:   #0a0a0a;
   --color-warn:        #f59e0b;
   --color-err:         #ef4444;
+  --color-postgres:    #5b9bd5;
+  --color-redis:       #e5534b;
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --radius-card: 11px;
@@ -242,6 +244,31 @@
   .k-modal-x { position:absolute; top:1rem; right:1rem; width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center;
     border-radius:7px; border:1px solid var(--color-border-strong); background:transparent; color:var(--color-muted); cursor:pointer; font-size:14px; line-height:1; }
   .k-modal-x:hover { background:var(--color-surface-2); color:var(--color-fg); }
+
+  /* topology page */
+  .k-topo-bar { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:12px; }
+  .k-topo-legend { display:flex; gap:1rem; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--color-muted); }
+  .k-topo-sw { display:inline-block; width:16px; height:0; border-top:3px solid var(--color-muted); vertical-align:middle; margin-right:6px; }
+  .k-topo-sw-dash { border-top-style:dashed; }
+  .k-topo-scroll { overflow-x:auto; border:1px solid var(--color-border); border-radius:var(--radius-card); background:var(--color-surface); }
+  .k-topo-canvas { min-width:100%; padding:4px; }
+  .k-topo-svg { display:block; font-family:var(--font-mono); }
+  .k-topo-lane { fill:var(--color-surface-2); stroke:var(--color-border); }
+  .k-topo-lanehead { fill:var(--color-fg); font-size:13px; font-weight:700; }
+  .k-topo-lanerole { fill:var(--color-faint); font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .k-topo-box { fill:var(--color-surface); stroke:var(--color-border-strong); }
+  .k-topo-db .k-topo-box { stroke:var(--color-accent); }
+  .k-topo-name { fill:var(--color-fg); font-size:12px; font-weight:600; }
+  .k-topo-sub { fill:var(--color-muted); font-size:10px; }
+  .k-topo-off { opacity:.45; }
+  .k-topo-chipbox { fill:var(--color-surface-2); stroke:var(--color-border); }
+  .k-topo-chiptext { fill:var(--color-muted); font-size:10px; }
+  .k-topo-link { fill:none; stroke-width:1.5; opacity:.55; }
+  .k-topo-link-postgres { stroke:var(--color-postgres); }
+  .k-topo-link-redis { stroke:var(--color-redis); }
+  .k-topo-cross { stroke-width:2.5; stroke-dasharray:5 4; }
+  .k-topo-focused .k-topo-link { opacity:.1; }
+  .k-topo-link.k-topo-lit { opacity:1; }
 }
 
 @keyframes k-toast-in { from { opacity:0; transform:translateX(8px); } to { opacity:1; transform:translateX(0); } }
