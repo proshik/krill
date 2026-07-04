@@ -10,6 +10,12 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
 		</p>
+		if role == "owner" || role == "admin" {
+			<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/rename") } class="flex items-end gap-2 mb-3">
+				<input class="k-input" name="name" value={ project.Name } required/>
+				<button type="submit" class="k-btn">{ i18n.T(ctx, "project.rename_btn") }</button>
+			</form>
+		}
 		<div class="k-frame">
 			<div class="k-panel">
 				<div class="k-panel-head">

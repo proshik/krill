@@ -85,6 +85,7 @@ var ru = map[string]string{
 	"project.create_env_hint":            "Создайте окружение, чтобы добавлять приложения.",
 	"project.create_env":                 "Создать окружение",
 	"project.add_env":                    "Добавить окружение",
+	"project.rename_btn":                 "Переименовать",
 	"env.new_modal_title":                "Новое окружение",
 	"env.new_modal_desc":                 "Например: production, staging.",
 	"env.delete":                         "Удалить окружение",
