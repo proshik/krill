@@ -245,6 +245,162 @@ function mountMonitoring(el) {
   window.addEventListener("resize", window.__krillMonResize);
 }
 
+function mountTopology(el) {
+  if (!el || el.dataset.mounted) return;
+  el.dataset.mounted = "1";
+  const base = el.dataset.url;
+  const I18N = {
+    empty: el.dataset.i18nEmpty || "No services yet",
+    cross: el.dataset.i18nCrossnode || "cross-node",
+  };
+  const NS = "http://www.w3.org/2000/svg";
+  const canvas = el.querySelector(".k-topo-canvas");
+  const btn = el.querySelector(".k-topo-refresh");
+  let data = null;
+
+  function mk(tag, attrs, text) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function draw() {
+    canvas.innerHTML = "";
+    if (!data || !(data.services || []).length) {
+      const p = document.createElement("p");
+      p.className = "k-muted";
+      p.style.padding = "1rem";
+      p.textContent = I18N.empty;
+      canvas.appendChild(p);
+      return;
+    }
+    const LANE_W = 240, LANE_GAP = 56, PAD = 16, HEAD_H = 34,
+      BOX_H = 46, BOX_GAP = 12, CHIP_H = 20, CHIP_GAP = 4, BOX_W = LANE_W - PAD * 2;
+
+    // Order lanes: control-plane/manager first, workers by name, unplaced last.
+    const rank = (n) => (n.id === "unplaced" ? 2 : (n.leader || n.role === "manager") ? 0 : 1);
+    const nodes = (data.nodes || []).slice().sort((a, b) => {
+      const r = rank(a) - rank(b);
+      return r !== 0 ? r : (a.name || "").localeCompare(b.name || "");
+    });
+
+    const byNode = {};
+    for (const s of data.services) (byNode[s.node] = byNode[s.node] || []).push(s);
+    const dbsByInst = {};
+    for (const d of (data.dbs || [])) (dbsByInst[d.service] = dbsByInst[d.service] || []).push(d);
+
+    // Geometry, keyed by service id and "L"+dbId.
+    const anchor = {};
+    let maxH = 0;
+    nodes.forEach((n, ci) => {
+      const laneX = PAD + ci * (LANE_W + LANE_GAP);
+      let y = HEAD_H + PAD;
+      for (const s of (byNode[n.id] || [])) {
+        const chips = s.kind === "db" ? (dbsByInst[s.id] || []) : [];
+        s.__x = laneX + PAD; s.__y = y; s.__w = BOX_W;
+        anchor[s.id] = {
+          left: { x: laneX + PAD, y: y + BOX_H / 2 },
+          right: { x: laneX + PAD + BOX_W, y: y + BOX_H / 2 },
+        };
+        let cy = y + BOX_H + CHIP_GAP;
+        for (const d of chips) {
+          d.__x = laneX + PAD + 8; d.__y = cy; d.__w = BOX_W - 16;
+          anchor["L" + d.id] = {
+            left: { x: laneX + PAD + 8, y: cy + CHIP_H / 2 },
+            right: { x: laneX + PAD + BOX_W - 8, y: cy + CHIP_H / 2 },
+          };
+          cy += CHIP_H + CHIP_GAP;
+        }
+        const h = BOX_H + (chips.length ? chips.length * (CHIP_H + CHIP_GAP) + CHIP_GAP : 0);
+        y += h + BOX_GAP;
+      }
+      n.__x = laneX;
+      if (y > maxH) maxH = y;
+    });
+
+    const totalW = PAD * 2 + nodes.length * LANE_W + Math.max(0, nodes.length - 1) * LANE_GAP;
+    const totalH = Math.max(maxH + PAD, 160);
+    const svg = mk("svg", { width: totalW, height: totalH, viewBox: `0 0 ${totalW} ${totalH}`, class: "k-topo-svg" });
+
+    // Lanes.
+    for (const n of nodes) {
+      svg.appendChild(mk("rect", { x: n.__x, y: 0, width: LANE_W, height: totalH, rx: 10, class: "k-topo-lane" }));
+      svg.appendChild(mk("text", { x: n.__x + PAD, y: 22, class: "k-topo-lanehead" }, n.name));
+      if (n.role) svg.appendChild(mk("text", { x: n.__x + LANE_W - PAD, y: 22, "text-anchor": "end", class: "k-topo-lanerole" }, n.role));
+    }
+
+    // Links (under boxes).
+    const linkEls = [];
+    for (const l of (data.links || [])) {
+      const from = anchor[l.from];
+      const to = l.to_kind === "logical" ? anchor["L" + l.to_id] : anchor[l.to_id];
+      if (!from || !to) continue;
+      const rightward = from.right.x <= to.left.x;
+      const a = rightward ? from.right : from.left;
+      const b = rightward ? to.left : to.right;
+      const dx = Math.abs(b.x - a.x) / 2 + 24;
+      const c1 = a.x + (b.x >= a.x ? dx : -dx);
+      const c2 = b.x + (b.x >= a.x ? -dx : dx);
+      const d = `M ${a.x} ${a.y} C ${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
+      const cls = "k-topo-link k-topo-link-" + (l.engine || "postgres") + (l.cross_node ? " k-topo-cross" : "");
+      const toKey = l.to_kind === "logical" ? "L" + l.to_id : l.to_id;
+      const path = mk("path", { d: d, class: cls, "data-from": l.from, "data-to": toKey });
+      path.appendChild(mk("title", {}, l.var + " → " + l.field + (l.cross_node ? " (" + I18N.cross + ")" : "")));
+      linkEls.push(path);
+      svg.appendChild(path);
+    }
+
+    function focusOn(key) {
+      svg.classList.add("k-topo-focused");
+      for (const p of linkEls) {
+        const on = p.getAttribute("data-from") === key || p.getAttribute("data-to") === key;
+        p.classList.toggle("k-topo-lit", on);
+      }
+    }
+    function focusOff() {
+      svg.classList.remove("k-topo-focused");
+      for (const p of linkEls) p.classList.remove("k-topo-lit");
+    }
+
+    // Service boxes + chips (on top; chips are siblings, not nested, so hover
+    // is independent).
+    for (const n of nodes) {
+      for (const s of (byNode[n.id] || [])) {
+        const g = mk("g", { class: "k-topo-svc k-topo-" + s.kind + (s.status && s.status !== "running" ? " k-topo-off" : ""), "data-id": s.id });
+        g.appendChild(mk("rect", { x: s.__x, y: s.__y, width: s.__w, height: BOX_H, rx: 8, class: "k-topo-box" }));
+        g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 20, class: "k-topo-name" }, s.label));
+        if (s.sub) g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 36, class: "k-topo-sub" }, s.sub));
+        g.addEventListener("mouseenter", () => focusOn(s.id));
+        g.addEventListener("mouseleave", focusOff);
+        svg.appendChild(g);
+        for (const d of (dbsByInst[s.id] || [])) {
+          const cg = mk("g", { class: "k-topo-chip", "data-id": "L" + d.id });
+          cg.appendChild(mk("rect", { x: d.__x, y: d.__y, width: d.__w, height: CHIP_H, rx: 5, class: "k-topo-chipbox" }));
+          cg.appendChild(mk("text", { x: d.__x + 8, y: d.__y + 14, class: "k-topo-chiptext" }, d.name + (d.env ? " · " + d.env : "")));
+          cg.addEventListener("mouseenter", () => focusOn("L" + d.id));
+          cg.addEventListener("mouseleave", focusOff);
+          svg.appendChild(cg);
+        }
+      }
+    }
+
+    canvas.appendChild(svg);
+  }
+
+  function load() {
+    fetch(base).then((r) => r.json()).then((d) => { data = d; draw(); }).catch(() => {});
+  }
+  if (btn) btn.addEventListener("click", load);
+  load();
+
+  // Redraw on resize (layout is width-independent here, but keep the same
+  // single-global-handler discipline as monitoring so it is cleaned up on nav).
+  if (window.__krillTopoResize) window.removeEventListener("resize", window.__krillTopoResize);
+  window.__krillTopoResize = function () { if (data) draw(); };
+  window.addEventListener("resize", window.__krillTopoResize);
+}
+
 // krillEnhance wires up content present on the page or just swapped in: it mounts
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
@@ -252,6 +408,7 @@ window.krillEnhance = function () {
   document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
   document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
   document.querySelectorAll(".k-mon:not([data-mounted])").forEach(mountMonitoring);
+  document.querySelectorAll(".k-topo:not([data-mounted])").forEach(mountTopology);
   if (document.getElementById("env-form")) {
     let mode = "kv";
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
@@ -263,6 +420,9 @@ window.krillEnhance = function () {
   if (!document.querySelector(".k-mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
     if (window.__krillMonResize) { window.removeEventListener("resize", window.__krillMonResize); window.__krillMonResize = null; }
+  }
+  if (!document.querySelector(".k-topo")) {
+    if (window.__krillTopoResize) { window.removeEventListener("resize", window.__krillTopoResize); window.__krillTopoResize = null; }
   }
   // Stop any previous status-refresh timer (the page/element may have swapped),
   // then restore the toggle from localStorage on the current page.
