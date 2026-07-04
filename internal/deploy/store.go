@@ -113,8 +113,8 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		return App{}, lerr
 	}
 	for _, l := range links {
-		if url, ok := s.resolveDBLinkURL(ctx, l); ok {
-			out.Env[l.VarName] = url // linked-DB value wins over env_text on key collision
+		if val, ok := s.resolveDBLinkValue(ctx, l); ok {
+			out.Env[l.VarName] = val // linked-DB value wins over env_text on key collision
 		} else {
 			slog.Warn("db-link: target database missing, skipping injection", "app", a.ID, "link_id", l.ID, "var", l.VarName)
 		}
@@ -122,11 +122,33 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	return out, nil
 }
 
-// resolveDBLinkURL builds the internal connection URL for a link (password
-// decrypted live, never stored in env_text). Postgres links point at a logical
-// database inside an instance; redis links point at the instance itself.
-// Returns false if the target no longer exists.
-func (s *DBStore) resolveDBLinkURL(ctx context.Context, l db.ListDBLinksByApplicationRow) (string, bool) {
+// dbLinkFieldValue returns the requested field of a DB link. An empty/unknown
+// field yields the full connection URL (backward-compatible default).
+func dbLinkFieldValue(field, user, pass, host, port, dbname, scheme string) string {
+	switch field {
+	case "password":
+		return pass
+	case "host":
+		return host
+	case "port":
+		return port
+	case "user":
+		return user
+	case "dbname":
+		return dbname
+	default: // "url"
+		u := scheme + "://" + user + ":" + pass + "@" + host + ":" + port
+		if dbname != "" {
+			u += "/" + dbname
+		}
+		return u
+	}
+}
+
+// resolveDBLinkValue derives the link's source fields (password decrypted live)
+// and returns the value named by l.Field. Returns false if the target is gone.
+func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByApplicationRow) (string, bool) {
+	var user, pass, host, port, dbname, scheme string
 	switch {
 	case l.LogicalDatabaseID != nil:
 		ld, err := s.q.GetLogicalDatabase(ctx, *l.LogicalDatabaseID)
@@ -137,15 +159,17 @@ func (s *DBStore) resolveDBLinkURL(ctx context.Context, l db.ListDBLinksByApplic
 		if err != nil {
 			return "", false
 		}
-		return l.Scheme + "://" + ld.Username + ":" + secret.Dec(ld.Password) + "@" + inst.AppName + ":5432/" + ld.DbName, true
+		user, pass, host, port, dbname, scheme = ld.Username, secret.Dec(ld.Password), inst.AppName, "5432", ld.DbName, l.Scheme
 	case l.InstanceID != nil:
 		inst, err := s.q.GetDBInstance(ctx, *l.InstanceID)
 		if err != nil {
 			return "", false
 		}
-		return "redis://default:" + secret.Dec(inst.SuperuserPassword) + "@" + inst.AppName + ":6379", true
+		user, pass, host, port, dbname, scheme = "default", secret.Dec(inst.SuperuserPassword), inst.AppName, "6379", "", "redis"
+	default:
+		return "", false
 	}
-	return "", false
+	return dbLinkFieldValue(l.Field, user, pass, host, port, dbname, scheme), true
 }
 
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {

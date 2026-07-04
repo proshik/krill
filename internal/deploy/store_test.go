@@ -80,6 +80,30 @@ func TestBuildHealthcheckInvalidDurations(t *testing.T) {
 	}
 }
 
+func TestDBLinkFieldValue(t *testing.T) {
+	// postgres source
+	for field, want := range map[string]string{
+		"url":      "postgresql://u:p@h:5432/d",
+		"":         "postgresql://u:p@h:5432/d", // empty defaults to url
+		"password": "p",
+		"host":     "h",
+		"port":     "5432",
+		"user":     "u",
+		"dbname":   "d",
+	} {
+		if got := dbLinkFieldValue(field, "u", "p", "h", "5432", "d", "postgresql"); got != want {
+			t.Errorf("pg field %q = %q, want %q", field, got, want)
+		}
+	}
+	// redis source (no dbname): url must omit the trailing /db
+	if got := dbLinkFieldValue("url", "default", "p", "h", "6379", "", "redis"); got != "redis://default:p@h:6379" {
+		t.Errorf("redis url = %q", got)
+	}
+	if got := dbLinkFieldValue("password", "default", "p", "h", "6379", "", "redis"); got != "p" {
+		t.Errorf("redis password = %q", got)
+	}
+}
+
 func TestStrDeref(t *testing.T) {
 	if got := strDeref(nil); got != "" {
 		t.Errorf("strDeref(nil) = %q, want \"\"", got)
