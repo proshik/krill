@@ -443,6 +443,7 @@ window.krillEnhance = function () {
     krillEnvMode(mode);
   }
   krillMountDBLink();
+  krillMountSchedulePresets();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".k-mon")) {
@@ -496,6 +497,20 @@ function krillMountDBLink() {
   dbSel.addEventListener("change", apply);
   if (fieldSel) fieldSel.addEventListener("change", apply);
   apply();
+}
+
+// Reveals the custom-cron input when a backup "Schedule" select is set to
+// "custom". Idempotent (guarded per-select by data-mounted); works for the DB
+// form and every per-volume form on the page.
+function krillMountSchedulePresets() {
+  document.querySelectorAll(".k-sched-preset:not([data-mounted])").forEach((sel) => {
+    sel.dataset.mounted = "1";
+    const wrap = sel.parentElement && sel.parentElement.querySelector(".k-sched-custom");
+    if (!wrap) return;
+    const apply = () => { wrap.style.display = sel.value === "custom" ? "" : "none"; };
+    sel.addEventListener("change", apply);
+    apply();
+  });
 }
 
 // Toggle periodic status refresh: when checked, click the refresh button every
