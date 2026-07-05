@@ -14,7 +14,7 @@ templ BackupObjects(base string, backupID int64, objs []backup.Object) {
 			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
 		} else {
 			<table class="k-table">
-				<thead><tr><th>Key</th><th>Size</th><th>Date</th><th></th></tr></thead>
+				<thead><tr><th>{ i18n.T(ctx, "backup.col.file") }</th><th>{ i18n.T(ctx, "backup.col.size") }</th><th>{ i18n.T(ctx, "backup.col.date") }</th><th></th></tr></thead>
 				<tbody>
 					for _, o := range objs {
 						<tr>
@@ -23,7 +23,7 @@ templ BackupObjects(base string, backupID int64, objs []backup.Object) {
 							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
 							<td>
 								<a class="k-btn" href={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/download?key=" + o.Key) }>{ i18n.T(ctx, "backup.download") }</a>
-								<form method="post" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } onsubmit="if(!confirm('Restore this backup? This overwrites the current database.')) return false; krillBusy(this.querySelector('button'), 'Restoring…')" style="display:inline">
+								<form method="post" hx-boost="false" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } data-confirm={ i18n.T(ctx, "backup.restore_warn") } data-busy={ i18n.T(ctx, "backup.restoring") } onsubmit="return krillConfirm(this, this.dataset.confirm)" style="display:inline">
 									<input type="hidden" name="key" value={ o.Key }/>
 									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.restore") }</button>
 								</form>

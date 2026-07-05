@@ -36,33 +36,7 @@ templ Destinations(org db.Organization, role string, dests []db.Destination) {
 				</tbody>
 			</table>
 			if role == "owner" || role == "admin" {
-				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations") } class="mt-4 flex flex-col gap-2">
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.name") }</label>
-						<input class="k-input" name="name"/>
-					</div>
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.endpoint") }</label>
-						<input class="k-input" name="endpoint" placeholder="(blank for AWS; URL for MinIO)"/>
-					</div>
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.bucket") }</label>
-						<input class="k-input" name="bucket"/>
-					</div>
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.region") }</label>
-						<input class="k-input" name="region" placeholder="us-east-1"/>
-					</div>
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.access_key") }</label>
-						<input class="k-input" name="access_key"/>
-					</div>
-					<div>
-						<label class="k-label">{ i18n.T(ctx, "dest.secret_key") }</label>
-						<input class="k-input" name="secret_key" type="password"/>
-					</div>
-					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "dest.add") }</button></div>
-				</form>
+				@inlineDestinationForm(org.ID, "")
 			}
 		</div>
 	}

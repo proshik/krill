@@ -13,7 +13,7 @@ templ VolumeBackupObjects(base string, vbID int64, objs []backup.Object) {
 			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
 		} else {
 			<table class="k-table">
-				<thead><tr><th>Key</th><th>Size</th><th>Date</th><th></th></tr></thead>
+				<thead><tr><th>{ i18n.T(ctx, "backup.col.file") }</th><th>{ i18n.T(ctx, "backup.col.size") }</th><th>{ i18n.T(ctx, "backup.col.date") }</th><th></th></tr></thead>
 				<tbody>
 					for _, o := range objs {
 						<tr>
