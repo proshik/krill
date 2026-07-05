@@ -1,0 +1,55 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// scheduleSelect is the preset schedule picker shared by DB + volume backup
+// forms. "Custom" reveals the cron input (JS: krillMountSchedulePresets).
+templ scheduleSelect() {
+	<div>
+		<label class="k-label">{ i18n.T(ctx, "backup.schedule") }</label>
+		<select class="k-select k-sched-preset" name="schedule_preset">
+			<option value="off">{ i18n.T(ctx, "backup.sched.off") }</option>
+			<option value="hourly">{ i18n.T(ctx, "backup.sched.hourly") }</option>
+			<option value="daily" selected>{ i18n.T(ctx, "backup.sched.daily") }</option>
+			<option value="weekly">{ i18n.T(ctx, "backup.sched.weekly") }</option>
+			<option value="monthly">{ i18n.T(ctx, "backup.sched.monthly") }</option>
+			<option value="custom">{ i18n.T(ctx, "backup.sched.custom") }</option>
+		</select>
+		<div class="k-sched-custom" style="display:none">
+			<input class="k-input mt-2" name="schedule_custom" placeholder="0 3 * * *"/>
+			<p class="k-muted text-xs">{ i18n.T(ctx, "backup.sched.custom_hint") }</p>
+		</div>
+	</div>
+}
+
+// backupAdvanced hides the S3 prefix behind an "Advanced" disclosure.
+templ backupAdvanced() {
+	<details>
+		<summary class="k-muted text-sm">{ i18n.T(ctx, "backup.advanced") }</summary>
+		<div class="mt-2">
+			<label class="k-label">{ i18n.T(ctx, "backup.prefix") }</label>
+			<input class="k-input" name="prefix"/>
+			<p class="k-muted text-xs">{ i18n.T(ctx, "backup.prefix_hint") }</p>
+		</div>
+	</details>
+}
+
+// inlineDestinationForm is the S3/MinIO storage form, reusable inline (with a
+// return URL back to the current page) and on the Settings page (returnURL "").
+templ inlineDestinationForm(orgID int64, returnURL string) {
+	<form method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class="mt-2 flex flex-col gap-2">
+		if returnURL != "" {
+			<input type="hidden" name="return" value={ returnURL }/>
+			<p class="k-muted text-sm">{ i18n.T(ctx, "backup.add_storage_hint") }</p>
+		}
+		<div><label class="k-label">{ i18n.T(ctx, "dest.name") }</label><input class="k-input" name="name"/></div>
+		<div><label class="k-label">{ i18n.T(ctx, "dest.endpoint") }</label><input class="k-input" name="endpoint"/><p class="k-muted text-xs">{ i18n.T(ctx, "dest.endpoint_hint") }</p></div>
+		<div><label class="k-label">{ i18n.T(ctx, "dest.bucket") }</label><input class="k-input" name="bucket"/></div>
+		<div><label class="k-label">{ i18n.T(ctx, "dest.region") }</label><input class="k-input" name="region" placeholder="us-east-1"/></div>
+		<div><label class="k-label">{ i18n.T(ctx, "dest.access_key") }</label><input class="k-input" name="access_key"/></div>
+		<div><label class="k-label">{ i18n.T(ctx, "dest.secret_key") }</label><input class="k-input" name="secret_key" type="password"/></div>
+		<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "dest.add") }</button></div>
+	</form>
+}

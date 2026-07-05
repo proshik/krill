@@ -89,7 +89,7 @@ templ backupsSection(c LogicalDBCtx) {
 					for _, b := range c.Backups {
 						<tr>
 							<td>{ destName(c.Destinations, b.DestinationID) }</td>
-							<td class="k-mono">{ b.Schedule }</td>
+							<td>{ scheduleLabel(ctx, b.Schedule) }</td>
 							<td>{ itoa(int64(b.Retention)) }</td>
 							<td>
 								if b.Enabled {
@@ -106,11 +106,15 @@ templ backupsSection(c LogicalDBCtx) {
 							</td>
 							<td>
 								<div class="flex items-center gap-2 flex-wrap">
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } onsubmit="krillBusy(this.querySelector('button'), 'Running…')" class="inline">
+									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } data-busy={ i18n.T(ctx, "backup.running") } onsubmit="krillBusy(this.querySelector('button'), this.dataset.busy)" class="inline">
 										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
 									</form>
 									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
-										<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.toggle") }</button>
+										if b.Enabled {
+											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.pause") }</button>
+										} else {
+											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.resume") }</button>
+										}
 									</form>
 									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_backup", destName(c.Destinations, b.DestinationID)) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="inline">
 										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
@@ -129,10 +133,8 @@ templ backupsSection(c LogicalDBCtx) {
 			</table>
 		}
 		if len(c.Destinations) == 0 {
-			<p class="k-muted">
-				{ i18n.T(ctx, "backup.no_destinations") }
-				<a class="underline" href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/destinations") }>{ i18n.T(ctx, "dest.link") }</a>
-			</p>
+			<p class="k-muted">{ i18n.T(ctx, "backup.no_destinations") }</p>
+			@inlineDestinationForm(c.Org.ID, c.Base)
 		} else {
 			<form method="post" action={ templ.SafeURL(c.Base + "/backups") } class="mt-4 flex flex-col gap-2">
 				<div>
@@ -143,18 +145,12 @@ templ backupsSection(c LogicalDBCtx) {
 						}
 					</select>
 				</div>
-				<div>
-					<label class="k-label k-label-required">{ i18n.T(ctx, "backup.schedule") }</label>
-					<input class="k-input" name="schedule" required placeholder="0 3 * * *"/>
-				</div>
+				@scheduleSelect()
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "backup.retention") }</label>
 					<input class="k-input" name="retention" type="number" value="7" min="1"/>
 				</div>
-				<div>
-					<label class="k-label">{ i18n.T(ctx, "backup.prefix") }</label>
-					<input class="k-input" name="prefix"/>
-				</div>
+				@backupAdvanced()
 				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button></div>
 			</form>
 		}

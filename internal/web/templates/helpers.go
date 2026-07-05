@@ -1,12 +1,15 @@
 package templates
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 // itoa formats an int64 for interpolation into URLs inside templates.
@@ -143,6 +146,16 @@ func orphanedPlacementNodes(csv string, nodes []docker.SwarmNode) []string {
 		}
 	}
 	return out
+}
+
+// scheduleLabel renders a stored cron schedule as a friendly preset name (or the
+// raw cron for a custom schedule).
+func scheduleLabel(ctx context.Context, schedule string) string {
+	p := backup.SchedulePreset(schedule)
+	if p == "custom" {
+		return schedule
+	}
+	return i18n.T(ctx, "backup.sched."+p)
 }
 
 // humanSize renders a byte count as a short human-readable string.
