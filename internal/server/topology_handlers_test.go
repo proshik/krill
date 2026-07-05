@@ -151,3 +151,104 @@ func TestTopologyPageMemberForbidden(t *testing.T) {
 		t.Fatalf("member want 403, got %d", rec.Code)
 	}
 }
+
+func TestTopologyDataIngress(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-ingress-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.example.com", Port: 80, SourceType: "image",
+		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: app.ID, Host: "web.example.com", Tls: true, IsPrimary: true, Exposed: true, Paths: "",
+	}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+
+	cookie := loginAs(t, q, "topo-ingress-owner@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var g topology.Graph
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	var hasGateway bool
+	for _, s := range g.Services {
+		if s.Kind == "gateway" {
+			hasGateway = true
+		}
+	}
+	if !hasGateway {
+		t.Errorf("gateway service missing")
+	}
+	var ingress *topology.GLink
+	for i := range g.Links {
+		if g.Links[i].Kind == "ingress" && g.Links[i].From == "gateway" && g.Links[i].ToID == "app-"+i64(app.ID) {
+			ingress = &g.Links[i]
+		}
+	}
+	if ingress == nil || ingress.Label != "web.example.com" {
+		t.Errorf("ingress link gateway->app with domain label missing, got %+v", ingress)
+	}
+}
+
+func TestTopologyDataDetectedEnvLink(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-det-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "pg1", AppName: "krill-postgres-pg1-t9",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	ld, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "readeck", DbName: "readeck", Username: "readeck", Password: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create logical db: %v", err)
+	}
+	// App connects via a RAW env DSN (no app_db_links row).
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "readeck", Image: "readeck", Tag: "latest",
+		Domain: "r.example.com", Port: 8000, SourceType: "image",
+		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		EnvText: "READECK_DATABASE_SOURCE=postgres://u:p@krill-postgres-pg1-t9:5432/readeck",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+
+	cookie := loginAs(t, q, "topo-det-owner@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var g topology.Graph
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	var det *topology.GLink
+	for i := range g.Links {
+		if g.Links[i].From == "app-"+i64(app.ID) && g.Links[i].ToKind == "logical" && g.Links[i].ToID == i64(ld.ID) {
+			det = &g.Links[i]
+		}
+	}
+	if det == nil || !det.Detected || det.Engine != "postgres" {
+		t.Errorf("detected env link app->logical readeck missing/incorrect, got %+v", det)
+	}
+}
