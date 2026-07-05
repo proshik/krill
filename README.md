@@ -2,7 +2,7 @@
 
 A minimal self-hosted PaaS written in Go: deploy containerized apps and managed databases onto a single-node Docker Swarm, routed by Traefik, managed from a dark web control plane.
 
-> **Status:** Active development — a learning project, running in production for the author's bot. Phases 0–7 are complete (image apps, Dockerfile builds, projects/RBAC, managed Postgres/Redis, S3 backups, domains/TLS, and realtime ops: Telegram notifications, web terminal, monitoring, structured log viewer) plus **Phase 6 — GitHub auto-deploy**. The **deploy-parity** track (gaps vs Dokploy for deploying a real private app) is fully closed, and **multi-server** (Swarm worker nodes joined over SSH, with placement) plus **cluster-wide monitoring** work too. Still open: Phase 8 (flexible state placement) and email/Slack channels. Not yet broadly production-hardened.
+> **Status:** Active development — a learning project, running in production for the author's bot. Phases 0–7 are complete (image apps, Dockerfile builds, projects/RBAC, managed Postgres/Redis, S3 backups, domains/TLS, and realtime ops: Telegram notifications, web terminal, monitoring, structured log viewer) plus **Phase 6 — GitHub auto-deploy**. The **deploy-parity** track (gaps vs Dokploy for deploying a real private app) is fully closed, and **multi-server** (Swarm worker nodes joined over SSH, with placement) plus **cluster-wide monitoring** work too. Managed databases were rebuilt around org-level **DB instances** holding env-scoped **logical databases** (replacing one container per database); a new admin **Topology** page draws the live cluster map with app↔DB threads and an ingress lane; and **backups** now use schedule presets (including on-demand) with inline storage setup. Still open: Phase 8 (flexible state placement) and email/Slack channels. Not yet broadly production-hardened.
 
 ## Why Krill
 
@@ -35,10 +35,12 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Per-app environment variables with in-UI editing.
 - A default organization is bootstrapped on first run (the seed admin becomes its owner).
 
-### Managed Postgres and Redis databases (Phase 3)
-- Run Postgres and Redis as Swarm services backed by named volumes.
+### Managed databases: DB instances + logical databases (Phase 3)
+- Org-level **DB instances** — one Swarm service per Postgres or Redis server, backed by a named volume, optionally pinned to a cluster node.
+- A Postgres instance holds env-scoped **logical databases** — a database plus an owner user, provisioned synchronously inside the instance's container (`CREATE DATABASE`/`CREATE USER`, public connect revoked).
+- Redis instances serve apps directly — no logical sub-resource, one instance is one connection target.
 - Generated credentials and connection strings — internal (overlay-network DNS) and external (host port).
-- Full lifecycle: deploy, start, stop, delete, and version change.
+- Full lifecycle on the instance: deploy, start, stop, delete, and version change; logical databases are created/deleted independently within their instance.
 - Opt-in "destroy data" on delete (the named volume is only removed when explicitly requested).
 
 ### Deploy-parity: container settings, lifecycle, route exposure
@@ -70,6 +72,12 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Join Swarm **worker nodes over SSH** from the admin **Nodes** page — one control plane + N workers (not N installs); drain/remove nodes (the control plane is guarded); per-app placement (any / pinned / global).
 - Managed DBs can be pinned to a chosen node (node-local volume; apps reach them over the overlay DNS).
 - **Cluster-wide monitoring** — the metrics sampler tunnels each worker's Docker socket over the stored SSH access and collects per-node stats (no agent, no exposed port); the Monitoring page shows every node, with a node selector that filters both the charts and the table.
+
+### Cluster topology
+- An admin-gated **Topology** page (`/orgs/{id}/topology`) draws the cluster as node lanes holding each org's apps and DB instances, placed where they actually run.
+- Logical databases render as chips inside their Postgres instance; colored threads connect an app to the databases it uses (color by engine — Postgres/Redis — and thicker/dashed for a cross-node link).
+- An **Ingress lane** shows Internet → Traefik → exposed app, with the domain labelled on the edge and arrows showing request direction.
+- Connections are detected both from modeled DB links and from raw `env_text` connection strings, so an app wired by a plain DSN still shows a thread; multiple per-field links to the same database collapse into one.
 
 ### Secrets at rest
 - Set `KRILL_SECRET_KEY` to encrypt stored secrets at rest (AES-256-GCM): DB passwords, registry/Git/destination credentials, webhook + notification tokens. Empty key = legacy plaintext (with a startup warning); previously-plaintext values stay readable after a key is added.
@@ -195,12 +203,13 @@ cmd/krill/main.go            Startup wiring: config, migrations, services, Traef
 | `internal/web` | templ templates, HTMX/Tailwind assets, embedded static files, and the i18n catalog. |
 | `internal/database` | Embedded SQL migrations, sqlc-generated query wrappers (`gen/`), and pgx pooling. |
 | `internal/secret` | AES-256-GCM encryption-at-rest for stored secrets (opt-in via `KRILL_SECRET_KEY`). |
-| `internal/backup` | S3/MinIO destinations + scheduled `pg_dump`/restore (cron, retention). |
+| `internal/backup` | S3/MinIO storage + scheduled `pg_dump`/restore (cron, retention, schedule presets). |
 | `internal/volume` | App-volume archive/restore to S3 (pinned busybox sidecar). |
 | `internal/metrics` | Monitoring sampler (local + SSH-tunnelled per-node stats), `metric_samples`/`node_capacity` store, chart bucketing. |
 | `internal/cluster` | SSH join of Swarm worker nodes (`DialVerified`, host-key handling). |
 | `internal/notify` | Telegram notification channels + background health watcher. |
 | `internal/webhook` | Pure HMAC verify / push-payload parse / secret helpers for GitHub auto-deploy. |
+| `internal/topology` | Pure cluster-topology graph builder (nodes/services/DB links, `env_text`-DSN detection) for the Topology page. |
 | `internal/testutil` | Ephemeral Postgres test databases via testcontainers. |
 
 ## Getting started
@@ -370,14 +379,14 @@ Traefik then obtains a Let's Encrypt certificate via the HTTP-01 challenge and s
 
 ## Backups
 
-Managed **Postgres** databases can be backed up to S3-compatible storage (AWS S3 or MinIO).
+Logical **Postgres** databases and app volumes can be backed up to S3-compatible storage (AWS S3 or MinIO), through the same flow for both.
 
-1. On the org, open **Destinations** and add an S3 target (name, endpoint — blank for AWS, a URL for MinIO — bucket, region, access/secret keys). The credentials are validated against the bucket on save.
-2. On a Postgres database's detail page, open the **Backups** section and add a backup: pick a destination, a cron `schedule` (e.g. `0 3 * * *`), a `retention` count (keep the newest N), and an optional key `prefix`.
-3. Backups run on schedule (in-process cron) and on demand via **Backup now**. Each run streams `pg_dump --clean --if-exists` from inside the DB container → gzip → `s3://<bucket>/<prefix>/<app_name>/<timestamp>.sql.gz`, then prunes to the newest N.
-4. **Restore** any stored backup from the list (streams it back through `psql`). Restore **overwrites** the database, so it asks for confirmation. **Download** streams the dump through Krill.
+1. Add S3/MinIO **storage** (name, endpoint — blank for AWS, a URL for MinIO — bucket, region, access/secret keys) from the org's **Storage** page, or inline — the backup section shows an add-storage form right there when the org has none yet, and returns you to where you started.
+2. On a logical database's detail page (or an app's Volumes tab), open the **Backups** section and add a backup: pick the storage, a schedule — **On-demand / Hourly / Daily / Weekly / Monthly / Custom (cron)** — and how many backups to keep. The raw cron field only shows up under **Advanced**, alongside the optional S3 key prefix.
+3. Backups run on schedule (in-process cron) or via **Backup now** at any time — including on-demand backups, which have no automatic schedule at all. Each run streams `pg_dump --clean --if-exists` from inside the instance's container → gzip → `s3://<bucket>/<prefix>/<app_name>/<db_name>/<timestamp>.sql.gz` (volumes: a pinned busybox sidecar tars the volume instead), then prunes to the newest N.
+4. **Restore** any listed file (streams it back through `psql`, or untars it for a volume). Restore **overwrites** the target, so it asks for confirmation. **Download** streams the file through Krill. Pause/Resume toggles a backup's schedule.
 
-Notes: S3 keys are stored in plaintext (like DB passwords); restore requires the database to be running; the local sslip.io setup needs no backups config. Backups need no environment variables — everything is configured in the UI. The full `pg_dump`/restore roundtrip is verified on a real host (it needs a running DB container + reachable S3); the S3 paths and config are covered by tests.
+Notes: this is a UX layer over the same engine as before (same S3/cron transport, same retention) — only the labels and flow changed. S3 keys are stored in plaintext (like DB passwords); restore requires the target to be running; the local sslip.io setup needs no backups config. The full `pg_dump`/restore roundtrip is verified on a real host (it needs a running DB container + reachable S3); the S3 paths and config are covered by tests.
 
 ## Private images (registries)
 
@@ -391,7 +400,7 @@ Notes: credentials are stored plaintext (like other secrets); a single registry 
 
 ## Data model
 
-State is stored in PostgreSQL (28 tables as of migration `000027`), created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`). The core tenancy tables are below; later features added `domains`, `registries`, `git_credentials`, `backups`, `destinations`, `notification_channels`, `metric_samples` + `node_capacity` (monitoring), `app_volumes` + `volume_backups`, `app_db_links`, `app_ports`, and `cluster_nodes` — see [CLAUDE.md §6](CLAUDE.md) for the full list.
+State is stored in PostgreSQL (24 tables as of migration `000030`), created by embedded migrations (`internal/database/migrations/`) and queried via sqlc-generated code (`internal/database/gen/`). The core tenancy tables are below; later features added `domains`, `registries`, `git_credentials`, `backups`, `destinations`, `notification_channels`, `metric_samples` + `node_capacity` (monitoring), `app_volumes` + `volume_backups`, `app_db_links`, `app_ports`, `cluster_nodes`, `db_instances`, and `logical_databases` — see [CLAUDE.md §6](CLAUDE.md) for the full list.
 
 | Table | Notes |
 |-------|-------|
@@ -403,14 +412,14 @@ State is stored in PostgreSQL (28 tables as of migration `000027`), created by e
 | `environments` | Unique `(project_id, slug)`. |
 | `applications` | Image/tag/domain/port/status, `source_type` ∈ {image, dockerfile}, order-preserving `env_text`, advanced container limits, optional `auto_deploy` + `webhook_secret` (Phase 6). |
 | `deployments` | Immutable history; `status` ∈ {running, done, error}, `trigger` ∈ {manual, webhook, schedule}, with logs. |
-| `postgres_dbs` | Managed Postgres service: `app_name` unique, credentials, optional `external_port`, default image `postgres:17`. |
-| `redis_dbs` | Managed Redis service: `app_name` unique, password, optional `external_port`, default image `redis:7`. |
+| `db_instances` | Org-level Postgres/Redis server: `app_name` unique (= Swarm service name = internal DNS host), optional `node_hostname` pin, optional `external_port`. |
+| `logical_databases` | A database + owner user living inside a `db_instances` Postgres server; unique `(instance_id, db_name)` and `(environment_id, name)`. |
 
-**Tenancy chain:** `organizations → projects → environments → applications / postgres_dbs / redis_dbs`. Foreign keys cascade on delete, and every resource handler chain-checks ownership (org → project → environment → resource), returning **404** on any cross-tenant mismatch.
+**Tenancy chain:** `organizations → projects → environments → applications`. `db_instances` hangs directly off `organizations` (org-level, not project/env-scoped); `logical_databases` has two FKs — `instance_id → db_instances` (RESTRICT, can't drop an instance that still holds databases) and `environment_id → environments` (CASCADE). Foreign keys cascade on delete except where noted, and every resource handler chain-checks ownership (org → project → environment → resource), returning **404** on any cross-tenant mismatch.
 
 ## Roadmap & status
 
-Phases 0–7 are complete and E2E-verified, plus **Phase 6 (GitHub auto-deploy)**, the full **deploy-parity** track, **multi-server** clustering, and **cluster-wide monitoring**. The UI is bilingual (English + Russian). See [ROADMAP.md](ROADMAP.md) for the detailed, living tracker.
+Phases 0–7 are complete and E2E-verified, plus **Phase 6 (GitHub auto-deploy)**, the full **deploy-parity** track, **multi-server** clustering, **cluster-wide monitoring**, the managed-database rebuild onto **DB instances + logical databases**, the visual **Topology** page, and the **backup UX simplification**. The UI is bilingual (English + Russian). See [ROADMAP.md](ROADMAP.md) for the detailed, living tracker.
 
 What's left:
 
@@ -422,7 +431,7 @@ What's left:
 
 - [PLAN.md](PLAN.md) — current working plan.
 - [ROADMAP.md](ROADMAP.md) — phase roadmap and status.
-- [`docs/superpowers/specs/`](docs/superpowers/specs/) — per-phase design docs (e.g. [`2026-06-02-krill-phase3-managed-databases-design.md`](docs/superpowers/specs/2026-06-02-krill-phase3-managed-databases-design.md)).
+- [`docs/superpowers/specs/`](docs/superpowers/specs/) — per-phase design docs (e.g. [`2026-06-02-krill-phase3-managed-databases-design.md`](docs/superpowers/specs/2026-06-02-krill-phase3-managed-databases-design.md), [`2026-07-04-krill-topology-graph-design.md`](docs/superpowers/specs/2026-07-04-krill-topology-graph-design.md), [`2026-07-05-krill-backup-ux-simplification-design.md`](docs/superpowers/specs/2026-07-05-krill-backup-ux-simplification-design.md)).
 - [`docs/superpowers/plans/`](docs/superpowers/plans/) — per-phase implementation plans.
 - [CLAUDE.md](CLAUDE.md) — conventions and guidance for contributors and AI agents.
 
