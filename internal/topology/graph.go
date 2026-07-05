@@ -6,7 +6,11 @@
 // into Inputs and marshals the returned Graph to JSON verbatim.
 package topology
 
-import "strconv"
+import (
+	"sort"
+	"strconv"
+	"strings"
+)
 
 // ---- JSON output (the wire contract; json tags are the single source) ----
 
@@ -20,7 +24,7 @@ type GNode struct {
 
 type GService struct {
 	ID     string `json:"id"`     // "app-<appID>" | "db-<instanceID>"
-	Kind   string `json:"kind"`   // "app" | "db"
+	Kind   string `json:"kind"`   // "app" | "db" | "gateway" | "internet"
 	NodeID string `json:"node"`   // FK -> GNode.ID
 	Label  string `json:"label"`  // display name
 	Sub    string `json:"sub"`    // "project / env" (app) or "Postgres"/"Redis" (db)
@@ -36,13 +40,16 @@ type GDB struct {
 }
 
 type GLink struct {
-	From      string `json:"from"`       // app GService.ID ("app-<appID>")
-	ToKind    string `json:"to_kind"`    // "logical" | "instance"
-	ToID      string `json:"to_id"`      // logical db id string | "db-<instanceID>"
-	VarName   string `json:"var"`        // env var name (tooltip)
+	From      string `json:"from"`       // source GService.ID
+	ToKind    string `json:"to_kind"`    // "logical" | "instance" | "service"
+	ToID      string `json:"to_id"`      // logical db id string | service GService.ID ("db-<id>"/"app-<id>"/"gateway")
+	Kind      string `json:"kind"`       // "db" | "ingress"
+	Detected  bool   `json:"detected"`   // db kind: env-detected vs modeled app_db_link
+	Label     string `json:"label"`      // domain (ingress) | aggregated vars (collapsed db)
+	VarName   string `json:"var"`        // env var name (single db link tooltip)
 	Field     string `json:"field"`      // url|password|host|port|user|dbname
 	Engine    string `json:"engine"`     // "postgres" | "redis" (thread color)
-	CrossNode bool   `json:"cross_node"` // app and target on different nodes
+	CrossNode bool   `json:"cross_node"` // db kind only: app and target on different nodes
 }
 
 type Graph struct {
@@ -81,12 +88,130 @@ type DBInput struct {
 }
 
 type LinkInput struct {
-	From    string
+	From     string
+	ToKind   string // "logical" | "instance" | "service"
+	ToID     string
+	Kind     string // "db" (default) | "ingress"
+	Detected bool
+	Label    string
+	VarName  string
+	Field    string
+	Engine   string
+}
+
+// EnvInstance is a DB instance to scan env values for, by its overlay hostname.
+type EnvInstance struct {
+	ServiceID string // "db-<instanceID>"
+	AppName   string // db_instances.app_name = overlay DNS hostname
+	Engine    string // "postgres" | "redis"
+}
+
+// EnvLogical pinpoints a postgres connection to a logical-DB chip.
+type EnvLogical struct {
+	ID              int64
+	InstanceAppName string // owning instance's app_name
+	DbName          string
+}
+
+// DetectedLink is a connection inferred from a raw env value.
+type DetectedLink struct {
 	ToKind  string // "logical" | "instance"
 	ToID    string // logical db id string | "db-<instanceID>"
-	VarName string
-	Field   string
 	Engine  string
+	VarName string // the env var whose value matched
+}
+
+// DetectEnvLinks scans env values for each instance's overlay hostname
+// (<app_name>:5432 for postgres, :6379 for redis). A postgres match whose value
+// also contains "/<db_name>" for a logical DB in that instance targets the
+// logical DB (chip); otherwise the instance. At most one detection per instance;
+// env keys are scanned in sorted order for determinism.
+func DetectEnvLinks(env map[string]string, instances []EnvInstance, logicals []EnvLogical) []DetectedLink {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var out []DetectedLink
+	for _, inst := range instances {
+		port := ":5432"
+		if inst.Engine == "redis" {
+			port = ":6379"
+		}
+		token := inst.AppName + port
+		matchedVar, matchedVal := "", ""
+		for _, k := range keys {
+			if strings.Contains(env[k], token) {
+				matchedVar, matchedVal = k, env[k]
+				break
+			}
+		}
+		if matchedVar == "" {
+			continue
+		}
+		if inst.Engine == "postgres" {
+			logicalID := ""
+			for _, lg := range logicals {
+				if lg.InstanceAppName == inst.AppName && strings.Contains(matchedVal, "/"+lg.DbName) {
+					logicalID = strconv.FormatInt(lg.ID, 10)
+					break
+				}
+			}
+			if logicalID != "" {
+				out = append(out, DetectedLink{ToKind: "logical", ToID: logicalID, Engine: "postgres", VarName: matchedVar})
+				continue
+			}
+		}
+		out = append(out, DetectedLink{ToKind: "instance", ToID: inst.ServiceID, Engine: inst.Engine, VarName: matchedVar})
+	}
+	return out
+}
+
+// MergeLinks collapses db links sharing (From,ToKind,ToID) into one: multiple
+// modeled vars aggregate into Label; a detected link is dropped when a modeled
+// link already covers the same edge; a detected-only edge is kept as detected.
+// It is intended for db links (modeled + detected) — ingress links have unique
+// edges and should bypass it. First-appearance order is preserved.
+func MergeLinks(links []LinkInput) []LinkInput {
+	type group struct {
+		idx     int
+		modeled bool
+		vars    []string
+	}
+	seen := map[string]*group{}
+	var out []LinkInput
+	for _, l := range links {
+		key := l.From + "|" + l.ToKind + "|" + l.ToID
+		g := seen[key]
+		if g == nil {
+			out = append(out, l)
+			ng := &group{idx: len(out) - 1, modeled: !l.Detected}
+			if !l.Detected && l.VarName != "" {
+				ng.vars = append(ng.vars, l.VarName)
+			}
+			seen[key] = ng
+			continue
+		}
+		if !l.Detected {
+			if !g.modeled { // replace a detected placeholder with the modeled link
+				out[g.idx] = l
+				g.modeled = true
+				g.vars = nil
+			}
+			if l.VarName != "" {
+				g.vars = append(g.vars, l.VarName)
+			}
+		}
+		// a detected duplicate of an existing edge is dropped
+	}
+	for _, g := range seen {
+		if g.modeled && len(g.vars) > 1 {
+			out[g.idx].Label = strings.Join(g.vars, ", ")
+			out[g.idx].VarName = ""
+		}
+	}
+	return out
 }
 
 // Task is one running-or-not task used by ResolveNodes.
@@ -147,7 +272,7 @@ func Build(in Inputs) Graph {
 	for _, l := range in.Links {
 		fromNode, ok := svcNode[l.From]
 		if !ok {
-			continue // source app not in this org's set
+			continue // source not in this org's set
 		}
 		var toNode string
 		switch l.ToKind {
@@ -157,17 +282,24 @@ func Build(in Inputs) Graph {
 				continue // dangling logical db
 			}
 			toNode = dbNode[id]
-		case "instance":
+		case "instance", "service":
 			n, ok := svcNode[l.ToID]
 			if !ok {
-				continue // dangling instance
+				continue // dangling target service
 			}
 			toNode = n
 		default:
 			continue
 		}
-		cross := fromNode != "" && toNode != "" && fromNode != toNode
-		g.Links = append(g.Links, GLink{From: l.From, ToKind: l.ToKind, ToID: l.ToID, VarName: l.VarName, Field: l.Field, Engine: l.Engine, CrossNode: cross})
+		kind := l.Kind
+		if kind == "" {
+			kind = "db"
+		}
+		cross := kind == "db" && fromNode != "" && toNode != "" && fromNode != toNode
+		g.Links = append(g.Links, GLink{
+			From: l.From, ToKind: l.ToKind, ToID: l.ToID, Kind: kind, Detected: l.Detected,
+			Label: l.Label, VarName: l.VarName, Field: l.Field, Engine: l.Engine, CrossNode: cross,
+		})
 	}
 	return g
 }
