@@ -252,3 +252,70 @@ func TestTopologyDataDetectedEnvLink(t *testing.T) {
 		t.Errorf("detected env link app->logical readeck missing/incorrect, got %+v", det)
 	}
 }
+
+func TestTopologyDataNonExposedNoIngress(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-ne-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "internal", Image: "nginx", Tag: "alpine",
+		Domain: "int.example.com", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: app.ID, Host: "int.example.com", Tls: false, IsPrimary: true, Exposed: false, Paths: ""}); err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+	cookie := loginAs(t, q, "topo-ne-owner@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	var g topology.Graph
+	json.Unmarshal(rec.Body.Bytes(), &g)
+	for _, l := range g.Links {
+		if l.Kind == "ingress" && l.ToID == "app-"+i64(app.ID) {
+			t.Errorf("non-exposed app must have no ingress edge, got %+v", l)
+		}
+	}
+}
+
+func TestTopologyDataMultiDomainOneEdge(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-md-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "a.example.com", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	for _, host := range []string{"a.example.com", "b.example.com"} {
+		if _, err := q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: app.ID, Host: host, Tls: true, IsPrimary: host == "a.example.com", Exposed: true, Paths: ""}); err != nil {
+			t.Fatalf("create domain %s: %v", host, err)
+		}
+	}
+	cookie := loginAs(t, q, "topo-md-owner@k.local")
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	var g topology.Graph
+	json.Unmarshal(rec.Body.Bytes(), &g)
+	n := 0
+	var lbl string
+	for _, l := range g.Links {
+		if l.Kind == "ingress" && l.ToID == "app-"+i64(app.ID) {
+			n++
+			lbl = l.Label
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly 1 ingress edge for a 2-domain app, got %d", n)
+	}
+	if !strings.Contains(lbl, "a.example.com") || !strings.Contains(lbl, "b.example.com") {
+		t.Errorf("aggregated label must list both domains, got %q", lbl)
+	}
+}

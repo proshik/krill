@@ -68,6 +68,17 @@ func TestDetectEnvLinksLogical(t *testing.T) {
 	}
 }
 
+func TestDetectEnvLinksLogicalBoundary(t *testing.T) {
+	env := map[string]string{"DSN": "postgres://u:p@krill-postgres-pg1-x:5432/readeck?sslmode=disable"}
+	insts := []EnvInstance{{ServiceID: "db-1", AppName: "krill-postgres-pg1-x", Engine: "postgres"}}
+	// "read" is a prefix of "readeck" — must NOT be chosen; readeck must win regardless of slice order.
+	logs := []EnvLogical{{ID: 5, InstanceAppName: "krill-postgres-pg1-x", DbName: "read"}, {ID: 9, InstanceAppName: "krill-postgres-pg1-x", DbName: "readeck"}}
+	got := DetectEnvLinks(env, insts, logs)
+	if len(got) != 1 || got[0].ToKind != "logical" || got[0].ToID != "9" {
+		t.Fatalf("want logical db 9 (readeck), got %+v", got)
+	}
+}
+
 func TestDetectEnvLinksInstanceAndRedisAndMiss(t *testing.T) {
 	insts := []EnvInstance{
 		{ServiceID: "db-1", AppName: "krill-postgres-pg1-x", Engine: "postgres"},

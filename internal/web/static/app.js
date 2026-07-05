@@ -359,7 +359,10 @@ function mountTopology(el) {
       const path = mk("path", { d: d, class: cls, "marker-end": "url(#k-topo-arrow)", "data-from": l.from, "data-to": toKey });
       let tip;
       if (l.kind === "ingress") tip = l.label || "";
-      else tip = (l.label || (l.var + " → " + l.field)) + (l.detected ? " (env)" : "") + (l.cross_node ? " (" + I18N.cross + ")" : "");
+      else {
+        const base = l.label || (l.field ? l.var + " → " + l.field : l.var);
+        tip = base + (l.detected ? " (env)" : "") + (l.cross_node ? " (" + I18N.cross + ")" : "");
+      }
       path.appendChild(mk("title", {}, tip));
       linkEls.push(path);
       svg.appendChild(path);

@@ -176,11 +176,14 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		if err != nil {
 			return topology.Graph{}, fmt.Errorf("topology: list domains failed: %w", err)
 		}
+		var hosts []string
 		for _, d := range doms {
-			if !d.Exposed {
-				continue
+			if d.Exposed {
+				hosts = append(hosts, d.Host)
 			}
-			ingressLinks = append(ingressLinks, topology.LinkInput{From: "gateway", ToKind: "service", ToID: sid, Kind: "ingress", Label: d.Host})
+		}
+		if len(hosts) > 0 {
+			ingressLinks = append(ingressLinks, topology.LinkInput{From: "gateway", ToKind: "service", ToID: sid, Kind: "ingress", Label: strings.Join(hosts, ", ")})
 		}
 	}
 

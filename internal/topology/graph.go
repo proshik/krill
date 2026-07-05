@@ -121,6 +121,27 @@ type DetectedLink struct {
 	VarName string // the env var whose value matched
 }
 
+// dsnHasDB reports whether val contains a "/<dbname>" path segment terminated by
+// end-of-string or a non-identifier char (so "/readeck" does not match dbname "read").
+func dsnHasDB(val, dbname string) bool {
+	needle := "/" + dbname
+	for i := 0; ; {
+		j := strings.Index(val[i:], needle)
+		if j < 0 {
+			return false
+		}
+		end := i + j + len(needle)
+		if end == len(val) || !isDBNameChar(val[end]) {
+			return true
+		}
+		i += j + 1
+	}
+}
+
+func isDBNameChar(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
 // DetectEnvLinks scans env values for each instance's overlay hostname
 // (<app_name>:5432 for postgres, :6379 for redis). A postgres match whose value
 // also contains "/<db_name>" for a logical DB in that instance targets the
@@ -153,7 +174,7 @@ func DetectEnvLinks(env map[string]string, instances []EnvInstance, logicals []E
 		if inst.Engine == "postgres" {
 			logicalID := ""
 			for _, lg := range logicals {
-				if lg.InstanceAppName == inst.AppName && strings.Contains(matchedVal, "/"+lg.DbName) {
+				if lg.InstanceAppName == inst.AppName && dsnHasDB(matchedVal, lg.DbName) {
 					logicalID = strconv.FormatInt(lg.ID, 10)
 					break
 				}
@@ -194,6 +215,7 @@ func MergeLinks(links []LinkInput) []LinkInput {
 			continue
 		}
 		if !l.Detected {
+			// defensive: adapters append modeled before detected, so this rarely runs
 			if !g.modeled { // replace a detected placeholder with the modeled link
 				out[g.idx] = l
 				g.modeled = true
