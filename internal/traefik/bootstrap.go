@@ -12,6 +12,9 @@ import (
 // rejects them ("client version 1.24 is too old"), so routers are not built.
 const TraefikVersion = "v3.6.1"
 
+// ServiceName is the fixed Swarm service name of the Traefik ingress proxy.
+const ServiceName = "krill-traefik"
+
 // AcmeConfig holds the Let's Encrypt settings for the Traefik resolver.
 type AcmeConfig struct {
 	Email   string
@@ -36,7 +39,7 @@ func TraefikSpec(network string, acme AcmeConfig) docker.ServiceSpec {
 		args = append(args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory")
 	}
 	return docker.ServiceSpec{
-		Name:     "krill-traefik",
+		Name:     ServiceName,
 		Image:    "traefik:" + TraefikVersion,
 		Replicas: 1,
 		Network:  network,
