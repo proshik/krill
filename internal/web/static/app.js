@@ -267,7 +267,8 @@ function mountTopology(el) {
 
   function draw() {
     canvas.innerHTML = "";
-    if (!data || !(data.services || []).length) {
+    const realSvcs = (data && data.services || []).filter((s) => s.kind === "app" || s.kind === "db");
+    if (!realSvcs.length) {
       const p = document.createElement("p");
       p.className = "k-muted";
       p.style.padding = "1rem";
@@ -279,7 +280,7 @@ function mountTopology(el) {
       BOX_H = 46, BOX_GAP = 12, CHIP_H = 20, CHIP_GAP = 4, BOX_W = LANE_W - PAD * 2;
 
     // Order lanes: control-plane/manager first, workers by name, unplaced last.
-    const rank = (n) => (n.id === "unplaced" ? 2 : (n.leader || n.role === "manager") ? 0 : 1);
+    const rank = (n) => (n.id === "ingress" ? -1 : n.id === "unplaced" ? 2 : (n.leader || n.role === "manager") ? 0 : 1);
     const nodes = (data.nodes || []).slice().sort((a, b) => {
       const r = rank(a) - rank(b);
       return r !== 0 ? r : (a.name || "").localeCompare(b.name || "");
@@ -323,6 +324,12 @@ function mountTopology(el) {
     const totalH = Math.max(maxH + PAD, 160);
     const svg = mk("svg", { width: totalW, height: totalH, viewBox: `0 0 ${totalW} ${totalH}`, class: "k-topo-svg" });
 
+    const defs = mk("defs", {});
+    const marker = mk("marker", { id: "k-topo-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" });
+    marker.appendChild(mk("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "k-topo-arrowhead" }));
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
     // Lanes.
     for (const n of nodes) {
       svg.appendChild(mk("rect", { x: n.__x, y: 0, width: LANE_W, height: totalH, rx: 10, class: "k-topo-lane" }));
@@ -330,7 +337,7 @@ function mountTopology(el) {
       if (n.role) svg.appendChild(mk("text", { x: n.__x + LANE_W - PAD, y: 22, "text-anchor": "end", class: "k-topo-lanerole" }, n.role));
     }
 
-    // Links (under boxes).
+    // Links (under boxes). Directed: arrowhead at the `to` end.
     const linkEls = [];
     for (const l of (data.links || [])) {
       const from = anchor[l.from];
@@ -343,12 +350,23 @@ function mountTopology(el) {
       const c1 = a.x + (b.x >= a.x ? dx : -dx);
       const c2 = b.x + (b.x >= a.x ? -dx : dx);
       const d = `M ${a.x} ${a.y} C ${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
-      const cls = "k-topo-link k-topo-link-" + (l.engine || "postgres") + (l.cross_node ? " k-topo-cross" : "");
+      let cls = "k-topo-link";
+      if (l.kind === "ingress") cls += " k-topo-link-ingress";
+      else cls += " k-topo-link-" + (l.engine || "postgres");
+      if (l.detected) cls += " k-topo-link-detected";
+      if (l.cross_node) cls += " k-topo-cross";
       const toKey = l.to_kind === "logical" ? "L" + l.to_id : l.to_id;
-      const path = mk("path", { d: d, class: cls, "data-from": l.from, "data-to": toKey });
-      path.appendChild(mk("title", {}, l.var + " → " + l.field + (l.cross_node ? " (" + I18N.cross + ")" : "")));
+      const path = mk("path", { d: d, class: cls, "marker-end": "url(#k-topo-arrow)", "data-from": l.from, "data-to": toKey });
+      let tip;
+      if (l.kind === "ingress") tip = l.label || "";
+      else tip = (l.label || (l.var + " → " + l.field)) + (l.detected ? " (env)" : "") + (l.cross_node ? " (" + I18N.cross + ")" : "");
+      path.appendChild(mk("title", {}, tip));
       linkEls.push(path);
       svg.appendChild(path);
+      // domain label on ingress edges (gateway -> app)
+      if (l.kind === "ingress" && l.label) {
+        svg.appendChild(mk("text", { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4, "text-anchor": "middle", class: "k-topo-edgelabel" }, l.label));
+      }
     }
 
     function focusOn(key) {
