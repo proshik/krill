@@ -269,6 +269,15 @@
   .k-topo-cross { stroke-width:2.5; stroke-dasharray:5 4; }
   .k-topo-focused .k-topo-link { opacity:.1; }
   .k-topo-link.k-topo-lit { opacity:1; }
+
+  /* topology v2: ingress, direction, detected */
+  .k-topo-link-ingress { stroke:var(--color-faint); }
+  .k-topo-link-detected { stroke-width:1; opacity:.4; stroke-dasharray:2 3; }
+  .k-topo-gateway .k-topo-box { stroke:var(--color-warn); }
+  .k-topo-internet .k-topo-box { stroke:var(--color-faint); fill:var(--color-surface-2); }
+  .k-topo-arrowhead { fill:var(--color-faint); }
+  .k-topo-edgelabel { fill:var(--color-muted); font-size:9px; }
+  .k-topo-sw-arrow { display:inline-block; margin-right:6px; color:var(--color-faint); font-family:var(--font-mono); }
 }
 
 @keyframes k-toast-in { from { opacity:0; transform:translateX(8px); } to { opacity:1; transform:translateX(0); } }

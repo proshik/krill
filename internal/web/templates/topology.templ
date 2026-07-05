@@ -14,7 +14,10 @@ templ Topology(org db.Organization, role string) {
 			<div class="k-topo-legend">
 				<span><span class="k-topo-sw" style="border-top-color:var(--color-postgres)"></span>{ i18n.T(ctx, "topo.legend.postgres") }</span>
 				<span><span class="k-topo-sw" style="border-top-color:var(--color-redis)"></span>{ i18n.T(ctx, "topo.legend.redis") }</span>
+				<span><span class="k-topo-sw" style="border-top-color:var(--color-faint)"></span>{ i18n.T(ctx, "topo.legend.ingress") }</span>
 				<span><span class="k-topo-sw k-topo-sw-dash" style="border-top-color:var(--color-muted)"></span>{ i18n.T(ctx, "topo.legend.crossnode") }</span>
+				<span><span class="k-topo-sw k-topo-sw-dash" style="border-top-color:var(--color-faint)"></span>{ i18n.T(ctx, "topo.legend.detected") }</span>
+				<span><span class="k-topo-sw-arrow">→</span>{ i18n.T(ctx, "topo.legend.direction") }</span>
 			</div>
 		</div>
 		<div id="topo" class="k-topo" data-url={ "/orgs/" + itoa(org.ID) + "/topology/data" } data-i18n-empty={ i18n.T(ctx, "topo.empty") } data-i18n-crossnode={ i18n.T(ctx, "topo.crossnode") }>
