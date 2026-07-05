@@ -337,8 +337,45 @@ function mountTopology(el) {
       if (n.role) svg.appendChild(mk("text", { x: n.__x + LANE_W - PAD, y: 22, "text-anchor": "end", class: "k-topo-lanerole" }, n.role));
     }
 
-    // Links (under boxes). Directed: arrowhead at the `to` end.
+    // Boxes/chips are drawn first; links and their domain labels layer ABOVE
+    // them, so a cross-lane link (or its label) is never hidden behind an
+    // intervening box.
     const linkEls = [];
+    function focusOn(key) {
+      svg.classList.add("k-topo-focused");
+      for (const p of linkEls) {
+        const on = p.getAttribute("data-from") === key || p.getAttribute("data-to") === key;
+        p.classList.toggle("k-topo-lit", on);
+      }
+    }
+    function focusOff() {
+      svg.classList.remove("k-topo-focused");
+      for (const p of linkEls) p.classList.remove("k-topo-lit");
+    }
+
+    // Service boxes + chips (chips are siblings, not nested, so hover is independent).
+    for (const n of nodes) {
+      for (const s of (byNode[n.id] || [])) {
+        const g = mk("g", { class: "k-topo-svc k-topo-" + s.kind + (s.status && s.status !== "running" ? " k-topo-off" : ""), "data-id": s.id });
+        g.appendChild(mk("rect", { x: s.__x, y: s.__y, width: s.__w, height: BOX_H, rx: 8, class: "k-topo-box" }));
+        g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 20, class: "k-topo-name" }, s.label));
+        if (s.sub) g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 36, class: "k-topo-sub" }, s.sub));
+        g.addEventListener("mouseenter", () => focusOn(s.id));
+        g.addEventListener("mouseleave", focusOff);
+        svg.appendChild(g);
+        for (const d of (dbsByInst[s.id] || [])) {
+          const cg = mk("g", { class: "k-topo-chip", "data-id": "L" + d.id });
+          cg.appendChild(mk("rect", { x: d.__x, y: d.__y, width: d.__w, height: CHIP_H, rx: 5, class: "k-topo-chipbox" }));
+          cg.appendChild(mk("text", { x: d.__x + 8, y: d.__y + 14, class: "k-topo-chiptext" }, d.name + (d.env ? " · " + d.env : "")));
+          cg.addEventListener("mouseenter", () => focusOn("L" + d.id));
+          cg.addEventListener("mouseleave", focusOff);
+          svg.appendChild(cg);
+        }
+      }
+    }
+
+    // Links above the boxes. Directed: arrowhead at the `to` end.
+    const edgeLabels = [];
     for (const l of (data.links || [])) {
       const from = anchor[l.from];
       const to = l.to_kind === "logical" ? anchor["L" + l.to_id] : anchor[l.to_id];
@@ -366,44 +403,14 @@ function mountTopology(el) {
       path.appendChild(mk("title", {}, tip));
       linkEls.push(path);
       svg.appendChild(path);
-      // domain label on ingress edges (gateway -> app)
       if (l.kind === "ingress" && l.label) {
-        svg.appendChild(mk("text", { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4, "text-anchor": "middle", class: "k-topo-edgelabel" }, l.label));
+        edgeLabels.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4, t: l.label });
       }
     }
 
-    function focusOn(key) {
-      svg.classList.add("k-topo-focused");
-      for (const p of linkEls) {
-        const on = p.getAttribute("data-from") === key || p.getAttribute("data-to") === key;
-        p.classList.toggle("k-topo-lit", on);
-      }
-    }
-    function focusOff() {
-      svg.classList.remove("k-topo-focused");
-      for (const p of linkEls) p.classList.remove("k-topo-lit");
-    }
-
-    // Service boxes + chips (on top; chips are siblings, not nested, so hover
-    // is independent).
-    for (const n of nodes) {
-      for (const s of (byNode[n.id] || [])) {
-        const g = mk("g", { class: "k-topo-svc k-topo-" + s.kind + (s.status && s.status !== "running" ? " k-topo-off" : ""), "data-id": s.id });
-        g.appendChild(mk("rect", { x: s.__x, y: s.__y, width: s.__w, height: BOX_H, rx: 8, class: "k-topo-box" }));
-        g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 20, class: "k-topo-name" }, s.label));
-        if (s.sub) g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 36, class: "k-topo-sub" }, s.sub));
-        g.addEventListener("mouseenter", () => focusOn(s.id));
-        g.addEventListener("mouseleave", focusOff);
-        svg.appendChild(g);
-        for (const d of (dbsByInst[s.id] || [])) {
-          const cg = mk("g", { class: "k-topo-chip", "data-id": "L" + d.id });
-          cg.appendChild(mk("rect", { x: d.__x, y: d.__y, width: d.__w, height: CHIP_H, rx: 5, class: "k-topo-chipbox" }));
-          cg.appendChild(mk("text", { x: d.__x + 8, y: d.__y + 14, class: "k-topo-chiptext" }, d.name + (d.env ? " · " + d.env : "")));
-          cg.addEventListener("mouseenter", () => focusOn("L" + d.id));
-          cg.addEventListener("mouseleave", focusOff);
-          svg.appendChild(cg);
-        }
-      }
+    // Domain labels on the very top; the CSS halo keeps them readable over anything.
+    for (const el2 of edgeLabels) {
+      svg.appendChild(mk("text", { x: el2.x, y: el2.y, "text-anchor": "middle", class: "k-topo-edgelabel" }, el2.t));
     }
 
     canvas.appendChild(svg);

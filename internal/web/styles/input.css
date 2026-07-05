@@ -276,7 +276,7 @@
   .k-topo-gateway .k-topo-box { stroke:var(--color-warn); }
   .k-topo-internet .k-topo-box { stroke:var(--color-faint); fill:var(--color-surface-2); }
   .k-topo-arrowhead { fill:var(--color-faint); }
-  .k-topo-edgelabel { fill:var(--color-muted); font-size:9px; }
+  .k-topo-edgelabel { fill:var(--color-fg); font-size:9px; paint-order:stroke; stroke:var(--color-bg); stroke-width:3px; stroke-linejoin:round; }
   .k-topo-sw-arrow { display:inline-block; margin-right:6px; color:var(--color-faint); font-family:var(--font-mono); }
 }
 
