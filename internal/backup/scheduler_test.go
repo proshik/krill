@@ -29,3 +29,18 @@ func TestSchedulerReload(t *testing.T) {
 		t.Fatalf("entries = %d, want 2 (bad cron skipped)", n)
 	}
 }
+
+func TestSchedulerSkipsEmptySchedule(t *testing.T) {
+	st := &fakeSchedStore{backups: []SchedBackup{
+		{ID: 1, Schedule: "0 3 * * *"}, // scheduled
+		{ID: 2, Schedule: ""},          // on-demand: must be skipped
+	}}
+	s := NewScheduler(st, func(context.Context, int64) {})
+	if err := s.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	defer s.Stop()
+	if n := s.entryCount(); n != 1 {
+		t.Fatalf("want 1 cron entry (empty schedule skipped), got %d", n)
+	}
+}
