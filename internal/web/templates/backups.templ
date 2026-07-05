@@ -23,7 +23,7 @@ templ BackupObjects(base string, backupID int64, objs []backup.Object) {
 							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
 							<td>
 								<a class="k-btn" href={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/download?key=" + o.Key) }>{ i18n.T(ctx, "backup.download") }</a>
-								<form method="post" hx-boost="false" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } data-confirm={ i18n.T(ctx, "backup.restore_warn") } data-busy={ i18n.T(ctx, "backup.restoring") } onsubmit="return krillConfirm(this, this.dataset.confirm)" style="display:inline">
+								<form method="post" hx-boost="false" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } data-confirm={ i18n.T(ctx, "backup.restore_warn") } onsubmit="return krillConfirm(this, this.dataset.confirm)" style="display:inline">
 									<input type="hidden" name="key" value={ o.Key }/>
 									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.restore") }</button>
 								</form>

@@ -522,7 +522,6 @@ var en = map[string]string{
 	"backup.col.size":                    "Size",
 	"backup.col.date":                    "Date",
 	"backup.running":                     "Running…",
-	"backup.restoring":                   "Restoring…",
 	"dest.endpoint_hint":                 "Blank for AWS S3; a URL for MinIO.",
 	"flash.err.invalid_schedule":         "invalid schedule (cron)",
 	"notif.title":                        "Notifications",

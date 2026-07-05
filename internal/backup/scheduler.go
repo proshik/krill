@@ -34,7 +34,7 @@ func NewScheduler(store SchedStore, run RunFunc) *Scheduler {
 	return &Scheduler{store: store, run: run}
 }
 
-// Reload rebuilds the schedule from enabled backups; invalid cron exprs are skipped.
+// Reload rebuilds the schedule from enabled backups; empty (on-demand) schedules and invalid cron exprs are skipped.
 func (s *Scheduler) Reload() error {
 	bs, err := s.store.ListEnabledBackups(context.Background())
 	if err != nil {

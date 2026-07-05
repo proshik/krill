@@ -522,7 +522,6 @@ var ru = map[string]string{
 	"backup.col.size":                    "Размер",
 	"backup.col.date":                    "Дата",
 	"backup.running":                     "Выполняется…",
-	"backup.restoring":                   "Восстановление…",
 	"dest.endpoint_hint":                 "Пусто для AWS S3; URL для MinIO.",
 	"flash.err.invalid_schedule":         "неверное расписание (cron)",
 	"notif.title":                        "Уведомления",
