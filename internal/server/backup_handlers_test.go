@@ -65,7 +65,7 @@ func TestAddBackupSucceeds(t *testing.T) {
 	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
 
 	base := backupsBase(o.ID, projID, envID, ldbID)
-	form := url.Values{"destination_id": {i64(destID)}, "schedule": {"0 3 * * *"}, "retention": {"7"}, "prefix": {"daily"}}
+	form := url.Values{"destination_id": {i64(destID)}, "schedule_preset": {"custom"}, "schedule_custom": {"0 3 * * *"}, "retention": {"7"}, "prefix": {"daily"}}
 	rec := postForm(t, h, base, cookie, form)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("add backup want 303, got %d (%s)", rec.Code, rec.Body.String())

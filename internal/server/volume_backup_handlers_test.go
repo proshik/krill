@@ -65,7 +65,7 @@ func TestAddVolumeBackupHappyPath(t *testing.T) {
 	o, appID, volID, destID, cookie := volumeBackupFixture(t, q, orgSvc)
 
 	base := appBase(o.ID, appID, q)
-	form := url.Values{"destination_id": {i64(destID)}, "schedule": {"0 3 * * *"}, "retention": {"7"}, "prefix": {"daily"}}
+	form := url.Values{"destination_id": {i64(destID)}, "schedule_preset": {"custom"}, "schedule_custom": {"0 3 * * *"}, "retention": {"7"}, "prefix": {"daily"}}
 	rec := postForm(t, h, base+"/volumes/"+i64(volID)+"/backups", cookie, form)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("add volume backup want 303, got %d (%s)", rec.Code, rec.Body.String())

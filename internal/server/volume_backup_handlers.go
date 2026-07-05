@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -56,9 +57,9 @@ func (s *Server) addVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_destination")
 		return
 	}
-	schedule := strings.TrimSpace(r.FormValue("schedule"))
-	if schedule == "" {
-		s.flashErrT(w, r, "flash.err.schedule_required")
+	schedule, serr := backup.CronForPreset(strings.TrimSpace(r.FormValue("schedule_preset")), strings.TrimSpace(r.FormValue("schedule_custom")))
+	if serr != nil {
+		s.flashErrT(w, r, "flash.err.invalid_schedule")
 		return
 	}
 	retention, err := strconv.Atoi(strings.TrimSpace(r.FormValue("retention")))

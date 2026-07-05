@@ -86,6 +86,10 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("destination created", "org_id", o.ID, "destination_id", d.ID, "name", d.Name, "bucket", d.Bucket, "endpoint", d.Endpoint)
 	s.flashOK(w, r, "flash.ok.dest_created")
+	if back := safeReturnPath(r, r.FormValue("return")); back != "" {
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/destinations", http.StatusSeeOther)
 }
 
