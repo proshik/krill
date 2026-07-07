@@ -65,7 +65,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad payload", http.StatusBadRequest)
 		return
 	}
-	if ev.Deleted || ev.Branch() != a.GitBranch {
+	if a.GitBranch == "" || ev.Deleted || ev.Branch() != a.GitBranch {
 		logFrom(r).Info("github webhook skipped", "app_id", a.ID, "ref", ev.Ref, "want_branch", a.GitBranch)
 		w.WriteHeader(http.StatusOK)
 		return

@@ -532,6 +532,9 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	if c.App.SourceType == "dockerfile" {
 		gitURL := strings.TrimSpace(r.FormValue("git_url"))
 		gitBranch := strings.TrimSpace(r.FormValue("git_branch"))
+		if gitBranch == "" {
+			gitBranch = c.App.GitBranch // don't clear a configured branch
+		}
 		dockerfilePath := strings.TrimSpace(r.FormValue("dockerfile_path"))
 		if gitURL != "" {
 			if err := s.q.UpdateApplicationSource(r.Context(), db.UpdateApplicationSourceParams{
