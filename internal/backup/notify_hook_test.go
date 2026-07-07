@@ -37,7 +37,7 @@ func (f *fakeBackupNotifier) BackupFailed(_ context.Context, id int64, _ string)
 
 func TestBackupFailureNotifies(t *testing.T) {
 	st := &hookStore{}
-	svc := New(nil, st)
+	svc := New(nil, st, false)
 	fn := &fakeBackupNotifier{}
 	svc.SetNotifier(fn)
 

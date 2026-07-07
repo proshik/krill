@@ -37,15 +37,16 @@ type Notifier interface {
 }
 
 type VolumeService struct {
-	eng      VolEngine
-	store    VolumeStore
-	notifier Notifier
-	mu       sync.Mutex
-	inFlight map[int64]bool
+	eng          VolEngine
+	store        VolumeStore
+	notifier     Notifier
+	allowPrivate bool // KRILL_ALLOW_PRIVATE_EGRESS: disables the SSRF egress guard on S3 traffic
+	mu           sync.Mutex
+	inFlight     map[int64]bool
 }
 
-func New(eng VolEngine, store VolumeStore) *VolumeService {
-	return &VolumeService{eng: eng, store: store, inFlight: map[int64]bool{}}
+func New(eng VolEngine, store VolumeStore, allowPrivate bool) *VolumeService {
+	return &VolumeService{eng: eng, store: store, allowPrivate: allowPrivate, inFlight: map[int64]bool{}}
 }
 
 func (s *VolumeService) SetNotifier(n Notifier) { s.notifier = n }
@@ -115,13 +116,13 @@ func (s *VolumeService) RunVolumeBackup(ctx context.Context, volBackupID int64, 
 		}
 		pw.Close()
 	}()
-	if uerr := backup.Upload(ctx, dst, key, pr); uerr != nil {
+	if uerr := backup.Upload(ctx, dst, key, pr, s.allowPrivate); uerr != nil {
 		pr.CloseWithError(uerr)
 		return s.fail(ctx, volBackupID, now, uerr)
 	}
-	if objs, lerr := backup.List(ctx, dst, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName))); lerr == nil {
+	if objs, lerr := backup.List(ctx, dst, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName)), s.allowPrivate); lerr == nil {
 		for _, o := range objectsToDelete(objs, b.Retention) {
-			if derr := backup.Delete(ctx, dst, o.Key); derr != nil {
+			if derr := backup.Delete(ctx, dst, o.Key, s.allowPrivate); derr != nil {
 				slog.Warn("volume backup retention delete failed", "key", o.Key, "err", derr)
 			}
 		}
@@ -144,7 +145,7 @@ func (s *VolumeService) ListObjects(ctx context.Context, volBackupID int64) ([]b
 	if err != nil {
 		return nil, err
 	}
-	return backup.List(ctx, dst, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName)))
+	return backup.List(ctx, dst, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName)), s.allowPrivate)
 }
 
 func (s *VolumeService) OpenObject(ctx context.Context, volBackupID int64, key string) (io.ReadCloser, error) {
@@ -155,7 +156,7 @@ func (s *VolumeService) OpenObject(ctx context.Context, volBackupID int64, key s
 	if !strings.HasPrefix(key, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName))) {
 		return nil, ErrKeyOutsideVolumeBackup
 	}
-	return backup.Download(ctx, dst, key)
+	return backup.Download(ctx, dst, key, s.allowPrivate)
 }
 
 func (s *VolumeService) RestoreByID(ctx context.Context, volBackupID int64, key string) error {
@@ -224,7 +225,7 @@ func (s *VolumeService) Restore(ctx context.Context, dst backup.Destination, t V
 		}
 	}
 
-	rc, err := backup.Download(ctx, dst, key)
+	rc, err := backup.Download(ctx, dst, key, s.allowPrivate)
 	if err != nil {
 		return err
 	}

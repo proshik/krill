@@ -38,7 +38,7 @@ func volumeBackupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0
 
 	minio := testutil.NewMinio(t)
 	dst := backup.Destination{Endpoint: minio.Endpoint, Bucket: "test", Region: minio.Region, AccessKey: minio.AccessKey, SecretKey: minio.SecretKey}
-	if err := backup.CreateBucket(ctx, dst); err != nil {
+	if err := backup.CreateBucket(ctx, dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 	d, err := q.CreateDestination(ctx, db.CreateDestinationParams{

@@ -512,7 +512,7 @@ func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := docker.RegistryRepo(reg.RegistryUrl, c.App.Image)
-	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, secret.Dec(reg.Password), repo)
+	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, secret.Dec(reg.Password), repo, s.cfg.AllowPrivateEgress)
 	if err != nil {
 		logFrom(r).Info("appTags: list tags failed", "err", err, "app_id", c.App.ID, "image", c.App.Image)
 		// Return 200 with a visible message: htmx does not swap on 4xx/5xx, so the

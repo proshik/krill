@@ -38,7 +38,7 @@ func TestDeploymentsListShowsRows(t *testing.T) {
 
 	authSvc := auth.NewService(q)
 	tok, _ := authSvc.Authenticate(ctx, "o@k", "pw")
-	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	h := server.New(cfg, authSvc, orgSvc, q, nil, nil, deploy.NewLogHub(), dbservice.New(nil, dbservice.NewDBStore(q), deploy.NewLogHub(), "krill-net")).Router()
 
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)

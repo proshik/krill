@@ -10,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/proshik/krill/internal/netguard"
 )
 
 // Destination is the S3 target (mapped from the destinations row).
@@ -28,10 +30,15 @@ type Object struct {
 	LastModified time.Time
 }
 
-func clientFor(ctx context.Context, d Destination) (*s3.Client, error) {
+// clientFor builds an S3 client whose HTTP transport enforces the SSRF egress
+// guard (internal/netguard): with allowPrivate=false, connections to
+// private/loopback/link-local destinations (including a spoofed Endpoint) are
+// refused.
+func clientFor(ctx context.Context, d Destination, allowPrivate bool) (*s3.Client, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion(d.Region),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(d.AccessKey, d.SecretKey, "")),
+		awsconfig.WithHTTPClient(netguard.HTTPClient(allowPrivate)),
 	)
 	if err != nil {
 		return nil, err
@@ -45,8 +52,8 @@ func clientFor(ctx context.Context, d Destination) (*s3.Client, error) {
 }
 
 // CheckAccess verifies credentials + bucket via HeadBucket.
-func CheckAccess(ctx context.Context, d Destination) error {
-	cl, err := clientFor(ctx, d)
+func CheckAccess(ctx context.Context, d Destination, allowPrivate bool) error {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return err
 	}
@@ -55,8 +62,8 @@ func CheckAccess(ctx context.Context, d Destination) error {
 }
 
 // CreateBucket creates the bucket (used in tests / first-time setup).
-func CreateBucket(ctx context.Context, d Destination) error {
-	cl, err := clientFor(ctx, d)
+func CreateBucket(ctx context.Context, d Destination, allowPrivate bool) error {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return err
 	}
@@ -64,8 +71,8 @@ func CreateBucket(ctx context.Context, d Destination) error {
 	return err
 }
 
-func Upload(ctx context.Context, d Destination, key string, r io.Reader) error {
-	cl, err := clientFor(ctx, d)
+func Upload(ctx context.Context, d Destination, key string, r io.Reader, allowPrivate bool) error {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return err
 	}
@@ -73,8 +80,8 @@ func Upload(ctx context.Context, d Destination, key string, r io.Reader) error {
 	return err
 }
 
-func List(ctx context.Context, d Destination, prefix string) ([]Object, error) {
-	cl, err := clientFor(ctx, d)
+func List(ctx context.Context, d Destination, prefix string, allowPrivate bool) ([]Object, error) {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +107,8 @@ func List(ctx context.Context, d Destination, prefix string) ([]Object, error) {
 	return out, nil
 }
 
-func Download(ctx context.Context, d Destination, key string) (io.ReadCloser, error) {
-	cl, err := clientFor(ctx, d)
+func Download(ctx context.Context, d Destination, key string, allowPrivate bool) (io.ReadCloser, error) {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return nil, err
 	}
@@ -112,8 +119,8 @@ func Download(ctx context.Context, d Destination, key string) (io.ReadCloser, er
 	return o.Body, nil
 }
 
-func Delete(ctx context.Context, d Destination, key string) error {
-	cl, err := clientFor(ctx, d)
+func Delete(ctx context.Context, d Destination, key string, allowPrivate bool) error {
+	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
 		return err
 	}

@@ -50,6 +50,35 @@ func TestCreateRegistrySucceeds(t *testing.T) {
 	}
 }
 
+// TestCreateRegistryPrivateHostBlocked verifies the createRegistry SSRF
+// pre-check: a registry_url resolving to a loopback address is rejected with
+// flash.err.registry_private_host and no registry row is created, when the
+// SSRF egress guard is at its production default (AllowPrivateEgress=false).
+func TestCreateRegistryPrivateHostBlocked(t *testing.T) {
+	h, q, orgSvc := newServerGuarded(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "owner@k.local")
+
+	form := url.Values{
+		"name":         {"primary"},
+		"registry_url": {"127.0.0.1:5000"},
+		"username":     {"robot"},
+		"password":     {"secret"},
+	}
+	rec := createRegistryForm(t, h, cookie, o.ID, form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("private host want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("private host want err flash, got %q", flashCookieValue(rec))
+	}
+	if regs, _ := q.ListRegistriesByOrg(ctx, o.ID); len(regs) != 0 {
+		t.Fatalf("expected no registry created, got %d", len(regs))
+	}
+}
+
 // TestCreateRegistryMissingFieldsFlash drives the converted createRegistry error
 // path (missing required fields) and asserts the PRG response: a 303 redirect
 // with an "err:"-prefixed krill_flash cookie, and no registry row created.

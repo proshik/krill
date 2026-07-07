@@ -85,7 +85,7 @@ func TestRunBackupSkipsOverlap(t *testing.T) {
 	gs := &gateStore{entered: make(chan struct{}, 1), gate: make(chan struct{})}
 	// The in-flight window is held by the gate (inside GetDestination), so the
 	// dump itself can abort instantly — no dependence on uploader timing.
-	svc := New(failExecer{}, gs)
+	svc := New(failExecer{}, gs, false)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -125,7 +125,7 @@ func TestRunBackupSkipsOverlap(t *testing.T) {
 // exec + in-container pg_dump) terminates instead of leaking forever.
 func TestRunBackupUploadFailureReleasesDump(t *testing.T) {
 	ex := &blockingExecer{done: make(chan struct{})}
-	svc := New(ex, leakStore{})
+	svc := New(ex, leakStore{}, false)
 
 	// Short deadline so the SDK gives up on the dead endpoint quickly instead
 	// of burning its full retry budget (~15s).

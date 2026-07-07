@@ -44,6 +44,10 @@ type Config struct {
 	MetricsRetention time.Duration `env:"KRILL_METRICS_RETENTION" envDefault:"48h"`
 	// MetricsNodeTimeout caps how long the sampler waits per worker node.
 	MetricsNodeTimeout time.Duration `env:"KRILL_METRICS_NODE_TIMEOUT" envDefault:"10s"`
+	// AllowPrivateEgress disables the SSRF egress guard (internal/netguard) for
+	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
+	// connections to private/loopback/link-local addresses. Default false.
+	AllowPrivateEgress bool `env:"KRILL_ALLOW_PRIVATE_EGRESS" envDefault:"false"`
 }
 
 // Load reads the configuration from the environment.

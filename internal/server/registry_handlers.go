@@ -1,13 +1,32 @@
 package server
 
 import (
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/netguard"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
+
+// registryURLHost extracts the bare hostname from a registry_url for the SSRF
+// pre-check below. registry_url is often entered without a scheme (e.g.
+// "registry.example.com"), so a scheme is assumed before parsing.
+func registryURLHost(registryURL string) (string, bool) {
+	raw := registryURL
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	return u.Hostname(), true
+}
 
 // listRegistries renders the org's private container registries (readable by
 // any member).
@@ -51,6 +70,20 @@ func (s *Server) createRegistry(w http.ResponseWriter, r *http.Request) {
 	if n > 0 {
 		s.flashErrT(w, r, "flash.err.registry_name_exists")
 		return
+	}
+
+	// RegistryCheck below logs in via the docker daemon (dockerd does the actual
+	// dial), so it can't be guarded by netguard's dial interception. Pre-validate
+	// the host here instead: best-effort (DNS can still be rebound between this
+	// check and the daemon's own connection), but it stops the common case of a
+	// registry_url that resolves straight to a private/loopback/link-local
+	// address (SSRF via "add a malicious registry").
+	if host, ok := registryURLHost(registryURL); ok {
+		if err := netguard.CheckHost(r.Context(), host, s.cfg.AllowPrivateEgress); err != nil && errors.Is(err, netguard.ErrBlocked) {
+			logFrom(r).Info("createRegistry: private host rejected", "org_id", o.ID, "registry_url", registryURL)
+			s.flashErrT(w, r, "flash.err.registry_private_host")
+			return
+		}
 	}
 
 	if s.engine != nil {

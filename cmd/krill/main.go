@@ -156,7 +156,7 @@ func run() error {
 
 	// Backups: service + in-process cron scheduler.
 	backupStore := backup.NewDBStore(q)
-	backupSvc := backup.New(engine, backupStore)
+	backupSvc := backup.New(engine, backupStore, cfg.AllowPrivateEgress)
 	backupSvc.SetNotifier(notifySvc)
 
 	// Health watcher: polls service state for app down/recovered alerts.
@@ -280,7 +280,7 @@ func run() error {
 
 	// Volume backups: separate service + a second in-process cron scheduler.
 	volStore := volume.NewDBStore(q)
-	volSvc := volume.New(engine, volStore)
+	volSvc := volume.New(engine, volStore, cfg.AllowPrivateEgress)
 	volSvc.SetNotifier(notifySvc)
 	volSched := backup.NewScheduler(volStore, func(ctx context.Context, id int64) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)

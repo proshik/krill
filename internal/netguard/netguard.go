@@ -67,10 +67,18 @@ func CheckHost(ctx context.Context, host string, allowPrivate bool) error {
 
 // DialContext returns a dialer that resolves the host, refuses blocked IPs, and
 // dials the checked IP directly (so the connection can't be rebound to a blocked
-// address between check and dial).
+// address between check and dial). When allowPrivate is true there is nothing to
+// guard against, so it delegates straight to the base dialer's normal
+// Happy-Eyeballs / RFC6555 dual-stack fallback instead of pinning to one IP.
 func DialContext(allowPrivate bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	base := &net.Dialer{Timeout: 15 * time.Second}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if allowPrivate {
+			// No guard needed: fall through to the stdlib dialer's full
+			// Happy-Eyeballs / RFC6555 dual-stack fallback instead of
+			// re-resolving and pinning to a single (possibly unreachable) IP.
+			return base.DialContext(ctx, network, addr)
+		}
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err

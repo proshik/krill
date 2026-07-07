@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/registry"
+
+	"github.com/proshik/krill/internal/netguard"
 )
 
 // EncodeRegistryAuth returns the base64url(JSON) auth blob Swarm expects in
@@ -55,15 +57,21 @@ func RegistryRepo(registryURL, image string) string {
 
 // RegistryListTags lists the tags for repo in a registry, following the v2
 // token (WWW-Authenticate: Bearer) flow. Anonymous if username is empty.
-func RegistryListTags(ctx context.Context, registryURL, username, password, repo string) ([]string, error) {
+// allowPrivate mirrors KRILL_ALLOW_PRIVATE_EGRESS: when false, both the tags
+// request and the bearer-realm token request refuse private/loopback/
+// link-local destinations (internal/netguard) — a malicious/compromised
+// registry_url or WWW-Authenticate realm can't be used to probe internal
+// hosts (SSRF egress guard).
+func RegistryListTags(ctx context.Context, registryURL, username, password, repo string, allowPrivate bool) ([]string, error) {
 	host := registryHost(registryURL)
 	tagsURL := fmt.Sprintf("https://%s/v2/%s/tags/list", host, repo)
+	client := netguard.HTTPClient(allowPrivate)
 	do := func(bearer string) (*http.Response, error) {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
 		if bearer != "" {
 			req.Header.Set("Authorization", "Bearer "+bearer)
 		}
-		return http.DefaultClient.Do(req)
+		return client.Do(req)
 	}
 	resp, err := do("")
 	if err != nil {
@@ -87,7 +95,7 @@ func RegistryListTags(ctx context.Context, registryURL, username, password, repo
 		if username != "" {
 			treq.SetBasicAuth(username, password)
 		}
-		tresp, terr := http.DefaultClient.Do(treq)
+		tresp, terr := client.Do(treq)
 		if terr != nil {
 			return nil, terr
 		}
