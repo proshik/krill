@@ -5,9 +5,8 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// Firewall is a minimal placeholder for the worker-firewall page (Task 8 builds
-// out the full UI). It lists the org's worker nodes with their current
-// firewall_managed state and exposes the lockdown/open actions.
+// Firewall renders the worker-firewall page: the org's worker nodes with
+// their current firewall_managed state, plus the lockdown/open actions.
 templ Firewall(org db.Organization, role string, rows []db.ClusterNode) {
 	@Layout(i18n.T(ctx, "firewall.title"), org, role) {
 		@settingsNav(org.ID)
@@ -40,10 +39,10 @@ templ Firewall(org db.Organization, role string, rows []db.ClusterNode) {
 			</table>
 			if role == "owner" || role == "admin" {
 				<div class="flex items-center gap-2 mt-4">
-					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/lockdown") }>
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/lockdown") } data-confirm={ i18n.T(ctx, "firewall.confirm.lockdown") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 						<button class="k-btn k-btn-primary">{ i18n.T(ctx, "firewall.lockdown") }</button>
 					</form>
-					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/open") }>
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/open") } data-confirm={ i18n.T(ctx, "firewall.confirm.open") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "firewall.open_action") }</button>
 					</form>
 				</div>
