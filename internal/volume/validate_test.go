@@ -45,6 +45,33 @@ func TestValidateAppVolume(t *testing.T) {
 	}
 }
 
+func TestValidationErrorKeys(t *testing.T) {
+	assertKey := func(desc string, err error, wantKey string, wantArg any) {
+		ve, ok := err.(*ValidationError)
+		if !ok {
+			t.Fatalf("%s: got %#v, want *ValidationError", desc, err)
+		}
+		if ve.Key != wantKey {
+			t.Fatalf("%s: Key = %q, want %q", desc, ve.Key, wantKey)
+		}
+		if wantArg != nil {
+			if len(ve.Args) != 1 || ve.Args[0] != wantArg {
+				t.Fatalf("%s: Args = %v, want [%v]", desc, ve.Args, wantArg)
+			}
+		}
+	}
+	assertKey("bad name", ValidateAppVolume("Bad", "/data"), "flash.err.vol_name", nil)
+	assertKey("absolute", ValidateAppVolume("data", "rel"), "flash.err.vol_mount_absolute", nil)
+	assertKey("spaces", ValidateAppVolume("data", "/da ta"), "flash.err.vol_mount_spaces", nil)
+	assertKey("clean", ValidateAppVolume("data", "/data/../x"), "flash.err.vol_mount_clean", nil)
+	assertKey("dash segment", ValidateAppVolume("data", "/-data"), "flash.err.vol_mount_segment_dash", nil)
+	assertKey("system dir", ValidateAppVolume("data", "/etc"), "flash.err.vol_mount_system", "/etc")
+	_, _, _, e1 := ParseOwner("abc")
+	assertKey("uid nan", e1, "flash.err.vol_owner_number", "UID")
+	_, _, _, e2 := ParseOwner("1000:70000")
+	assertKey("gid range", e2, "flash.err.vol_owner_range", "GID")
+}
+
 func TestParseOwner(t *testing.T) {
 	cases := []struct {
 		in               string

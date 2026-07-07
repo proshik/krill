@@ -449,10 +449,10 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 }
 
 // chownNodes returns the swarm node IDs on which owned volumes must be chowned
-// before deploy: the app's pinned nodes, or [""] (the local/control-plane
-// daemon) otherwise. "" is resolved to the local client by selectClient.
+// before deploy: the app's pinned/global node set, or [""] (the local/control-
+// plane daemon) otherwise. "" is resolved to the local client by selectClient.
 func chownNodes(app App) []string {
-	if app.PlacementMode == "pin" && len(app.PlacementNodes) > 0 {
+	if len(app.PlacementNodes) > 0 && (app.PlacementMode == "pin" || app.PlacementMode == "global") {
 		return app.PlacementNodes
 	}
 	return []string{""}

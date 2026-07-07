@@ -1,12 +1,37 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/volume"
+	"github.com/proshik/krill/internal/web/i18n"
 )
+
+// flashValidation renders a volume.ValidationError through i18n; any other error
+// falls back to its raw message.
+func (s *Server) flashValidation(w http.ResponseWriter, r *http.Request, err error) {
+	var ve *volume.ValidationError
+	if errors.As(err, &ve) {
+		s.flashErr(w, r, i18n.Tf(r.Context(), ve.Key, ve.Args...))
+		return
+	}
+	s.flashErr(w, r, err.Error())
+}
+
+// clusterHasWorkers reports whether the cluster has worker nodes (⟺ multi-node,
+// since cluster_nodes holds only workers). On a count error it logs and returns
+// false — the volume-owner placement guard is best-effort and fails open.
+func (s *Server) clusterHasWorkers(r *http.Request) bool {
+	n, err := s.q.CountClusterNodes(r.Context())
+	if err != nil {
+		logFrom(r).Warn("count cluster nodes failed; skipping volume-owner placement guard", "err", err)
+		return false
+	}
+	return n > 0
+}
 
 // addVolume creates a named volume for the app. The mount is applied on the next
 // deploy (the ServiceSpec is rebuilt from app_volumes).
@@ -18,7 +43,7 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	mountPath := strings.TrimSpace(r.FormValue("mount_path"))
 	if err := volume.ValidateAppVolume(name, mountPath); err != nil {
-		s.flashErr(w, r, err.Error())
+		s.flashValidation(w, r, err)
 		return
 	}
 	existing, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
@@ -39,7 +64,11 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
 	if oerr != nil {
-		s.flashErr(w, r, oerr.Error())
+		s.flashValidation(w, r, oerr)
+		return
+	}
+	if normOwner != "" && c.App.PlacementMode == "any" && s.clusterHasWorkers(r) {
+		s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
 		return
 	}
 	var ownerCol *string
@@ -93,7 +122,11 @@ func (s *Server) setVolumeOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
 	if oerr != nil {
-		s.flashErr(w, r, oerr.Error())
+		s.flashValidation(w, r, oerr)
+		return
+	}
+	if normOwner != "" && c.App.PlacementMode == "any" && s.clusterHasWorkers(r) {
+		s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
 		return
 	}
 	var ownerCol *string

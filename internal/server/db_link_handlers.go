@@ -41,7 +41,7 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		field = "url"
 	}
 	switch field {
-	case "url", "password", "host", "port", "user", "dbname":
+	case "url", "password", "host", "port", "user", "dbname", "hostport":
 	default:
 		s.flashErrT(w, r, "flash.err.invalid_field")
 		return

@@ -191,3 +191,52 @@ func TestSetVolumeOwnerCrossTenant(t *testing.T) {
 		t.Fatalf("SECURITY: org-A volume owner was modified cross-tenant: %v", *v.Owner)
 	}
 }
+
+func TestVolumeOwnerBlockedOnAnyMultiNode(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	uid := mkUser(t, q, "vol-guard@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "wg.x", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	cookie := loginAs(t, q, "vol-guard@k.local")
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) +
+		"/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)
+
+	// Register a worker → CountClusterNodes()>0 → multi-node. App defaults to "any".
+	if _, err := q.CreateClusterNode(ctx, db.CreateClusterNodeParams{
+		Name: "worker-1", SshHost: "10.0.0.2", SshPort: 22, SshUser: "root",
+		SshKey: "k", HostKey: "", SwarmNodeID: "swarm-1",
+	}); err != nil {
+		t.Fatalf("create cluster node: %v", err)
+	}
+
+	// owner on any+multinode → rejected, nothing persisted.
+	postForm(t, h, base+"/volumes", cookie, url.Values{
+		"name": {"data"}, "mount_path": {"/data"}, "owner": {"1000"},
+	})
+	if vs, _ := q.ListVolumesByApplication(ctx, app.ID); len(vs) != 0 {
+		t.Fatalf("owner on any+multinode must be rejected, have %d volumes", len(vs))
+	}
+
+	// no-owner volume is fine.
+	if rec := postForm(t, h, base+"/volumes", cookie, url.Values{
+		"name": {"data"}, "mount_path": {"/data"},
+	}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("no-owner volume want 303, got %d", rec.Code)
+	}
+	vs, _ := q.ListVolumesByApplication(ctx, app.ID)
+	if len(vs) != 1 {
+		t.Fatalf("no-owner volume should persist, have %d", len(vs))
+	}
+
+	// setVolumeOwner on it is also rejected.
+	postForm(t, h, base+"/volumes/"+i64(vs[0].ID)+"/owner", cookie, url.Values{"owner": {"1000:0"}})
+	if v, _ := q.GetVolume(ctx, vs[0].ID); v.Owner != nil {
+		t.Fatalf("setVolumeOwner on any+multinode must be rejected, got %v", *v.Owner)
+	}
+}

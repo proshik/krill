@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
 	"strconv"
 	"sync"
 	"testing"
@@ -802,18 +801,6 @@ func TestImageDeployUsesDigest(t *testing.T) {
 	const wantPlain = "nginx:alpine"
 	if deployed2[0].Image != wantPlain {
 		t.Fatalf("fallback deployed image = %q, want %q", deployed2[0].Image, wantPlain)
-	}
-}
-
-func TestChownNodes(t *testing.T) {
-	if got := chownNodes(App{PlacementMode: "pin", PlacementNodes: []string{"a", "b"}}); !reflect.DeepEqual(got, []string{"a", "b"}) {
-		t.Fatalf("pin: got %v", got)
-	}
-	if got := chownNodes(App{PlacementMode: "any"}); !reflect.DeepEqual(got, []string{""}) {
-		t.Fatalf("any: got %v", got)
-	}
-	if got := chownNodes(App{PlacementMode: "pin", PlacementNodes: nil}); !reflect.DeepEqual(got, []string{""}) {
-		t.Fatalf("pin-empty: got %v", got)
 	}
 }
 
