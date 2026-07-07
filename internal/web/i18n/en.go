@@ -486,6 +486,7 @@ var en = map[string]string{
 	"flash.ok.tls_updated":                 "TLS setting updated",
 	"flash.ok.env_saved":                   "Variables saved — applied on next deploy",
 	"flash.ok.version_queued":              "Version update queued",
+	"flash.ok.external_access_updated":     "External access updated — applied on next deploy",
 	"flash.ok.volume_added":                "Volume added — applied on next deploy",
 	"flash.ok.volume_removed":              "Volume removed — applied on next deploy",
 	"flash.ok.volume_owner_set":            "Volume owner updated.",

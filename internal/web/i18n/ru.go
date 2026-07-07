@@ -486,6 +486,7 @@ var ru = map[string]string{
 	"flash.ok.tls_updated":                 "Настройка TLS обновлена",
 	"flash.ok.env_saved":                   "Переменные сохранены — применятся при следующем деплое",
 	"flash.ok.version_queued":              "Обновление версии в очереди",
+	"flash.ok.external_access_updated":     "Внешний доступ обновлён — применится при следующем деплое",
 	"flash.ok.volume_added":                "Том добавлен — применится при следующем деплое",
 	"flash.ok.volume_removed":              "Том удалён — применится при следующем деплое",
 	"flash.ok.volume_owner_set":            "Владелец тома обновлён.",

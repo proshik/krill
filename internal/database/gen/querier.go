@@ -30,6 +30,7 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
@@ -163,6 +164,7 @@ type Querier interface {
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
+	UpdateDBInstanceExternalPort(ctx context.Context, arg UpdateDBInstanceExternalPortParams) error
 	UpdateDBInstanceImage(ctx context.Context, arg UpdateDBInstanceImageParams) error
 	UpdateDBInstanceStatus(ctx context.Context, arg UpdateDBInstanceStatusParams) error
 	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error

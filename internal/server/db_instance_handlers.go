@@ -248,6 +248,42 @@ func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
+// setDBInstanceExternalPort toggles the instance's external port. Empty clears
+// it (no external access). A set port is range- and conflict-checked, then the
+// instance is redeployed (drops the port from the DB service and reconciles the
+// control-plane proxy). Admin-gated; tenant-chained via loadInstance.
+func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Request) {
+	inst, ok := s.loadInstance(w, r)
+	if !ok {
+		return
+	}
+	var ext *int32
+	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
+		x, err := strconv.Atoi(v)
+		if err != nil || x < 1 || x > 65535 {
+			s.flashErrT(w, r, "flash.err.invalid_external_port")
+			return
+		}
+		x32 := int32(x)
+		instN, _ := s.q.CountOtherDBInstancesByExternalPort(r.Context(), db.CountOtherDBInstancesByExternalPortParams{ExternalPort: &x32, ID: inst.ID})
+		portN, _ := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{HostPort: x32, Protocol: "tcp"})
+		if instN > 0 || portN > 0 {
+			s.flashErrT(w, r, "flash.err.external_port_in_use")
+			return
+		}
+		ext = &x32
+	}
+	if err := s.q.UpdateDBInstanceExternalPort(r.Context(), db.UpdateDBInstanceExternalPortParams{ID: inst.ID, ExternalPort: ext}); err != nil {
+		logFrom(r).Error("setDBInstanceExternalPort: update failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	s.dbsvc.DeployInstance(inst.ID)
+	logFrom(r).Info("db instance external port set", "instance_id", inst.ID, "external", ext != nil)
+	s.flashOK(w, r, "flash.ok.external_access_updated")
+	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+}
+
 func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {

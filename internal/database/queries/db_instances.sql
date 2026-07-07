@@ -28,3 +28,9 @@ SELECT count(*) FROM logical_databases WHERE instance_id = $1;
 
 -- name: ListDBInstancesByNodeHostname :many
 SELECT id, organization_id, name, engine, node_hostname FROM db_instances WHERE node_hostname = $1 ORDER BY name;
+
+-- name: UpdateDBInstanceExternalPort :exec
+UPDATE db_instances SET external_port = $2 WHERE id = $1;
+
+-- name: CountOtherDBInstancesByExternalPort :one
+SELECT count(*) FROM db_instances WHERE external_port = $1 AND id <> $2;
