@@ -54,7 +54,9 @@ func NewClusterSource(localName string, local NodeStatsSource, workers WorkerLis
 // Each worker runs under its own per-node timeout; a failing worker yields
 // NodeSample{Node, OK:false} and never aborts others.
 func (c *ClusterSource) SampleAll(ctx context.Context) []NodeSample {
-	out := []NodeSample{c.sampleOne(ctx, c.localName, c.local)}
+	lctx, lcancel := context.WithTimeout(ctx, c.timeout)
+	out := []NodeSample{c.sampleOne(lctx, c.localName, c.local)}
+	lcancel()
 
 	workers, err := c.workers(ctx)
 	if err != nil {

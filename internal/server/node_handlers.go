@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -147,7 +148,9 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Join over SSH BEFORE persisting, so a failed join leaves no half-added row.
-	_, hostKey, jerr := cluster.Join(cluster.JoinSpec{
+	jctx, jcancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer jcancel()
+	_, hostKey, jerr := cluster.Join(jctx, cluster.JoinSpec{
 		Host: host, Port: port, User: user, PrivateKey: []byte(key),
 		Token: token, ManagerAddr: s.cfg.AdvertiseAddr + ":2377",
 	})

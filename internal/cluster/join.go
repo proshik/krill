@@ -3,6 +3,7 @@ package cluster
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"strconv"
@@ -81,8 +82,10 @@ func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
 // Join SSHes into the worker, verifies/records the host key (accept-new), and
 // runs the fixed swarm-join command. It returns the command's combined output
 // and the presented host key (which the caller persists so later operations
-// verify it). The private key and token are never logged here.
-func Join(spec JoinSpec) (output, hostKey string, err error) {
+// verify it). The private key and token are never logged here. ctx bounds the
+// join command itself: on cancellation the SSH session is closed to unblock
+// the remote command and ctx.Err() is returned.
+func Join(ctx context.Context, spec JoinSpec) (output, hostKey string, err error) {
 	var seen string
 	cb := func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		seen = string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(key)))
@@ -103,8 +106,16 @@ func Join(spec JoinSpec) (output, hostKey string, err error) {
 	defer sess.Close()
 	var buf bytes.Buffer
 	sess.Stdout, sess.Stderr = &buf, &buf
-	if rerr := sess.Run(joinCommand(spec.Token, spec.ManagerAddr)); rerr != nil {
-		return buf.String(), seen, fmt.Errorf("swarm join: %w", rerr)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run(joinCommand(spec.Token, spec.ManagerAddr)) }()
+	select {
+	case <-ctx.Done():
+		_ = sess.Close()
+		return buf.String(), seen, fmt.Errorf("swarm join: %w", ctx.Err())
+	case rerr := <-done:
+		if rerr != nil {
+			return buf.String(), seen, fmt.Errorf("swarm join: %w", rerr)
+		}
 	}
 	return buf.String(), seen, nil
 }
