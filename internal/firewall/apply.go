@@ -84,6 +84,35 @@ func (rr RealRunner) Run(ctx context.Context, stdin, cmd string) (string, error)
 	if stdin != "" {
 		sess.Stdin = bytes.NewBufferString(stdin)
 	}
-	out, err := sess.CombinedOutput(cmd)
-	return string(out), err
+	return runCtx(ctx, sess.Close, func() (string, error) {
+		out, err := sess.CombinedOutput(cmd)
+		return string(out), err
+	})
+}
+
+// runCtx runs work in a goroutine and returns its result, unless ctx is
+// canceled first — in which case it calls closeSess (to unblock the
+// still-running work, e.g. by closing the underlying SSH session so a
+// blocked remote command errors out) and returns ctx.Err(). Extracted from
+// RealRunner.Run so the deadline/cancel behavior is unit-testable without a
+// real SSH session.
+func runCtx(ctx context.Context, closeSess func() error, work func() (string, error)) (string, error) {
+	type res struct {
+		out string
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		out, err := work()
+		ch <- res{out, err}
+	}()
+	select {
+	case <-ctx.Done():
+		if closeSess != nil {
+			_ = closeSess()
+		}
+		return "", ctx.Err()
+	case r := <-ch:
+		return r.out, r.err
+	}
 }

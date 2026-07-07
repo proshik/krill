@@ -316,9 +316,13 @@ func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 
 // deleteDBInstance refuses while logical databases exist unless the admin
 // explicitly confirms cascade (delete_databases=on). destroy_data additionally
-// removes the volume, mirroring the legacy managed-DB delete. dbservice.DeleteInstance
-// is engine-gated internally (nil engine → row-only delete), so this handler
-// works in tests without an engine.
+// removes the volume, mirroring the legacy managed-DB delete. It runs in three
+// steps: dbsvc.RemoveInstanceContainers first (the real-failure point — service
+// +optional volume teardown), then the logical_databases rows (their ON DELETE
+// RESTRICT FK to db_instances would otherwise block the instance row anyway),
+// then dbsvc.DeleteInstanceRow. RemoveInstanceContainers is engine-gated
+// internally (nil engine → no-op), so this handler works in tests without an
+// engine.
 func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -334,11 +338,26 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	if n > 0 && r.FormValue("delete_databases") != "on" {
+		s.flashErrT(w, r, "flash.err.dbi_has_databases")
+		return
+	}
+	destroy := r.FormValue("destroy_data") == "on"
+
+	// Remove the instance's containers FIRST — the real-failure point — before
+	// touching any DB rows. logical_databases has an ON DELETE RESTRICT FK to
+	// db_instances, so those rows (and their backups/links) can't be dropped
+	// before the containers are confirmed gone anyway; sequencing it this way
+	// also means a real docker failure here never silently destroys bookkeeping
+	// for an instance that is still actually running (not-found is tolerated —
+	// see dbsvc.RemoveInstanceContainers).
+	if err := s.dbsvc.RemoveInstanceContainers(r.Context(), inst.ID, destroy); err != nil {
+		logFrom(r).Error("deleteDBInstance: failed", "err", err, "instance_id", inst.ID, "destroy_data", destroy)
+		s.flashErrT(w, r, "flash.err.delete_database")
+		return
+	}
+
 	if n > 0 {
-		if r.FormValue("delete_databases") != "on" {
-			s.flashErrT(w, r, "flash.err.dbi_has_databases")
-			return
-		}
 		ldbs, _ := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
 		for _, ld := range ldbs {
 			if derr := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); derr != nil {
@@ -348,12 +367,13 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	destroy := r.FormValue("destroy_data") == "on"
-	if err := s.dbsvc.DeleteInstance(r.Context(), inst.ID, destroy); err != nil {
-		logFrom(r).Error("deleteDBInstance: failed", "err", err, "instance_id", inst.ID, "destroy_data", destroy)
-		s.flashErrT(w, r, "flash.err.delete_database")
+
+	if err := s.dbsvc.DeleteInstanceRow(r.Context(), inst.ID); err != nil {
+		logFrom(r).Error("deleteDBInstance: delete instance row failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+
 	logFrom(r).Info("db instance deleted", "instance_id", inst.ID, "destroy_data", destroy)
 	s.flashOK(w, r, "flash.ok.dbi_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/db-servers", http.StatusSeeOther)

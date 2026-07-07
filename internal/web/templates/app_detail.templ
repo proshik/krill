@@ -12,7 +12,7 @@ type AppCtx struct {
 	Project    db.Project
 	Env        db.Environment
 	App        db.Application
-	Deps       []db.Deployment
+	Deps       []db.ListDeploymentSummariesByApplicationRow
 	Domains    []db.Domain
 	Volumes    []db.AppVolume
 	Ports      []db.AppPort

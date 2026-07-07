@@ -112,6 +112,10 @@ type Querier interface {
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
+	// Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
+	// column — for the deploy-history list, which is polled every 2s and never
+	// renders the log. Use GetDeployment for the single-deployment detail/log view.
+	ListDeploymentSummariesByApplication(ctx context.Context, applicationID int64) ([]ListDeploymentSummariesByApplicationRow, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)

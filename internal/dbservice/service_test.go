@@ -19,6 +19,7 @@ type mockEngine struct {
 	removed        []string
 	removedVolumes []string
 	failPull       bool
+	removeErr      error // returned by every ServiceRemove call, after recording it
 }
 
 func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
@@ -33,7 +34,7 @@ func (m *mockEngine) ServiceRemove(_ context.Context, n string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.removed = append(m.removed, n)
-	return nil
+	return m.removeErr
 }
 func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
@@ -108,9 +109,10 @@ func (m *mockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, er
 }
 
 type fakeStore struct {
-	mu       sync.Mutex
-	instance Instance
-	status   map[int64]string
+	mu         sync.Mutex
+	instance   Instance
+	status     map[int64]string
+	rowDeleted bool
 }
 
 func newFakeStore(inst Instance) *fakeStore {
@@ -128,7 +130,12 @@ func (f *fakeStore) SetInstanceStatus(_ context.Context, id int64, s string) err
 	f.status[id] = s
 	return nil
 }
-func (f *fakeStore) DeleteInstanceRow(_ context.Context, id int64) error { return nil }
+func (f *fakeStore) DeleteInstanceRow(_ context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rowDeleted = true
+	return nil
+}
 func (f *fakeStore) st(id int64) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -271,6 +278,35 @@ func TestDeleteRedisInstanceDestroysVolume(t *testing.T) {
 	want := volumeName("krill-redis-x")
 	if len(eng.removedVolumes) != 1 || eng.removedVolumes[0] != want {
 		t.Errorf("removedVolumes = %+v, want [%s]", eng.removedVolumes, want)
+	}
+}
+
+func TestDeleteInstanceKeepsRowOnServiceRemoveError(t *testing.T) {
+	eng := newMockEngine()
+	eng.removeErr = errors.New("cannot connect to docker daemon")
+	st := newFakeStore(samplePGInstance())
+	svc := newSvc(eng, st)
+	if err := svc.DeleteInstance(context.Background(), 1, false); err == nil {
+		t.Fatal("want error when ServiceRemove fails")
+	}
+	if st.rowDeleted {
+		t.Fatal("row must NOT be deleted when the service removal failed")
+	}
+}
+
+func TestDeleteInstanceToleratesNotFoundOnServiceRemove(t *testing.T) {
+	eng := newMockEngine()
+	eng.removeErr = errors.New("no such service: krill-pg-x")
+	st := newFakeStore(samplePGInstance())
+	svc := newSvc(eng, st)
+	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
+		t.Fatalf("not-found ServiceRemove error must be tolerated, got: %v", err)
+	}
+	if !st.rowDeleted {
+		t.Fatal("row must be deleted when the service removal error is not-found")
+	}
+	if len(eng.removed) != 2 || eng.removed[0] != "krill-pg-x" || eng.removed[1] != "krill-dbproxy-1" {
+		t.Errorf("removed = %+v", eng.removed)
 	}
 }
 

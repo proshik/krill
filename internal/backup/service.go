@@ -33,16 +33,17 @@ type Notifier interface {
 }
 
 type Service struct {
-	eng      Execer
-	store    Store
-	notifier Notifier
+	eng          Execer
+	store        Store
+	notifier     Notifier
+	allowPrivate bool // KRILL_ALLOW_PRIVATE_EGRESS: disables the SSRF egress guard on S3 traffic
 
 	mu       sync.Mutex
 	inFlight map[int64]bool // backup IDs with a run in progress
 }
 
-func New(eng Execer, store Store) *Service {
-	return &Service{eng: eng, store: store, inFlight: map[int64]bool{}}
+func New(eng Execer, store Store, allowPrivate bool) *Service {
+	return &Service{eng: eng, store: store, allowPrivate: allowPrivate, inFlight: map[int64]bool{}}
 }
 
 // SetNotifier wires backup-failure notifications (no-op if never set).
@@ -120,7 +121,7 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 		}
 		pw.Close()
 	}()
-	if uerr := Upload(ctx, dst, key, pr); uerr != nil {
+	if uerr := Upload(ctx, dst, key, pr, s.allowPrivate); uerr != nil {
 		// Close the read side so the dump goroutine's blocked pw.Write fails and
 		// the goroutine (and its docker exec + in-container pg_dump) terminates —
 		// otherwise each failed upload leaks them all until process exit.
@@ -128,9 +129,9 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 		return s.fail(ctx, backupID, now, uerr)
 	}
 
-	if objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName)); lerr == nil {
+	if objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName), s.allowPrivate); lerr == nil {
 		for _, o := range objectsToDelete(objs, b.Retention) {
-			if derr := Delete(ctx, dst, o.Key); derr != nil {
+			if derr := Delete(ctx, dst, o.Key, s.allowPrivate); derr != nil {
 				slog.Warn("backup retention delete failed", "key", o.Key, "err", derr)
 			}
 		}
@@ -162,7 +163,7 @@ func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, er
 	if err != nil {
 		return nil, err
 	}
-	return List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName))
+	return List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName), s.allowPrivate)
 }
 
 // RestoreByID restores object `key` of a backup config into its DB.
@@ -202,12 +203,12 @@ func (s *Service) OpenObject(ctx context.Context, backupID int64, key string) (i
 	if err != nil {
 		return nil, err
 	}
-	return Download(ctx, dst, key)
+	return Download(ctx, dst, key, s.allowPrivate)
 }
 
 // Restore streams a stored backup from S3 through gunzip into psql.
 func (s *Service) Restore(ctx context.Context, dst Destination, pg PGTarget, key string) error {
-	rc, err := Download(ctx, dst, key)
+	rc, err := Download(ctx, dst, key, s.allowPrivate)
 	if err != nil {
 		return err
 	}

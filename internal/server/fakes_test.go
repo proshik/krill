@@ -91,7 +91,7 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
-	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
 	eng := noopEngine{}
 	dep := deploy.New(eng, noopBuilder{}, deploy.NewDBStore(q), hub, "krill-net")
@@ -99,6 +99,6 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	t.Cleanup(dep.Stop)
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
-	srv.SetBackups(backup.New(nil, backup.NewDBStore(q)), func() {})
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	return srv.Router(), q, orgSvc, pool
 }

@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) (http.Handler, *db.Queries) {
 		t.Fatalf("seed: %v", err)
 	}
 	orgSvc := org.NewService(q)
-	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 	return server.New(cfg, authSvc, orgSvc, q, nil, nil, hub, dbSvc).Router(), q

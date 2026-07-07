@@ -145,6 +145,29 @@ func TestGithubWebhook(t *testing.T) {
 	}
 }
 
+// TestGithubWebhookEmptyBranchSkipsTagPush guards against a regression where a
+// blank configured git_branch (e.g. cleared via the edit form) would match a
+// tag push's empty Branch() and wrongly enqueue a deploy: "" == "" if the
+// skip condition only compared ev.Branch() != a.GitBranch.
+func TestGithubWebhookEmptyBranchSkipsTagPush(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	appID := dockerfileAppFixture(t, q, orgSvc, "")
+	const sec = "topsecret"
+	seedAutoDeploy(t, q, appID, sec)
+	path := "/webhooks/github/" + i64(appID)
+	// A tag push: Branch() returns "" for any non-refs/heads/* ref.
+	body := []byte(`{"ref":"refs/tags/v1.0.0","deleted":false}`)
+
+	rec := postWebhook(t, h, path, "push", body, map[string]string{"X-Hub-Signature-256": ghSign(sec, body)})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty branch + tag push: want 200 (skip), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	deps, _ := q.ListDeploymentsByApplication(context.Background(), appID)
+	if len(deps) != 0 {
+		t.Fatalf("empty branch + tag push must not enqueue a deploy, got %d deployments", len(deps))
+	}
+}
+
 func TestGithubWebhookDisabledAndWrongSource(t *testing.T) {
 	h, q, orgSvc, _ := newDeployServer(t)
 	// disabled app

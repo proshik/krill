@@ -62,11 +62,33 @@ func newServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
+	// AllowPrivateEgress=true: several suites sharing this helper (destinations,
+	// backups, volume backups) point S3 destinations at a loopback testcontainer
+	// (testutil.NewMinio), which the SSRF egress guard would otherwise refuse.
+	// The guard's actual blocking behavior is covered directly (internal/netguard,
+	// internal/backup/s3_test.go) and at the handler layer by newServerGuarded
+	// below (registry_handlers_test.go's private-host test).
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
+	hub := deploy.NewLogHub()
+	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
+	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
+	return srv.Router(), q, orgSvc
+}
+
+// newServerGuarded is like newServer but leaves AllowPrivateEgress at its
+// production default (false), for tests that specifically exercise the SSRF
+// egress guard (e.g. registry-create's private-host pre-check).
+func newServerGuarded(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
+	t.Helper()
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
-	srv.SetBackups(backup.New(nil, backup.NewDBStore(q)), func() {})
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), false), func() {})
 	return srv.Router(), q, orgSvc
 }
 

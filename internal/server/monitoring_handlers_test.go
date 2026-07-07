@@ -79,11 +79,11 @@ func newMonServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
-	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
-	srv.SetBackups(backup.New(nil, backup.NewDBStore(q)), func() {})
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	srv.SetMetrics(metrics.NewDBStore(q))
 	return srv.Router(), q, orgSvc
 }

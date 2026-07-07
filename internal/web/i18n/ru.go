@@ -436,6 +436,7 @@ var ru = map[string]string{
 	"flash.err.vol_owner_number":           "owner %s должен быть числом",
 	"flash.err.vol_owner_range":            "owner %s должен быть в диапазоне 0..65535",
 	"flash.err.registry_name_exists":       "реестр с таким именем уже существует",
+	"flash.err.registry_private_host":      "Хост реестра не разрешён (приватный/link-local). Установите KRILL_ALLOW_PRIVATE_EGRESS=true, чтобы разрешить его.",
 	"flash.err.link_var_exists":            "связь для этой переменной уже существует",
 	"flash.err.gitcred_name_exists":        "git-кред с таким именем уже существует",
 	"flash.err.dest_name_exists":           "хранилище с таким именем уже существует",

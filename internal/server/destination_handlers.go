@@ -64,7 +64,7 @@ func (s *Server) createDestination(w http.ResponseWriter, r *http.Request) {
 		Region:    region,
 		AccessKey: accessKey,
 		SecretKey: secretKey,
-	}); err != nil {
+	}, s.cfg.AllowPrivateEgress); err != nil {
 		logFrom(r).Info("createDestination: bucket access check failed", "err", err, "org_id", o.ID, "bucket", bucket, "endpoint", endpoint)
 		s.flashErrT(w, r, "flash.err.bucket_access")
 		return

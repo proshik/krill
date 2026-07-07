@@ -398,7 +398,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		c.Ports = ports
 	}
 	if tab == "deployments" {
-		deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
+		deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
 		if err != nil {
 			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -512,7 +512,7 @@ func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := docker.RegistryRepo(reg.RegistryUrl, c.App.Image)
-	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, secret.Dec(reg.Password), repo)
+	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, secret.Dec(reg.Password), repo, s.cfg.AllowPrivateEgress)
 	if err != nil {
 		logFrom(r).Info("appTags: list tags failed", "err", err, "app_id", c.App.ID, "image", c.App.Image)
 		// Return 200 with a visible message: htmx does not swap on 4xx/5xx, so the
@@ -532,6 +532,9 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	if c.App.SourceType == "dockerfile" {
 		gitURL := strings.TrimSpace(r.FormValue("git_url"))
 		gitBranch := strings.TrimSpace(r.FormValue("git_branch"))
+		if gitBranch == "" {
+			gitBranch = c.App.GitBranch // don't clear a configured branch
+		}
 		dockerfilePath := strings.TrimSpace(r.FormValue("dockerfile_path"))
 		if gitURL != "" {
 			if err := s.q.UpdateApplicationSource(r.Context(), db.UpdateApplicationSourceParams{

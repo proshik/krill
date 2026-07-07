@@ -436,6 +436,7 @@ var en = map[string]string{
 	"flash.err.vol_owner_number":           "owner %s must be a number",
 	"flash.err.vol_owner_range":            "owner %s must be in 0..65535",
 	"flash.err.registry_name_exists":       "a registry with this name already exists",
+	"flash.err.registry_private_host":      "Registry host is not permitted (private/link-local). Set KRILL_ALLOW_PRIVATE_EGRESS=true to allow it.",
 	"flash.err.link_var_exists":            "a link for this variable already exists",
 	"flash.err.gitcred_name_exists":        "a git credential with this name already exists",
 	"flash.err.dest_name_exists":           "a destination with this name already exists",

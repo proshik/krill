@@ -40,7 +40,7 @@ func TestCreateDestinationSucceeds(t *testing.T) {
 		AccessKey: minio.AccessKey,
 		SecretKey: minio.SecretKey,
 	}
-	if err := backup.CreateBucket(ctx, dst); err != nil {
+	if err := backup.CreateBucket(ctx, dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestCreateDestinationDuplicateNameFlash(t *testing.T) {
 		AccessKey: minio.AccessKey,
 		SecretKey: minio.SecretKey,
 	}
-	if err := backup.CreateBucket(ctx, dst); err != nil {
+	if err := backup.CreateBucket(ctx, dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 

@@ -139,7 +139,7 @@ func newMinioStore(t *testing.T, prefix string, retention int) (*mockVolStore, b
 	t.Helper()
 	m := testutil.NewMinio(t)
 	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
-	if err := backup.CreateBucket(context.Background(), dst); err != nil {
+	if err := backup.CreateBucket(context.Background(), dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 	store := &mockVolStore{
@@ -155,7 +155,7 @@ func newMinioStore(t *testing.T, prefix string, retention int) (*mockVolStore, b
 func TestRunVolumeBackupRoundtrip(t *testing.T) {
 	store, dst := newMinioStore(t, "vol", 7)
 	eng := &mockVolEngine{} // default archive writes PAYLOAD-123, state Running:0
-	svc := New(eng, store)
+	svc := New(eng, store, true)
 	ctx := context.Background()
 
 	if err := svc.RunVolumeBackup(ctx, 1, time.Now()); err != nil {
@@ -192,7 +192,7 @@ func TestRunVolumeBackupRoundtrip(t *testing.T) {
 func TestRunVolumeBackupRetention(t *testing.T) {
 	store, _ := newMinioStore(t, "vol", 2)
 	eng := &mockVolEngine{}
-	svc := New(eng, store)
+	svc := New(eng, store, true)
 	ctx := context.Background()
 
 	// 4 runs with distinct timestamps so the S3 keys differ. Space the uploads
@@ -229,7 +229,7 @@ func contains(s, sub string) bool { return bytes.Contains([]byte(s), []byte(sub)
 func TestVolumeBackupKeyContainment(t *testing.T) {
 	store, _ := newMinioStore(t, "vol", 7)
 	eng := &mockVolEngine{}
-	svc := New(eng, store)
+	svc := New(eng, store, true)
 	ctx := context.Background()
 
 	// A key that is NOT under prefixDir("vol", "42-data").
@@ -251,7 +251,7 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 	store, _ := newMinioStore(t, "vol", 7)
 	// First, write a real archive object to S3 so the restore download succeeds.
 	eng := &mockVolEngine{}
-	svc := New(eng, store)
+	svc := New(eng, store, true)
 	ctx := context.Background()
 	if err := svc.RunVolumeBackup(ctx, 1, time.Now()); err != nil {
 		t.Fatalf("seed backup: %v", err)
@@ -264,7 +264,7 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 
 	// Fresh engine to record the restore call order cleanly.
 	eng2 := &mockVolEngine{} // state Running:0 → restore proceeds immediately
-	svc2 := New(eng2, store)
+	svc2 := New(eng2, store, true)
 	if err := svc2.RestoreByID(ctx, 1, key); err != nil {
 		t.Fatalf("RestoreByID: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 
 	// Variant: the scale-up's first two attempts fail, then succeed (defer retries).
 	eng3 := &mockVolEngine{scaleUpFailFirst: 2}
-	svc3 := New(eng3, store)
+	svc3 := New(eng3, store, true)
 	if err := svc3.RestoreByID(ctx, 1, key); err != nil {
 		t.Fatalf("RestoreByID (retry variant): %v", err)
 	}
@@ -319,7 +319,7 @@ func TestRunVolumeBackupInFlight(t *testing.T) {
 			return err
 		},
 	}
-	svc := New(eng, store)
+	svc := New(eng, store, true)
 	ctx := context.Background()
 
 	done := make(chan error, 1)

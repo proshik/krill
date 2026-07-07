@@ -126,7 +126,19 @@ type RemoteStats struct {
 // NewRemoteStats builds a docker client whose connections come from dial. The
 // dialer's address is the remote unix socket; callers (the metrics sampler)
 // supply a dialer that opens the worker's /var/run/docker.sock over SSH.
+// It carries a fresh (single-shot) CPU cache — every CPU% sample through it is
+// a "first sample" (0%). Callers that sample the same node repeatedly (e.g. the
+// cluster metrics sampler, once per tick) MUST use NewRemoteStatsWithCache with
+// a cache kept alive across calls, or CPU% deltas can never be computed.
 func NewRemoteStats(dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*RemoteStats, error) {
+	return NewRemoteStatsWithCache(dial, NewCPUCache())
+}
+
+// NewRemoteStatsWithCache builds a stats client like NewRemoteStats but uses the
+// caller-provided CPU cache instead of a fresh one, so CPU% deltas persist across
+// repeated calls when the caller keeps one cache per node (passing a fresh cache
+// every time makes every sample a first sample and CPU% is always 0).
+func NewRemoteStatsWithCache(dial func(ctx context.Context, network, addr string) (net.Conn, error), cache *CPUCache) (*RemoteStats, error) {
 	cli, err := client.NewClientWithOpts(
 		// WithHost MUST come before WithDialContext: for a unix host WithHost
 		// calls sockets.ConfigureTransport which sets a local-socket DialContext,
@@ -139,7 +151,7 @@ func NewRemoteStats(dial func(ctx context.Context, network, addr string) (net.Co
 	if err != nil {
 		return nil, err
 	}
-	return &RemoteStats{cli: cli, sc: &statsCollector{cli: cli, cache: NewCPUCache()}}, nil
+	return &RemoteStats{cli: cli, sc: &statsCollector{cli: cli, cache: cache}}, nil
 }
 
 func (r *RemoteStats) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {

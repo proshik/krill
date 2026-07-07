@@ -156,7 +156,7 @@ func run() error {
 
 	// Backups: service + in-process cron scheduler.
 	backupStore := backup.NewDBStore(q)
-	backupSvc := backup.New(engine, backupStore)
+	backupSvc := backup.New(engine, backupStore, cfg.AllowPrivateEgress)
 	backupSvc.SetNotifier(notifySvc)
 
 	// Health watcher: polls service state for app down/recovered alerts.
@@ -168,14 +168,31 @@ func run() error {
 	// matching the rest of the UI, e.g. the managed-DB node picker) rather than its
 	// raw Swarm hostname; workers keep their cluster_nodes name (e.g. "worker-1").
 	localName := "control-plane"
+	// cpuCaches holds one CPUCache per worker node, kept alive across sampler
+	// ticks. NewRemoteStats(WithCache) with a fresh cache every tick would make
+	// every CPU% sample a "first sample" (always 0) — see docker.NewRemoteStatsWithCache.
+	// workerLister runs single-threaded, once per tick, before SampleAll's
+	// goroutines fan out, so this map needs no mutex.
+	cpuCaches := map[string]*docker.CPUCache{}
 	workerLister := func(c context.Context) ([]metrics.Worker, error) {
 		rows, err := q.ListClusterNodes(c)
 		if err != nil {
 			return nil, err
 		}
 		ws := make([]metrics.Worker, 0, len(rows))
+		live := make(map[string]bool, len(rows))
 		for _, row := range rows {
 			row := row
+			key := row.SwarmNodeID
+			if key == "" {
+				key = row.Name
+			}
+			live[key] = true
+			cache := cpuCaches[key]
+			if cache == nil {
+				cache = docker.NewCPUCache()
+				cpuCaches[key] = cache
+			}
 			ws = append(ws, metrics.Worker{
 				Name: row.Name,
 				Connect: func(cc context.Context) (metrics.NodeStatsSource, func() error, error) {
@@ -189,9 +206,9 @@ func run() error {
 					if derr != nil {
 						return nil, nil, derr
 					}
-					rs, rerr := docker.NewRemoteStats(func(_ context.Context, _, _ string) (net.Conn, error) {
+					rs, rerr := docker.NewRemoteStatsWithCache(func(_ context.Context, _, _ string) (net.Conn, error) {
 						return cl.Dial("unix", "/var/run/docker.sock")
-					})
+					}, cache)
 					if rerr != nil {
 						_ = cl.Close()
 						return nil, nil, rerr
@@ -199,6 +216,13 @@ func run() error {
 					return rs, func() error { _ = rs.Close(); return cl.Close() }, nil
 				},
 			})
+		}
+		// Drop caches for nodes no longer in the cluster (renamed/removed) so
+		// they don't leak forever.
+		for k := range cpuCaches {
+			if !live[k] {
+				delete(cpuCaches, k)
+			}
 		}
 		return ws, nil
 	}
@@ -256,7 +280,7 @@ func run() error {
 
 	// Volume backups: separate service + a second in-process cron scheduler.
 	volStore := volume.NewDBStore(q)
-	volSvc := volume.New(engine, volStore)
+	volSvc := volume.New(engine, volStore, cfg.AllowPrivateEgress)
 	volSvc.SetNotifier(notifySvc)
 	volSched := backup.NewScheduler(volStore, func(ctx context.Context, id int64) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
@@ -290,6 +314,11 @@ func run() error {
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: app.Router(),
+		// Slowloris guard on the request line/headers only; body/stream reads and
+		// writes stay unbounded (long-lived WS: deploy logs, log viewer, terminal).
+		// Do NOT set ReadTimeout/WriteTimeout — those would cut those streams.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

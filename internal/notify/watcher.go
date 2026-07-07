@@ -84,7 +84,9 @@ func (w *Watcher) tick(ctx context.Context) {
 	for _, a := range apps {
 		names = append(names, docker.ServiceName(a.AppID))
 	}
-	states, err := w.engine.ServiceStates(ctx, names)
+	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	states, err := w.engine.ServiceStates(tctx, names)
 	if err != nil {
 		w.log.Warn("notify watcher: service states failed", "err", err)
 		return
