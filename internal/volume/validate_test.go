@@ -61,6 +61,10 @@ func TestValidationErrorKeys(t *testing.T) {
 		}
 	}
 	assertKey("bad name", ValidateAppVolume("Bad", "/data"), "flash.err.vol_name", nil)
+	assertKey("absolute", ValidateAppVolume("data", "rel"), "flash.err.vol_mount_absolute", nil)
+	assertKey("spaces", ValidateAppVolume("data", "/da ta"), "flash.err.vol_mount_spaces", nil)
+	assertKey("clean", ValidateAppVolume("data", "/data/../x"), "flash.err.vol_mount_clean", nil)
+	assertKey("dash segment", ValidateAppVolume("data", "/-data"), "flash.err.vol_mount_segment_dash", nil)
 	assertKey("system dir", ValidateAppVolume("data", "/etc"), "flash.err.vol_mount_system", "/etc")
 	_, _, _, e1 := ParseOwner("abc")
 	assertKey("uid nan", e1, "flash.err.vol_owner_number", "UID")

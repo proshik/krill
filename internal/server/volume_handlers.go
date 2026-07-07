@@ -21,6 +21,18 @@ func (s *Server) flashValidation(w http.ResponseWriter, r *http.Request, err err
 	s.flashErr(w, r, err.Error())
 }
 
+// clusterHasWorkers reports whether the cluster has worker nodes (⟺ multi-node,
+// since cluster_nodes holds only workers). On a count error it logs and returns
+// false — the volume-owner placement guard is best-effort and fails open.
+func (s *Server) clusterHasWorkers(r *http.Request) bool {
+	n, err := s.q.CountClusterNodes(r.Context())
+	if err != nil {
+		logFrom(r).Warn("count cluster nodes failed; skipping volume-owner placement guard", "err", err)
+		return false
+	}
+	return n > 0
+}
+
 // addVolume creates a named volume for the app. The mount is applied on the next
 // deploy (the ServiceSpec is rebuilt from app_volumes).
 func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
@@ -55,11 +67,9 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 		s.flashValidation(w, r, oerr)
 		return
 	}
-	if normOwner != "" && c.App.PlacementMode == "any" {
-		if n, _ := s.q.CountClusterNodes(r.Context()); n > 0 {
-			s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
-			return
-		}
+	if normOwner != "" && c.App.PlacementMode == "any" && s.clusterHasWorkers(r) {
+		s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
+		return
 	}
 	var ownerCol *string
 	if normOwner != "" {
@@ -115,11 +125,9 @@ func (s *Server) setVolumeOwner(w http.ResponseWriter, r *http.Request) {
 		s.flashValidation(w, r, oerr)
 		return
 	}
-	if normOwner != "" && c.App.PlacementMode == "any" {
-		if n, _ := s.q.CountClusterNodes(r.Context()); n > 0 {
-			s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
-			return
-		}
+	if normOwner != "" && c.App.PlacementMode == "any" && s.clusterHasWorkers(r) {
+		s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
+		return
 	}
 	var ownerCol *string
 	if normOwner != "" {
