@@ -163,7 +163,7 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logFrom(r).Error("dbInstanceDetail: list dbs failed", "err", err, "instance_id", inst.ID)
 	}
-	c := templates.DBServerCtx{Org: o, Role: role, Inst: inst, DBs: ldbs, Base: instBase(o.ID, inst.ID)}
+	c := templates.DBServerCtx{Org: o, Role: role, Inst: inst, DBs: ldbs, Base: instBase(o.ID, inst.ID), Host: s.cfg.Host}
 	if role == "owner" || role == "admin" {
 		if s.engine != nil {
 			c.Nodes, _ = s.engine.Nodes(r.Context())
