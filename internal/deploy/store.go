@@ -2,10 +2,13 @@ package deploy
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
@@ -113,7 +116,11 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		return App{}, lerr
 	}
 	for _, l := range links {
-		if val, ok := s.resolveDBLinkValue(ctx, l); ok {
+		val, ok, rerr := s.resolveDBLinkValue(ctx, l)
+		if rerr != nil {
+			return App{}, fmt.Errorf("resolve db-link %d: %w", l.ID, rerr)
+		}
+		if ok {
 			out.Env[l.VarName] = val // linked-DB value wins over env_text on key collision
 		} else {
 			slog.Warn("db-link: target database missing, skipping injection", "app", a.ID, "link_id", l.ID, "var", l.VarName)
@@ -148,30 +155,45 @@ func dbLinkFieldValue(field, user, pass, host, port, dbname, scheme string) stri
 }
 
 // resolveDBLinkValue derives the link's source fields (password decrypted live)
-// and returns the value named by l.Field. Returns false if the target is gone.
-func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByApplicationRow) (string, bool) {
+// and returns the value named by l.Field. Returns ("", false, nil) only when
+// the target row genuinely no longer exists (pgx.ErrNoRows) -- e.g. the
+// linked logical database or instance was deleted -- so the caller can skip
+// injection with just a warning. Any other error (pool exhaustion, deadline,
+// connection loss, ...) is returned as-is so the caller fails the deploy
+// instead of silently shipping the app without its injected connection
+// string.
+func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByApplicationRow) (string, bool, error) {
 	var user, pass, host, port, dbname, scheme string
 	switch {
 	case l.LogicalDatabaseID != nil:
 		ld, err := s.q.GetLogicalDatabase(ctx, *l.LogicalDatabaseID)
 		if err != nil {
-			return "", false
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, nil
+			}
+			return "", false, err
 		}
 		inst, err := s.q.GetDBInstance(ctx, ld.InstanceID)
 		if err != nil {
-			return "", false
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, nil
+			}
+			return "", false, err
 		}
 		user, pass, host, port, dbname, scheme = ld.Username, secret.Dec(ld.Password), inst.AppName, "5432", ld.DbName, l.Scheme
 	case l.InstanceID != nil:
 		inst, err := s.q.GetDBInstance(ctx, *l.InstanceID)
 		if err != nil {
-			return "", false
+			if errors.Is(err, pgx.ErrNoRows) {
+				return "", false, nil
+			}
+			return "", false, err
 		}
 		user, pass, host, port, dbname, scheme = "default", secret.Dec(inst.SuperuserPassword), inst.AppName, "6379", "", "redis"
 	default:
-		return "", false
+		return "", false, nil
 	}
-	return dbLinkFieldValue(l.Field, user, pass, host, port, dbname, scheme), true
+	return dbLinkFieldValue(l.Field, user, pass, host, port, dbname, scheme), true, nil
 }
 
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {

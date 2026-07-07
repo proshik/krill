@@ -2,9 +2,11 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/testutil"
 )
@@ -208,6 +210,96 @@ func TestGetApplicationInjectsDBLinks(t *testing.T) {
 	}
 	if got2.Env["DB_URL"] != "manual" {
 		t.Errorf("after DB delete expected env_text 'manual', got %q", got2.Env["DB_URL"])
+	}
+}
+
+// TestResolveDBLinkValueErrorClassification exercises resolveDBLinkValue
+// directly against a real DB (no querier mock exists at this seam — DBStore.q
+// is a concrete *db.Queries, not an interface, so there is nothing to inject
+// a synthetic non-ErrNoRows failure into). Instead this drives the two real
+// error shapes pgx actually produces: a genuinely-missing row (pgx.ErrNoRows)
+// vs. a cancelled context (a stand-in for any transient/non-ErrNoRows
+// failure, e.g. pool exhaustion or a deadline). It asserts the classification
+// contract: only ErrNoRows collapses to ("", false, nil); everything else
+// propagates as a non-nil error.
+func TestResolveDBLinkValueErrorClassification(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	s := NewDBStore(q)
+
+	u, err := q.CreateUser(ctx, db.CreateUserParams{Email: "rc@k.local", PasswordHash: "h"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	o, err := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-rc", OwnerID: u.ID})
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-rc", Description: ""})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	e, err := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+	if err != nil {
+		t.Fatalf("create environment: %v", err)
+	}
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-rc",
+		Image: "postgres:16-alpine", Superuser: "appuser", SuperuserPassword: "secretpw",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "db", DbName: "appdb", Username: "appuser", Password: "secretpw",
+	})
+	if err != nil {
+		t.Fatalf("create logical database: %v", err)
+	}
+	redisInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-rc",
+		Image: "redis:7-alpine", SuperuserPassword: "rpw",
+	})
+	if err != nil {
+		t.Fatalf("create redis instance: %v", err)
+	}
+
+	missingID := int64(987654321)
+	pgRow := db.ListDBLinksByApplicationRow{LogicalDatabaseID: &ldb.ID, VarName: "DB_URL", Scheme: "postgres", Field: "url"}
+	redisRow := db.ListDBLinksByApplicationRow{InstanceID: &redisInst.ID, VarName: "REDIS_URL", Scheme: "redis", Field: "url"}
+
+	// Success: a real, existing logical database resolves to a value with ok=true, err=nil.
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, pgRow); rerr != nil || !ok || val == "" {
+		t.Errorf("success case: val=%q ok=%v err=%v, want non-empty val, ok=true, err=nil", val, ok, rerr)
+	}
+
+	// Genuinely-deleted target (logical DB): ErrNoRows -> skip, no error.
+	missingLDRow := db.ListDBLinksByApplicationRow{LogicalDatabaseID: &missingID, VarName: "DB_URL", Scheme: "postgres", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, missingLDRow); rerr != nil || ok || val != "" {
+		t.Errorf("missing logical db: val=%q ok=%v err=%v, want (\"\", false, nil)", val, ok, rerr)
+	}
+
+	// Genuinely-deleted target (redis instance): ErrNoRows -> skip, no error.
+	missingInstRow := db.ListDBLinksByApplicationRow{InstanceID: &missingID, VarName: "REDIS_URL", Scheme: "redis", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, missingInstRow); rerr != nil || ok || val != "" {
+		t.Errorf("missing redis instance: val=%q ok=%v err=%v, want (\"\", false, nil)", val, ok, rerr)
+	}
+
+	// Transient failure (stand-in: a cancelled context) must NOT collapse to
+	// ("", false, nil) the way ErrNoRows does -- it must propagate as an error
+	// so GetApplication fails the deploy instead of silently omitting the link.
+	cancelledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if val, ok, rerr := s.resolveDBLinkValue(cancelledCtx, pgRow); rerr == nil || ok || val != "" {
+		t.Errorf("cancelled ctx (pg): val=%q ok=%v err=%v, want (\"\", false, non-nil)", val, ok, rerr)
+	} else if errors.Is(rerr, pgx.ErrNoRows) {
+		t.Errorf("cancelled ctx (pg) misclassified as ErrNoRows: %v", rerr)
+	}
+	if val, ok, rerr := s.resolveDBLinkValue(cancelledCtx, redisRow); rerr == nil || ok || val != "" {
+		t.Errorf("cancelled ctx (redis): val=%q ok=%v err=%v, want (\"\", false, non-nil)", val, ok, rerr)
+	} else if errors.Is(rerr, pgx.ErrNoRows) {
+		t.Errorf("cancelled ctx (redis) misclassified as ErrNoRows: %v", rerr)
 	}
 }
 
