@@ -7,6 +7,9 @@ package db
 
 import (
 	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const clearOldDeploymentLogs = `-- name: ClearOldDeploymentLogs :exec
@@ -89,6 +92,54 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const listDeploymentSummariesByApplication = `-- name: ListDeploymentSummariesByApplication :many
+SELECT id, application_id, status, trigger, image_tag, error_message, started_at, finished_at
+FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
+`
+
+type ListDeploymentSummariesByApplicationRow struct {
+	ID            int64              `json:"id"`
+	ApplicationID int64              `json:"application_id"`
+	Status        string             `json:"status"`
+	Trigger       string             `json:"trigger"`
+	ImageTag      string             `json:"image_tag"`
+	ErrorMessage  string             `json:"error_message"`
+	StartedAt     time.Time          `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+}
+
+// Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
+// column — for the deploy-history list, which is polled every 2s and never
+// renders the log. Use GetDeployment for the single-deployment detail/log view.
+func (q *Queries) ListDeploymentSummariesByApplication(ctx context.Context, applicationID int64) ([]ListDeploymentSummariesByApplicationRow, error) {
+	rows, err := q.db.Query(ctx, listDeploymentSummariesByApplication, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentSummariesByApplicationRow
+	for rows.Next() {
+		var i ListDeploymentSummariesByApplicationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.Status,
+			&i.Trigger,
+			&i.ImageTag,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many

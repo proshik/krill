@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Deployments(c AppCtx, deps []db.Deployment) {
+templ Deployments(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	<div class="k-card">
 		<div hx-get={ c.base() + "/deployments-list" } hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
 			@DeploymentsList(c, deps)
@@ -13,7 +13,7 @@ templ Deployments(c AppCtx, deps []db.Deployment) {
 	</div>
 }
 
-templ DeploymentsList(c AppCtx, deps []db.Deployment) {
+templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	<table id="deployments-list" class="k-table">
 		<thead><tr><th>{ i18n.T(ctx, "deploy.col_time") }</th><th>{ i18n.T(ctx, "deploy.col_status") }</th><th>{ i18n.T(ctx, "deploy.col_trigger") }</th><th>{ i18n.T(ctx, "deploy.col_image") }</th><th>{ i18n.T(ctx, "deploy.col_log") }</th></tr></thead>
 		<tbody>

@@ -19,7 +19,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
+	deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
 	if err != nil {
 		logFrom(r).Error("listDeployments: query deployments failed", "err", err, "app_id", c.App.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

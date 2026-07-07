@@ -398,7 +398,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		c.Ports = ports
 	}
 	if tab == "deployments" {
-		deps, err := s.q.ListDeploymentsByApplication(r.Context(), c.App.ID)
+		deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
 		if err != nil {
 			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
