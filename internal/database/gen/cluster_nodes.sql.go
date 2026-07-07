@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countClusterNodes = `-- name: CountClusterNodes :one
+SELECT count(*) FROM cluster_nodes
+`
+
+func (q *Queries) CountClusterNodes(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countClusterNodes)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countClusterNodesByName = `-- name: CountClusterNodesByName :one
 SELECT count(*) FROM cluster_nodes WHERE name = $1
 `

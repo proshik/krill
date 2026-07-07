@@ -55,6 +55,12 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 		s.flashValidation(w, r, oerr)
 		return
 	}
+	if normOwner != "" && c.App.PlacementMode == "any" {
+		if n, _ := s.q.CountClusterNodes(r.Context()); n > 0 {
+			s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
+			return
+		}
+	}
 	var ownerCol *string
 	if normOwner != "" {
 		ownerCol = &normOwner
@@ -108,6 +114,12 @@ func (s *Server) setVolumeOwner(w http.ResponseWriter, r *http.Request) {
 	if oerr != nil {
 		s.flashValidation(w, r, oerr)
 		return
+	}
+	if normOwner != "" && c.App.PlacementMode == "any" {
+		if n, _ := s.q.CountClusterNodes(r.Context()); n > 0 {
+			s.flashErrT(w, r, "flash.err.vol_owner_needs_pin")
+			return
+		}
 	}
 	var ownerCol *string
 	if normOwner != "" {

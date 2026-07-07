@@ -50,6 +50,30 @@ func TestSavePlacement(t *testing.T) {
 	}
 }
 
+func TestSavePlacementBlockedWithOwnedVolume(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, appID, _, _ := rpFixture(t, h, q, orgSvc, "pl-owned@k.local")
+
+	owner := "1000:0"
+	if _, err := q.CreateVolume(ctx, db.CreateVolumeParams{
+		ApplicationID: appID, Name: "data", MountPath: "/data", Owner: &owner,
+	}); err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if _, err := q.CreateClusterNode(ctx, db.CreateClusterNodeParams{
+		Name: "worker-1", SshHost: "10.0.0.2", SshPort: 22, SshUser: "root",
+		SshKey: "k", HostKey: "", SwarmNodeID: "swarm-1",
+	}); err != nil {
+		t.Fatalf("create cluster node: %v", err)
+	}
+
+	// Switching to "any" while an owned volume exists on a multi-node cluster → err.
+	if rec := postForm(t, h, base+"/placement", cookie, url.Values{"placement_mode": {"any"}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("any with owned volume + worker want 303+err, got %d", rec.Code)
+	}
+}
+
 // TestSetDBInstanceNode exercises setDBInstanceNode — node pinning for a DB
 // instance now lives on the org-level /db-servers page (moved off the
 // env-level DB detail page in the logical-databases rework).

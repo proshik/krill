@@ -287,6 +287,19 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_placement")
 		return
 	}
+	// Switching to "any" on a multi-node cluster would leave owned volumes chowned
+	// only on the control-plane, so a replica on a worker gets an unwritable volume.
+	if mode == "any" {
+		if n, _ := s.q.CountClusterNodes(r.Context()); n > 0 {
+			vols, _ := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
+			for _, v := range vols {
+				if v.Owner != nil {
+					s.flashErrT(w, r, "flash.err.placement_any_owned_volume")
+					return
+				}
+			}
+		}
+	}
 	var nodes []string
 	if mode != "any" {
 		nodes = r.PostForm["placement_nodes"]

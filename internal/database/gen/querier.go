@@ -19,6 +19,7 @@ type Querier interface {
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
+	CountClusterNodes(ctx context.Context) (int64, error)
 	CountClusterNodesByName(ctx context.Context, name string) (int64, error)
 	CountDBInstancesByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
