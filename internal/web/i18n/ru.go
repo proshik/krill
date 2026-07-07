@@ -510,6 +510,7 @@ var ru = map[string]string{
 	"flash.ok.autodeploy_enabled":          "Автодеплой включён",
 	"flash.ok.autodeploy_disabled":         "Автодеплой выключен",
 	"flash.err.firewall_no_nodes":          "Нет воркер-нод для блокировки",
+	"flash.err.firewall_advertise_not_ip":  "Адрес control-plane (KRILL_ADVERTISE_ADDR) должен быть IP-адресом, чтобы безопасно заблокировать воркеров.",
 	"flash.ok.firewall_locked":             "Воркер-ноды заблокированы",
 	"flash.ok.firewall_opened":             "Файрвол воркеров открыт",
 	"flash.ok.autodeploy_regenerated":      "Секрет webhook перевыпущен — обновите его в GitHub",

@@ -31,6 +31,11 @@ func TestInstanceSpecNoHostPublish(t *testing.T) {
 	if len(spec.Ports) != 0 {
 		t.Fatalf("DB service must not host-publish external_port anymore, got %+v", spec.Ports)
 	}
+
+	redisSpec := instanceSpec(Instance{Engine: "redis", AppName: "krill-redis-y", ExternalPort: p32(6380)}, "krill-net")
+	if len(redisSpec.Ports) != 0 {
+		t.Fatalf("redis service must not host-publish external_port anymore, got %+v", redisSpec.Ports)
+	}
 }
 
 func TestReconcileProxyDeployAndRemove(t *testing.T) {

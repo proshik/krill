@@ -510,6 +510,7 @@ var en = map[string]string{
 	"flash.ok.autodeploy_enabled":          "Auto-deploy enabled",
 	"flash.ok.autodeploy_disabled":         "Auto-deploy disabled",
 	"flash.err.firewall_no_nodes":          "No worker nodes to lock down",
+	"flash.err.firewall_advertise_not_ip":  "Control-plane advertise address (KRILL_ADVERTISE_ADDR) must be an IP to lock down workers safely.",
 	"flash.ok.firewall_locked":             "Worker nodes locked down",
 	"flash.ok.firewall_opened":             "Worker firewalls opened",
 	"flash.ok.autodeploy_regenerated":      "Webhook secret regenerated — update it in GitHub",
