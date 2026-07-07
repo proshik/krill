@@ -90,6 +90,7 @@ func TestDBLinkFieldValue(t *testing.T) {
 		"port":     "5432",
 		"user":     "u",
 		"dbname":   "d",
+		"hostport": "h:5432",
 	} {
 		if got := dbLinkFieldValue(field, "u", "p", "h", "5432", "d", "postgresql"); got != want {
 			t.Errorf("pg field %q = %q, want %q", field, got, want)
@@ -101,6 +102,9 @@ func TestDBLinkFieldValue(t *testing.T) {
 	}
 	if got := dbLinkFieldValue("password", "default", "p", "h", "6379", "", "redis"); got != "p" {
 		t.Errorf("redis password = %q", got)
+	}
+	if got := dbLinkFieldValue("hostport", "default", "p", "h", "6379", "", "redis"); got != "h:6379" {
+		t.Errorf("redis hostport = %q", got)
 	}
 }
 

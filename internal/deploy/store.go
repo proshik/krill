@@ -136,6 +136,8 @@ func dbLinkFieldValue(field, user, pass, host, port, dbname, scheme string) stri
 		return user
 	case "dbname":
 		return dbname
+	case "hostport":
+		return host + ":" + port
 	default: // "url"
 		u := scheme + "://" + user + ":" + pass + "@" + host + ":" + port
 		if dbname != "" {
