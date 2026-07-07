@@ -187,6 +187,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/nodes/{nodeID}/label", s.setNodeLabel)
 				r.Get("/monitoring", s.monitoring)
 				r.Get("/monitoring/data", s.monitoringData)
+				r.Get("/firewall", s.firewallPage)
+				r.Post("/firewall/lockdown", s.lockdownWorkers)
+				r.Post("/firewall/open", s.openWorkers)
 			})
 
 			r.Group(func(r chi.Router) {
@@ -207,6 +210,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/db-servers/{instID}/start", s.startDBInstance)
 				r.Post("/db-servers/{instID}/stop", s.stopDBInstance)
 				r.Post("/db-servers/{instID}/version", s.versionDBInstance)
+				r.Post("/db-servers/{instID}/external-port", s.setDBInstanceExternalPort)
 				r.Post("/db-servers/{instID}/node", s.setDBInstanceNode)
 				r.Post("/db-servers/{instID}/delete", s.deleteDBInstance)
 				r.Get("/notifications", s.listNotifications)

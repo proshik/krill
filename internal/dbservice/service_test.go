@@ -209,7 +209,7 @@ func TestDeleteInstanceRemovesService(t *testing.T) {
 	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
+	if len(eng.removed) != 2 || eng.removed[0] != "krill-pg-x" || eng.removed[1] != "krill-dbproxy-1" {
 		t.Errorf("removed = %+v", eng.removed)
 	}
 }
@@ -221,7 +221,7 @@ func TestDeleteInstanceKeepsVolumeByDefault(t *testing.T) {
 	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(eng.removed) != 1 || eng.removed[0] != "krill-pg-x" {
+	if len(eng.removed) != 2 || eng.removed[0] != "krill-pg-x" || eng.removed[1] != "krill-dbproxy-1" {
 		t.Errorf("removed = %+v", eng.removed)
 	}
 	if len(eng.removedVolumes) != 0 {
@@ -253,7 +253,7 @@ func TestDeleteRedisInstanceKeepsVolumeByDefault(t *testing.T) {
 	if err := svc.DeleteInstance(context.Background(), 1, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(eng.removed) != 1 || eng.removed[0] != "krill-redis-x" {
+	if len(eng.removed) != 2 || eng.removed[0] != "krill-redis-x" || eng.removed[1] != "krill-dbproxy-1" {
 		t.Errorf("removed = %+v", eng.removed)
 	}
 	if len(eng.removedVolumes) != 0 {

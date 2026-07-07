@@ -90,15 +90,16 @@ type Backup struct {
 }
 
 type ClusterNode struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	SshHost     string    `json:"ssh_host"`
-	SshPort     int32     `json:"ssh_port"`
-	SshUser     string    `json:"ssh_user"`
-	SshKey      string    `json:"ssh_key"`
-	HostKey     string    `json:"host_key"`
-	SwarmNodeID string    `json:"swarm_node_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	Name            string    `json:"name"`
+	SshHost         string    `json:"ssh_host"`
+	SshPort         int32     `json:"ssh_port"`
+	SshUser         string    `json:"ssh_user"`
+	SshKey          string    `json:"ssh_key"`
+	HostKey         string    `json:"host_key"`
+	SwarmNodeID     string    `json:"swarm_node_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	FirewallManaged bool      `json:"firewall_managed"`
 }
 
 type DbInstance struct {

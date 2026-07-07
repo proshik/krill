@@ -23,17 +23,17 @@ func Path(ctx context.Context) string {
 // IsActive reports whether the current path belongs to the given sidebar
 // section ("projects" | "members" | "db-servers" | "monitoring" | one of the
 // Settings sections: "destinations" | "registries" | "notifications" |
-// "git-credentials" | "nodes").
+// "git-credentials" | "nodes" | "firewall").
 func IsActive(ctx context.Context, section string) bool {
 	return sectionOf(Path(ctx)) == section
 }
 
 // IsSettings reports whether the current path is one of the Settings pages
-// (Destinations, Registries, Notifications, Git credentials, or Nodes), which
-// share a single sidebar entry.
+// (Destinations, Registries, Notifications, Git credentials, Nodes, or
+// Firewall), which share a single sidebar entry.
 func IsSettings(ctx context.Context) bool {
 	s := sectionOf(Path(ctx))
-	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes"
+	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes" || s == "firewall"
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages
@@ -52,6 +52,8 @@ func sectionOf(path string) string {
 		return "git-credentials"
 	case strings.Contains(path, "/nodes"):
 		return "nodes"
+	case strings.Contains(path, "/firewall"):
+		return "firewall"
 	case strings.Contains(path, "/registries"):
 		return "registries"
 	case strings.Contains(path, "/notifications"):

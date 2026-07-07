@@ -30,12 +30,13 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
-	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (ClusterNode, error)
+	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error)
 	CreateDBInstance(ctx context.Context, arg CreateDBInstanceParams) (DbInstance, error)
 	CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (CreateDBLinkRow, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
@@ -77,8 +78,8 @@ type Querier interface {
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
-	GetClusterNode(ctx context.Context, id int64) (ClusterNode, error)
-	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (ClusterNode, error)
+	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
+	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
@@ -147,6 +148,7 @@ type Querier interface {
 	SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
+	SetClusterNodeFirewallManaged(ctx context.Context, arg SetClusterNodeFirewallManagedParams) error
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error
@@ -163,6 +165,7 @@ type Querier interface {
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
+	UpdateDBInstanceExternalPort(ctx context.Context, arg UpdateDBInstanceExternalPortParams) error
 	UpdateDBInstanceImage(ctx context.Context, arg UpdateDBInstanceImageParams) error
 	UpdateDBInstanceStatus(ctx context.Context, arg UpdateDBInstanceStatusParams) error
 	UpdateDomainExposure(ctx context.Context, arg UpdateDomainExposureParams) error

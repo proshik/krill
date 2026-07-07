@@ -31,6 +31,22 @@ func (q *Queries) CountLogicalDatabasesByInstance(ctx context.Context, instanceI
 	return count, err
 }
 
+const countOtherDBInstancesByExternalPort = `-- name: CountOtherDBInstancesByExternalPort :one
+SELECT count(*) FROM db_instances WHERE external_port = $1 AND id <> $2
+`
+
+type CountOtherDBInstancesByExternalPortParams struct {
+	ExternalPort *int32 `json:"external_port"`
+	ID           int64  `json:"id"`
+}
+
+func (q *Queries) CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOtherDBInstancesByExternalPort, arg.ExternalPort, arg.ID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDBInstance = `-- name: CreateDBInstance :one
 INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at
@@ -200,6 +216,20 @@ type SetDBInstanceNodeParams struct {
 
 func (q *Queries) SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error {
 	_, err := q.db.Exec(ctx, setDBInstanceNode, arg.ID, arg.NodeHostname)
+	return err
+}
+
+const updateDBInstanceExternalPort = `-- name: UpdateDBInstanceExternalPort :exec
+UPDATE db_instances SET external_port = $2 WHERE id = $1
+`
+
+type UpdateDBInstanceExternalPortParams struct {
+	ID           int64  `json:"id"`
+	ExternalPort *int32 `json:"external_port"`
+}
+
+func (q *Queries) UpdateDBInstanceExternalPort(ctx context.Context, arg UpdateDBInstanceExternalPortParams) error {
+	_, err := q.db.Exec(ctx, updateDBInstanceExternalPort, arg.ID, arg.ExternalPort)
 	return err
 }
 

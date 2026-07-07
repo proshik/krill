@@ -15,6 +15,7 @@ type DBServerCtx struct {
 	SuperuserURL string // admin-only; postgres superuser / redis connection string
 	ExternalURL  string // redis external (postgres external lives on the logical DB page)
 	Base         string
+	Host         string // control-plane host, for the external-access "host:port" line
 }
 
 templ DBServerDetail(c DBServerCtx) {
@@ -67,6 +68,20 @@ templ DBServerDetail(c DBServerCtx) {
 							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbnode.save") }</button>
 						</form>
 					}
+					<div class="mt-4">
+						<label class="k-label">{ i18n.T(ctx, "dbinst.external.title") }</label>
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/external-port") } class="flex items-end gap-2 flex-wrap">
+							<div>
+								<input class="k-input k-mono w-32" name="external_port" type="number" min="1" max="65535"
+									value={ i32v(c.Inst.ExternalPort) } placeholder="5433"/>
+							</div>
+							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbinst.external.save") }</button>
+							<p class="k-muted text-xs mt-1" style="flex-basis:100%">{ i18n.T(ctx, "dbinst.external.hint") }</p>
+						</form>
+						if c.Inst.ExternalPort != nil {
+							<p class="k-muted text-xs mt-1 k-mono">{ c.Host }:{ itoa(int64(*c.Inst.ExternalPort)) }</p>
+						}
+					</div>
 					if c.SuperuserURL != "" {
 						<div>
 							<div class="k-label">{ i18n.T(ctx, "dbi.superuser_url") }</div>
