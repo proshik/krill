@@ -1,8 +1,54 @@
 package dbservice
 
-import "testing"
+import (
+	"context"
+	"io"
+	"testing"
+
+	"github.com/proshik/krill/internal/docker"
+)
 
 func int32p(v int32) *int32 { return &v }
+
+type recEngine struct {
+	docker.Engine // embed nil: only the methods we call are implemented below
+	deployed      []string
+	removed       []string
+}
+
+func (e *recEngine) ImagePull(ctx context.Context, ref string, out io.Writer) error { return nil }
+func (e *recEngine) ServiceDeploy(ctx context.Context, spec docker.ServiceSpec) error {
+	e.deployed = append(e.deployed, spec.Name)
+	return nil
+}
+func (e *recEngine) ServiceRemove(ctx context.Context, name string) error {
+	e.removed = append(e.removed, name)
+	return nil
+}
+
+func TestInstanceSpecNoHostPublish(t *testing.T) {
+	spec := instanceSpec(Instance{Engine: "postgres", AppName: "krill-postgres-x", ExternalPort: p32(5433)}, "krill-net")
+	if len(spec.Ports) != 0 {
+		t.Fatalf("DB service must not host-publish external_port anymore, got %+v", spec.Ports)
+	}
+}
+
+func TestReconcileProxyDeployAndRemove(t *testing.T) {
+	e := &recEngine{}
+	s := &Service{engine: e, network: "krill-net"}
+	if err := s.reconcileProxy(context.Background(), Instance{ID: 7, Engine: "postgres", AppName: "a", ExternalPort: p32(5433)}); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if len(e.deployed) != 1 || e.deployed[0] != "krill-dbproxy-7" {
+		t.Fatalf("deployed = %v", e.deployed)
+	}
+	if err := s.reconcileProxy(context.Background(), Instance{ID: 7, Engine: "postgres", AppName: "a", ExternalPort: nil}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if len(e.removed) != 1 || e.removed[0] != "krill-dbproxy-7" {
+		t.Fatalf("removed = %v", e.removed)
+	}
+}
 
 func TestInstanceSpecPostgres(t *testing.T) {
 	inst := Instance{
@@ -26,8 +72,8 @@ func TestInstanceSpecPostgres(t *testing.T) {
 	if len(s.Mounts) != 1 || s.Mounts[0].Source != "krill-postgres-x-abc123-data" || s.Mounts[0].Target != "/var/lib/postgresql/data" {
 		t.Fatalf("mount wrong: %+v", s.Mounts)
 	}
-	if len(s.Ports) != 1 || s.Ports[0].Target != 5432 || s.Ports[0].Published != 55001 || s.Ports[0].Mode != "host" {
-		t.Fatalf("ports wrong: %+v", s.Ports)
+	if len(s.Ports) != 0 {
+		t.Fatalf("DB service must not host-publish anymore (external access goes via the proxy), got %+v", s.Ports)
 	}
 }
 

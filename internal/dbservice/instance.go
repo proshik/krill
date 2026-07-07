@@ -58,16 +58,10 @@ func instanceSpec(inst Instance, network string) docker.ServiceSpec {
 			"POSTGRES_PASSWORD": inst.SuperuserPassword,
 		}
 		spec.Mounts = []docker.MountSpec{{Type: "volume", Source: volumeName(inst.AppName), Target: "/var/lib/postgresql/data"}}
-		if inst.ExternalPort != nil {
-			spec.Ports = []docker.PortSpec{{Target: 5432, Published: uint32(*inst.ExternalPort), Mode: "host"}}
-		}
 	case "redis":
 		// Exec form (no shell): the password is a discrete argv element.
 		spec.Args = []string{"redis-server", "--requirepass", inst.SuperuserPassword}
 		spec.Mounts = []docker.MountSpec{{Type: "volume", Source: volumeName(inst.AppName), Target: "/data"}}
-		if inst.ExternalPort != nil {
-			spec.Ports = []docker.PortSpec{{Target: 6379, Published: uint32(*inst.ExternalPort), Mode: "host"}}
-		}
 	}
 	return spec
 }
@@ -140,6 +134,10 @@ func (s *Service) deployInstance(ctx context.Context, id int64) {
 	}
 	fmt.Fprintf(out, "✅ deployed %s\n", inst.AppName)
 	_ = s.store.SetInstanceStatus(ctx, id, "running")
+	if err := s.reconcileProxy(ctx, inst); err != nil {
+		fmt.Fprintf(out, "⚠ external-access proxy: %v\n", err)
+		slog.Warn("db instance: reconcile proxy failed", "err", err, "instance_id", id)
+	}
 }
 
 func (s *Service) StartInstance(ctx context.Context, id int64) error {
@@ -173,6 +171,7 @@ func (s *Service) DeleteInstance(ctx context.Context, id int64, destroyData bool
 	}
 	if s.engine != nil {
 		_ = s.engine.ServiceRemove(ctx, inst.AppName) // volume preserved by default
+		_ = s.engine.ServiceRemove(ctx, proxyName(id))
 		if destroyData {
 			s.removeVolume(ctx, volumeName(inst.AppName))
 		}
