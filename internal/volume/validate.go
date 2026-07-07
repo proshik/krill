@@ -3,8 +3,6 @@
 package volume
 
 import (
-	"errors"
-	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,35 +20,46 @@ var forbiddenExact = map[string]bool{
 // forbiddenTrees: paths under which mounting is always rejected.
 var forbiddenTrees = []string{"/proc", "/sys", "/dev"}
 
+// ValidationError is a user-facing validation error identified by an i18n key.
+// Args are the printf args for i18n.Tf. Error() returns the key as a fallback.
+type ValidationError struct {
+	Key  string
+	Args []any
+}
+
+func (e *ValidationError) Error() string { return e.Key }
+
+func verr(key string, args ...any) *ValidationError { return &ValidationError{Key: key, Args: args} }
+
 // ValidateAppVolume checks a volume name and mount path. name is a short slug
 // (so docker.VolumeName is always safe); mountPath must be a clean absolute path
-// that does not overlay a sensitive container directory. The returned error is
-// user-facing (shown via flash).
+// that does not overlay a sensitive container directory. The returned error is a
+// *ValidationError carrying an i18n key (shown via flash).
 func ValidateAppVolume(name, mountPath string) error {
 	if !nameRe.MatchString(name) {
-		return errors.New("name must match ^[a-z0-9][a-z0-9-]{0,31}$ (lowercase letters, digits, dashes; up to 32 chars)")
+		return verr("flash.err.vol_name")
 	}
 	p := mountPath
 	if !strings.HasPrefix(p, "/") {
-		return errors.New("mount path must be absolute (start with /)")
+		return verr("flash.err.vol_mount_absolute")
 	}
 	if strings.ContainsAny(p, "` \t") {
-		return errors.New("mount path must not contain spaces, tabs or backticks")
+		return verr("flash.err.vol_mount_spaces")
 	}
 	if p != filepath.Clean(p) {
-		return errors.New("mount path must be clean (no .., ., trailing or double slashes)")
+		return verr("flash.err.vol_mount_clean")
 	}
 	for _, seg := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
 		if strings.HasPrefix(seg, "-") {
-			return errors.New("mount path segments must not start with '-'")
+			return verr("flash.err.vol_mount_segment_dash")
 		}
 	}
 	if forbiddenExact[p] {
-		return errors.New("mount path overlays a system directory: " + p)
+		return verr("flash.err.vol_mount_system", p)
 	}
 	for _, t := range forbiddenTrees {
 		if p == t || strings.HasPrefix(p, t+"/") {
-			return errors.New("mount path overlays a system directory: " + p)
+			return verr("flash.err.vol_mount_system", p)
 		}
 	}
 	return nil
@@ -59,7 +68,7 @@ func ValidateAppVolume(name, mountPath string) error {
 // ParseOwner validates an optional volume-owner string. Accepts "uid:gid" or a
 // bare "uid" (which means uid:uid). Empty input is valid and yields normalized
 // "" (no chown). uid and gid must be integers in 0..65535. Returns the parsed
-// ids and the normalized "uid:gid" string. The error is user-facing (flash).
+// ids and the normalized "uid:gid" string. The error is a *ValidationError.
 func ParseOwner(s string) (uid, gid int, normalized string, err error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -69,24 +78,24 @@ func ParseOwner(s string) (uid, gid int, normalized string, err error) {
 	if i := strings.IndexByte(s, ':'); i >= 0 {
 		uidStr, gidStr = s[:i], s[i+1:]
 	}
-	uid, err = parseIDField(uidStr)
+	uid, err = parseIDField(uidStr, "UID")
 	if err != nil {
-		return 0, 0, "", fmt.Errorf("owner UID: %w", err)
+		return 0, 0, "", err
 	}
-	gid, err = parseIDField(gidStr)
+	gid, err = parseIDField(gidStr, "GID")
 	if err != nil {
-		return 0, 0, "", fmt.Errorf("owner GID: %w", err)
+		return 0, 0, "", err
 	}
 	return uid, gid, strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
-func parseIDField(s string) (int, error) {
+func parseIDField(s, field string) (int, error) {
 	n, convErr := strconv.Atoi(strings.TrimSpace(s))
 	if convErr != nil {
-		return 0, errors.New("must be a number")
+		return 0, verr("flash.err.vol_owner_number", field)
 	}
 	if n < 0 || n > 65535 {
-		return 0, errors.New("must be in 0..65535")
+		return 0, verr("flash.err.vol_owner_range", field)
 	}
 	return n, nil
 }

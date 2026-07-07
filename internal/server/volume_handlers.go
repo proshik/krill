@@ -1,12 +1,25 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/volume"
+	"github.com/proshik/krill/internal/web/i18n"
 )
+
+// flashValidation renders a volume.ValidationError through i18n; any other error
+// falls back to its raw message.
+func (s *Server) flashValidation(w http.ResponseWriter, r *http.Request, err error) {
+	var ve *volume.ValidationError
+	if errors.As(err, &ve) {
+		s.flashErr(w, r, i18n.Tf(r.Context(), ve.Key, ve.Args...))
+		return
+	}
+	s.flashErr(w, r, err.Error())
+}
 
 // addVolume creates a named volume for the app. The mount is applied on the next
 // deploy (the ServiceSpec is rebuilt from app_volumes).
@@ -18,7 +31,7 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
 	mountPath := strings.TrimSpace(r.FormValue("mount_path"))
 	if err := volume.ValidateAppVolume(name, mountPath); err != nil {
-		s.flashErr(w, r, err.Error())
+		s.flashValidation(w, r, err)
 		return
 	}
 	existing, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
@@ -39,7 +52,7 @@ func (s *Server) addVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
 	if oerr != nil {
-		s.flashErr(w, r, oerr.Error())
+		s.flashValidation(w, r, oerr)
 		return
 	}
 	var ownerCol *string
@@ -93,7 +106,7 @@ func (s *Server) setVolumeOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, normOwner, oerr := volume.ParseOwner(r.FormValue("owner"))
 	if oerr != nil {
-		s.flashErr(w, r, oerr.Error())
+		s.flashValidation(w, r, oerr)
 		return
 	}
 	var ownerCol *string
