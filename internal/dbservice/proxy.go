@@ -43,7 +43,10 @@ func (s *Service) reconcileProxy(ctx context.Context, inst Instance) error {
 		return nil
 	}
 	if inst.ExternalPort == nil {
-		return s.engine.ServiceRemove(ctx, proxyName(inst.ID))
+		if err := s.engine.ServiceRemove(ctx, proxyName(inst.ID)); err != nil && !isNotFound(err) {
+			return fmt.Errorf("remove proxy: %w", err)
+		}
+		return nil
 	}
 	if err := s.engine.ImagePull(ctx, socatImage, io.Discard); err != nil {
 		return fmt.Errorf("pull socat: %w", err)

@@ -162,19 +162,55 @@ func (s *Service) StopInstance(ctx context.Context, id int64) error {
 	return s.store.SetInstanceStatus(ctx, id, "idle")
 }
 
-// DeleteInstance removes the Swarm service (engine-gated: nil engine → row-only
-// delete, tests only) and optionally the data volume, then the row.
-func (s *Service) DeleteInstance(ctx context.Context, id int64, destroyData bool) error {
+// RemoveInstanceContainers removes the instance's Swarm service and its
+// control-plane proxy (engine-gated: nil engine → no-op) and, if requested,
+// the data volume — WITHOUT touching the db_instances row. Split out from
+// DeleteInstance so callers that must first clear other rows referencing the
+// instance (logical_databases has an ON DELETE RESTRICT FK to db_instances)
+// can sequence "containers are actually gone" before "bookkeeping rows are
+// gone": a real docker failure here must not silently destroy backups/links
+// for an instance that is still running.
+func (s *Service) RemoveInstanceContainers(ctx context.Context, id int64, destroyData bool) error {
 	inst, err := s.store.GetInstance(ctx, id)
 	if err != nil {
 		return err
 	}
-	if s.engine != nil {
-		_ = s.engine.ServiceRemove(ctx, inst.AppName) // volume preserved by default
-		_ = s.engine.ServiceRemove(ctx, proxyName(id))
-		if destroyData {
-			s.removeVolume(ctx, volumeName(inst.AppName))
-		}
+	if s.engine == nil {
+		return nil
+	}
+	// Detach from the request ctx so a cancelled request cannot leave a
+	// half-removed instance; tolerate not-found (already gone) but surface a
+	// real failure so the row+credentials are kept and the delete is retryable.
+	rmCtx := context.WithoutCancel(ctx)
+	if err := s.engine.ServiceRemove(rmCtx, inst.AppName); err != nil && !isNotFound(err) {
+		slog.Error("delete db instance: service remove failed", "err", err, "instance_id", id, "app_name", inst.AppName)
+		return fmt.Errorf("remove service: %w", err)
+	}
+	if err := s.engine.ServiceRemove(rmCtx, proxyName(id)); err != nil && !isNotFound(err) {
+		slog.Error("delete db instance: proxy remove failed", "err", err, "instance_id", id)
+		return fmt.Errorf("remove proxy: %w", err)
+	}
+	if destroyData {
+		s.removeVolume(rmCtx, volumeName(inst.AppName))
+	}
+	return nil
+}
+
+// DeleteInstanceRow deletes the db_instances row directly, without touching
+// docker. Used by callers (e.g. the deleteDBInstance handler) that already
+// removed the containers via RemoveInstanceContainers and cleared any rows
+// with a RESTRICT FK to db_instances (logical_databases) first.
+func (s *Service) DeleteInstanceRow(ctx context.Context, id int64) error {
+	return s.store.DeleteInstanceRow(ctx, id)
+}
+
+// DeleteInstance removes the Swarm service (engine-gated: nil engine → row-only
+// delete, tests only) and optionally the data volume, then the row. A real
+// ServiceRemove failure is surfaced (not swallowed): the row is kept so the
+// delete is retryable; a not-found failure is tolerated (already gone).
+func (s *Service) DeleteInstance(ctx context.Context, id int64, destroyData bool) error {
+	if err := s.RemoveInstanceContainers(ctx, id, destroyData); err != nil {
+		return err
 	}
 	return s.store.DeleteInstanceRow(ctx, id)
 }

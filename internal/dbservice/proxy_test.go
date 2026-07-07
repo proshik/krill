@@ -1,6 +1,10 @@
 package dbservice
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
 func TestProxySpec(t *testing.T) {
 	pg := proxySpec(Instance{ID: 7, Engine: "postgres", AppName: "krill-postgres-x", ExternalPort: p32(5433)}, "krill-net")
@@ -26,3 +30,35 @@ func TestProxySpec(t *testing.T) {
 }
 
 func p32(v int32) *int32 { return &v }
+
+// reconcileProxy's disable path (ExternalPort == nil) removes the proxy
+// service and must tolerate a not-found ServiceRemove error (proxy was never
+// deployed, or already removed) while still surfacing a real docker error.
+func TestReconcileProxyDisabledToleratesNotFoundOnServiceRemove(t *testing.T) {
+	eng := newMockEngine()
+	eng.removeErr = errors.New("Error: no such service: krill-dbproxy-1")
+	svc := newSvc(eng, nil)
+	inst := samplePGInstance()
+	inst.ExternalPort = nil
+	if err := svc.reconcileProxy(context.Background(), inst); err != nil {
+		t.Fatalf("not-found ServiceRemove error must be tolerated, got: %v", err)
+	}
+	if len(eng.removed) != 1 || eng.removed[0] != proxyName(inst.ID) {
+		t.Errorf("removed = %+v, want [%s]", eng.removed, proxyName(inst.ID))
+	}
+}
+
+func TestReconcileProxyDisabledSurfacesRealServiceRemoveError(t *testing.T) {
+	eng := newMockEngine()
+	eng.removeErr = errors.New("cannot connect to the Docker daemon")
+	svc := newSvc(eng, nil)
+	inst := samplePGInstance()
+	inst.ExternalPort = nil
+	err := svc.reconcileProxy(context.Background(), inst)
+	if err == nil {
+		t.Fatal("want error when ServiceRemove fails with a non-not-found error")
+	}
+	if len(eng.removed) != 1 || eng.removed[0] != proxyName(inst.ID) {
+		t.Errorf("removed = %+v, want [%s]", eng.removed, proxyName(inst.ID))
+	}
+}
