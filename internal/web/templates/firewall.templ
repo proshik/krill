@@ -1,0 +1,53 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// Firewall is a minimal placeholder for the worker-firewall page (Task 8 builds
+// out the full UI). It lists the org's worker nodes with their current
+// firewall_managed state and exposes the lockdown/open actions.
+templ Firewall(org db.Organization, role string, rows []db.ClusterNode) {
+	@Layout(i18n.T(ctx, "firewall.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "firewall.desc") }</p>
+		<div class="k-card">
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "nodes.hostname") }</th>
+						<th>{ i18n.T(ctx, "firewall.status") }</th>
+					</tr>
+				</thead>
+				<tbody>
+					if len(rows) == 0 {
+						<tr><td colspan="2" class="k-muted">{ i18n.T(ctx, "nodes.empty") }</td></tr>
+					}
+					for _, n := range rows {
+						<tr>
+							<td class="k-mono">{ n.Name }</td>
+							<td>
+								if n.FirewallManaged {
+									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.locked") }</span>
+								} else {
+									<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.open") }</span>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			if role == "owner" || role == "admin" {
+				<div class="flex items-center gap-2 mt-4">
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/lockdown") }>
+						<button class="k-btn k-btn-primary">{ i18n.T(ctx, "firewall.lockdown") }</button>
+					</form>
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/open") }>
+						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "firewall.open_action") }</button>
+					</form>
+				</div>
+			}
+		</div>
+	}
+}

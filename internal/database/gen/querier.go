@@ -36,7 +36,7 @@ type Querier interface {
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
-	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (ClusterNode, error)
+	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error)
 	CreateDBInstance(ctx context.Context, arg CreateDBInstanceParams) (DbInstance, error)
 	CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (CreateDBLinkRow, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
@@ -78,8 +78,8 @@ type Querier interface {
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
-	GetClusterNode(ctx context.Context, id int64) (ClusterNode, error)
-	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (ClusterNode, error)
+	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
+	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
@@ -148,6 +148,7 @@ type Querier interface {
 	SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
+	SetClusterNodeFirewallManaged(ctx context.Context, arg SetClusterNodeFirewallManagedParams) error
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error

@@ -187,6 +187,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/nodes/{nodeID}/label", s.setNodeLabel)
 				r.Get("/monitoring", s.monitoring)
 				r.Get("/monitoring/data", s.monitoringData)
+				r.Get("/firewall", s.firewallPage)
+				r.Post("/firewall/lockdown", s.lockdownWorkers)
+				r.Post("/firewall/open", s.openWorkers)
 			})
 
 			r.Group(func(r chi.Router) {

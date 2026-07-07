@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const countClusterNodes = `-- name: CountClusterNodes :one
@@ -47,7 +48,19 @@ type CreateClusterNodeParams struct {
 	SwarmNodeID string `json:"swarm_node_id"`
 }
 
-func (q *Queries) CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (ClusterNode, error) {
+type CreateClusterNodeRow struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	SshHost     string    `json:"ssh_host"`
+	SshPort     int32     `json:"ssh_port"`
+	SshUser     string    `json:"ssh_user"`
+	SshKey      string    `json:"ssh_key"`
+	HostKey     string    `json:"host_key"`
+	SwarmNodeID string    `json:"swarm_node_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (q *Queries) CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error) {
 	row := q.db.QueryRow(ctx, createClusterNode,
 		arg.Name,
 		arg.SshHost,
@@ -57,7 +70,7 @@ func (q *Queries) CreateClusterNode(ctx context.Context, arg CreateClusterNodePa
 		arg.HostKey,
 		arg.SwarmNodeID,
 	)
-	var i ClusterNode
+	var i CreateClusterNodeRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -86,9 +99,21 @@ SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id,
 FROM cluster_nodes WHERE id = $1
 `
 
-func (q *Queries) GetClusterNode(ctx context.Context, id int64) (ClusterNode, error) {
+type GetClusterNodeRow struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	SshHost     string    `json:"ssh_host"`
+	SshPort     int32     `json:"ssh_port"`
+	SshUser     string    `json:"ssh_user"`
+	SshKey      string    `json:"ssh_key"`
+	HostKey     string    `json:"host_key"`
+	SwarmNodeID string    `json:"swarm_node_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error) {
 	row := q.db.QueryRow(ctx, getClusterNode, id)
-	var i ClusterNode
+	var i GetClusterNodeRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -108,9 +133,21 @@ SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id,
 FROM cluster_nodes WHERE swarm_node_id = $1
 `
 
-func (q *Queries) GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (ClusterNode, error) {
+type GetClusterNodeBySwarmIDRow struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	SshHost     string    `json:"ssh_host"`
+	SshPort     int32     `json:"ssh_port"`
+	SshUser     string    `json:"ssh_user"`
+	SshKey      string    `json:"ssh_key"`
+	HostKey     string    `json:"host_key"`
+	SwarmNodeID string    `json:"swarm_node_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error) {
 	row := q.db.QueryRow(ctx, getClusterNodeBySwarmID, swarmNodeID)
-	var i ClusterNode
+	var i GetClusterNodeBySwarmIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -126,7 +163,7 @@ func (q *Queries) GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID strin
 }
 
 const listClusterNodes = `-- name: ListClusterNodes :many
-SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id, created_at
+SELECT id, name, ssh_host, ssh_port, ssh_user, ssh_key, host_key, swarm_node_id, created_at, firewall_managed
 FROM cluster_nodes ORDER BY name
 `
 
@@ -149,6 +186,7 @@ func (q *Queries) ListClusterNodes(ctx context.Context) ([]ClusterNode, error) {
 			&i.HostKey,
 			&i.SwarmNodeID,
 			&i.CreatedAt,
+			&i.FirewallManaged,
 		); err != nil {
 			return nil, err
 		}
@@ -158,6 +196,20 @@ func (q *Queries) ListClusterNodes(ctx context.Context) ([]ClusterNode, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const setClusterNodeFirewallManaged = `-- name: SetClusterNodeFirewallManaged :exec
+UPDATE cluster_nodes SET firewall_managed = $2 WHERE id = $1
+`
+
+type SetClusterNodeFirewallManagedParams struct {
+	ID              int64 `json:"id"`
+	FirewallManaged bool  `json:"firewall_managed"`
+}
+
+func (q *Queries) SetClusterNodeFirewallManaged(ctx context.Context, arg SetClusterNodeFirewallManagedParams) error {
+	_, err := q.db.Exec(ctx, setClusterNodeFirewallManaged, arg.ID, arg.FirewallManaged)
+	return err
 }
 
 const setClusterNodeHostKey = `-- name: SetClusterNodeHostKey :exec
