@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 )
 
@@ -19,10 +20,10 @@ func proxyName(instanceID int64) string { return fmt.Sprintf("krill-dbproxy-%d",
 // the overlay so it resolves the DB service by name, host-publishing the
 // instance's external_port on the manager's public IP.
 func proxySpec(inst Instance, network string) docker.ServiceSpec {
-	target := 5432
-	if inst.Engine == "redis" {
-		target = 6379
-	}
+	// Single-port today: the instance's driver may expose several external
+	// targets (e.g. a future minio data+console pair); take the first (the
+	// primary, "" suffix) — matches the current one-proxy-per-instance shape.
+	target := drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst)[0].ContainerPort
 	port := uint32(*inst.ExternalPort)
 	return docker.ServiceSpec{
 		Name:        proxyName(inst.ID),
