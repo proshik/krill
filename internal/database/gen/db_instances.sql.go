@@ -10,9 +10,12 @@ import (
 )
 
 const countDBInstancesByExternalPort = `-- name: CountDBInstancesByExternalPort :one
-SELECT count(*) FROM db_instances WHERE external_port = $1
+SELECT count(*) FROM db_instances WHERE external_port = $1 OR console_external_port = $1
 `
 
+// Checks BOTH host-published columns: external_port and console_external_port
+// share the same host port namespace (both are socat-proxied on the manager),
+// so a candidate port must not collide with either.
 func (q *Queries) CountDBInstancesByExternalPort(ctx context.Context, externalPort *int32) (int64, error) {
 	row := q.db.QueryRow(ctx, countDBInstancesByExternalPort, externalPort)
 	var count int64
@@ -32,7 +35,7 @@ func (q *Queries) CountLogicalDatabasesByInstance(ctx context.Context, instanceI
 }
 
 const countOtherDBInstancesByExternalPort = `-- name: CountOtherDBInstancesByExternalPort :one
-SELECT count(*) FROM db_instances WHERE external_port = $1 AND id <> $2
+SELECT count(*) FROM db_instances WHERE (external_port = $1 OR console_external_port = $1) AND id <> $2
 `
 
 type CountOtherDBInstancesByExternalPortParams struct {
@@ -40,6 +43,8 @@ type CountOtherDBInstancesByExternalPortParams struct {
 	ID           int64  `json:"id"`
 }
 
+// Same both-columns check as CountDBInstancesByExternalPort, excluding the
+// instance's own row (an edit must not conflict with itself).
 func (q *Queries) CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countOtherDBInstancesByExternalPort, arg.ExternalPort, arg.ID)
 	var count int64
@@ -48,20 +53,21 @@ func (q *Queries) CountOtherDBInstancesByExternalPort(ctx context.Context, arg C
 }
 
 const createDBInstance = `-- name: CreateDBInstance :one
-INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at
+INSERT INTO db_instances (organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, console_external_port)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, console_external_port
 `
 
 type CreateDBInstanceParams struct {
-	OrganizationID    int64  `json:"organization_id"`
-	Engine            string `json:"engine"`
-	Name              string `json:"name"`
-	AppName           string `json:"app_name"`
-	Image             string `json:"image"`
-	Superuser         string `json:"superuser"`
-	SuperuserPassword string `json:"superuser_password"`
-	ExternalPort      *int32 `json:"external_port"`
-	NodeHostname      string `json:"node_hostname"`
+	OrganizationID      int64  `json:"organization_id"`
+	Engine              string `json:"engine"`
+	Name                string `json:"name"`
+	AppName             string `json:"app_name"`
+	Image               string `json:"image"`
+	Superuser           string `json:"superuser"`
+	SuperuserPassword   string `json:"superuser_password"`
+	ExternalPort        *int32 `json:"external_port"`
+	NodeHostname        string `json:"node_hostname"`
+	ConsoleExternalPort *int32 `json:"console_external_port"`
 }
 
 func (q *Queries) CreateDBInstance(ctx context.Context, arg CreateDBInstanceParams) (DbInstance, error) {
@@ -75,6 +81,7 @@ func (q *Queries) CreateDBInstance(ctx context.Context, arg CreateDBInstancePara
 		arg.SuperuserPassword,
 		arg.ExternalPort,
 		arg.NodeHostname,
+		arg.ConsoleExternalPort,
 	)
 	var i DbInstance
 	err := row.Scan(
@@ -91,6 +98,7 @@ func (q *Queries) CreateDBInstance(ctx context.Context, arg CreateDBInstancePara
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsoleExternalPort,
 	)
 	return i, err
 }
@@ -105,7 +113,7 @@ func (q *Queries) DeleteDBInstance(ctx context.Context, id int64) error {
 }
 
 const getDBInstance = `-- name: GetDBInstance :one
-SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE id = $1
+SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, console_external_port FROM db_instances WHERE id = $1
 `
 
 func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, error) {
@@ -125,6 +133,7 @@ func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, erro
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConsoleExternalPort,
 	)
 	return i, err
 }
@@ -168,7 +177,7 @@ func (q *Queries) ListDBInstancesByNodeHostname(ctx context.Context, nodeHostnam
 }
 
 const listDBInstancesByOrg = `-- name: ListDBInstancesByOrg :many
-SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at FROM db_instances WHERE organization_id = $1 ORDER BY created_at
+SELECT id, organization_id, engine, name, app_name, image, superuser, superuser_password, external_port, node_hostname, status, created_at, updated_at, console_external_port FROM db_instances WHERE organization_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error) {
@@ -194,6 +203,7 @@ func (q *Queries) ListDBInstancesByOrg(ctx context.Context, organizationID int64
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ConsoleExternalPort,
 		); err != nil {
 			return nil, err
 		}
@@ -216,6 +226,20 @@ type SetDBInstanceNodeParams struct {
 
 func (q *Queries) SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error {
 	_, err := q.db.Exec(ctx, setDBInstanceNode, arg.ID, arg.NodeHostname)
+	return err
+}
+
+const updateDBInstanceConsolePort = `-- name: UpdateDBInstanceConsolePort :exec
+UPDATE db_instances SET console_external_port = $2 WHERE id = $1
+`
+
+type UpdateDBInstanceConsolePortParams struct {
+	ID                  int64  `json:"id"`
+	ConsoleExternalPort *int32 `json:"console_external_port"`
+}
+
+func (q *Queries) UpdateDBInstanceConsolePort(ctx context.Context, arg UpdateDBInstanceConsolePortParams) error {
+	_, err := q.db.Exec(ctx, updateDBInstanceConsolePort, arg.ID, arg.ConsoleExternalPort)
 	return err
 }
 

@@ -103,19 +103,20 @@ type ClusterNode struct {
 }
 
 type DbInstance struct {
-	ID                int64     `json:"id"`
-	OrganizationID    int64     `json:"organization_id"`
-	Engine            string    `json:"engine"`
-	Name              string    `json:"name"`
-	AppName           string    `json:"app_name"`
-	Image             string    `json:"image"`
-	Superuser         string    `json:"superuser"`
-	SuperuserPassword string    `json:"superuser_password"`
-	ExternalPort      *int32    `json:"external_port"`
-	NodeHostname      string    `json:"node_hostname"`
-	Status            string    `json:"status"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                  int64     `json:"id"`
+	OrganizationID      int64     `json:"organization_id"`
+	Engine              string    `json:"engine"`
+	Name                string    `json:"name"`
+	AppName             string    `json:"app_name"`
+	Image               string    `json:"image"`
+	Superuser           string    `json:"superuser"`
+	SuperuserPassword   string    `json:"superuser_password"`
+	ExternalPort        *int32    `json:"external_port"`
+	NodeHostname        string    `json:"node_hostname"`
+	Status              string    `json:"status"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ConsoleExternalPort *int32    `json:"console_external_port"`
 }
 
 type Deployment struct {

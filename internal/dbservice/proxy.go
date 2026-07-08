@@ -16,19 +16,16 @@ const socatImage = "alpine/socat@sha256:188fe0a22182f81c16def9d1137930121eaa3023
 // proxyName is the Swarm service name of the control-plane proxy for an instance.
 func proxyName(instanceID int64) string { return fmt.Sprintf("krill-dbproxy-%d", instanceID) }
 
-// proxySpec builds the socat proxy service: pinned to the manager, attached to
-// the overlay so it resolves the DB service by name, host-publishing the
-// instance's external_port on the manager's public IP.
-func proxySpec(inst Instance, network string) docker.ServiceSpec {
-	// Single-port today: the instance's driver may expose several external
-	// targets (e.g. a future minio data+console pair); take the first (the
-	// primary, "" suffix) — matches the current one-proxy-per-instance shape.
-	target := drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst)[0].ContainerPort
-	port := uint32(*inst.ExternalPort)
+// proxySpecTarget builds one socat proxy service: pinned to the manager,
+// attached to the overlay so it resolves the DB service by name,
+// host-publishing hostPort on the manager's public IP and forwarding to
+// containerPort on appName.
+func proxySpecTarget(name string, hostPort int32, appName string, containerPort uint32, network string) docker.ServiceSpec {
+	port := uint32(hostPort)
 	return docker.ServiceSpec{
-		Name:        proxyName(inst.ID),
+		Name:        name,
 		Image:       socatImage,
-		Args:        []string{fmt.Sprintf("TCP-LISTEN:%d,fork,reuseaddr", port), fmt.Sprintf("TCP:%s:%d", inst.AppName, target)},
+		Args:        []string{fmt.Sprintf("TCP-LISTEN:%d,fork,reuseaddr", port), fmt.Sprintf("TCP:%s:%d", appName, containerPort)},
 		Replicas:    1,
 		Network:     network,
 		Constraints: []string{"node.role==manager"},
@@ -36,21 +33,32 @@ func proxySpec(inst Instance, network string) docker.ServiceSpec {
 	}
 }
 
-// reconcileProxy brings the control-plane proxy in line with the instance's
-// external_port: deploy it when set, remove it when cleared. Best-effort — a
-// failure is logged by the caller; the DB itself is unaffected.
+// reconcileProxy brings the control-plane proxy/proxies in line with the
+// instance's driver-declared external targets: one socat service per target
+// with a non-nil HostPort (deployed/updated), one ServiceRemove per target
+// whose HostPort is nil (cleared). Today every driver (postgres, redis)
+// returns exactly one target ("" suffix), so this is a one-proxy-per-instance
+// no-op change; a future N-target driver (e.g. minio: data + console) gets
+// one proxy per published port for free. Best-effort — a failure is logged by
+// the caller; the DB itself is unaffected.
 func (s *Service) reconcileProxy(ctx context.Context, inst Instance) error {
 	if s.engine == nil {
 		return nil
 	}
-	if inst.ExternalPort == nil {
-		if err := s.engine.ServiceRemove(ctx, proxyName(inst.ID)); err != nil && !isNotFound(err) {
-			return fmt.Errorf("remove proxy: %w", err)
+	for _, t := range drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst) {
+		name := proxyName(inst.ID) + t.Suffix
+		if t.HostPort == nil {
+			if err := s.engine.ServiceRemove(ctx, name); err != nil && !isNotFound(err) {
+				return fmt.Errorf("remove proxy %s: %w", name, err)
+			}
+			continue
 		}
-		return nil
+		if err := s.engine.ImagePull(ctx, socatImage, io.Discard); err != nil {
+			return fmt.Errorf("pull socat: %w", err)
+		}
+		if err := s.engine.ServiceDeploy(ctx, proxySpecTarget(name, *t.HostPort, inst.AppName, t.ContainerPort, s.network)); err != nil {
+			return fmt.Errorf("deploy proxy %s: %w", name, err)
+		}
 	}
-	if err := s.engine.ImagePull(ctx, socatImage, io.Discard); err != nil {
-		return fmt.Errorf("pull socat: %w", err)
-	}
-	return s.engine.ServiceDeploy(ctx, proxySpec(inst, s.network))
+	return nil
 }

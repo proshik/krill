@@ -165,9 +165,16 @@ func (s *Service) RemoveInstanceContainers(ctx context.Context, id int64, destro
 		slog.Error("delete db instance: service remove failed", "err", err, "instance_id", id, "app_name", inst.AppName)
 		return fmt.Errorf("remove service: %w", err)
 	}
-	if err := s.engine.ServiceRemove(rmCtx, proxyName(id)); err != nil && !isNotFound(err) {
-		slog.Error("delete db instance: proxy remove failed", "err", err, "instance_id", id)
-		return fmt.Errorf("remove proxy: %w", err)
+	// Remove every proxy the instance's driver declares (postgres/redis: one;
+	// a future N-target driver like minio: one per published port, e.g. data +
+	// console) — not-found is tolerated per target (proxy was never deployed
+	// for that target, or already removed).
+	for _, t := range drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst) {
+		name := proxyName(id) + t.Suffix
+		if err := s.engine.ServiceRemove(rmCtx, name); err != nil && !isNotFound(err) {
+			slog.Error("delete db instance: proxy remove failed", "err", err, "instance_id", id, "proxy", name)
+			return fmt.Errorf("remove proxy %s: %w", name, err)
+		}
 	}
 	if destroyData {
 		s.removeVolume(rmCtx, volumeName(inst.AppName))

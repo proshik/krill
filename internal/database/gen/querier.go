@@ -21,6 +21,9 @@ type Querier interface {
 	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
 	CountClusterNodes(ctx context.Context) (int64, error)
 	CountClusterNodesByName(ctx context.Context, name string) (int64, error)
+	// Checks BOTH host-published columns: external_port and console_external_port
+	// share the same host port namespace (both are socat-proxied on the manager),
+	// so a candidate port must not collide with either.
 	CountDBInstancesByExternalPort(ctx context.Context, externalPort *int32) (int64, error)
 	CountDestinationsByName(ctx context.Context, arg CountDestinationsByNameParams) (int64, error)
 	CountDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
@@ -30,6 +33,8 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	// Same both-columns check as CountDBInstancesByExternalPort, excluding the
+	// instance's own row (an edit must not conflict with itself).
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
@@ -169,6 +174,7 @@ type Querier interface {
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error
+	UpdateDBInstanceConsolePort(ctx context.Context, arg UpdateDBInstanceConsolePortParams) error
 	UpdateDBInstanceExternalPort(ctx context.Context, arg UpdateDBInstanceExternalPortParams) error
 	UpdateDBInstanceImage(ctx context.Context, arg UpdateDBInstanceImageParams) error
 	UpdateDBInstanceStatus(ctx context.Context, arg UpdateDBInstanceStatusParams) error

@@ -20,6 +20,7 @@ type mockEngine struct {
 	removedVolumes []string
 	failPull       bool
 	removeErr      error // returned by every ServiceRemove call, after recording it
+	deployErr      error // returned by every ServiceDeploy call, after recording it
 }
 
 func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
@@ -28,7 +29,7 @@ func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deployed = append(m.deployed, s)
-	return nil
+	return m.deployErr
 }
 func (m *mockEngine) ServiceRemove(_ context.Context, n string) error {
 	m.mu.Lock()

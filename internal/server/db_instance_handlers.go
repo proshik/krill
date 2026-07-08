@@ -75,6 +75,41 @@ func (s *Server) listDBInstances(w http.ResponseWriter, r *http.Request) {
 	render(w, r, http.StatusOK, templates.DBServers(o, role, insts, nodes, statuses))
 }
 
+// parseInstancePort parses an optional host-port form value: empty input is
+// valid (ok=true, port=nil, meaning "unset"); a non-empty value must be a
+// plain integer in 1..65535.
+func parseInstancePort(v string) (port *int32, ok bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 65535 {
+		return nil, false
+	}
+	x := int32(n)
+	return &x, true
+}
+
+// dbInstancePortInUse reports whether port collides with another db_instances
+// row's external_port OR console_external_port (both are host-published on
+// the manager and share one port namespace — CountDBInstancesByExternalPort
+// checks both columns) or an app's raw published TCP port. Used when creating
+// a new instance (no row of its own yet to exclude).
+func (s *Server) dbInstancePortInUse(ctx context.Context, port int32) bool {
+	instN, _ := s.q.CountDBInstancesByExternalPort(ctx, &port)
+	apN, _ := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
+	return instN+apN > 0
+}
+
+// dbInstancePortInUseByOther is dbInstancePortInUse excluding selfID's own
+// row — used when editing an existing instance's ports.
+func (s *Server) dbInstancePortInUseByOther(ctx context.Context, port int32, selfID int64) bool {
+	instN, _ := s.q.CountOtherDBInstancesByExternalPort(ctx, db.CountOtherDBInstancesByExternalPortParams{ExternalPort: &port, ID: selfID})
+	apN, _ := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
+	return instN+apN > 0
+}
+
 func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -87,21 +122,31 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.engine_name_required")
 		return
 	}
-	var extPort *int32
-	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 || n > 65535 {
-			s.flashErrT(w, r, "flash.err.invalid_external_port")
-			return
-		}
-		x := int32(n)
-		instN, _ := s.q.CountDBInstancesByExternalPort(r.Context(), &x)
-		apN, _ := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{HostPort: x, Protocol: "tcp"})
-		if instN+apN > 0 {
-			s.flashErrT(w, r, "flash.err.external_port_in_use")
-			return
-		}
-		extPort = &x
+	extPort, ok := parseInstancePort(r.FormValue("external_port"))
+	if !ok {
+		s.flashErrT(w, r, "flash.err.invalid_external_port")
+		return
+	}
+	if extPort != nil && s.dbInstancePortInUse(r.Context(), *extPort) {
+		s.flashErrT(w, r, "flash.err.external_port_in_use")
+		return
+	}
+	// console_external_port is minio-relevant (data + console pair); no engine
+	// accepts it yet (CHECK constraint is postgres/redis only), but the
+	// plumbing is engine-agnostic and forward-compatible with the driver that
+	// will submit it.
+	consolePort, ok := parseInstancePort(r.FormValue("console_external_port"))
+	if !ok {
+		s.flashErrT(w, r, "flash.err.invalid_console_port")
+		return
+	}
+	if consolePort != nil && s.dbInstancePortInUse(r.Context(), *consolePort) {
+		s.flashErrT(w, r, "flash.err.console_port_in_use")
+		return
+	}
+	if extPort != nil && consolePort != nil && *extPort == *consolePort {
+		s.flashErrT(w, r, "flash.err.console_port_in_use")
+		return
 	}
 	node := strings.TrimSpace(r.FormValue("node_hostname"))
 	if node != "" && s.engine != nil {
@@ -139,6 +184,7 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 	inst, err := s.q.CreateDBInstance(r.Context(), db.CreateDBInstanceParams{
 		OrganizationID: o.ID, Engine: engine, Name: name, AppName: app, Image: version,
 		Superuser: su, SuperuserPassword: secret.Enc(pw), ExternalPort: extPort, NodeHostname: node,
+		ConsoleExternalPort: consolePort,
 	})
 	if err != nil {
 		logFrom(r).Error("createDBInstance: create failed", "err", err, "org_id", o.ID, "engine", engine, "name", name)
@@ -248,38 +294,61 @@ func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
-// setDBInstanceExternalPort toggles the instance's external port. Empty clears
-// it (no external access). A set port is range- and conflict-checked, then the
-// instance is redeployed (drops the port from the DB service and reconciles the
-// control-plane proxy). Admin-gated; tenant-chained via loadInstance.
+// setDBInstanceExternalPort toggles the instance's external port(s). Empty
+// clears a port (no external access on that target). Each set port is range-
+// and conflict-checked (against every other instance's external/console port
+// and app_ports), then the instance is redeployed (drops/adds the port(s)
+// from the DB service and reconciles the control-plane proxy/proxies).
+// console_external_port is minio-relevant (data + console pair) but parsed
+// unconditionally — harmless for engines whose driver ignores it. Admin-gated;
+// tenant-chained via loadInstance.
 func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
 		return
 	}
-	var ext *int32
-	if v := strings.TrimSpace(r.FormValue("external_port")); v != "" {
-		x, err := strconv.Atoi(v)
-		if err != nil || x < 1 || x > 65535 {
-			s.flashErrT(w, r, "flash.err.invalid_external_port")
+	ext, ok := parseInstancePort(r.FormValue("external_port"))
+	if !ok {
+		s.flashErrT(w, r, "flash.err.invalid_external_port")
+		return
+	}
+	if ext != nil && s.dbInstancePortInUseByOther(r.Context(), *ext, inst.ID) {
+		s.flashErrT(w, r, "flash.err.external_port_in_use")
+		return
+	}
+	// console_external_port: no current form submits this field (no engine
+	// uses it yet — it's minio-relevant, landing in a later task), so treat it
+	// as "unchanged" unless the request actually includes it — an absent field
+	// must not silently wipe a console port a future form didn't mean to touch.
+	console := inst.ConsoleExternalPort
+	if r.Form.Has("console_external_port") {
+		c, ok := parseInstancePort(r.FormValue("console_external_port"))
+		if !ok {
+			s.flashErrT(w, r, "flash.err.invalid_console_port")
 			return
 		}
-		x32 := int32(x)
-		instN, _ := s.q.CountOtherDBInstancesByExternalPort(r.Context(), db.CountOtherDBInstancesByExternalPortParams{ExternalPort: &x32, ID: inst.ID})
-		portN, _ := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{HostPort: x32, Protocol: "tcp"})
-		if instN > 0 || portN > 0 {
-			s.flashErrT(w, r, "flash.err.external_port_in_use")
-			return
-		}
-		ext = &x32
+		console = c
+	}
+	if console != nil && s.dbInstancePortInUseByOther(r.Context(), *console, inst.ID) {
+		s.flashErrT(w, r, "flash.err.console_port_in_use")
+		return
+	}
+	if ext != nil && console != nil && *ext == *console {
+		s.flashErrT(w, r, "flash.err.console_port_in_use")
+		return
 	}
 	if err := s.q.UpdateDBInstanceExternalPort(r.Context(), db.UpdateDBInstanceExternalPortParams{ID: inst.ID, ExternalPort: ext}); err != nil {
 		logFrom(r).Error("setDBInstanceExternalPort: update failed", "err", err, "instance_id", inst.ID)
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	if err := s.q.UpdateDBInstanceConsolePort(r.Context(), db.UpdateDBInstanceConsolePortParams{ID: inst.ID, ConsoleExternalPort: console}); err != nil {
+		logFrom(r).Error("setDBInstanceExternalPort: update console port failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
 	s.dbsvc.DeployInstance(inst.ID)
-	logFrom(r).Info("db instance external port set", "instance_id", inst.ID, "external", ext != nil)
+	logFrom(r).Info("db instance external port set", "instance_id", inst.ID, "external", ext != nil, "console", console != nil)
 	s.flashOK(w, r, "flash.ok.external_access_updated")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }

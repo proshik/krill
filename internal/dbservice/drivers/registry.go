@@ -28,6 +28,17 @@ func (r *registry) Get(e string) (Driver, bool) {
 // panics loudly on first use, rather than silently no-op'ing.
 func (r *registry) MustGet(e string) Driver { return r.m[e] }
 
+// Register adds (or replaces) a driver in the registry. Exposed mainly for
+// tests that need to exercise multi-target behavior (e.g. reconcileProxy's
+// N-target loop) ahead of a real N-target driver landing; production drivers
+// are wired once via New(...) below.
+func (r *registry) Register(d Driver) {
+	if _, exists := r.m[d.Engine()]; !exists {
+		r.order = append(r.order, d.Engine())
+	}
+	r.m[d.Engine()] = d
+}
+
 // List returns every registered driver in stable (registration) order.
 func (r *registry) List() []Driver {
 	out := make([]Driver, 0, len(r.order))

@@ -21,6 +21,7 @@ func (s *DBStore) GetInstance(ctx context.Context, id int64) (Instance, error) {
 		AppName: r.AppName, Image: r.Image, Superuser: r.Superuser,
 		SuperuserPassword: secret.Dec(r.SuperuserPassword),
 		ExternalPort:      r.ExternalPort, Status: r.Status, NodeHostname: r.NodeHostname,
+		ConsoleExternalPort: r.ConsoleExternalPort,
 	}, nil
 }
 
