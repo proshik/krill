@@ -46,7 +46,7 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 						<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-dbi')">✕</button>
 						<div class="k-modal-title">{ i18n.T(ctx, "dbi.new") }</div>
 					</div>
-					<div class="flex flex-col gap-2">
+					<div class="k-modal-body">
 						<div>
 							<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.engine") }</label>
 							<select class="k-select" name="engine" onchange="krillToggleEngine(this)">
