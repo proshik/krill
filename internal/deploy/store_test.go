@@ -82,34 +82,6 @@ func TestBuildHealthcheckInvalidDurations(t *testing.T) {
 	}
 }
 
-func TestDBLinkFieldValue(t *testing.T) {
-	// postgres source
-	for field, want := range map[string]string{
-		"url":      "postgresql://u:p@h:5432/d",
-		"":         "postgresql://u:p@h:5432/d", // empty defaults to url
-		"password": "p",
-		"host":     "h",
-		"port":     "5432",
-		"user":     "u",
-		"dbname":   "d",
-		"hostport": "h:5432",
-	} {
-		if got := dbLinkFieldValue(field, "u", "p", "h", "5432", "d", "postgresql"); got != want {
-			t.Errorf("pg field %q = %q, want %q", field, got, want)
-		}
-	}
-	// redis source (no dbname): url must omit the trailing /db
-	if got := dbLinkFieldValue("url", "default", "p", "h", "6379", "", "redis"); got != "redis://default:p@h:6379" {
-		t.Errorf("redis url = %q", got)
-	}
-	if got := dbLinkFieldValue("password", "default", "p", "h", "6379", "", "redis"); got != "p" {
-		t.Errorf("redis password = %q", got)
-	}
-	if got := dbLinkFieldValue("hostport", "default", "p", "h", "6379", "", "redis"); got != "h:6379" {
-		t.Errorf("redis hostport = %q", got)
-	}
-}
-
 func TestStrDeref(t *testing.T) {
 	if got := strDeref(nil); got != "" {
 		t.Errorf("strDeref(nil) = %q, want \"\"", got)
@@ -300,6 +272,88 @@ func TestResolveDBLinkValueErrorClassification(t *testing.T) {
 		t.Errorf("cancelled ctx (redis): val=%q ok=%v err=%v, want (\"\", false, non-nil)", val, ok, rerr)
 	} else if errors.Is(rerr, pgx.ErrNoRows) {
 		t.Errorf("cancelled ctx (redis) misclassified as ErrNoRows: %v", rerr)
+	}
+}
+
+// TestResolveDBLinkValueDispatchesByEngine verifies resolveDBLinkValue's
+// driver dispatch (Task 5): a minio instance link resolves its S3 fields, a
+// dragonfly instance link resolves identically to redis (RESP-compatible),
+// and — as a regression check — an existing redis link still resolves
+// exactly as it did before the drivers.LinkValue dispatch replaced the
+// inline dbLinkFieldValue helper (same user "default", port 6379, no dbname).
+func TestResolveDBLinkValueDispatchesByEngine(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	s := NewDBStore(q)
+
+	u, err := q.CreateUser(ctx, db.CreateUserParams{Email: "disp@k.local", PasswordHash: "h"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	o, err := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-disp", OwnerID: u.ID})
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+
+	redisInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-disp",
+		Image: "redis:7-alpine", SuperuserPassword: "rpw",
+	})
+	if err != nil {
+		t.Fatalf("create redis instance: %v", err)
+	}
+	dragonflyInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "dragonfly", Name: "df", AppName: "krill-dragonfly-disp",
+		Image: "docker.dragonflydb.io/dragonflydb/dragonfly:latest", Superuser: "default", SuperuserPassword: "dfpw",
+	})
+	if err != nil {
+		t.Fatalf("create dragonfly instance: %v", err)
+	}
+	minioInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "minio", Name: "objs", AppName: "krill-minio-disp",
+		Image: "minio/minio:latest", Superuser: "root-user", SuperuserPassword: "s3secret",
+	})
+	if err != nil {
+		t.Fatalf("create minio instance: %v", err)
+	}
+
+	// Regression: redis link resolves identically to the pre-dispatch behavior
+	// (user "default", port 6379, no dbname).
+	redisRow := db.ListDBLinksByApplicationRow{InstanceID: &redisInst.ID, VarName: "REDIS_URL", Scheme: "redis", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, redisRow); rerr != nil || !ok || val != "redis://default:rpw@krill-redis-disp:6379" {
+		t.Errorf("redis url = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+	redisPassRow := db.ListDBLinksByApplicationRow{InstanceID: &redisInst.ID, VarName: "REDIS_PASS", Scheme: "redis", Field: "password"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, redisPassRow); rerr != nil || !ok || val != "rpw" {
+		t.Errorf("redis password = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+
+	// DragonFly (RESP-compatible with redis): same shape, different app name.
+	dfRow := db.ListDBLinksByApplicationRow{InstanceID: &dragonflyInst.ID, VarName: "DF_URL", Scheme: "redis", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, dfRow); rerr != nil || !ok || val != "redis://default:dfpw@krill-dragonfly-disp:6379" {
+		t.Errorf("dragonfly url = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+
+	// MinIO: endpoint/access_key/secret_key resolve via the instance's own
+	// superuser (= access key) and decrypted password (= secret key).
+	epRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "S3_ENDPOINT", Field: "endpoint"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, epRow); rerr != nil || !ok || val != "http://krill-minio-disp:9000" {
+		t.Errorf("minio endpoint = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+	akRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "S3_ACCESS_KEY", Field: "access_key"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, akRow); rerr != nil || !ok || val != "root-user" {
+		t.Errorf("minio access_key = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+	skRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "S3_SECRET_KEY", Field: "secret_key"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, skRow); rerr != nil || !ok || val != "s3secret" {
+		t.Errorf("minio secret_key = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+	// A field the minio driver doesn't expose (e.g. "dbname") -> (_, false, nil),
+	// same skip-with-warning contract as ErrNoRows.
+	badRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "BAD", Field: "dbname"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, badRow); rerr != nil || ok || val != "" {
+		t.Errorf("minio unknown field: val=%q ok=%v err=%v, want (\"\", false, nil)", val, ok, rerr)
 	}
 }
 

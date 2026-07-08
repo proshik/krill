@@ -464,11 +464,14 @@ window.krillEnhance = function () {
   }
 };
 
-// Engine-aware Scheme select for the DB-link form: rebuilds the scheme options to
-// only those valid for the currently selected database (Postgres -> postgresql/
-// postgres, Redis -> redis) and reveals a hint explaining that postgres:// and
-// postgresql:// are interchangeable aliases (the choice is about the consuming
-// framework, not the database). Idempotent (guarded by data-mounted).
+// Engine-aware Scheme + Field selects for the DB-link form: rebuilds the scheme
+// options to only those valid for the currently selected database (Postgres ->
+// postgresql/postgres, Redis/DragonFly -> redis) and reveals a hint explaining
+// that postgres:// and postgresql:// are interchangeable aliases (the choice is
+// about the consuming framework, not the database); rebuilds the Field options
+// to only those the selected engine's driver exposes (e.g. MinIO ->
+// endpoint/access_key/secret_key/region, Postgres adds user/dbname). Idempotent
+// (guarded by data-mounted).
 function krillMountDBLink() {
   const dbSel = document.getElementById("dblink-db");
   const schemeSel = document.getElementById("dblink-scheme");
@@ -477,18 +480,37 @@ function krillMountDBLink() {
   const hint = document.getElementById("dblink-scheme-hint");
   const fieldSel = document.getElementById("dblink-field");
   const schemeWrap = document.getElementById("dblink-scheme-wrap");
-  const all = Array.from(schemeSel.options).map((o) => ({ value: o.value, label: o.textContent, engine: o.dataset.engine }));
+  const allSchemes = Array.from(schemeSel.options).map((o) => ({ value: o.value, label: o.textContent, engine: o.dataset.engine }));
+  const allFields = fieldSel
+    ? Array.from(fieldSel.options).map((o) => ({ value: o.value, label: o.textContent, engines: (o.dataset.engines || "").split(" ") }))
+    : [];
+  const engineOf = () => {
+    const opt = dbSel.selectedOptions && dbSel.selectedOptions[0];
+    return (opt && opt.dataset.engine) || dbSel.value.split(":")[0] || "";
+  };
   const apply = () => {
-    const engine = dbSel.value.split(":")[0] || "";
-    const prev = schemeSel.value;
+    const engine = engineOf();
+    const prevScheme = schemeSel.value;
     schemeSel.innerHTML = "";
-    all.filter((o) => o.engine === engine).forEach((o) => {
+    allSchemes.filter((o) => o.engine === engine).forEach((o) => {
       const opt = document.createElement("option");
       opt.value = o.value;
       opt.textContent = o.label;
       schemeSel.appendChild(opt);
     });
-    if (Array.from(schemeSel.options).some((o) => o.value === prev)) schemeSel.value = prev;
+    if (Array.from(schemeSel.options).some((o) => o.value === prevScheme)) schemeSel.value = prevScheme;
+    if (fieldSel) {
+      const prevField = fieldSel.value;
+      fieldSel.innerHTML = "";
+      allFields.filter((o) => o.engines.includes(engine)).forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.label;
+        fieldSel.appendChild(opt);
+      });
+      // Falls back to the first visible option when the prior field isn't valid for this engine.
+      if (Array.from(fieldSel.options).some((o) => o.value === prevField)) fieldSel.value = prevField;
+    }
     // Scheme and its hint only apply to the "url" field of a postgres DB.
     const isUrl = !fieldSel || fieldSel.value === "url";
     if (schemeWrap) schemeWrap.style.display = isUrl ? "" : "none";

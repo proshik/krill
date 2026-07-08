@@ -3,10 +3,12 @@ package server
 import (
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -40,13 +42,8 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 	if field == "" {
 		field = "url"
 	}
-	switch field {
-	case "url", "password", "host", "port", "user", "dbname", "hostport":
-	default:
-		s.flashErrT(w, r, "flash.err.invalid_field")
-		return
-	}
 	var ldbID, instID *int64
+	var drv drivers.Driver
 	switch kind {
 	case "pg":
 		if scheme != "postgresql" && scheme != "postgres" {
@@ -60,20 +57,33 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ldbID = &ld.ID
-	case "redis":
-		scheme = "redis"
-		if field == "dbname" {
-			s.flashErrT(w, r, "flash.err.redis_no_dbname")
-			return
-		}
+		drv, _ = drivers.Registry.Get("postgres")
+	case "inst":
 		inst, gerr := s.q.GetDBInstance(r.Context(), refID)
-		if gerr != nil || inst.OrganizationID != c.Org.ID || inst.Engine != "redis" {
+		if gerr != nil || inst.OrganizationID != c.Org.ID || inst.Engine == "postgres" {
+			// postgres is linked via its logical DBs (kind "pg"), not the instance directly.
 			s.flashErrT(w, r, "flash.err.db_not_found")
 			return
+		}
+		d, ok := drivers.Registry.Get(inst.Engine)
+		if !ok {
+			s.flashErrT(w, r, "flash.err.db_not_found")
+			return
+		}
+		drv = d
+		switch inst.Engine {
+		case "redis", "dragonfly":
+			scheme = "redis"
+		case "minio":
+			scheme = "" // S3 access — no connection-string scheme to choose
 		}
 		instID = &inst.ID
 	default:
 		s.flashErrT(w, r, "flash.err.invalid_database")
+		return
+	}
+	if !slices.Contains(drv.LinkFields(), field) {
+		s.flashErrT(w, r, "flash.err.invalid_field")
 		return
 	}
 	// var must not already be set in env_text: the link would override it at

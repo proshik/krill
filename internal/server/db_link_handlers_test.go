@@ -50,7 +50,7 @@ func TestAddDBLinkHappyPath(t *testing.T) {
 		OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-cache-t1",
 		Image: "redis:7-alpine", SuperuserPassword: "rpw",
 	})
-	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"redis:" + i64(redisInst.ID)}, "var_name": {"REDIS_URL"}, "scheme": {"redis"}}); rec.Code != http.StatusSeeOther {
+	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"inst:" + i64(redisInst.ID)}, "var_name": {"REDIS_URL"}, "scheme": {"redis"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("addDBLink redis: got %d, want 303", rec.Code)
 	}
 	// reject: invalid scheme for postgres
@@ -128,7 +128,7 @@ func TestDBLinkCrossTenantIsolation(t *testing.T) {
 	// cross-org confinement: org-B must not be able to link org-A's redis
 	// instance either, even by supplying the raw id.
 	postForm(t, h, baseB+"/db-links", cookieB, url.Values{
-		"db_ref": {"redis:" + i64(redisInstA.ID)}, "var_name": {"Y_URL"}, "scheme": {"redis"},
+		"db_ref": {"inst:" + i64(redisInstA.ID)}, "var_name": {"Y_URL"}, "scheme": {"redis"},
 	})
 	if links, _ := q.ListDBLinksByApplication(ctx, appB.ID); len(links) != 0 {
 		t.Fatalf("SECURITY: org-B linked org-A's redis instance by id, have %d links", len(links))
@@ -157,6 +157,14 @@ func TestAddDBLinkPerField(t *testing.T) {
 		OrganizationID: o.ID, Engine: "redis", Name: "rd", AppName: "krill-redis-x",
 		Image: "redis:7", Superuser: "default", SuperuserPassword: "pw",
 	})
+	dragonfly, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "dragonfly", Name: "df", AppName: "krill-dragonfly-x",
+		Image: "docker.dragonflydb.io/dragonflydb/dragonfly:latest", Superuser: "default", SuperuserPassword: "pw",
+	})
+	minio, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "minio", Name: "s3", AppName: "krill-minio-x",
+		Image: "minio/minio:latest", Superuser: "root-user", SuperuserPassword: "pw",
+	})
 	cookie := loginAs(t, q, "dblf@k.local")
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)
 
@@ -171,9 +179,10 @@ func TestAddDBLinkPerField(t *testing.T) {
 		t.Fatalf("link not persisted with field: %+v", links)
 	}
 
-	// redis + field=dbname is rejected (redis has no dbname)
+	// redis + field=dbname is rejected (redis has no dbname; subsumed by the
+	// general drv.LinkFields() allow-list check now, not an ad-hoc reject)
 	postForm(t, h, base+"/db-links", cookie, url.Values{
-		"db_ref": {"redis:" + i64(redis.ID)}, "var_name": {"R_DB"}, "scheme": {"redis"}, "field": {"dbname"},
+		"db_ref": {"inst:" + i64(redis.ID)}, "var_name": {"R_DB"}, "scheme": {"redis"}, "field": {"dbname"},
 	})
 	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 1 {
 		t.Fatalf("redis dbname should be rejected, have %d links", len(ls))
@@ -185,5 +194,34 @@ func TestAddDBLinkPerField(t *testing.T) {
 	})
 	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 1 {
 		t.Fatalf("invalid field should be rejected, have %d links", len(ls))
+	}
+
+	// dragonfly + field=password succeeds (RESP-compatible with redis, same field set)
+	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"inst:" + i64(dragonfly.ID)}, "var_name": {"DF_PASSWORD"}, "scheme": {"redis"}, "field": {"password"},
+	}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add dragonfly password link: got %d", rec.Code)
+	}
+	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 2 {
+		t.Fatalf("dragonfly password link not persisted, have %d links", len(ls))
+	}
+
+	// minio + field=secret_key succeeds
+	if rec := postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"inst:" + i64(minio.ID)}, "var_name": {"S3_SECRET_KEY"}, "field": {"secret_key"},
+	}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add minio secret_key link: got %d", rec.Code)
+	}
+	links, _ = q.ListDBLinksByApplication(ctx, app.ID)
+	if len(links) != 3 {
+		t.Fatalf("minio secret_key link not persisted, have %d links", len(links))
+	}
+
+	// minio + field=dbname is rejected (minio has no dbname field)
+	postForm(t, h, base+"/db-links", cookie, url.Values{
+		"db_ref": {"inst:" + i64(minio.ID)}, "var_name": {"S3_DB"}, "field": {"dbname"},
+	})
+	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 3 {
+		t.Fatalf("minio dbname should be rejected, have %d links", len(ls))
 	}
 }

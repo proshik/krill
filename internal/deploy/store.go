@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/traefik"
@@ -129,41 +130,16 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	return out, nil
 }
 
-// dbLinkFieldValue returns the requested field of a DB link. An empty/unknown
-// field yields the full connection URL (backward-compatible default).
-func dbLinkFieldValue(field, user, pass, host, port, dbname, scheme string) string {
-	switch field {
-	case "password":
-		return pass
-	case "host":
-		return host
-	case "port":
-		return port
-	case "user":
-		return user
-	case "dbname":
-		return dbname
-	case "hostport":
-		return host + ":" + port
-	default: // "url"
-		u := scheme + "://" + user + ":" + pass + "@" + host + ":" + port
-		if dbname != "" {
-			u += "/" + dbname
-		}
-		return u
-	}
-}
-
 // resolveDBLinkValue derives the link's source fields (password decrypted live)
-// and returns the value named by l.Field. Returns ("", false, nil) only when
-// the target row genuinely no longer exists (pgx.ErrNoRows) -- e.g. the
-// linked logical database or instance was deleted -- so the caller can skip
-// injection with just a warning. Any other error (pool exhaustion, deadline,
-// connection loss, ...) is returned as-is so the caller fails the deploy
-// instead of silently shipping the app without its injected connection
-// string.
+// and dispatches to the target instance's engine driver for the value named by
+// l.Field. Returns ("", false, nil) when the target row genuinely no longer
+// exists (pgx.ErrNoRows) -- e.g. the linked logical database or instance was
+// deleted -- or when the driver itself reports an unknown engine/field, so the
+// caller can skip injection with just a warning. Any other error (pool
+// exhaustion, deadline, connection loss, ...) is returned as-is so the caller
+// fails the deploy instead of silently shipping the app without its injected
+// connection string.
 func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByApplicationRow) (string, bool, error) {
-	var user, pass, host, port, dbname, scheme string
 	switch {
 	case l.LogicalDatabaseID != nil:
 		ld, err := s.q.GetLogicalDatabase(ctx, *l.LogicalDatabaseID)
@@ -180,7 +156,15 @@ func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByAppl
 			}
 			return "", false, err
 		}
-		user, pass, host, port, dbname, scheme = ld.Username, secret.Dec(ld.Password), inst.AppName, "5432", ld.DbName, l.Scheme
+		src := drivers.LinkSource{
+			AppName:   inst.AppName,
+			Superuser: ld.Username,
+			Password:  secret.Dec(ld.Password),
+			DBName:    ld.DbName,
+			Scheme:    l.Scheme,
+		}
+		val, ok := drivers.LinkValue("postgres", src, l.Field)
+		return val, ok, nil
 	case l.InstanceID != nil:
 		inst, err := s.q.GetDBInstance(ctx, *l.InstanceID)
 		if err != nil {
@@ -189,11 +173,17 @@ func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByAppl
 			}
 			return "", false, err
 		}
-		user, pass, host, port, dbname, scheme = "default", secret.Dec(inst.SuperuserPassword), inst.AppName, "6379", "", "redis"
+		src := drivers.LinkSource{
+			AppName:   inst.AppName,
+			Superuser: inst.Superuser,
+			Password:  secret.Dec(inst.SuperuserPassword),
+			Scheme:    l.Scheme,
+		}
+		val, ok := drivers.LinkValue(inst.Engine, src, l.Field)
+		return val, ok, nil
 	default:
 		return "", false, nil
 	}
-	return dbLinkFieldValue(l.Field, user, pass, host, port, dbname, scheme), true, nil
 }
 
 func (s *DBStore) SetStatus(ctx context.Context, id int64, status string) error {

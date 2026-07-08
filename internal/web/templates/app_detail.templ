@@ -28,9 +28,9 @@ type AppCtx struct {
 	VolumeBackups map[int64][]db.VolumeBackup // app_volume_id → its backups
 	Destinations  []db.Destination
 
-	DBLinks        []DBLinkView
-	Ldbs           []db.ListLogicalDatabasesByEnvironmentRow // logical DBs of this environment (pg link options)
-	RedisInstances []db.DbInstance                           // redis instances of this org (redis link options)
+	DBLinks       []DBLinkView
+	Ldbs          []db.ListLogicalDatabasesByEnvironmentRow // logical DBs of this environment (pg link options)
+	LinkInstances []db.DbInstance                           // non-postgres instances of this org — redis/dragonfly/minio link options
 
 	AutoDeploy    bool
 	WebhookSecret string // decrypted; set for admins only
@@ -316,7 +316,7 @@ templ envTab(c AppCtx) {
 				</tbody>
 			</table>
 		}
-		if len(c.Ldbs) == 0 && len(c.RedisInstances) == 0 {
+		if len(c.Ldbs) == 0 && len(c.LinkInstances) == 0 {
 			<p class="k-muted mb-3">{ i18n.T(ctx, "dblink.no_databases") }</p>
 		} else {
 			<form method="post" action={ templ.SafeURL(c.base() + "/db-links") } class="flex items-end gap-2 flex-wrap mb-4">
@@ -324,10 +324,10 @@ templ envTab(c AppCtx) {
 					<label class="k-label">{ i18n.T(ctx, "dblink.database") }</label>
 					<select id="dblink-db" class="k-select" name="db_ref">
 						for _, ldb := range c.Ldbs {
-							<option value={ "pg:" + itoa(ldb.ID) }>🐘 { ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")" }</option>
+							<option value={ "pg:" + itoa(ldb.ID) } data-engine="pg">🐘 { ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")" }</option>
 						}
-						for _, inst := range c.RedisInstances {
-							<option value={ "redis:" + itoa(inst.ID) }>🟥 { inst.Name }</option>
+						for _, inst := range c.LinkInstances {
+							<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ dbEngineIcon(inst.Engine) + " " + inst.Name }</option>
 						}
 					</select>
 				</div>
@@ -346,13 +346,17 @@ templ envTab(c AppCtx) {
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.field") }</label>
 					<select id="dblink-field" class="k-select" name="field">
-						<option value="url">url</option>
-						<option value="password">password</option>
-						<option value="host">host</option>
-						<option value="port">port</option>
-						<option value="user">user</option>
-						<option value="dbname">dbname</option>
-						<option value="hostport">host:port</option>
+						<option value="url" data-engines="pg redis dragonfly">url</option>
+						<option value="password" data-engines="pg redis dragonfly">password</option>
+						<option value="host" data-engines="pg redis dragonfly">host</option>
+						<option value="port" data-engines="pg redis dragonfly">port</option>
+						<option value="user" data-engines="pg">user</option>
+						<option value="dbname" data-engines="pg">dbname</option>
+						<option value="hostport" data-engines="pg redis dragonfly">host:port</option>
+						<option value="endpoint" data-engines="minio">endpoint</option>
+						<option value="access_key" data-engines="minio">access_key</option>
+						<option value="secret_key" data-engines="minio">secret_key</option>
+						<option value="region" data-engines="minio">region</option>
 					</select>
 				</div>
 				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>

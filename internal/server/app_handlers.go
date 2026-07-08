@@ -421,23 +421,25 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("appDetail: list db links", "err", lerr, "app_id", c.App.ID)
 		}
 		ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(r.Context(), c.Env.ID)
-		var redisInsts []db.DbInstance
+		var linkInsts []db.DbInstance
 		if insts, err := s.q.ListDBInstancesByOrg(r.Context(), c.Org.ID); err == nil {
 			for _, in := range insts {
-				if in.Engine == "redis" {
-					redisInsts = append(redisInsts, in)
+				if in.Engine != "postgres" {
+					linkInsts = append(linkInsts, in)
 				}
 			}
 		}
 		c.Ldbs = ldbs
-		c.RedisInstances = redisInsts
+		c.LinkInstances = linkInsts
 		ldbName := map[int64]string{}
 		for _, ldb := range ldbs {
 			ldbName[ldb.ID] = ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")"
 		}
-		redisName := map[int64]string{}
-		for _, inst := range redisInsts {
-			redisName[inst.ID] = inst.Name
+		instName := map[int64]string{}
+		instEngine := map[int64]string{}
+		for _, inst := range linkInsts {
+			instName[inst.ID] = inst.Name
+			instEngine[inst.ID] = inst.Engine
 		}
 		envKeys, _ := parseEnv(c.App.EnvText)
 		for _, l := range links {
@@ -446,7 +448,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			case l.LogicalDatabaseID != nil:
 				engine, name = "postgres", ldbName[*l.LogicalDatabaseID]
 			case l.InstanceID != nil:
-				engine, name = "redis", redisName[*l.InstanceID]
+				engine, name = instEngine[*l.InstanceID], instName[*l.InstanceID]
 			}
 			_, collides := envKeys[l.VarName]
 			c.DBLinks = append(c.DBLinks, templates.DBLinkView{

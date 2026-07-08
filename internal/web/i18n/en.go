@@ -45,7 +45,7 @@ var en = map[string]string{
 	"dblink.note":                          "Linked databases inject a value into the chosen variable on every deploy (overriding env below). For apps needing separate variables (e.g. Vikunja), add one link per field.",
 	"dblink.var_name":                      "Variable",
 	"dblink.var_hint":                      "The env variable name injected into the container (e.g. DATABASE_URL).",
-	"dblink.field_hint":                    "What to inject: url = the full connection string; hostport = host:port in one value; or a single field — password / host / port / user / dbname.",
+	"dblink.field_hint":                    "What to inject: url = the full connection string; hostport = host:port in one value; or a single field — password / host / port / user / dbname. For MinIO (S3): endpoint / access_key / secret_key / region.",
 	"dblink.database":                      "Database",
 	"dblink.scheme":                        "Scheme",
 	"dblink.add":                           "Link database",
