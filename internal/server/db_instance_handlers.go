@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,10 @@ import (
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
+
+// minioRootUserRe validates the user-chosen MinIO root user (MINIO_ROOT_USER):
+// alphanumeric only, 3-63 chars (MinIO itself requires >=3 chars).
+var minioRootUserRe = regexp.MustCompile(`^[a-zA-Z0-9]{3,63}$`)
 
 func instBase(orgID, instID int64) string {
 	return "/orgs/" + strconv.FormatInt(orgID, 10) + "/db-servers/" + strconv.FormatInt(instID, 10)
@@ -133,11 +138,10 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.external_port_in_use")
 		return
 	}
-	// console_external_port is minio-relevant (data + console pair); no
-	// currently-registered driver's form submits it yet (dragonfly, like
-	// redis, is a single-target engine — one ProxyTarget, no "-console"
-	// suffix), but the plumbing is engine-agnostic and forward-compatible
-	// with the driver that will submit it.
+	// console_external_port is minio's second target (data + console pair) —
+	// the create form only submits it when engine=minio (JS-revealed field);
+	// parsing it unconditionally is harmless for single-target engines
+	// (postgres/redis/dragonfly), whose form never sends it.
 	consolePort, ok := parseInstancePort(r.FormValue("console_external_port"))
 	if !ok {
 		s.flashErrT(w, r, "flash.err.invalid_console_port")
@@ -170,6 +174,14 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		version = drv.DefaultImage()
 	}
 	su := drv.SuperuserName()
+	if engine == "minio" {
+		root := strings.TrimSpace(r.FormValue("root_user"))
+		if !minioRootUserRe.MatchString(root) {
+			s.flashErrT(w, r, "flash.err.minio_root_user")
+			return
+		}
+		su = root
+	}
 	pw, err := genPassword()
 	if err != nil {
 		logFrom(r).Error("createDBInstance: password generation failed", "err", err, "org_id", o.ID)
@@ -210,15 +222,14 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 		if s.engine != nil {
 			c.Nodes, _ = s.engine.Nodes(r.Context())
 		}
-		di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser,
-			SuperuserPassword: secret.Dec(inst.SuperuserPassword), ExternalPort: inst.ExternalPort}
-		if inst.Engine == "postgres" {
-			c.SuperuserURL = dbservice.PostgresURL("postgresql", di, dbservice.LogicalDB{DBName: "postgres", Username: di.Superuser, Password: di.SuperuserPassword})
-		} else {
-			c.SuperuserURL = dbservice.RedisInternalURL(di)
-			if inst.ExternalPort != nil {
-				c.ExternalURL = dbservice.RedisExternalURL(di, s.cfg.Host)
+		if drv, ok := drivers.Registry.Get(inst.Engine); ok {
+			di := drivers.Instance{
+				AppName: inst.AppName, Superuser: inst.Superuser,
+				SuperuserPassword:   secret.Dec(inst.SuperuserPassword),
+				ExternalPort:        inst.ExternalPort,
+				ConsoleExternalPort: inst.ConsoleExternalPort,
 			}
+			c.Conn = drv.ConnDisplay(di, s.cfg.Host)
 		}
 	}
 	render(w, r, http.StatusOK, templates.DBServerDetail(c))

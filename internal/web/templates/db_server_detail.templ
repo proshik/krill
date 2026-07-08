@@ -2,20 +2,20 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
 type DBServerCtx struct {
-	Org          db.Organization
-	Role         string
-	Inst         db.DbInstance
-	DBs          []db.ListLogicalDatabasesByInstanceRow
-	Nodes        []docker.SwarmNode
-	SuperuserURL string // admin-only; postgres superuser / redis connection string
-	ExternalURL  string // redis external (postgres external lives on the logical DB page)
-	Base         string
-	Host         string // control-plane host, for the external-access "host:port" line
+	Org   db.Organization
+	Role  string
+	Inst  db.DbInstance
+	DBs   []db.ListLogicalDatabasesByInstanceRow
+	Nodes []docker.SwarmNode
+	Conn  []drivers.ConnField // admin-only; the engine driver's connection panel (endpoint/creds)
+	Base  string
+	Host  string // control-plane host, for the external-access "host:port" line
 }
 
 templ DBServerDetail(c DBServerCtx) {
@@ -82,24 +82,21 @@ templ DBServerDetail(c DBServerCtx) {
 							<p class="k-muted text-xs mt-1 k-mono">{ c.Host }:{ itoa(int64(*c.Inst.ExternalPort)) }</p>
 						}
 					</div>
-					if c.SuperuserURL != "" {
+					for _, f := range c.Conn {
 						<div>
-							<div class="k-label">{ i18n.T(ctx, "dbi.superuser_url") }</div>
-							<div class="flex items-center gap-2">
-								<input class="k-input k-mono" type="password" readonly value={ c.SuperuserURL }/>
-								<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
-								<button type="button" class="k-copy" data-copy={ c.SuperuserURL } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
-							</div>
-						</div>
-					}
-					if c.ExternalURL != "" {
-						<div>
-							<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
-							<div class="flex items-center gap-2">
-								<input class="k-input k-mono" type="password" readonly value={ c.ExternalURL }/>
-								<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
-								<button type="button" class="k-copy" data-copy={ c.ExternalURL } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
-							</div>
+							<div class="k-label">{ i18n.T(ctx, f.Label) }</div>
+							if f.Secret {
+								<div class="flex items-center gap-2">
+									<input class="k-input k-mono" type="password" readonly value={ f.Value }/>
+									<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
+									<button type="button" class="k-copy" data-copy={ f.Value } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
+								</div>
+							} else {
+								<div class="flex items-center gap-2">
+									<input class="k-input k-mono" readonly value={ f.Value }/>
+									<button type="button" class="k-copy" data-copy={ f.Value } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
+								</div>
+							}
 						</div>
 					}
 				}

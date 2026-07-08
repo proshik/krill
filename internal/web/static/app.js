@@ -534,6 +534,21 @@ window.krillToggleSource = function (val) {
   });
 };
 
+// Toggles engine-only fields in the DB-server creation form (e.g. MinIO's
+// root user + console port) and refreshes the version field's placeholder
+// from the selected option's data-default-image.
+window.krillToggleEngine = function (sel) {
+  const val = sel.value;
+  document.querySelectorAll('[data-engine-only]').forEach(function (el) {
+    el.style.display = (el.getAttribute('data-engine-only') === val) ? '' : 'none';
+  });
+  const opt = sel.selectedOptions && sel.selectedOptions[0];
+  const img = opt && opt.dataset ? opt.dataset.defaultImage : '';
+  const form = sel.closest('form');
+  const verInput = form && form.querySelector('[name="version"]');
+  if (verInput && img) verInput.placeholder = img;
+};
+
 // Open/close the native <dialog> modal by id.
 window.krillOpenModal = function (id) {
   const d = document.getElementById(id);

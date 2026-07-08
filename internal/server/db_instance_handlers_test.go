@@ -94,7 +94,7 @@ func TestCreateDBInstanceRejectsUnknownEngine(t *testing.T) {
 	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
 	cookie := loginAs(t, q, "o@k.local")
 
-	form := url.Values{"engine": {"minio"}, "name": {"bucket1"}}
+	form := url.Values{"engine": {"mysql"}, "name": {"bucket1"}}
 	req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(cookie)
@@ -105,7 +105,62 @@ func TestCreateDBInstanceRejectsUnknownEngine(t *testing.T) {
 	}
 	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
 	if len(insts) != 0 {
-		t.Fatalf("engine not yet registered must not create an instance, got %+v", insts)
+		t.Fatalf("unregistered engine must not create an instance, got %+v", insts)
+	}
+}
+
+func TestAdminCreatesMinioDBInstance(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "o@k.local")
+
+	form := url.Values{"engine": {"minio"}, "name": {"bucket1"}, "root_user": {"minioadmin"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin create minio instance want 303, got %d", rec.Code)
+	}
+	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
+	if len(insts) != 1 || insts[0].Engine != "minio" {
+		t.Fatalf("expected 1 minio instance, got %+v", insts)
+	}
+	if insts[0].Superuser != "minioadmin" {
+		t.Fatalf("expected superuser %q, got %q", "minioadmin", insts[0].Superuser)
+	}
+	if insts[0].SuperuserPassword == "" {
+		t.Fatal("instance must get a generated password")
+	}
+	if !strings.Contains(insts[0].Image, "minio") {
+		t.Fatalf("expected default minio image, got %q", insts[0].Image)
+	}
+}
+
+func TestCreateMinioDBInstanceRejectsBadRootUser(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "o@k.local")
+
+	for _, root := range []string{"", "ab", "has spaces", "has-dash", strings.Repeat("x", 64)} {
+		form := url.Values{"engine": {"minio"}, "name": {"bucket1"}, "root_user": {root}}
+		req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("root_user %q: want redirect back with a flash error, got %d", root, rec.Code)
+		}
+	}
+	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
+	if len(insts) != 0 {
+		t.Fatalf("bad root_user must not create an instance, got %+v", insts)
 	}
 }
 

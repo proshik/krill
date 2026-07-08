@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -120,6 +121,34 @@ func dbiStatus(statuses map[int64]string, in db.DbInstance) string {
 		return s
 	}
 	return in.Status
+}
+
+// dbEngineIcon returns the display icon for a db_instances engine value.
+func dbEngineIcon(engine string) string {
+	switch engine {
+	case "postgres":
+		return "🐘"
+	case "redis":
+		return "🟥"
+	case "dragonfly":
+		return "🪰"
+	case "minio":
+		return "🪣"
+	default:
+		return "🗄"
+	}
+}
+
+// firstEngineDefaultImage returns the default image of the first registered
+// driver — used as the create-form version field's initial placeholder
+// (matches the engine select's default option; kept in sync by
+// krillToggleEngine on change).
+func firstEngineDefaultImage() string {
+	list := drivers.Registry.List()
+	if len(list) == 0 {
+		return ""
+	}
+	return list[0].DefaultImage()
 }
 
 // hostnameInNodes reports whether hostname matches a live swarm node.

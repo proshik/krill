@@ -22,11 +22,7 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 					<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers/" + itoa(in.ID)) }>
 						<div class="flex items-center justify-between">
 							<div class="font-semibold text-base">
-								if in.Engine == "postgres" {
-									<span aria-hidden="true">🐘</span>
-								} else {
-									<span aria-hidden="true">🟥</span>
-								}
+								<span aria-hidden="true">{ dbEngineIcon(in.Engine) }</span>
 								{ in.Name }
 							</div>
 							@StatusBadge(dbiStatus(statuses, in))
@@ -53,9 +49,9 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 					<div class="flex flex-col gap-2">
 						<div>
 							<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.engine") }</label>
-							<select class="k-select" name="engine">
+							<select class="k-select" name="engine" onchange="krillToggleEngine(this)">
 								for _, d := range drivers.Registry.List() {
-									<option value={ d.Engine() }>{ d.Label() }</option>
+									<option value={ d.Engine() } data-default-image={ d.DefaultImage() }>{ d.Label() }</option>
 								}
 							</select>
 						</div>
@@ -65,7 +61,19 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 						</div>
 						<div>
 							<label class="k-label">{ i18n.T(ctx, "dbi.version") }</label>
-							<input class="k-input" name="version" placeholder="postgres:17 / redis:7"/>
+							<input class="k-input" name="version" placeholder={ firstEngineDefaultImage() }/>
+						</div>
+						<div data-engine-only="minio" style="display:none" class="grid gap-3">
+							<div>
+								<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.minio_root_user") }</label>
+								<input class="k-input" name="root_user" pattern="[a-zA-Z0-9]{3,63}" placeholder="minioadmin"/>
+								<p class="k-muted text-xs mt-1">{ i18n.T(ctx, "dbi.minio_root_user_hint") }</p>
+							</div>
+							<div>
+								<label class="k-label">{ i18n.T(ctx, "dbi.console_port") }</label>
+								<input class="k-input" name="console_external_port" type="number" min="1" max="65535"/>
+								<p class="k-muted text-xs mt-1">{ i18n.T(ctx, "dbi.console_port_hint") }</p>
+							</div>
 						</div>
 						<div>
 							<label class="k-label">{ i18n.T(ctx, "dbnode.label") }</label>

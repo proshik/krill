@@ -83,15 +83,15 @@ func TestRegistryGetAndList(t *testing.T) {
 	if d, ok := Registry.Get("dragonfly"); !ok || d.Engine() != "dragonfly" {
 		t.Fatalf("get dragonfly: %v %v", d, ok)
 	}
-	if _, ok := Registry.Get("minio"); ok {
-		t.Fatal("minio must not be registered yet")
+	if d, ok := Registry.Get("minio"); !ok || d.Engine() != "minio" {
+		t.Fatalf("get minio: %v %v", d, ok)
 	}
 	list := Registry.List()
-	if len(list) != 3 {
-		t.Fatalf("List() = %d drivers, want 3", len(list))
+	if len(list) != 4 {
+		t.Fatalf("List() = %d drivers, want 4", len(list))
 	}
-	if list[0].Engine() != "postgres" || list[1].Engine() != "redis" || list[2].Engine() != "dragonfly" {
-		t.Fatalf("List() order = [%s, %s, %s], want stable [postgres, redis, dragonfly]", list[0].Engine(), list[1].Engine(), list[2].Engine())
+	if list[0].Engine() != "postgres" || list[1].Engine() != "redis" || list[2].Engine() != "dragonfly" || list[3].Engine() != "minio" {
+		t.Fatalf("List() order = [%s, %s, %s, %s], want stable [postgres, redis, dragonfly, minio]", list[0].Engine(), list[1].Engine(), list[2].Engine(), list[3].Engine())
 	}
 }
 
@@ -239,7 +239,7 @@ func TestRedisLinkValue(t *testing.T) {
 }
 
 func TestLinkValueFreeFunctionUnknownEngine(t *testing.T) {
-	if _, ok := LinkValue("minio", LinkSource{}, "url"); ok {
+	if _, ok := LinkValue("mysql", LinkSource{}, "url"); ok {
 		t.Fatal("unknown engine must return ok=false")
 	}
 }
@@ -303,5 +303,125 @@ func TestDBConstraint(t *testing.T) {
 func TestVolumeName(t *testing.T) {
 	if v := VolumeName("krill-pg-x"); v != "krill-pg-x-data" {
 		t.Errorf("volume name = %q", v)
+	}
+}
+
+// --- MinIO (S3-shaped: two ports, no logical resource, user-chosen root user) ---
+
+func TestMinioDriverSpec(t *testing.T) {
+	d, ok := Registry.Get("minio")
+	if !ok {
+		t.Fatal("minio driver not registered")
+	}
+	if d.Label() != "MinIO" {
+		t.Fatalf("label = %q", d.Label())
+	}
+	if d.DefaultImage() != "minio/minio:latest" {
+		t.Fatalf("default image = %q", d.DefaultImage())
+	}
+	if d.SuperuserName() != "" {
+		t.Fatalf("superuser = %q, want \"\" (root user is user-chosen, supplied by the handler)", d.SuperuserName())
+	}
+	if d.MountTarget() != "/data" {
+		t.Fatalf("mount target = %q, want \"/data\"", d.MountTarget())
+	}
+	if d.HasLogicalResource() {
+		t.Fatal("minio must not have a logical resource")
+	}
+
+	inst := Instance{Engine: "minio", AppName: "krill-minio-x", Image: d.DefaultImage(), Superuser: "minioadmin", SuperuserPassword: "pw"}
+	spec := d.BuildSpec(inst, "krill-net")
+	wantArgs := []string{"server", "/data", "--console-address", ":9001"}
+	if len(spec.Args) != len(wantArgs) {
+		t.Fatalf("args = %v, want %v", spec.Args, wantArgs)
+	}
+	for i, a := range wantArgs {
+		if spec.Args[i] != a {
+			t.Fatalf("args = %v, want %v", spec.Args, wantArgs)
+		}
+	}
+	if spec.Env["MINIO_ROOT_USER"] != "minioadmin" || spec.Env["MINIO_ROOT_PASSWORD"] != "pw" {
+		t.Fatalf("env = %v", spec.Env)
+	}
+	if len(spec.Mounts) != 1 || spec.Mounts[0].Target != "/data" || spec.Mounts[0].Source != "krill-minio-x-data" {
+		t.Fatalf("mount: %+v", spec.Mounts)
+	}
+	if len(spec.Ports) != 0 {
+		t.Fatalf("DB service must not host-publish, got %+v", spec.Ports)
+	}
+	if spec.Healthcheck != nil {
+		t.Fatalf("healthcheck must be omitted in v1, got %+v", spec.Healthcheck)
+	}
+
+	targets := d.ExternalTargets(Instance{ExternalPort: p32(59000), ConsoleExternalPort: p32(59001)})
+	if len(targets) != 2 {
+		t.Fatalf("want 2 external targets (data + console), got %+v", targets)
+	}
+	if targets[0].Suffix != "" || targets[0].ContainerPort != 9000 || targets[0].HostPort == nil || *targets[0].HostPort != 59000 {
+		t.Fatalf("data target: %+v", targets[0])
+	}
+	if targets[1].Suffix != "-console" || targets[1].ContainerPort != 9001 || targets[1].HostPort == nil || *targets[1].HostPort != 59001 {
+		t.Fatalf("console target: %+v", targets[1])
+	}
+
+	wantFields := []string{"endpoint", "access_key", "secret_key", "region"}
+	if got := d.LinkFields(); len(got) != len(wantFields) {
+		t.Fatalf("link fields = %v, want %v", got, wantFields)
+	} else {
+		for i, f := range wantFields {
+			if got[i] != f {
+				t.Fatalf("link fields = %v, want %v", got, wantFields)
+			}
+		}
+	}
+
+	src := LinkSource{AppName: "h", Superuser: "minioadmin", Password: "sekret"}
+	if got, ok := d.LinkValue(src, "endpoint"); !ok || got != "http://h:9000" {
+		t.Errorf("minio endpoint = %q,%v", got, ok)
+	}
+	if got, ok := d.LinkValue(src, "access_key"); !ok || got != "minioadmin" {
+		t.Errorf("minio access_key = %q,%v", got, ok)
+	}
+	if got, ok := d.LinkValue(src, "secret_key"); !ok || got != "sekret" {
+		t.Errorf("minio secret_key = %q,%v", got, ok)
+	}
+	if got, ok := d.LinkValue(src, "region"); !ok || got != "us-east-1" {
+		t.Errorf("minio region = %q,%v", got, ok)
+	}
+	if _, ok := d.LinkValue(src, "dbname"); ok {
+		t.Error("minio has no dbname field, want ok=false")
+	}
+}
+
+func TestMinioConnDisplay(t *testing.T) {
+	d := Registry.MustGet("minio")
+
+	// No external/console port set: only endpoint + access/secret keys.
+	inst := Instance{AppName: "minio-inst", Superuser: "minioadmin", SuperuserPassword: "pw"}
+	fields := d.ConnDisplay(inst, "example.com")
+	if len(fields) != 3 {
+		t.Fatalf("want 3 fields (endpoint, access_key, secret_key), got %+v", fields)
+	}
+	if fields[0].Value != "http://minio-inst:9000" {
+		t.Fatalf("endpoint: %+v", fields[0])
+	}
+	if fields[1].Value != "minioadmin" || fields[1].Secret {
+		t.Fatalf("access key: %+v", fields[1])
+	}
+	if fields[2].Value != "pw" || !fields[2].Secret {
+		t.Fatalf("secret key: %+v", fields[2])
+	}
+
+	// Both external ports set.
+	inst2 := Instance{AppName: "minio-inst", Superuser: "minioadmin", SuperuserPassword: "pw", ExternalPort: p32(59000), ConsoleExternalPort: p32(59001)}
+	fields2 := d.ConnDisplay(inst2, "example.com")
+	if len(fields2) != 5 {
+		t.Fatalf("want 5 fields, got %+v", fields2)
+	}
+	if fields2[1].Value != "example.com:59000" {
+		t.Fatalf("external API: %+v", fields2[1])
+	}
+	if fields2[2].Value != "http://example.com:59001" {
+		t.Fatalf("console URL: %+v", fields2[2])
 	}
 }
