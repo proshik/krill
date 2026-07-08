@@ -1,6 +1,9 @@
 package drivers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func p32(v int32) *int32 { return &v }
 
@@ -77,15 +80,98 @@ func TestRegistryGetAndList(t *testing.T) {
 	if d, ok := Registry.Get("redis"); !ok || d.Engine() != "redis" {
 		t.Fatalf("get redis: %v %v", d, ok)
 	}
+	if d, ok := Registry.Get("dragonfly"); !ok || d.Engine() != "dragonfly" {
+		t.Fatalf("get dragonfly: %v %v", d, ok)
+	}
 	if _, ok := Registry.Get("minio"); ok {
 		t.Fatal("minio must not be registered yet")
 	}
 	list := Registry.List()
-	if len(list) != 2 {
-		t.Fatalf("List() = %d drivers, want 2", len(list))
+	if len(list) != 3 {
+		t.Fatalf("List() = %d drivers, want 3", len(list))
 	}
-	if list[0].Engine() != "postgres" || list[1].Engine() != "redis" {
-		t.Fatalf("List() order = [%s, %s], want stable [postgres, redis]", list[0].Engine(), list[1].Engine())
+	if list[0].Engine() != "postgres" || list[1].Engine() != "redis" || list[2].Engine() != "dragonfly" {
+		t.Fatalf("List() order = [%s, %s, %s], want stable [postgres, redis, dragonfly]", list[0].Engine(), list[1].Engine(), list[2].Engine())
+	}
+}
+
+// --- DragonFly (Redis-compatible: RESP wire protocol, same link/conn shape) ---
+
+func TestDragonflyDriverSpec(t *testing.T) {
+	d, ok := Registry.Get("dragonfly")
+	if !ok {
+		t.Fatal("dragonfly driver not registered")
+	}
+	if d.Label() != "DragonFly" {
+		t.Fatalf("label = %q", d.Label())
+	}
+	if !strings.Contains(d.DefaultImage(), "dragonfly") {
+		t.Fatalf("default image = %q, want it to contain \"dragonfly\"", d.DefaultImage())
+	}
+	if d.SuperuserName() != "default" {
+		t.Fatalf("superuser = %q, want \"default\"", d.SuperuserName())
+	}
+	if d.MountTarget() != "/data" {
+		t.Fatalf("mount target = %q, want \"/data\"", d.MountTarget())
+	}
+	if d.HasLogicalResource() {
+		t.Fatal("dragonfly must not have a logical resource")
+	}
+
+	inst := Instance{Engine: "dragonfly", AppName: "krill-dragonfly-x", Image: d.DefaultImage(), SuperuserPassword: "pw"}
+	spec := d.BuildSpec(inst, "krill-net")
+	wantArgs := []string{"dragonfly", "--requirepass", "pw"}
+	if len(spec.Args) != len(wantArgs) {
+		t.Fatalf("args = %v, want %v", spec.Args, wantArgs)
+	}
+	for i, a := range wantArgs {
+		if spec.Args[i] != a {
+			t.Fatalf("args = %v, want %v", spec.Args, wantArgs)
+		}
+	}
+	if len(spec.Mounts) != 1 || spec.Mounts[0].Target != "/data" {
+		t.Fatalf("mount: %+v", spec.Mounts)
+	}
+	if len(spec.Ports) != 0 {
+		t.Fatalf("DB service must not host-publish, got %+v", spec.Ports)
+	}
+
+	targets := d.ExternalTargets(Instance{ExternalPort: p32(56501)})
+	if len(targets) != 1 || targets[0].ContainerPort != 6379 || targets[0].Suffix != "" {
+		t.Fatalf("external targets: %+v", targets)
+	}
+
+	wantFields := []string{"url", "password", "host", "port", "hostport"}
+	if got := d.LinkFields(); len(got) != len(wantFields) {
+		t.Fatalf("link fields = %v, want %v", got, wantFields)
+	} else {
+		for i, f := range wantFields {
+			if got[i] != f {
+				t.Fatalf("link fields = %v, want %v", got, wantFields)
+			}
+		}
+	}
+
+	src := LinkSource{AppName: "h", Password: "p", Scheme: "redis"}
+	if got, ok := d.LinkValue(src, "url"); !ok || got != "redis://default:p@h:6379" {
+		t.Errorf("dragonfly url = %q,%v", got, ok)
+	}
+	if got, ok := d.LinkValue(src, "hostport"); !ok || got != "h:6379" {
+		t.Errorf("dragonfly hostport = %q,%v", got, ok)
+	}
+}
+
+func TestDragonflyConnDisplay(t *testing.T) {
+	inst := Instance{AppName: "df-inst", SuperuserPassword: "pw", ExternalPort: p32(56502)}
+	fields := Registry.MustGet("dragonfly").ConnDisplay(inst, "example.com")
+	if len(fields) != 2 {
+		t.Fatalf("want 2 fields, got %+v", fields)
+	}
+	if fields[0].Value != "redis://default:pw@df-inst:6379" || !fields[0].Secret {
+		t.Fatalf("internal: %+v", fields[0])
+	}
+	if fields[1].Value != "redis://default:pw@example.com:56502" || !fields[1].Secret {
+		t.Fatalf("external: %+v", fields[1])
 	}
 }
 

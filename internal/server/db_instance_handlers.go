@@ -11,6 +11,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
@@ -118,7 +119,8 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 	engine := r.FormValue("engine")
 	name := strings.TrimSpace(r.FormValue("name"))
 	version := strings.TrimSpace(r.FormValue("version"))
-	if name == "" || (engine != "postgres" && engine != "redis") {
+	drv, engineOK := drivers.Registry.Get(engine)
+	if name == "" || !engineOK {
 		s.flashErrT(w, r, "flash.err.engine_name_required")
 		return
 	}
@@ -131,10 +133,11 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.external_port_in_use")
 		return
 	}
-	// console_external_port is minio-relevant (data + console pair); no engine
-	// accepts it yet (CHECK constraint is postgres/redis only), but the
-	// plumbing is engine-agnostic and forward-compatible with the driver that
-	// will submit it.
+	// console_external_port is minio-relevant (data + console pair); no
+	// currently-registered driver's form submits it yet (dragonfly, like
+	// redis, is a single-target engine — one ProxyTarget, no "-console"
+	// suffix), but the plumbing is engine-agnostic and forward-compatible
+	// with the driver that will submit it.
 	consolePort, ok := parseInstancePort(r.FormValue("console_external_port"))
 	if !ok {
 		s.flashErrT(w, r, "flash.err.invalid_console_port")
@@ -164,16 +167,9 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if version == "" {
-		if engine == "postgres" {
-			version = "postgres:17"
-		} else {
-			version = "redis:7"
-		}
+		version = drv.DefaultImage()
 	}
-	su := ""
-	if engine == "postgres" {
-		su = "postgres"
-	}
+	su := drv.SuperuserName()
 	pw, err := genPassword()
 	if err != nil {
 		logFrom(r).Error("createDBInstance: password generation failed", "err", err, "org_id", o.ID)

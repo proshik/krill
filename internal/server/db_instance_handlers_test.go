@@ -56,6 +56,59 @@ func TestAdminCreatesDBInstance(t *testing.T) {
 	}
 }
 
+func TestAdminCreatesDragonflyDBInstance(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "o@k.local")
+
+	form := url.Values{"engine": {"dragonfly"}, "name": {"cache1"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin create dragonfly instance want 303, got %d", rec.Code)
+	}
+	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
+	if len(insts) != 1 || insts[0].Engine != "dragonfly" {
+		t.Fatalf("expected 1 dragonfly instance, got %+v", insts)
+	}
+	if !strings.Contains(insts[0].Image, "dragonfly") {
+		t.Fatalf("expected default dragonfly image, got %q", insts[0].Image)
+	}
+	if insts[0].Superuser != "default" {
+		t.Fatalf("expected superuser %q, got %q", "default", insts[0].Superuser)
+	}
+	if insts[0].SuperuserPassword == "" {
+		t.Fatal("instance must get a generated password")
+	}
+}
+
+func TestCreateDBInstanceRejectsUnknownEngine(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "o@k.local")
+
+	form := url.Values{"engine": {"minio"}, "name": {"bucket1"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("want redirect back with a flash error, got %d", rec.Code)
+	}
+	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
+	if len(insts) != 0 {
+		t.Fatalf("engine not yet registered must not create an instance, got %+v", insts)
+	}
+}
+
 func TestDBInstanceCrossOrg404(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()

@@ -48,5 +48,5 @@ func (r *registry) List() []Driver {
 	return out
 }
 
-// Registry is the process-wide driver set: postgres + redis today.
-var Registry = New(&postgresDriver{}, &redisDriver{})
+// Registry is the process-wide driver set: postgres + redis + dragonfly today.
+var Registry = New(&postgresDriver{}, &redisDriver{}, &dragonflyDriver{})

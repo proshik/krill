@@ -2,6 +2,7 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -53,8 +54,9 @@ templ DBServers(org db.Organization, role string, insts []db.DbInstance, nodes [
 						<div>
 							<label class="k-label k-label-required">{ i18n.T(ctx, "dbi.engine") }</label>
 							<select class="k-select" name="engine">
-								<option value="postgres">PostgreSQL</option>
-								<option value="redis">Redis</option>
+								for _, d := range drivers.Registry.List() {
+									<option value={ d.Engine() }>{ d.Label() }</option>
+								}
 							</select>
 						</div>
 						<div>
