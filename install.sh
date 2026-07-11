@@ -138,14 +138,25 @@ if [ "$UPGRADE" = "yes" ]; then
 		info "KRILL_DATABASE_URL points at an external database — skipping local Postgres management."
 	fi
 else
-	PG_PW="$(rand_hex 16)"
+	if [ -n "${KRILL_DATABASE_URL:-}" ]; then
+		# External/managed Postgres: verify reachability BEFORE writing the env
+		# file (which doubles as the upgrade marker), then use the DSN verbatim.
+		MANAGE_PG="no"
+		DB_URL="$KRILL_DATABASE_URL"
+		preflight_external_db "$DB_URL"
+		info "Using external database for Krill state (skipping local Postgres)."
+	else
+		# Local bundled Postgres (default): generate a loopback DSN + password.
+		PG_PW="$(rand_hex 16)"
+		DB_URL="postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
+	fi
 	ADMIN_EMAIL="admin@krill.local"
 	[ -n "${KRILL_DOMAIN:-}" ] && ADMIN_EMAIL="admin@${KRILL_DOMAIN}"
 	ADMIN_PW="$(rand_hex 12)"
 	SECRET_KEY="$(rand_hex 32)"
 	umask 077
 	{
-		echo "KRILL_DATABASE_URL=postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
+		echo "KRILL_DATABASE_URL=${DB_URL}"
 		echo "KRILL_ADMIN_EMAIL=${ADMIN_EMAIL}"
 		echo "KRILL_ADMIN_PASSWORD=${ADMIN_PW}"
 		echo "KRILL_SECRET_KEY=${SECRET_KEY}"
@@ -276,6 +287,9 @@ IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src
 [ -z "$IP" ] && IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 info "Krill is running."
+if [ "$MANAGE_PG" = "no" ] && [ "$UPGRADE" = "no" ]; then
+	echo "  State:  external database ($(mask_dsn "$DB_URL"))"
+fi
 echo "  URL:    http://${IP:-<server-ip>}:8080"
 echo "  Login:  ${ADMIN_EMAIL}"
 if [ "$UPGRADE" = "yes" ]; then

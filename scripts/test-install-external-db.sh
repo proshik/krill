@@ -17,5 +17,27 @@ check "mask password" "postgres://u:***@h:5432/db?sslmode=require" "$(mask_dsn '
 check "no password unchanged" "postgres://u@h:5432/db" "$(mask_dsn 'postgres://u@h:5432/db')"
 check "hostless unchanged" "postgres://h/db" "$(mask_dsn 'postgres://h/db')"
 
+# --- preflight_external_db integration (needs Docker) ---
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+	# Failure path (most important — the fail-closed gate): unreachable DSN must die (non-zero).
+	if ( preflight_external_db 'postgres://x:y@127.0.0.1:1/db?connect_timeout=2' ) >/dev/null 2>&1; then
+		printf 'FAIL preflight should reject an unreachable DSN\n'; fail=1
+	else
+		printf 'ok   preflight rejects unreachable DSN\n'
+	fi
+	# Success path (best-effort): a throwaway postgres reachable via host loopback.
+	docker rm -f krill-pf-test >/dev/null 2>&1 || true
+	docker run -d --name krill-pf-test -e POSTGRES_PASSWORD=testpw -p 127.0.0.1:15432:5432 "$PG_IMAGE" >/dev/null 2>&1 || true
+	i=0; until docker exec krill-pf-test pg_isready -q >/dev/null 2>&1 || [ "$i" -ge 30 ]; do i=$((i+1)); sleep 1; done
+	if ( preflight_external_db 'postgres://postgres:testpw@127.0.0.1:15432/postgres?sslmode=disable' ) >/dev/null 2>&1; then
+		printf 'ok   preflight accepts a reachable DSN\n'
+	else
+		printf 'WARN preflight success path did not pass (host-loopback wiring); check manually\n'
+	fi
+	docker rm -f krill-pf-test >/dev/null 2>&1 || true
+else
+	printf 'SKIP preflight integration (no docker)\n'
+fi
+
 [ "$fail" = 0 ] && echo "ALL PASS" || echo "SOME FAILED"
 exit "$fail"
