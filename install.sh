@@ -51,6 +51,30 @@ rand_hex() {
 	fi
 }
 
+# mask_dsn DSN — echo a postgres DSN with its password replaced by *** for
+# safe display/logging. A DSN without a password is echoed unchanged.
+mask_dsn() {
+	printf '%s\n' "$1" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'
+}
+
+# preflight_external_db DSN — verify an external Postgres DSN is reachable
+# (throwaway psql container; Docker is a precondition). Fail-closed: die on
+# failure. --network host so a DSN targeting the host's own loopback works too.
+preflight_external_db() {
+	info "Verifying external database connectivity ($(mask_dsn "$1")) ..."
+	if ! docker run --rm --network host "$PG_IMAGE" \
+		psql "$1" -qAtc 'select 1' >/dev/null 2>&1; then
+		die "cannot connect to the external database ($(mask_dsn "$1")): check host, credentials, and sslmode (managed providers usually need sslmode=require)"
+	fi
+	info "External database reachable."
+}
+
+# Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
+# after defining functions — do not run the installer's side effects.
+if [ "${KRILL_LIB_ONLY:-}" = "1" ]; then
+	return 0 2>/dev/null || exit 0
+fi
+
 # --- 1. Preconditions --------------------------------------------------------
 [ "$(id -u)" = "0" ] || die "must run as root (pipe to 'sudo sh')"
 [ "$(uname -s)" = "Linux" ] || die "Krill installs on Linux only"
