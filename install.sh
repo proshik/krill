@@ -51,6 +51,36 @@ rand_hex() {
 	fi
 }
 
+# mask_dsn DSN — echo a postgres DSN with its password replaced by *** for
+# safe display/logging. A DSN without a password is echoed unchanged.
+mask_dsn() {
+	printf '%s\n' "$1" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'
+}
+
+# preflight_external_db DSN — verify an external Postgres DSN is reachable
+# (throwaway psql container; Docker is a precondition). Fail-closed: die on
+# failure. --network host so a DSN targeting the host's own loopback works too.
+preflight_external_db() {
+	# Pull the psql image up front (external mode skips §5's pull) so a slow or
+	# failed image pull is not silently misreported as a DB connection error.
+	if ! docker image inspect "$PG_IMAGE" >/dev/null 2>&1; then
+		info "Pulling $PG_IMAGE (for the connectivity check) ..."
+		docker pull "$PG_IMAGE" >/dev/null 2>&1 || die "failed to pull $PG_IMAGE (needed for the database connectivity check)"
+	fi
+	info "Verifying external database connectivity ($(mask_dsn "$1")) ..."
+	if ! docker run --rm --network host "$PG_IMAGE" \
+		psql "$1" -qAtc 'select 1' >/dev/null 2>&1; then
+		die "cannot connect to the external database ($(mask_dsn "$1")): check host, credentials, and sslmode (managed providers usually need sslmode=require)"
+	fi
+	info "External database reachable."
+}
+
+# Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
+# after defining functions — do not run the installer's side effects.
+if [ "${KRILL_LIB_ONLY:-}" = "1" ]; then
+	return 0 2>/dev/null || exit 0
+fi
+
 # --- 1. Preconditions --------------------------------------------------------
 [ "$(id -u)" = "0" ] || die "must run as root (pipe to 'sudo sh')"
 [ "$(uname -s)" = "Linux" ] || die "Krill installs on Linux only"
@@ -114,14 +144,25 @@ if [ "$UPGRADE" = "yes" ]; then
 		info "KRILL_DATABASE_URL points at an external database — skipping local Postgres management."
 	fi
 else
-	PG_PW="$(rand_hex 16)"
+	if [ -n "${KRILL_DATABASE_URL:-}" ]; then
+		# External/managed Postgres: verify reachability BEFORE writing the env
+		# file (which doubles as the upgrade marker), then use the DSN verbatim.
+		MANAGE_PG="no"
+		DB_URL="$KRILL_DATABASE_URL"
+		preflight_external_db "$DB_URL"
+		info "Using external database for Krill state (skipping local Postgres)."
+	else
+		# Local bundled Postgres (default): generate a loopback DSN + password.
+		PG_PW="$(rand_hex 16)"
+		DB_URL="postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
+	fi
 	ADMIN_EMAIL="admin@krill.local"
 	[ -n "${KRILL_DOMAIN:-}" ] && ADMIN_EMAIL="admin@${KRILL_DOMAIN}"
 	ADMIN_PW="$(rand_hex 12)"
 	SECRET_KEY="$(rand_hex 32)"
 	umask 077
 	{
-		echo "KRILL_DATABASE_URL=postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
+		echo "KRILL_DATABASE_URL=${DB_URL}"
 		echo "KRILL_ADMIN_EMAIL=${ADMIN_EMAIL}"
 		echo "KRILL_ADMIN_PASSWORD=${ADMIN_PW}"
 		echo "KRILL_SECRET_KEY=${SECRET_KEY}"
@@ -252,6 +293,9 @@ IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src
 [ -z "$IP" ] && IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 info "Krill is running."
+if [ "$MANAGE_PG" = "no" ] && [ "$UPGRADE" = "no" ]; then
+	echo "  State:  external database ($(mask_dsn "$DB_URL"))"
+fi
 echo "  URL:    http://${IP:-<server-ip>}:8080"
 echo "  Login:  ${ADMIN_EMAIL}"
 if [ "$UPGRADE" = "yes" ]; then
