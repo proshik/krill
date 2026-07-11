@@ -119,6 +119,27 @@ download — handy when the repo/release is private; `scp` the binary up first),
 `KRILL_SKIP_VERIFY=1` allows installing a downloaded binary when the release has
 no `checksums.txt` (by default the installer refuses — fail closed).
 
+### Use a managed / external Postgres (optional)
+
+By default the installer runs a small loopback-only Postgres container on the
+host for Krill's own state. To keep state off the box (managed durability and
+backups), point Krill at an external Postgres by passing `KRILL_DATABASE_URL` to
+the installer — the local container is then skipped:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh \
+  | KRILL_DATABASE_URL='postgres://user:pass@db.example.com:5432/krill?sslmode=require' sudo -E sh
+```
+
+- `sudo -E` passes the variable through to the script under `sudo`.
+- Managed providers (Neon, Supabase, RDS, …) require TLS — include
+  `sslmode=require` (or `verify-full`) in the DSN.
+- Point at an **empty** database you created at the provider; Krill applies its
+  schema automatically on first start.
+- The installer verifies connectivity before continuing and aborts on failure.
+- State-DB backups are then the provider's responsibility. The default local
+  mode is unchanged, and re-running to upgrade keeps using the external DSN.
+
 After it finishes: point an A record at the server, then set the base domain and
 put the admin UI behind HTTPS (set `KRILL_COOKIE_SECURE=true` in `/etc/krill/krill.env`
 and `systemctl restart krill`). Logs: `journalctl -u krill -f`.
