@@ -61,6 +61,12 @@ mask_dsn() {
 # (throwaway psql container; Docker is a precondition). Fail-closed: die on
 # failure. --network host so a DSN targeting the host's own loopback works too.
 preflight_external_db() {
+	# Pull the psql image up front (external mode skips §5's pull) so a slow or
+	# failed image pull is not silently misreported as a DB connection error.
+	if ! docker image inspect "$PG_IMAGE" >/dev/null 2>&1; then
+		info "Pulling $PG_IMAGE (for the connectivity check) ..."
+		docker pull "$PG_IMAGE" >/dev/null 2>&1 || die "failed to pull $PG_IMAGE (needed for the database connectivity check)"
+	fi
 	info "Verifying external database connectivity ($(mask_dsn "$1")) ..."
 	if ! docker run --rm --network host "$PG_IMAGE" \
 		psql "$1" -qAtc 'select 1' >/dev/null 2>&1; then

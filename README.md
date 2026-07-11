@@ -139,6 +139,10 @@ curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh \
 - The installer verifies connectivity before continuing and aborts on failure.
 - State-DB backups are then the provider's responsibility. The default local
   mode is unchanged, and re-running to upgrade keeps using the external DSN.
+- This choice is made at **first install**. Re-running the installer on an
+  existing local install with `KRILL_DATABASE_URL` set does **not** move state
+  to the external DB (upgrades preserve the existing store) — switching backends
+  needs a manual dump/restore.
 
 After it finishes: point an A record at the server, then set the base domain and
 put the admin UI behind HTTPS (set `KRILL_COOKIE_SECURE=true` in `/etc/krill/krill.env`
