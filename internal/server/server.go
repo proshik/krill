@@ -211,7 +211,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/db-servers/{instID}/stop", s.stopDBInstance)
 				r.Post("/db-servers/{instID}/version", s.versionDBInstance)
 				r.Post("/db-servers/{instID}/external-port", s.setDBInstanceExternalPort)
-				r.Post("/db-servers/{instID}/node", s.setDBInstanceNode)
+				r.Post("/db-servers/{instID}/node", s.migrateDBInstanceNode)
 				r.Post("/db-servers/{instID}/delete", s.deleteDBInstance)
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)

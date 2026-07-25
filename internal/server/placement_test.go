@@ -3,11 +3,29 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
 )
+
+// flashText decodes the "<kind>:<urlescaped-msg>" krill_flash cookie value
+// into its plain-text message, so a test can assert on the exact flash text
+// (not just the ok:/err: prefix) when several error paths share a test.
+func flashText(rec *httptest.ResponseRecorder) string {
+	v := flashCookieValue(rec)
+	_, raw, ok := strings.Cut(v, ":")
+	if !ok {
+		return ""
+	}
+	m, err := url.QueryUnescape(raw)
+	if err != nil {
+		return ""
+	}
+	return m
+}
 
 func TestSavePlacement(t *testing.T) {
 	h, q, orgSvc := newServer(t)
@@ -101,4 +119,84 @@ func TestSetDBInstanceNode(t *testing.T) {
 		t.Errorf("node_hostname want empty, got %q", got.NodeHostname)
 	}
 	// (hostname validation requires a live engine; covered by the live 2-node test.)
+}
+
+// TestMigrateDBInstanceNodeSameNode exercises migrateDBInstanceNode's
+// same-node refusal under a live (non-nil) engine: noopEngine.Nodes returns
+// no live nodes, so the only target that passes node validation is "" (the
+// control-plane) — and the fixture instance also defaults to NodeHostname=""
+// via CreateDBInstance, so posting node_hostname="" hits the same-node path
+// (not invalid_node, and not a dispatched migration).
+func TestMigrateDBInstanceNodeSameNode(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "dbmig-same@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgDBMigSame")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-dbmigsame",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	if inst.NodeHostname != "" {
+		t.Fatalf("fixture assumption broken: NodeHostname = %q, want empty", inst.NodeHostname)
+	}
+	cookie := loginAs(t, q, "dbmig-same@k.local")
+	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+
+	rec := postForm(t, h, base+"/node", cookie, url.Values{"node_hostname": {""}})
+	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("same node want 303+err, got %d body %s", rec.Code, rec.Body.String())
+	}
+	if want := "The instance is already on that node."; flashText(rec) != want {
+		t.Errorf("flash text = %q, want %q", flashText(rec), want)
+	}
+	// No migration was dispatched: node_hostname and status must be untouched.
+	got, err := q.GetDBInstance(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("get db instance: %v", err)
+	}
+	if got.NodeHostname != "" || got.Status != "idle" {
+		t.Errorf("instance mutated by a rejected same-node request: node=%q status=%q", got.NodeHostname, got.Status)
+	}
+}
+
+// TestMigrateDBInstanceNodeBusy exercises migrateDBInstanceNode's
+// migrate-in-progress refusal: an instance whose status is already
+// 'migrating' must reject any new node-change request outright — the busy
+// check runs before the same-node check, so even a same-node target is
+// refused with flash.err.migrate_in_progress rather than flash.err.same_node.
+func TestMigrateDBInstanceNodeBusy(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "dbmig-busy@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgDBMigBusy")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-dbmigbusy",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	if err := q.UpdateDBInstanceStatus(ctx, db.UpdateDBInstanceStatusParams{ID: inst.ID, Status: "migrating"}); err != nil {
+		t.Fatalf("set status migrating: %v", err)
+	}
+	cookie := loginAs(t, q, "dbmig-busy@k.local")
+	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+
+	rec := postForm(t, h, base+"/node", cookie, url.Values{"node_hostname": {""}})
+	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("busy instance want 303+err, got %d body %s", rec.Code, rec.Body.String())
+	}
+	if want := "A migration is already in progress for this instance."; flashText(rec) != want {
+		t.Errorf("flash text = %q, want %q", flashText(rec), want)
+	}
+	got, err := q.GetDBInstance(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("get db instance: %v", err)
+	}
+	if got.Status != "migrating" || got.NodeHostname != "" {
+		t.Errorf("busy instance mutated by a rejected request: status=%q node=%q", got.Status, got.NodeHostname)
+	}
 }

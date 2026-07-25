@@ -360,13 +360,27 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
-func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
+// migrateDBInstanceNode moves a DB instance to another node WITH its data
+// (async volume migration; see dbservice.MigrateInstanceNode). With no engine
+// (tests/single-node bootstrap) it falls back to the legacy metadata-only
+// write — there is nothing to migrate without a swarm.
+func (s *Server) migrateDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
 		return
 	}
 	node := strings.TrimSpace(r.FormValue("node_hostname"))
-	if node != "" && s.engine != nil {
+	if s.engine == nil {
+		if err := s.q.SetDBInstanceNode(r.Context(), db.SetDBInstanceNodeParams{ID: inst.ID, NodeHostname: node}); err != nil {
+			logFrom(r).Error("migrateDBInstanceNode: metadata update failed", "err", err, "instance_id", inst.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		s.flashOK(w, r, "flash.ok.db_node_saved")
+		http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+		return
+	}
+	if node != "" {
 		live, _ := s.engine.Nodes(r.Context())
 		valid := false
 		for _, n := range live {
@@ -380,13 +394,18 @@ func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.q.SetDBInstanceNode(r.Context(), db.SetDBInstanceNodeParams{ID: inst.ID, NodeHostname: node}); err != nil {
-		logFrom(r).Error("setDBInstanceNode: update failed", "err", err, "instance_id", inst.ID)
-		s.flashErrT(w, r, "flash.err.internal")
+	if inst.Status == "migrating" {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
-	logFrom(r).Info("db instance node set", "instance_id", inst.ID, "node", node)
-	s.flashOK(w, r, "flash.ok.db_node_saved")
+	if node == inst.NodeHostname {
+		s.flashErrT(w, r, "flash.err.same_node")
+		return
+	}
+	deleteSource := r.FormValue("delete_source") == "on"
+	s.dbsvc.MigrateInstanceNode(inst.ID, node, deleteSource)
+	logFrom(r).Info("db instance migration started", "instance_id", inst.ID, "target", node, "delete_source", deleteSource)
+	s.flashOK(w, r, "flash.ok.db_migration_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
