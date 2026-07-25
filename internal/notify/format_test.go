@@ -35,3 +35,13 @@ func TestFormatEscapesHTML(t *testing.T) {
 		t.Fatalf("expected escaped entities in output:\n%s", got)
 	}
 }
+
+func TestFormatMigrateFailed(t *testing.T) {
+	got := format(Event{Kind: MigrateFailed, Target: "prod-pg", Detail: "copy volume: boom"})
+	if !strings.Contains(got, "DB migration failed") || !strings.Contains(got, "prod-pg") {
+		t.Fatalf("format = %q", got)
+	}
+	if strings.Contains(got, "//") {
+		t.Fatalf("empty path segments leaked: %q", got)
+	}
+}
