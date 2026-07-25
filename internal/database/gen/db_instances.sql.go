@@ -215,6 +215,18 @@ func (q *Queries) ListDBInstancesByOrg(ctx context.Context, organizationID int64
 	return items, nil
 }
 
+const resetMigratingInstances = `-- name: ResetMigratingInstances :exec
+UPDATE db_instances SET status = 'error', updated_at = now() WHERE status = 'migrating'
+`
+
+// Boot sweep: a control-plane restart kills the in-process migration job,
+// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
+// honest: the job died mid-copy and the service was left scaled to 0.
+func (q *Queries) ResetMigratingInstances(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, resetMigratingInstances)
+	return err
+}
+
 const setDBInstanceNode = `-- name: SetDBInstanceNode :exec
 UPDATE db_instances SET node_hostname = $2, updated_at = now() WHERE id = $1
 `

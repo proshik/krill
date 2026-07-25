@@ -56,9 +56,17 @@ func (f *digestMockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCl
 }
 func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
 func (f *digestMockEngine) ServiceRestart(context.Context, string) error                { return nil }
-func (f *digestMockEngine) VolumeRemove(context.Context, string) error                  { return nil }
-func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer) error      { return nil }
-func (f *digestMockEngine) VolumeRestore(context.Context, string, io.Reader) error      { return nil }
+func (f *digestMockEngine) VolumeRemove(context.Context, string) error { return nil }
+func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
+	return nil
+}
+func (f *digestMockEngine) VolumeRestore(context.Context, string, io.Reader, string) error {
+	return nil
+}
+func (f *digestMockEngine) VolumeRemoveOn(context.Context, string, string) error { return nil }
+func (f *digestMockEngine) VolumeExistsOn(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *digestMockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
 func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error          { return nil }
 func (f *digestMockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
@@ -166,9 +174,17 @@ func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, 
 }
 func (m *mockEngine) ServiceScale(context.Context, string, uint64) error     { return nil }
 func (m *mockEngine) ServiceRestart(context.Context, string) error           { return nil }
-func (m *mockEngine) VolumeRemove(context.Context, string) error             { return nil }
-func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error { return nil }
-func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
+	return nil
+}
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader, string) error {
+	return nil
+}
+func (m *mockEngine) VolumeRemoveOn(context.Context, string, string) error { return nil }
+func (m *mockEngine) VolumeExistsOn(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (m *mockEngine) VolumeChown(_ context.Context, vol string, uid, gid int, node string) error {
 	m.chownCalls = append(m.chownCalls, chownCall{vol, uid, gid, node})
 	return m.chownErr

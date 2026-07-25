@@ -9,11 +9,12 @@ import (
 
 // fakeStore is an in-memory notify.Store for unit tests.
 type fakeStore struct {
-	channels map[int64][]Channel
-	targets  map[int64]Target // appID -> target
-	backups  map[int64]Target // backupID -> target
-	watched  []WatchedApp
-	health   int
+	channels  map[int64][]Channel
+	targets   map[int64]Target // appID -> target
+	backups   map[int64]Target // backupID -> target
+	dbTargets map[int64]Target // instanceID -> target
+	watched   []WatchedApp
+	health    int
 }
 
 func (f *fakeStore) ChannelsForOrg(_ context.Context, orgID int64) ([]Channel, error) {
@@ -24,6 +25,9 @@ func (f *fakeStore) AppTarget(_ context.Context, appID int64) (Target, error) {
 }
 func (f *fakeStore) BackupTarget(_ context.Context, id int64) (Target, error) {
 	return f.backups[id], nil
+}
+func (f *fakeStore) DBInstanceTarget(_ context.Context, id int64) (Target, error) {
+	return f.dbTargets[id], nil
 }
 func (f *fakeStore) ListWatchedApps(_ context.Context) ([]WatchedApp, error) { return f.watched, nil }
 func (f *fakeStore) EnabledHealthChannels(_ context.Context) (int, error)    { return f.health, nil }
@@ -94,5 +98,14 @@ func TestBackupEventResolvesTarget(t *testing.T) {
 	// OrgID drives channel lookup — a corrupted value would silently misroute.
 	if ev.OrgID != 7 || ev.Project != "p" || ev.Env != "e" {
 		t.Fatalf("target fields wrong: %+v", ev)
+	}
+}
+
+func TestChannelWantsMigrate(t *testing.T) {
+	if !(Channel{NotifyDeploy: true}).wants(MigrateFailed) {
+		t.Fatal("deploy-toggled channel must receive MigrateFailed")
+	}
+	if (Channel{NotifyBackup: true, NotifyHealth: true}).wants(MigrateFailed) {
+		t.Fatal("non-deploy channel must not receive MigrateFailed")
 	}
 }

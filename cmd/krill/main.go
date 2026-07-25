@@ -154,10 +154,20 @@ func run() error {
 	dbStore := dbservice.NewDBStore(q)
 	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
 
+	// Boot sweep: a control-plane restart kills any in-process migration job,
+	// leaving rows stuck at 'migrating' (the oplock is in-memory, so a fresh
+	// process starts with none held) — reset them to 'error' before serving.
+	if err := q.ResetMigratingInstances(ctx); err != nil {
+		slog.Warn("reset stale migrating instances", "err", err)
+	}
+
 	// Backups: service + in-process cron scheduler.
 	backupStore := backup.NewDBStore(q)
 	backupSvc := backup.New(engine, backupStore, cfg.AllowPrivateEgress)
 	backupSvc.SetNotifier(notifySvc)
+
+	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
+	dbSvc.SetNotifier(notifySvc)
 
 	// Health watcher: polls service state for app down/recovered alerts.
 	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)

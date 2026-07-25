@@ -19,12 +19,20 @@ func format(ev Event) string {
 		head = "🔴 App down"
 	case AppRecovered:
 		head = "🟢 App recovered"
+	case MigrateFailed:
+		head = "🔴 DB migration failed"
 	default:
 		head = "Notification"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "<b>%s</b>\n", html.EscapeString(head))
-	fmt.Fprint(&b, html.EscapeString(ev.Project+"/"+ev.Env+"/"+ev.Target))
+	parts := make([]string, 0, 3)
+	for _, p := range []string{ev.Project, ev.Env, ev.Target} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	fmt.Fprint(&b, html.EscapeString(strings.Join(parts, "/")))
 	if d := strings.TrimSpace(ev.Detail); d != "" {
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(d))
 	}

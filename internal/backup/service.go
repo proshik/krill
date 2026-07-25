@@ -4,11 +4,14 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/proshik/krill/internal/oplock"
 )
 
 // ErrKeyOutsideBackup is returned when a requested object key is not within the
@@ -99,6 +102,9 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 	if err != nil {
 		return s.fail(ctx, backupID, now, err)
 	}
+	if oplock.Held(oplock.DBInstance(pg.AppName)) {
+		return s.fail(ctx, backupID, now, fmt.Errorf("db instance %s is migrating — retry after the migration finishes", pg.AppName))
+	}
 	dst, err := s.store.GetDestination(ctx, b.DestinationID)
 	if err != nil {
 		return s.fail(ctx, backupID, now, err)
@@ -175,6 +181,9 @@ func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) e
 	pg, err := s.store.GetPGTarget(ctx, b.LogicalDatabaseID)
 	if err != nil {
 		return err
+	}
+	if oplock.Held(oplock.DBInstance(pg.AppName)) {
+		return fmt.Errorf("db instance %s is migrating — retry after the migration finishes", pg.AppName)
 	}
 	if !strings.HasPrefix(key, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName)) {
 		return ErrKeyOutsideBackup

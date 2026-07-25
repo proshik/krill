@@ -32,6 +32,9 @@ type Config struct {
 	// ConvergeTimeout caps how long a deploy waits for the service to become
 	// healthy before giving up (auto-extended by a healthcheck's start_period).
 	ConvergeTimeout time.Duration `env:"KRILL_CONVERGE_TIMEOUT" envDefault:"180s"`
+	// MigrateTimeout bounds a DB-instance volume migration (stop → copy →
+	// redeploy). Large volumes or slow links may need more.
+	MigrateTimeout time.Duration `env:"KRILL_MIGRATE_TIMEOUT" envDefault:"30m"`
 	// HealthPollInterval is how often the notification health watcher polls
 	// service state to detect apps going down / recovering.
 	HealthPollInterval time.Duration `env:"KRILL_HEALTH_POLL_INTERVAL" envDefault:"30s"`

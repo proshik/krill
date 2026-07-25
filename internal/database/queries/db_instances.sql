@@ -42,3 +42,9 @@ UPDATE db_instances SET console_external_port = $2 WHERE id = $1;
 -- Same both-columns check as CountDBInstancesByExternalPort, excluding the
 -- instance's own row (an edit must not conflict with itself).
 SELECT count(*) FROM db_instances WHERE (external_port = $1 OR console_external_port = $1) AND id <> $2;
+
+-- name: ResetMigratingInstances :exec
+-- Boot sweep: a control-plane restart kills the in-process migration job,
+-- leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
+-- honest: the job died mid-copy and the service was left scaled to 0.
+UPDATE db_instances SET status = 'error', updated_at = now() WHERE status = 'migrating';

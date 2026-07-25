@@ -25,8 +25,8 @@ const quiesceTimeout = 60 * time.Second
 
 // VolEngine is the slice of docker.Engine the volume backup service needs.
 type VolEngine interface {
-	VolumeArchive(ctx context.Context, volumeName string, out io.Writer) error
-	VolumeRestore(ctx context.Context, volumeName string, in io.Reader) error
+	VolumeArchive(ctx context.Context, volumeName string, out io.Writer, swarmNodeID string) error
+	VolumeRestore(ctx context.Context, volumeName string, in io.Reader, swarmNodeID string) error
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
 	ServiceState(ctx context.Context, name string) (docker.ServiceState, error)
 }
@@ -105,7 +105,7 @@ func (s *VolumeService) RunVolumeBackup(ctx context.Context, volBackupID int64, 
 	pr, pw := io.Pipe()
 	go func() {
 		gz := gzip.NewWriter(pw)
-		if aerr := s.eng.VolumeArchive(ctx, docker.VolumeName(t.AppID, t.VolumeName), gz); aerr != nil {
+		if aerr := s.eng.VolumeArchive(ctx, docker.VolumeName(t.AppID, t.VolumeName), gz, ""); aerr != nil {
 			_ = gz.Close()
 			pw.CloseWithError(aerr)
 			return
@@ -235,5 +235,5 @@ func (s *VolumeService) Restore(ctx context.Context, dst backup.Destination, t V
 		return err
 	}
 	defer gz.Close()
-	return s.eng.VolumeRestore(ctx, docker.VolumeName(t.AppID, t.VolumeName), gz)
+	return s.eng.VolumeRestore(ctx, docker.VolumeName(t.AppID, t.VolumeName), gz, "")
 }

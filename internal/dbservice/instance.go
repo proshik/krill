@@ -3,6 +3,7 @@ package dbservice
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strconv"
 
@@ -85,11 +86,6 @@ func (s *Service) DeployInstance(id int64) {
 }
 
 func (s *Service) deployInstance(ctx context.Context, id int64) {
-	inst, err := s.store.GetInstance(ctx, id)
-	if err != nil {
-		slog.Error("get db instance", "err", err)
-		return
-	}
 	feed := InstanceFeedID(id)
 	var out interface{ Write([]byte) (int, error) } = nopWriter{}
 	if s.hub != nil {
@@ -97,19 +93,31 @@ func (s *Service) deployInstance(ctx context.Context, id int64) {
 		out = s.hub.Writer(feed)
 		defer s.hub.Close(feed)
 	}
+	_ = s.deployCore(ctx, id, out)
+}
+
+// deployCore pulls and deploys the instance's service writing progress to out,
+// setting status running/error. Extracted from deployInstance so the migration
+// job can redeploy inside its own log feed.
+func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		slog.Error("get db instance", "err", err)
+		return err
+	}
 	fmt.Fprintf(out, "→ pull %s\n", inst.Image)
 	if err := s.engine.ImagePull(ctx, inst.Image, out); err != nil {
 		fmt.Fprintf(out, "❌ pull failed: %v\n", err)
 		slog.Error("db instance deploy: image pull failed", "err", err, "instance_id", id, "image", inst.Image)
 		_ = s.store.SetInstanceStatus(ctx, id, "error")
-		return
+		return err
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
 	if err := s.engine.ServiceDeploy(ctx, instanceSpec(inst, s.network)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
 		_ = s.store.SetInstanceStatus(ctx, id, "error")
-		return
+		return err
 	}
 	fmt.Fprintf(out, "✅ deployed %s\n", inst.AppName)
 	_ = s.store.SetInstanceStatus(ctx, id, "running")
@@ -117,6 +125,7 @@ func (s *Service) deployInstance(ctx context.Context, id int64) {
 		fmt.Fprintf(out, "⚠ external-access proxy: %v\n", err)
 		slog.Warn("db instance: reconcile proxy failed", "err", err, "instance_id", id)
 	}
+	return nil
 }
 
 func (s *Service) StartInstance(ctx context.Context, id int64) error {
@@ -177,7 +186,21 @@ func (s *Service) RemoveInstanceContainers(ctx context.Context, id int64, destro
 		}
 	}
 	if destroyData {
-		s.removeVolume(rmCtx, volumeName(inst.AppName))
+		vol := volumeName(inst.AppName)
+		nodeID, ok := "", false
+		if nodes, nerr := s.engine.Nodes(rmCtx); nerr == nil {
+			nodeID, ok = resolveNodeID(nodes, inst.NodeHostname)
+		}
+		if ok {
+			if err := s.removeVolumeOn(rmCtx, vol, nodeID); err != nil {
+				slog.Error("delete db instance: volume remove failed", "err", err, "instance_id", id, "vol", vol, "node", inst.NodeHostname)
+			}
+		} else {
+			// Node lookup failed (single-node deployment with no cluster_nodes,
+			// or a transient Nodes() error) — fall back to the old local-only
+			// removal so a plain single-node install keeps working unchanged.
+			s.removeVolume(rmCtx, vol)
+		}
 	}
 	return nil
 }

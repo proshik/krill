@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -240,6 +241,15 @@ func (s *Server) deployDBInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A live migration holds the instance's oplock: any service mutation
+	// mid-copy can corrupt the target volume (or restart the DB onto the
+	// source while tar reads it), so every lifecycle handler refuses while it
+	// is held. In-memory lock, not DB status: status can go stale after a
+	// crash; the boot sweep resets it.
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
+		return
+	}
 	s.dbsvc.DeployInstance(inst.ID)
 	logFrom(r).Info("db instance deploy requested", "instance_id", inst.ID)
 	s.flashOK(w, r, "flash.ok.deploy_queued")
@@ -249,6 +259,10 @@ func (s *Server) deployDBInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startDBInstance(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
+		return
+	}
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
 	if s.engine == nil {
@@ -269,6 +283,10 @@ func (s *Server) stopDBInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
+		return
+	}
 	if s.engine == nil {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
@@ -285,6 +303,10 @@ func (s *Server) stopDBInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
+		return
+	}
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
 	image := strings.TrimSpace(r.FormValue("image"))
@@ -312,6 +334,10 @@ func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
+		return
+	}
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
 	ext, ok := parseInstancePort(r.FormValue("external_port"))
@@ -360,14 +386,30 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
-func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
+// migrateDBInstanceNode moves a DB instance to another node WITH its data
+// (async volume migration; see dbservice.MigrateInstanceNode). With no engine
+// (tests/single-node bootstrap) it falls back to the legacy metadata-only
+// write — there is nothing to migrate without a swarm.
+func (s *Server) migrateDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
 		return
 	}
 	node := strings.TrimSpace(r.FormValue("node_hostname"))
-	if node != "" && s.engine != nil {
-		live, _ := s.engine.Nodes(r.Context())
+	if s.engine == nil {
+		if err := s.q.SetDBInstanceNode(r.Context(), db.SetDBInstanceNodeParams{ID: inst.ID, NodeHostname: node}); err != nil {
+			logFrom(r).Error("migrateDBInstanceNode: metadata update failed", "err", err, "instance_id", inst.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		s.flashOK(w, r, "flash.ok.db_node_saved")
+		http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+		return
+	}
+	// Fetched once up front (not just when node != "") so the same-node check
+	// below has the live node list available even for a control-plane target.
+	live, _ := s.engine.Nodes(r.Context())
+	if node != "" {
 		valid := false
 		for _, n := range live {
 			if n.Hostname == node {
@@ -380,13 +422,43 @@ func (s *Server) setDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.q.SetDBInstanceNode(r.Context(), db.SetDBInstanceNodeParams{ID: inst.ID, NodeHostname: node}); err != nil {
-		logFrom(r).Error("setDBInstanceNode: update failed", "err", err, "instance_id", inst.ID)
-		s.flashErrT(w, r, "flash.err.internal")
+	if inst.Status == "migrating" {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
-	logFrom(r).Info("db instance node set", "instance_id", inst.ID, "node", node)
-	s.flashOK(w, r, "flash.ok.db_node_saved")
+	if node == inst.NodeHostname {
+		// Refuse only when the metadata is corroborated: no running task
+		// (metadata is all we have) or the task actually runs where the
+		// metadata says. A contradicting live task means the metadata is
+		// stale (the legacy metadata-only node change) and re-selecting
+		// the same target is the healing migration — let it through.
+		corroborated := true
+		if tasks, terr := s.engine.ServiceTasks(r.Context(), inst.AppName); terr == nil {
+			for _, t := range tasks {
+				if t.State == "running" {
+					want := node
+					if want == "" { // metadata "" = control-plane; compare against the leader's hostname
+						for _, n := range live {
+							if n.Leader {
+								want = n.Hostname
+								break
+							}
+						}
+					}
+					corroborated = t.NodeName == want
+					break
+				}
+			}
+		}
+		if corroborated {
+			s.flashErrT(w, r, "flash.err.same_node")
+			return
+		}
+	}
+	deleteSource := r.FormValue("delete_source") == "on"
+	s.dbsvc.MigrateInstanceNode(inst.ID, node, deleteSource)
+	logFrom(r).Info("db instance migration started", "instance_id", inst.ID, "target", node, "delete_source", deleteSource)
+	s.flashOK(w, r, "flash.ok.db_migration_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -406,6 +478,10 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	inst, ok := s.loadInstance(w, r)
 	if !ok {
+		return
+	}
+	if oplock.Held(oplock.DBInstance(inst.AppName)) {
+		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
 	n, err := s.q.CountLogicalDatabasesByInstance(r.Context(), inst.ID)

@@ -32,3 +32,7 @@ func (s *DBStore) SetInstanceStatus(ctx context.Context, id int64, status string
 func (s *DBStore) DeleteInstanceRow(ctx context.Context, id int64) error {
 	return s.q.DeleteDBInstance(ctx, id)
 }
+
+func (s *DBStore) SetInstanceNode(ctx context.Context, id int64, hostname string) error {
+	return s.q.SetDBInstanceNode(ctx, db.SetDBInstanceNodeParams{ID: id, NodeHostname: hostname})
+}

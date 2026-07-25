@@ -21,7 +21,7 @@ type Channel struct {
 // wants reports whether this channel should receive the given event kind.
 func (c Channel) wants(k EventKind) bool {
 	switch k {
-	case DeployFailed:
+	case DeployFailed, MigrateFailed:
 		return c.NotifyDeploy
 	case BackupFailed:
 		return c.NotifyBackup
@@ -53,6 +53,7 @@ type Store interface {
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]Channel, error)
 	AppTarget(ctx context.Context, appID int64) (Target, error)
 	BackupTarget(ctx context.Context, backupID int64) (Target, error)
+	DBInstanceTarget(ctx context.Context, id int64) (Target, error)
 	ListWatchedApps(ctx context.Context) ([]WatchedApp, error)
 	EnabledHealthChannels(ctx context.Context) (int, error)
 }
@@ -92,6 +93,14 @@ func (s *DBStore) BackupTarget(ctx context.Context, backupID int64) (Target, err
 		return Target{}, err
 	}
 	return Target{OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.DbName}, nil
+}
+
+func (s *DBStore) DBInstanceTarget(ctx context.Context, id int64) (Target, error) {
+	r, err := s.q.GetDBInstance(ctx, id)
+	if err != nil {
+		return Target{}, err
+	}
+	return Target{OrgID: r.OrganizationID, Name: r.Name}, nil
 }
 
 func (s *DBStore) ListWatchedApps(ctx context.Context) ([]WatchedApp, error) {

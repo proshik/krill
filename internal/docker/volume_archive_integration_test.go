@@ -80,24 +80,24 @@ func TestVolumeArchiveRestoreRoundtrip(t *testing.T) {
 	// Seed srcVol by restoring an in-process tar into it.
 	var seed bytes.Buffer
 	writeTar(t, &seed, want)
-	if err := e.VolumeRestore(ctx, srcVol, &seed); err != nil {
+	if err := e.VolumeRestore(ctx, srcVol, &seed, ""); err != nil {
 		t.Fatalf("VolumeRestore(src): %v", err)
 	}
 
 	// Archive srcVol to a buffer.
 	var archived bytes.Buffer
-	if err := e.VolumeArchive(ctx, srcVol, &archived); err != nil {
+	if err := e.VolumeArchive(ctx, srcVol, &archived, ""); err != nil {
 		t.Fatalf("VolumeArchive(src): %v", err)
 	}
 
 	// Restore the archive into dstVol.
-	if err := e.VolumeRestore(ctx, dstVol, bytes.NewReader(archived.Bytes())); err != nil {
+	if err := e.VolumeRestore(ctx, dstVol, bytes.NewReader(archived.Bytes()), ""); err != nil {
 		t.Fatalf("VolumeRestore(dst): %v", err)
 	}
 
 	// Archive dstVol and assert the files survived the roundtrip.
 	var roundtrip bytes.Buffer
-	if err := e.VolumeArchive(ctx, dstVol, &roundtrip); err != nil {
+	if err := e.VolumeArchive(ctx, dstVol, &roundtrip, ""); err != nil {
 		t.Fatalf("VolumeArchive(dst): %v", err)
 	}
 	got := tarFiles(t, &roundtrip)

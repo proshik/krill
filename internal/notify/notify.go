@@ -18,6 +18,7 @@ const (
 	BackupFailed
 	AppDown
 	AppRecovered
+	MigrateFailed
 )
 
 // Event is a resolved, human-targetable description of something that happened.
@@ -126,4 +127,17 @@ func (s *Service) AppDown(_ context.Context, appID int64, detail string) {
 // AppRecovered is emitted by the health watcher when an app becomes reachable again.
 func (s *Service) AppRecovered(_ context.Context, appID int64) {
 	s.async(func(ctx context.Context) (Event, bool) { return s.appEvent(ctx, AppRecovered, appID, "") })
+}
+
+// MigrateFailed implements dbservice.Notifier (volume-migration failures ride
+// the deploy category toggle).
+func (s *Service) MigrateFailed(_ context.Context, instanceID int64, reason string) {
+	s.async(func(ctx context.Context) (Event, bool) {
+		tgt, err := s.store.DBInstanceTarget(ctx, instanceID)
+		if err != nil {
+			s.log.Warn("notify: db instance target lookup failed", "instance", instanceID, "err", err)
+			return Event{}, false
+		}
+		return Event{Kind: MigrateFailed, OrgID: tgt.OrgID, Target: tgt.Name, Detail: reason, Time: s.now()}, true
+	})
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -510,18 +511,42 @@ func (e *dockerEngine) ImagePull(ctx context.Context, ref string, out io.Writer)
 }
 
 func (e *dockerEngine) VolumeRemove(ctx context.Context, name string) error {
-	return e.cli.VolumeRemove(ctx, name, true) // force
+	return e.VolumeRemoveOn(ctx, name, "")
+}
+
+// VolumeRemoveOn force-removes a named volume on the given node ("" or a
+// non-worker id → the local daemon; a worker → over the SSH tunnel).
+func (e *dockerEngine) VolumeRemoveOn(ctx context.Context, name, swarmNodeID string) error {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	if err != nil {
+		return fmt.Errorf("reach node for volume remove %s: %w", name, err)
+	}
+	defer release()
+	return cli.VolumeRemove(ctx, name, true)
+}
+
+// VolumeExistsOn reports whether the named volume exists on the given node.
+// Guards migration against docker's implicit creation: mounting a missing
+// named volume in a sidecar silently creates it empty.
+func (e *dockerEngine) VolumeExistsOn(ctx context.Context, name, swarmNodeID string) (bool, error) {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	if err != nil {
+		return false, fmt.Errorf("reach node for volume inspect %s: %w", name, err)
+	}
+	defer release()
+	if _, err := cli.VolumeInspect(ctx, name); err != nil {
+		if errdefs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // busyboxImage is the pinned helper used to tar/untar app volumes. App images
 // often lack tar (e.g. Readeck), so we run a sidecar with the volume mounted.
 // Pinned by digest — never :latest. Bump only with a security review.
 const busyboxImage = "busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"
-
-// ensureImage pulls ref if no local image matches it.
-func (e *dockerEngine) ensureImage(ctx context.Context, ref string) error {
-	return ensureImageOn(ctx, e.cli, ref)
-}
 
 // ensureImageOn pulls ref on the given client if it has no matching local image.
 func ensureImageOn(ctx context.Context, cli *client.Client, ref string) error {
@@ -544,11 +569,16 @@ func ensureImageOn(ctx context.Context, cli *client.Client, ref string) error {
 // the caller gzips). Runs busybox as root with the volume mounted read-only and
 // no network. Root is required so files owned by any uid (apps run as varied
 // non-root users) are readable, and so original ownership is captured in the tar.
-func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out io.Writer) error {
-	if err := e.ensureImage(ctx, busyboxImage); err != nil {
+func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out io.Writer, swarmNodeID string) error {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	if err != nil {
+		return fmt.Errorf("reach node for volume archive %s: %w", volumeName, err)
+	}
+	defer release()
+	if err := ensureImageOn(ctx, cli, busyboxImage); err != nil {
 		return err
 	}
-	resp, err := e.cli.ContainerCreate(ctx,
+	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image: busyboxImage,
 			Cmd:   []string{"tar", "-c", "-C", "/vol", "."},
@@ -561,21 +591,21 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 		return err
 	}
 	cid := resp.ID
-	defer e.cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
 
-	att, err := e.cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
 		return err
 	}
 	defer att.Close()
-	if err := e.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
 		return err
 	}
 	var stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(out, &stderr, att.Reader); err != nil {
 		return err
 	}
-	return waitContainer(ctx, e.cli, cid, "volume archive "+volumeName, &stderr)
+	return waitContainer(ctx, cli, cid, "volume archive "+volumeName, &stderr)
 }
 
 // VolumeRestore extracts a tar (read from in; the caller gunzips) into the named
@@ -583,11 +613,16 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 // Root is required to write into the (root-owned) fresh-volume root and to
 // restore each entry's original ownership (tar's default) so the app can read
 // its data back as whatever uid it runs under.
-func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in io.Reader) error {
-	if err := e.ensureImage(ctx, busyboxImage); err != nil {
+func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in io.Reader, swarmNodeID string) error {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	if err != nil {
+		return fmt.Errorf("reach node for volume restore %s: %w", volumeName, err)
+	}
+	defer release()
+	if err := ensureImageOn(ctx, cli, busyboxImage); err != nil {
 		return err
 	}
-	resp, err := e.cli.ContainerCreate(ctx,
+	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:     busyboxImage,
 			Cmd:       []string{"tar", "-x", "-C", "/vol"},
@@ -601,14 +636,14 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 		return err
 	}
 	cid := resp.ID
-	defer e.cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
 
-	att, err := e.cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
+	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
 	if err != nil {
 		return err
 	}
 	defer att.Close()
-	if err := e.cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
 		return err
 	}
 	copyErr := make(chan error, 1)
@@ -621,7 +656,7 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 	if _, err := stdcopy.StdCopy(io.Discard, &stderr, att.Reader); err != nil {
 		return err
 	}
-	if err := waitContainer(ctx, e.cli, cid, "volume restore "+volumeName, &stderr); err != nil {
+	if err := waitContainer(ctx, cli, cid, "volume restore "+volumeName, &stderr); err != nil {
 		return err
 	}
 	if ce := <-copyErr; ce != nil {

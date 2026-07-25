@@ -22,13 +22,19 @@ import (
 // nodesEngine is a noopEngine that reports a fixed set of live Swarm nodes, so
 // node-reconciliation handlers (savePlacement's live-node filter, removeNode's
 // preflight/removal) have a real live-node set to check submitted/pinned node
-// IDs against.
+// IDs against. tasks optionally reports a fixed set of running service tasks
+// (e.g. for migrateDBInstanceNode's same-node drift corroboration) — unset,
+// it defaults to noopEngine's empty ServiceTasks, matching prior behavior.
 type nodesEngine struct {
 	noopEngine
-	live []docker.SwarmNode
+	live  []docker.SwarmNode
+	tasks []docker.TaskPlacement
 }
 
 func (e nodesEngine) Nodes(context.Context) ([]docker.SwarmNode, error) { return e.live, nil }
+func (e nodesEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return e.tasks, nil
+}
 
 // newServerWithNodesEngine mirrors newDeployServer but injects a nodesEngine
 // reporting a fixed live-node set instead of a plain noopEngine.

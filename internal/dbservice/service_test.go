@@ -66,8 +66,24 @@ func (m *mockEngine) VolumeRemove(_ context.Context, n string) error {
 	m.removedVolumes = append(m.removedVolumes, n)
 	return nil
 }
-func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer) error      { return nil }
-func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader) error      { return nil }
+func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
+	return nil
+}
+func (m *mockEngine) VolumeRestore(context.Context, string, io.Reader, string) error {
+	return nil
+}
+
+// VolumeRemoveOn records the same as VolumeRemove — tests keying off
+// removedVolumes don't need to distinguish the node-aware call.
+func (m *mockEngine) VolumeRemoveOn(ctx context.Context, n, _ string) error {
+	return m.VolumeRemove(ctx, n)
+}
+
+// VolumeExistsOn defaults to "exists"; overridden per-test where the migration
+// (Task 4) needs to exercise the missing-volume guard.
+func (m *mockEngine) VolumeExistsOn(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (m *mockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) error {
 	m.mu.Lock()
@@ -135,6 +151,12 @@ func (f *fakeStore) DeleteInstanceRow(_ context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rowDeleted = true
+	return nil
+}
+func (f *fakeStore) SetInstanceNode(_ context.Context, id int64, hostname string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.instance.NodeHostname = hostname
 	return nil
 }
 func (f *fakeStore) st(id int64) string {
