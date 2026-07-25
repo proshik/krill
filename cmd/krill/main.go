@@ -159,6 +159,9 @@ func run() error {
 	backupSvc := backup.New(engine, backupStore, cfg.AllowPrivateEgress)
 	backupSvc.SetNotifier(notifySvc)
 
+	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
+	dbSvc.SetNotifier(notifySvc)
+
 	// Health watcher: polls service state for app down/recovered alerts.
 	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
 	go watcher.Run(ctx)

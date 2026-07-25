@@ -276,6 +276,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_PUBLIC_URL` | derived | No | Externally reachable base URL shown for webhook URLs (defaults to `scheme://KRILL_HOST`, scheme from `KRILL_COOKIE_SECURE`). |
 | `KRILL_ADVERTISE_ADDR` | — | No | Swarm advertise address used when joining worker nodes (multi-server). |
 | `KRILL_CONVERGE_TIMEOUT` | `180s` | No | Deploy convergence cap (auto-extended by a healthcheck's start period). |
+| `KRILL_MIGRATE_TIMEOUT` | `30m` | No | Caps a DB-instance volume migration (stop → copy → redeploy). |
 | `KRILL_HEALTH_POLL_INTERVAL` | `30s` | No | How often the notification watcher polls service health. |
 | `KRILL_TERMINAL_IDLE_TIMEOUT` | `15m` | No | Closes an idle web-terminal session (`0` disables). |
 | `KRILL_METRICS_INTERVAL` | `30s` | No | How often the monitoring sampler records container stats. |
