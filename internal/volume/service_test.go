@@ -47,7 +47,7 @@ func (m *mockVolEngine) callSeq() []string {
 	return out
 }
 
-func (m *mockVolEngine) VolumeArchive(_ context.Context, _ string, out io.Writer) error {
+func (m *mockVolEngine) VolumeArchive(_ context.Context, _ string, out io.Writer, _ string) error {
 	m.record("archive")
 	if m.archiveFn != nil {
 		return m.archiveFn(out)
@@ -56,7 +56,7 @@ func (m *mockVolEngine) VolumeArchive(_ context.Context, _ string, out io.Writer
 	return err
 }
 
-func (m *mockVolEngine) VolumeRestore(_ context.Context, _ string, in io.Reader) error {
+func (m *mockVolEngine) VolumeRestore(_ context.Context, _ string, in io.Reader, _ string) error {
 	m.record("restore")
 	if m.restoreFn != nil {
 		return m.restoreFn(in)

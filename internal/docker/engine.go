@@ -140,8 +140,10 @@ type Engine interface {
 	ServiceRestart(ctx context.Context, name string) error // force-restart current tasks without rebuilding
 	ImagePull(ctx context.Context, ref string, out io.Writer) error
 	VolumeRemove(ctx context.Context, name string) error
-	VolumeArchive(ctx context.Context, volumeName string, out io.Writer) error
-	VolumeRestore(ctx context.Context, volumeName string, in io.Reader) error
+	VolumeArchive(ctx context.Context, volumeName string, out io.Writer, swarmNodeID string) error
+	VolumeRestore(ctx context.Context, volumeName string, in io.Reader, swarmNodeID string) error
+	VolumeRemoveOn(ctx context.Context, name, swarmNodeID string) error         // node-aware force remove
+	VolumeExistsOn(ctx context.Context, name, swarmNodeID string) (bool, error) // guards implicit volume creation
 	VolumeChown(ctx context.Context, volumeName string, uid, gid int, swarmNodeID string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error

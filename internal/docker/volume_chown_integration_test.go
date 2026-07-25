@@ -25,7 +25,7 @@ func TestVolumeChown(t *testing.T) {
 
 	var seed bytes.Buffer
 	writeTar(t, &seed, map[string]string{"file.txt": "hi"})
-	if err := e.VolumeRestore(ctx, vol, &seed); err != nil {
+	if err := e.VolumeRestore(ctx, vol, &seed, ""); err != nil {
 		t.Fatalf("seed VolumeRestore: %v", err)
 	}
 
@@ -34,7 +34,7 @@ func TestVolumeChown(t *testing.T) {
 	}
 
 	var arch bytes.Buffer
-	if err := e.VolumeArchive(ctx, vol, &arch); err != nil {
+	if err := e.VolumeArchive(ctx, vol, &arch, ""); err != nil {
 		t.Fatalf("VolumeArchive: %v", err)
 	}
 	tr := tar.NewReader(&arch)

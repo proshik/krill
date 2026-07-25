@@ -46,9 +46,17 @@ func (noopEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, err
 func (noopEngine) ServiceScale(context.Context, string, uint64) error               { return nil }
 func (noopEngine) ServiceRestart(context.Context, string) error                     { return nil }
 func (noopEngine) ImagePull(context.Context, string, io.Writer) error               { return nil }
-func (noopEngine) VolumeRemove(context.Context, string) error                       { return nil }
-func (noopEngine) VolumeArchive(context.Context, string, io.Writer) error           { return nil }
-func (noopEngine) VolumeRestore(context.Context, string, io.Reader) error           { return nil }
+func (noopEngine) VolumeRemove(context.Context, string) error { return nil }
+func (noopEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
+	return nil
+}
+func (noopEngine) VolumeRestore(context.Context, string, io.Reader, string) error {
+	return nil
+}
+func (noopEngine) VolumeRemoveOn(context.Context, string, string) error { return nil }
+func (noopEngine) VolumeExistsOn(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (noopEngine) VolumeChown(context.Context, string, int, int, string) error      { return nil }
 func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
