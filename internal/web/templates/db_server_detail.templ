@@ -49,7 +49,7 @@ templ DBServerDetail(c DBServerCtx) {
 						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "db.deploy") }</button>
 					</form>
 					if len(c.Nodes) > 0 {
-						<form method="post" action={ templ.SafeURL(c.Base + "/node") } class="flex items-end gap-2">
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/node") } data-confirm={ i18n.Tf(ctx, "confirm.migrate_dbi", c.Inst.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="flex items-end gap-2 flex-wrap">
 							<div class="flex-1">
 								<label class="k-label">{ i18n.T(ctx, "dbnode.label") }</label>
 								<select class="k-select" name="node_hostname">
@@ -65,7 +65,8 @@ templ DBServerDetail(c DBServerCtx) {
 								</select>
 								<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "dbnode.hint") }</p>
 							</div>
-							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbnode.save") }</button>
+							<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dbnode.migrate") }</button>
+							<label class="k-label" style="flex-basis:100%"><input class="k-check" type="checkbox" name="delete_source"/> { i18n.T(ctx, "dbnode.delete_source") }</label>
 						</form>
 					}
 					<div class="mt-4">

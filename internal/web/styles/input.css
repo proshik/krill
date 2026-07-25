@@ -76,6 +76,7 @@
   .k-dot { width:6px; height:6px; border-radius:50%; }
   .k-badge-running { background:rgba(190,242,100,.13); color:#d9f99d; } .k-badge-running .k-dot { background:var(--color-accent); box-shadow:0 0 8px var(--color-accent); }
   .k-badge-deploying { background:rgba(245,158,11,.14); color:#fcd34d; } .k-badge-deploying .k-dot { background:var(--color-warn); box-shadow:0 0 8px var(--color-warn); }
+  .k-badge-migrating { background:rgba(245,158,11,.14); color:#fcd34d; } .k-badge-migrating .k-dot { background:var(--color-warn); box-shadow:0 0 8px var(--color-warn); }
   .k-badge-error { background:rgba(239,68,68,.14); color:#fca5a5; } .k-badge-error .k-dot { background:var(--color-err); box-shadow:0 0 8px var(--color-err); }
   .k-badge-idle { background:#202024; color:var(--color-faint); } .k-badge-idle .k-dot { background:var(--color-faint); }
   .k-badge-node_down { background:rgba(245,158,11,.14); color:#fcd34d; } .k-badge-node_down .k-dot { background:var(--color-warn); box-shadow:0 0 8px var(--color-warn); }
