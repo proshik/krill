@@ -106,18 +106,24 @@ func (s *Service) migrateInstanceNode(ctx context.Context, id int64, target stri
 
 	st, err := s.engine.ServiceState(ctx, inst.AppName)
 	if err != nil {
-		return fmt.Errorf("service state: %w", err)
+		err = fmt.Errorf("service state: %w", err)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 	hot := st.Found && st.Desired > 0
 
 	nodes, err := s.engine.Nodes(ctx)
 	if err != nil {
-		return fmt.Errorf("list nodes: %w", err)
+		err = fmt.Errorf("list nodes: %w", err)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 	nodeID := func(hostname string) (string, bool) { return resolveNodeID(nodes, hostname) }
 	dstNode, ok := nodeID(target)
 	if !ok {
-		return fmt.Errorf("%w: %q", ErrNodeNotFound, target)
+		err := fmt.Errorf("%w: %q", ErrNodeNotFound, target)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 	// Where the data actually is: a running task's node beats the metadata
 	// (the pre-migration "set node" was metadata-only and may have drifted).
@@ -137,21 +143,30 @@ func (s *Service) migrateInstanceNode(ctx context.Context, id int64, target stri
 	}
 	srcNode, ok := nodeID(srcHostname)
 	if !ok {
-		return fmt.Errorf("%w: source %q", ErrNodeNotFound, srcHostname)
+		err := fmt.Errorf("%w: source %q", ErrNodeNotFound, srcHostname)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 	if srcNode == dstNode {
+		fmt.Fprintf(out, "❌ %v\n", ErrSameNode)
 		return ErrSameNode
 	}
 
 	vol := volumeName(inst.AppName)
 	if exists, verr := s.engine.VolumeExistsOn(ctx, vol, srcNode); verr != nil {
-		return fmt.Errorf("check source volume: %w", verr)
+		err := fmt.Errorf("check source volume: %w", verr)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	} else if !exists {
-		return fmt.Errorf("%w: %s on %s", ErrSourceVolume, vol, hostOrManager(srcHostname))
+		err := fmt.Errorf("%w: %s on %s", ErrSourceVolume, vol, hostOrManager(srcHostname))
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 
 	if err := s.store.SetInstanceStatus(ctx, id, "migrating"); err != nil {
-		return fmt.Errorf("set status: %w", err)
+		err = fmt.Errorf("set status: %w", err)
+		fmt.Fprintf(out, "❌ %v\n", err)
+		return err
 	}
 	prevStatus := "idle"
 	if hot {

@@ -150,6 +150,10 @@ type Querier interface {
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
 	PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error
+	// Boot sweep: a control-plane restart kills the in-process migration job,
+	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
+	// honest: the job died mid-copy and the service was left scaled to 0.
+	ResetMigratingInstances(ctx context.Context) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error

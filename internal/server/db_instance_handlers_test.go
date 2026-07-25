@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 func TestMemberCannotCreateDBInstance(t *testing.T) {
@@ -190,5 +191,98 @@ func TestDBInstanceCrossOrg404(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("SECURITY FINDING: %s %s want 404, got %d", tc.method, tc.path, rec.Code)
 		}
+	}
+}
+
+// TestResetMigratingInstances covers the boot sweep (Fix B): a row stuck at
+// status='migrating' (a control-plane restart killed the in-process job,
+// whose oplock is in-memory and so is gone on the new process) is swept to
+// 'error' rather than staying wedged forever.
+func TestResetMigratingInstances(t *testing.T) {
+	_, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "reset-mig@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgResetMig")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "pg", AppName: "krill-postgres-resetmig",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	if err := q.UpdateDBInstanceStatus(ctx, db.UpdateDBInstanceStatusParams{ID: inst.ID, Status: "migrating"}); err != nil {
+		t.Fatalf("set status migrating: %v", err)
+	}
+	if err := q.ResetMigratingInstances(ctx); err != nil {
+		t.Fatalf("reset migrating instances: %v", err)
+	}
+	got, err := q.GetDBInstance(ctx, inst.ID)
+	if err != nil {
+		t.Fatalf("get db instance: %v", err)
+	}
+	if got.Status != "error" {
+		t.Errorf("status after boot sweep = %q, want %q", got.Status, "error")
+	}
+}
+
+// TestDBInstanceLifecycleGuardedDuringMigration verifies every admin POST
+// handler that mutates a DB instance's service/volume — deploy/start/stop/
+// version/external-port/delete — refuses while a migration holds the
+// instance's in-memory oplock (internal/oplock), regardless of what the DB
+// row's status column says. A mutation mid-copy can restart the DB onto the
+// source volume while tar reads it (torn pages in the target copy), or —
+// with delete — destroy the still-intact source outright.
+func TestDBInstanceLifecycleGuardedDuringMigration(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "dbmig-guard@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgDBMigGuard")
+	cookie := loginAs(t, q, "dbmig-guard@k.local")
+
+	routes := []struct {
+		name string
+		path string
+		form url.Values
+	}{
+		{"deploy", "/deploy", url.Values{}},
+		{"start", "/start", url.Values{}},
+		{"stop", "/stop", url.Values{}},
+		{"version", "/version", url.Values{"image": {"postgres:18"}}},
+		{"external-port", "/external-port", url.Values{"external_port": {"5433"}}},
+		{"delete", "/delete", url.Values{}},
+	}
+
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+				OrganizationID: o.ID, Engine: "postgres", Name: "pg-" + rt.name,
+				AppName: "krill-postgres-guard-" + rt.name, Image: "postgres:17",
+				Superuser: "postgres", SuperuserPassword: "pw",
+			})
+			if err != nil {
+				t.Fatalf("create instance: %v", err)
+			}
+			lock := oplock.DBInstance(inst.AppName)
+			if !oplock.TryAcquire(lock) {
+				t.Fatal("setup: acquire oplock")
+			}
+			defer oplock.Release(lock)
+
+			base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+			rec := postForm(t, h, base+rt.path, cookie, rt.form)
+			if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+				t.Fatalf("%s: want 303+err, got %d body %s", rt.name, rec.Code, rec.Body.String())
+			}
+			if want := "A migration is already in progress for this instance."; flashText(rec) != want {
+				t.Errorf("%s: flash text = %q, want %q", rt.name, flashText(rec), want)
+			}
+			got, err := q.GetDBInstance(ctx, inst.ID)
+			if err != nil {
+				t.Fatalf("%s: instance row missing after a guarded request (should be untouched): %v", rt.name, err)
+			}
+			if got.Status != "idle" || got.Image != "postgres:17" || got.ExternalPort != nil {
+				t.Errorf("%s: instance mutated by a guarded request: status=%q image=%q ext=%v", rt.name, got.Status, got.Image, got.ExternalPort)
+			}
+		})
 	}
 }

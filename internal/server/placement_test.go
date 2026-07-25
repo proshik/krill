@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 )
 
 // flashText decodes the "<kind>:<urlescaped-msg>" krill_flash cookie value
@@ -92,9 +93,10 @@ func TestSavePlacementBlockedWithOwnedVolume(t *testing.T) {
 	}
 }
 
-// TestSetDBInstanceNode exercises setDBInstanceNode — node pinning for a DB
-// instance now lives on the org-level /db-servers page (moved off the
-// env-level DB detail page in the logical-databases rework).
+// TestSetDBInstanceNode exercises migrateDBInstanceNode's nil-engine metadata
+// path — node pinning for a DB instance now lives on the org-level
+// /db-servers page (moved off the env-level DB detail page in the
+// logical-databases rework).
 func TestSetDBInstanceNode(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
@@ -198,5 +200,42 @@ func TestMigrateDBInstanceNodeBusy(t *testing.T) {
 	}
 	if got.Status != "migrating" || got.NodeHostname != "" {
 		t.Errorf("busy instance mutated by a rejected request: status=%q node=%q", got.Status, got.NodeHostname)
+	}
+}
+
+// TestMigrateDBInstanceNodeSameTargetButDrifted covers the drift-healing case
+// migrateDBInstanceNode's same-node check must let through: node_hostname
+// metadata says "worker-1", but a running task is actually on a different
+// node ("worker-2") — the metadata is stale (the legacy metadata-only node
+// change), so re-selecting "worker-1" is the HEALING migration, not a no-op,
+// and must be dispatched rather than refused as same_node.
+func TestMigrateDBInstanceNodeSameTargetButDrifted(t *testing.T) {
+	eng := nodesEngine{
+		live:  []docker.SwarmNode{{ID: "n1", Hostname: "worker-1"}, {ID: "n2", Hostname: "worker-2"}},
+		tasks: []docker.TaskPlacement{{NodeID: "n2", NodeName: "worker-2", State: "running"}},
+	}
+	h, q, orgSvc := newServerWithNodesEngine(t, eng)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "dbmig-drift@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "OrgDBMigDrift")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-dbmigdrift",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw", NodeHostname: "worker-1",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	cookie := loginAs(t, q, "dbmig-drift@k.local")
+	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+
+	// Target == metadata's node_hostname ("worker-1"), but the live task
+	// contradicts it (running on "worker-2") — the handler must dispatch the
+	// healing migration rather than refuse same_node.
+	rec := postForm(t, h, base+"/node", cookie, url.Values{"node_hostname": {"worker-1"}})
+	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("drifted same-node target want 303+ok (dispatch), got %d body %s", rec.Code, rec.Body.String())
+	}
+	if want := "Migration started — follow the progress in the instance log."; flashText(rec) != want {
+		t.Errorf("flash text = %q, want %q", flashText(rec), want)
 	}
 }
