@@ -153,6 +153,12 @@ func (f *fakeStore) DeleteInstanceRow(_ context.Context, id int64) error {
 	f.rowDeleted = true
 	return nil
 }
+func (f *fakeStore) SetInstanceNode(_ context.Context, id int64, hostname string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.instance.NodeHostname = hostname
+	return nil
+}
 func (f *fakeStore) st(id int64) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

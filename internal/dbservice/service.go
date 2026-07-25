@@ -14,6 +14,12 @@ type Store interface {
 	GetInstance(ctx context.Context, id int64) (Instance, error)
 	SetInstanceStatus(ctx context.Context, id int64, status string) error
 	DeleteInstanceRow(ctx context.Context, id int64) error
+	SetInstanceNode(ctx context.Context, id int64, hostname string) error
+}
+
+// Notifier — consumer-side migration alerts (implemented by notify.Service).
+type Notifier interface {
+	MigrateFailed(ctx context.Context, instanceID int64, reason string)
 }
 
 // Service — DB lifecycle on top of Engine + Store, with a live log via DeployLogHub.
@@ -22,11 +28,20 @@ type Service struct {
 	store   Store
 	hub     *deploy.DeployLogHub
 	network string
+
+	notifier       Notifier
+	migrateTimeout time.Duration
 }
 
 func New(engine docker.Engine, store Store, hub *deploy.DeployLogHub, network string) *Service {
 	return &Service{engine: engine, store: store, hub: hub, network: network}
 }
+
+// SetNotifier wires migration-failure notifications (no-op if never set).
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+
+// SetMigrateTimeout overrides the default migration timeout (0 keeps default).
+func (s *Service) SetMigrateTimeout(d time.Duration) { s.migrateTimeout = d }
 
 // dbDeployTimeout bounds a detached DB deploy so a stalled ImagePull (registry
 // blackhole) can't leak the goroutine and keep the log feed open forever.
