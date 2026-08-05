@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -49,12 +50,22 @@ func (s *Service) CreateOrg(ctx context.Context, ownerID int64, name string) (db
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return db.Organization{}, err
 	}
+	// The check above is a fast path, not a guarantee: two concurrent creates of
+	// the same name both pass it, and the loser collides at INSERT. Map that to
+	// ErrSlugTaken so the user is told the name is taken instead of seeing a raw
+	// constraint violation.
 	o, err := s.q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: name, Slug: slug, OwnerID: ownerID})
 	if err != nil {
-		return db.Organization{}, err
+		return db.Organization{}, mapUniqueErr(err)
 	}
-	_, err = s.q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: ownerID, Role: "owner"})
-	if err != nil {
+	if _, err := s.q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: ownerID, Role: "owner"}); err != nil {
+		// Access is driven by membership, so an org without its owner's row is
+		// invisible and unmanageable in the UI while still holding its slug.
+		// Compensate rather than leave that behind (same shape as createApp's
+		// rollback when the primary domain cannot be created).
+		if derr := s.q.DeleteOrganization(ctx, o.ID); derr != nil {
+			slog.Error("createOrg: could not roll back an organization left without its owner membership", "err", derr, "org_id", o.ID, "owner_id", ownerID)
+		}
 		return db.Organization{}, err
 	}
 	return o, nil

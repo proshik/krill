@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -102,5 +103,74 @@ func TestSeedAdminBootstrapsOrg(t *testing.T) {
 	}
 	if len(orgs) != 1 || orgs[0].Slug != "default" {
 		t.Fatalf("expected exactly 1 default org, got %+v", orgs)
+	}
+}
+
+// Any GetUserByEmail failure collapsed into ErrInvalidCredentials, so a
+// database outage told every user "invalid email or password" and left no
+// signal that the infrastructure -- not the password -- was the problem. Only a
+// genuinely missing row means invalid credentials.
+func TestAuthenticateDistinguishesInfraFailureFromBadCredentials(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	svc := auth.NewService(q)
+
+	hash, _ := auth.HashPassword("pw")
+	if _, err := q.CreateUser(context.Background(), db.CreateUserParams{Email: "infra@k.local", PasswordHash: hash}); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// A genuinely unknown email is still ErrInvalidCredentials.
+	if _, err := svc.Authenticate(context.Background(), "nobody@k.local", "pw"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Errorf("unknown email: got %v, want ErrInvalidCredentials", err)
+	}
+
+	// A failing query (cancelled context stands in for any infra failure) must
+	// not be reported as bad credentials.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.Authenticate(ctx, "infra@k.local", "pw")
+	if err == nil {
+		t.Fatal("expected an error when the user lookup fails")
+	}
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Error("infrastructure failure reported as invalid credentials: the user is told their password is wrong while the database is down")
+	}
+}
+
+// SeedAdmin promoted the configured admin to instance operator but never
+// demoted anyone, so rotating KRILL_ADMIN_EMAIL left the OLD account with
+// instance-wide rights over cluster nodes and host monitoring — an operator who
+// believed they had handed the role over.
+func TestSeedAdminRevokesPreviousOperator(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	svc := auth.NewService(q)
+	ctx := context.Background()
+
+	if err := svc.SeedAdmin(ctx, "first@k.local", "pw"); err != nil {
+		t.Fatalf("seed first: %v", err)
+	}
+	first, err := q.GetUserByEmail(ctx, "first@k.local")
+	if err != nil {
+		t.Fatalf("get first: %v", err)
+	}
+	if ok, _ := q.GetUserIsAdmin(ctx, first.ID); !ok {
+		t.Fatal("seeded admin was not promoted")
+	}
+
+	// Operator rotates KRILL_ADMIN_EMAIL to a different account.
+	if err := svc.SeedAdmin(ctx, "second@k.local", "pw"); err != nil {
+		t.Fatalf("seed second: %v", err)
+	}
+	second, err := q.GetUserByEmail(ctx, "second@k.local")
+	if err != nil {
+		t.Fatalf("get second: %v", err)
+	}
+	if ok, _ := q.GetUserIsAdmin(ctx, second.ID); !ok {
+		t.Error("new admin was not promoted")
+	}
+	if ok, _ := q.GetUserIsAdmin(ctx, first.ID); ok {
+		t.Error("previous admin kept instance-operator rights after the email was rotated")
 	}
 }

@@ -15,3 +15,9 @@ SELECT is_admin FROM users WHERE id = $1;
 
 -- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2 WHERE id = $1;
+
+-- name: DemoteInstanceAdminsExcept :execrows
+-- Revoke the instance-operator flag from everyone except the seeded admin.
+-- Keeps KRILL_ADMIN_EMAIL authoritative: rotating it must hand the role over,
+-- not hand out a second one.
+UPDATE users SET is_admin = false WHERE is_admin = true AND id <> $1;

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -16,6 +18,13 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	token, err := s.auth.Authenticate(r.Context(), email, password)
 	if err != nil {
+		// Telling a user their password is wrong when the database is down
+		// sends them off resetting credentials that were never the problem.
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			logFrom(r).Error("login: authentication backend failed", "err", err, "email", email)
+			render(w, r, http.StatusInternalServerError, templates.Login(i18n.T(r.Context(), "login.backend_error")))
+			return
+		}
 		logFrom(r).Warn("login failed", "email", email, "remote", r.RemoteAddr)
 		render(w, r, http.StatusUnauthorized, templates.Login("Invalid email or password"))
 		return

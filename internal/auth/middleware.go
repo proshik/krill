@@ -88,7 +88,13 @@ func WithInstanceAdmin(res InstanceAdminResolver) func(http.Handler) http.Handle
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			isAdmin := false
 			if uid := UserID(r.Context()); uid != 0 {
-				if ok, err := res.IsInstanceAdmin(r.Context(), uid); err == nil {
+				ok, err := res.IsInstanceAdmin(r.Context(), uid)
+				switch {
+				case err != nil:
+					// Fail closed, but never silently: this is why an operator
+					// suddenly gets 404 on Nodes and Monitoring.
+					slog.Error("instance-admin lookup failed, treating user as non-operator", "err", err, "user_id", uid)
+				default:
 					isAdmin = ok
 				}
 			}

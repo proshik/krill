@@ -15,3 +15,6 @@ ORDER BY o.created_at;
 
 -- name: DeleteOrganization :exec
 DELETE FROM organizations WHERE id = $1;
+
+-- name: CountOrganizations :one
+SELECT count(*) FROM organizations;

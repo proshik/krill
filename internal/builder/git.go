@@ -50,15 +50,21 @@ func gitAuthSetup(gitURL string, auth *GitAuth) (env []string, cleanup func(), e
 	// git calls the askpass helper with the prompt ("Username for ..." /
 	// "Password for ...") as $1; answer from the environment.
 	const script = "#!/bin/sh\ncase \"$1\" in\n*[Uu]sername*) printf '%s' \"$KRILL_GIT_USERNAME\" ;;\n*) printf '%s' \"$KRILL_GIT_PASSWORD\" ;;\nesac\n"
+	// Every failure past this point removes the file itself and hands back a
+	// no-op cleanup: callers return early on error, and one that forgets to run
+	// cleanup would otherwise leave the helper script behind on every attempt.
 	if _, werr := f.WriteString(script); werr != nil {
 		f.Close()
-		return nil, cleanup, werr
+		cleanup()
+		return nil, func() {}, werr
 	}
 	if cerr := f.Close(); cerr != nil {
-		return nil, cleanup, cerr
+		cleanup()
+		return nil, func() {}, cerr
 	}
 	if cherr := os.Chmod(name, 0o700); cherr != nil {
-		return nil, cleanup, cherr
+		cleanup()
+		return nil, func() {}, cherr
 	}
 	env = []string{
 		"GIT_ASKPASS=" + name,
@@ -102,6 +108,7 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 	// error output could otherwise surface it.
 	authEnv, authCleanup, err := gitAuthSetup(req.GitURL, req.GitAuth)
 	if err != nil {
+		authCleanup() // belt and braces: gitAuthSetup already cleans up its own failures
 		fmt.Fprintf(out, "❌ %v\n", err)
 		return err
 	}

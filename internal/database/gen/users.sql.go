@@ -31,6 +31,21 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const demoteInstanceAdminsExcept = `-- name: DemoteInstanceAdminsExcept :execrows
+UPDATE users SET is_admin = false WHERE is_admin = true AND id <> $1
+`
+
+// Revoke the instance-operator flag from everyone except the seeded admin.
+// Keeps KRILL_ADMIN_EMAIL authoritative: rotating it must hand the role over,
+// not hand out a second one.
+func (q *Queries) DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, demoteInstanceAdminsExcept, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, email, password_hash, created_at, is_admin FROM users WHERE email = $1
 `

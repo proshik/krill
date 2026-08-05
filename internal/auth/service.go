@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -30,6 +32,12 @@ var dummyHash, _ = HashPassword("krill-constant-time-login-placeholder")
 func (s *Service) Authenticate(ctx context.Context, email, password string) (string, error) {
 	u, err := s.q.GetUserByEmail(ctx, email)
 	if err != nil {
+		// Only a genuinely missing row is "invalid credentials". Collapsing
+		// every failure into it tells users their password is wrong while the
+		// database is down, and hides the outage from the operator.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("look up user: %w", err)
+		}
 		// Spend the same bcrypt time as a real check so known and unknown emails
 		// are indistinguishable by response latency.
 		CheckPassword(dummyHash, password)
@@ -104,13 +112,30 @@ func (s *Service) SeedAdmin(ctx context.Context, email, password string) error {
 	if err := s.q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: u.ID, IsAdmin: true}); err != nil {
 		return err
 	}
+	// ...and revoke it from anyone else. The promotion used to be one-way, so
+	// rotating KRILL_ADMIN_EMAIL left the previous account with instance-wide
+	// rights over cluster nodes and host monitoring.
+	if n, err := s.q.DemoteInstanceAdminsExcept(ctx, u.ID); err != nil {
+		return err
+	} else if n > 0 {
+		slog.Warn("revoked instance-operator rights from previously seeded admins", "count", n, "current_admin", email)
+	}
 
-	// Default organization: if the admin has no membership anywhere yet, create it.
+	// Default organization: bootstrap it only on a genuinely fresh instance.
+	// Checking just this user's memberships meant that rotating the admin email
+	// tried to create a SECOND "default" org, whose slug collides -- and the
+	// error is fatal at startup, so the rotation bricked the control plane.
 	orgs, err := s.q.ListOrganizationsForUser(ctx, u.ID)
 	if err != nil {
 		return err
 	}
 	if len(orgs) > 0 {
+		return nil
+	}
+	if n, err := s.q.CountOrganizations(ctx); err != nil {
+		return err
+	} else if n > 0 {
+		slog.Info("skipping default-organization bootstrap: this instance already has organizations", "admin", email)
 		return nil
 	}
 	o, err := s.q.CreateOrganization(ctx, db.CreateOrganizationParams{

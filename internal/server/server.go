@@ -158,7 +158,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/login", s.loginPage)
 	// Rate-limit login attempts per source IP to bound online password guessing.
 	loginLimiter := newLoginRateLimiter(10, time.Minute)
-	r.With(loginLimiter.middleware).Post("/login", s.loginSubmit)
+	r.With(loginLimiter.middleware(s.cfg.TrustProxy)).Post("/login", s.loginSubmit)
 	// POST so csrfGuard + SameSite cover it: a GET /logout is vulnerable to a
 	// cross-site top-level navigation terminating the victim's session.
 	r.Post("/logout", s.logout)

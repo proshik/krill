@@ -33,6 +33,7 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	CountOrganizations(ctx context.Context) (int64, error)
 	// Same both-columns check as CountDBInstancesByExternalPort, excluding the
 	// instance's own row (an edit must not conflict with itself).
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
@@ -78,6 +79,10 @@ type Querier interface {
 	DeleteSession(ctx context.Context, token string) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
+	// Revoke the instance-operator flag from everyone except the seeded admin.
+	// Keeps KRILL_ADMIN_EMAIL authoritative: rotating it must hand the role over,
+	// not hand out a second one.
+	DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int64, error)
 	// Reconcile deploys that were in flight when the process died: nothing will
 	// ever finish them, so they read as permanently running in the history. Safe to
 	// run at startup only — a just-booted control plane has no deploy in flight.

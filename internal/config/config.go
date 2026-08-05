@@ -21,10 +21,16 @@ type Config struct {
 	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
 	PublicURL     string `env:"KRILL_PUBLIC_URL"`
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
-	LogLevel      string `env:"KRILL_LOG_LEVEL" envDefault:"info"`   // debug | info | warn | error
-	LogFormat     string `env:"KRILL_LOG_FORMAT" envDefault:"text"`  // text | json
-	AcmeEmail     string `env:"KRILL_ACME_EMAIL"`
-	AcmeStaging   bool   `env:"KRILL_ACME_STAGING" envDefault:"false"`
+	// TrustProxy: honour X-Forwarded-For when deriving the client IP (login
+	// rate limiting). Enable ONLY when a reverse proxy fronts Krill and
+	// overwrites/appends the header — otherwise any client can forge it and
+	// hand itself a private rate-limit bucket. Off by default, matching the
+	// installer's direct-on-host deployment.
+	TrustProxy  bool   `env:"KRILL_TRUST_PROXY" envDefault:"false"`
+	LogLevel    string `env:"KRILL_LOG_LEVEL" envDefault:"info"`  // debug | info | warn | error
+	LogFormat   string `env:"KRILL_LOG_FORMAT" envDefault:"text"` // text | json
+	AcmeEmail   string `env:"KRILL_ACME_EMAIL"`
+	AcmeStaging bool   `env:"KRILL_ACME_STAGING" envDefault:"false"`
 	// SecretKey enables encryption-at-rest of stored secrets (DB passwords,
 	// registry/destination credentials). Any string; hashed to a 32-byte AES key.
 	// Empty = secrets stored as plaintext (legacy, logged as a warning).

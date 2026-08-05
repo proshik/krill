@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,8 +13,10 @@ import (
 // endpoint. bcrypt already makes each attempt expensive; this caps the attempt
 // rate so an attacker cannot run an unbounded online password-guessing attack.
 // In-memory and intentionally simple — a self-hosted control plane serves a
-// handful of clients. Note: it keys on RemoteAddr, so behind a reverse proxy
-// that terminates the control-plane connection all clients share one bucket.
+// handful of clients. Behind a reverse proxy the connection address is the
+// proxy's, which would collapse every client into one bucket, so the limiter
+// keys on clientIP: it honours X-Forwarded-For when (and only when) the
+// operator has declared a proxy via KRILL_TRUST_PROXY.
 type loginRateLimiter struct {
 	mu     sync.Mutex
 	limit  int
@@ -62,22 +65,42 @@ func (l *loginRateLimiter) pruneLocked(now time.Time) {
 	}
 }
 
-func (l *loginRateLimiter) middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !l.allow(clientIP(r), time.Now()) {
-			w.Header().Set("Retry-After", strconv.Itoa(int(l.window.Seconds())))
-			http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func (l *loginRateLimiter) middleware(trustProxy bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !l.allow(clientIP(r, trustProxy), time.Now()) {
+				w.Header().Set("Retry-After", strconv.Itoa(int(l.window.Seconds())))
+				http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // clientIP returns the request's source IP without the port.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+//
+// With trustProxy set it prefers the LAST X-Forwarded-For entry: a client may
+// forge the header, but the proxy in front appends the address it actually saw,
+// so the final entry is the only one anything vouches for. Without trustProxy
+// the header is ignored outright — otherwise any client could mint its own
+// rate-limit bucket by sending one.
+func clientIP(r *http.Request, trustProxy bool) string {
+	direct := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		direct = host
 	}
-	return host
+	if !trustProxy {
+		return direct
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		return direct
+	}
+	parts := strings.Split(xff, ",")
+	last := strings.TrimSpace(parts[len(parts)-1])
+	if net.ParseIP(last) == nil {
+		return direct
+	}
+	return last
 }
