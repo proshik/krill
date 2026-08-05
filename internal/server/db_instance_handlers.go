@@ -66,7 +66,12 @@ func (s *Server) listDBInstances(w http.ResponseWriter, r *http.Request) {
 		// Fetched for every viewer (not just admin/owner): the honest status badge
 		// needs the live node list to detect node_down/node_removed regardless of
 		// role. The node-picker in the template still only renders for admin/owner.
-		nodes, _ = s.engine.Nodes(r.Context())
+		var nerr error
+		nodes, nerr = s.engine.Nodes(r.Context())
+		nodesOK := nerr == nil
+		if nerr != nil {
+			logFrom(r).Error("listDBInstances: node list unavailable, node badges fall back to stored status", "err", nerr)
+		}
 		names := make([]string, 0, len(insts))
 		for _, in := range insts {
 			names = append(names, in.AppName)
@@ -77,7 +82,7 @@ func (s *Server) listDBInstances(w http.ResponseWriter, r *http.Request) {
 			if st, ok := states[in.AppName]; ok {
 				running = st.Found && st.Desired > 0 && st.Running >= st.Desired
 			}
-			statuses[in.ID] = displayInstanceStatus(running, in.NodeHostname, nodes, in.Status)
+			statuses[in.ID] = displayInstanceStatus(running, in.NodeHostname, nodes, nodesOK, in.Status)
 		}
 	}
 	render(w, r, http.StatusOK, templates.DBServers(o, role, insts, nodes, statuses))
@@ -596,8 +601,8 @@ func (s *Server) dbInstanceStatus(w http.ResponseWriter, r *http.Request) {
 		if st, err := s.engine.ServiceState(r.Context(), inst.AppName); err == nil && st.Found {
 			running = st.Running >= st.Desired && st.Desired > 0
 		}
-		live, _ := s.engine.Nodes(r.Context())
-		status = displayInstanceStatus(running, inst.NodeHostname, live, inst.Status)
+		live, nerr := s.engine.Nodes(r.Context())
+		status = displayInstanceStatus(running, inst.NodeHostname, live, nerr == nil, inst.Status)
 	}
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
 }

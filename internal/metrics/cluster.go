@@ -31,6 +31,10 @@ type NodeSample struct {
 	Containers []docker.ContainerStat
 	Capacity   docker.NodeInfo
 	OK         bool
+	// CapacityOK distinguishes "capacity is genuinely zero" from "we could not
+	// read it". Persisting an unread capacity would overwrite good NCPU/MemTotal
+	// with zeros, and the dashboard would divide memory use by zero.
+	CapacityOK bool
 }
 
 // ClusterSource samples the control-plane node plus every worker each tick.
@@ -53,7 +57,11 @@ func NewClusterSource(localName string, local NodeStatsSource, workers WorkerLis
 // SampleAll samples the local node first, then all workers concurrently.
 // Each worker runs under its own per-node timeout; a failing worker yields
 // NodeSample{Node, OK:false} and never aborts others.
-func (c *ClusterSource) SampleAll(ctx context.Context) []NodeSample {
+//
+// complete reports whether the returned set covers every node in the cluster.
+// It is false when the worker list itself could not be read — the samples are
+// still usable, but callers must not treat missing nodes as removed.
+func (c *ClusterSource) SampleAll(ctx context.Context) (samples []NodeSample, complete bool) {
 	lctx, lcancel := context.WithTimeout(ctx, c.timeout)
 	out := []NodeSample{c.sampleOne(lctx, c.localName, c.local)}
 	lcancel()
@@ -61,7 +69,7 @@ func (c *ClusterSource) SampleAll(ctx context.Context) []NodeSample {
 	workers, err := c.workers(ctx)
 	if err != nil {
 		c.log.Warn("metrics: list workers failed", "err", err)
-		return out
+		return out, false
 	}
 
 	var mu sync.Mutex
@@ -97,7 +105,7 @@ func (c *ClusterSource) SampleAll(ctx context.Context) []NodeSample {
 	}
 
 	wg.Wait()
-	return out
+	return out, true
 }
 
 // sampleOne collects stats + capacity from one node. On any error it returns OK=false.
@@ -110,8 +118,9 @@ func (c *ClusterSource) sampleOne(ctx context.Context, name string, src NodeStat
 	info, err := src.NodeInfo(ctx)
 	if err != nil {
 		c.log.Warn("metrics: node info failed", "node", name, "err", err)
-		// still report containers; capacity stays zero
+		// Still report containers, but mark the capacity unknown so the stored
+		// NCPU/MemTotal are left as they are rather than zeroed.
 		return NodeSample{Node: name, Containers: stats, OK: true}
 	}
-	return NodeSample{Node: name, Containers: stats, Capacity: info, OK: true}
+	return NodeSample{Node: name, Containers: stats, Capacity: info, OK: true, CapacityOK: true}
 }

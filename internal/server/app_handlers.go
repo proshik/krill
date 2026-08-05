@@ -319,7 +319,15 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 	// unknown ones (a non-live ID can't schedule and labels nothing anyway).
 	droppedNodes := 0
 	if s.engine != nil && len(nodes) > 0 {
-		live, _ := s.engine.Nodes(r.Context())
+		live, nerr := s.engine.Nodes(r.Context())
+		if nerr != nil {
+			// An unreadable list would drop every submitted node and report
+			// "no live node" — a misleading verdict on healthy nodes. Refuse
+			// instead of guessing.
+			logFrom(r).Error("savePlacement: node list unavailable, refusing to validate placement", "err", nerr, "app_id", c.App.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
 		nodes, droppedNodes = filterLiveNodes(nodes, live)
 		if mode != "any" && len(nodes) == 0 {
 			s.flashErrT(w, r, "flash.err.no_live_node")
@@ -511,8 +519,8 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		} else {
 			logFrom(r).Error("appStatus: failed to query engine service state", "err", err, "app_id", c.App.ID)
 		}
-		live, _ := s.engine.Nodes(r.Context())
-		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live)
+		live, nerr := s.engine.Nodes(r.Context())
+		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
 	}
 	render(w, r, http.StatusOK, templates.StatusBadge(status))
 }

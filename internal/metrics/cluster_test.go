@@ -12,15 +12,21 @@ import (
 )
 
 type fakeSrc struct {
-	stats []docker.ContainerStat
-	cap   docker.NodeInfo
-	err   error
+	stats  []docker.ContainerStat
+	cap    docker.NodeInfo
+	err    error
+	capErr error // NodeInfo fails while ListContainerStats succeeds
 }
 
 func (f fakeSrc) ListContainerStats(ctx context.Context) ([]docker.ContainerStat, error) {
 	return f.stats, f.err
 }
-func (f fakeSrc) NodeInfo(ctx context.Context) (docker.NodeInfo, error) { return f.cap, f.err }
+func (f fakeSrc) NodeInfo(ctx context.Context) (docker.NodeInfo, error) {
+	if f.capErr != nil {
+		return docker.NodeInfo{}, f.capErr
+	}
+	return f.cap, f.err
+}
 
 func TestSampleAllLocalPlusWorkers(t *testing.T) {
 	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill", CPUPct: 5}}, cap: docker.NodeInfo{NCPU: 2, MemTotal: 100}}
@@ -41,7 +47,10 @@ func TestSampleAllLocalPlusWorkers(t *testing.T) {
 	}
 
 	cs := metrics.NewClusterSource("cp", local, workers, time.Second)
-	samples := cs.SampleAll(context.Background())
+	samples, complete := cs.SampleAll(context.Background())
+	if !complete {
+		t.Fatal("worker list was readable, so the sample set must be complete")
+	}
 
 	byNode := map[string]metrics.NodeSample{}
 	for _, s := range samples {

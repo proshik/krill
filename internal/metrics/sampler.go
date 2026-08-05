@@ -70,7 +70,7 @@ func (s *Sampler) SelfComponent() string {
 
 func (s *Sampler) tick(ctx context.Context) {
 	now := time.Now()
-	samples := s.src.SampleAll(ctx)
+	samples, complete := s.src.SampleAll(ctx)
 	keep := make([]string, 0, len(samples))
 	for _, ns := range samples {
 		keep = append(keep, ns.Node) // every current node (incl. down → kept, shows stale)
@@ -87,13 +87,17 @@ func (s *Sampler) tick(ctx context.Context) {
 				s.log.Warn("metrics: insert failed", "node", ns.Node, "component", st.Component, "err", err)
 			}
 		}
-		if err := s.store.UpsertCapacity(ctx, ns.Node, ns.Capacity.NCPU, ns.Capacity.MemTotal); err != nil {
-			s.log.Warn("metrics: capacity upsert failed", "node", ns.Node, "err", err)
+		if ns.CapacityOK {
+			if err := s.store.UpsertCapacity(ctx, ns.Node, ns.Capacity.NCPU, ns.Capacity.MemTotal); err != nil {
+				s.log.Warn("metrics: capacity upsert failed", "node", ns.Node, "err", err)
+			}
 		}
 	}
 	// Drop capacity for nodes no longer in the cluster (renamed/removed) so they
 	// stop showing as stale phantoms; down-but-still-listed nodes stay in keep.
-	if len(keep) > 0 {
+	// Only safe when the node list is complete: an unreadable worker list would
+	// otherwise look like "every worker was removed" and wipe their capacity.
+	if complete && len(keep) > 0 {
 		if err := s.store.PruneCapacityExcept(ctx, keep); err != nil {
 			s.log.Warn("metrics: orphan capacity prune failed", "err", err)
 		}

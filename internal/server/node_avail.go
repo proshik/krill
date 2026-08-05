@@ -14,13 +14,22 @@ const (
 	NodeLive    NodeAvail = "live"
 	NodeDown    NodeAvail = "down"
 	NodeRemoved NodeAvail = "removed"
+	// NodeUnknown: the live node list could not be read, so nothing can be said
+	// about this node. Distinct from NodeRemoved on purpose — a failed
+	// engine.Nodes() call returns an empty list, and treating that as "removed"
+	// paints healthy, pinned infrastructure with an alarming badge.
+	NodeUnknown NodeAvail = "unknown"
 )
 
 // nodeAvailByHostname classifies a node referenced by hostname (DB instances).
-// "" => NodeLive (control-plane / not pinned).
-func nodeAvailByHostname(live []docker.SwarmNode, hostname string) NodeAvail {
+// "" => NodeLive (control-plane / not pinned). listOK reports whether live was
+// actually read; when false the answer is NodeUnknown.
+func nodeAvailByHostname(live []docker.SwarmNode, listOK bool, hostname string) NodeAvail {
 	if hostname == "" {
 		return NodeLive
+	}
+	if !listOK {
+		return NodeUnknown
 	}
 	for _, n := range live {
 		if n.Hostname == hostname {
@@ -34,9 +43,12 @@ func nodeAvailByHostname(live []docker.SwarmNode, hostname string) NodeAvail {
 }
 
 // nodeAvailByID classifies a node referenced by swarm node ID (app placement).
-func nodeAvailByID(live []docker.SwarmNode, id string) NodeAvail {
+func nodeAvailByID(live []docker.SwarmNode, listOK bool, id string) NodeAvail {
 	if id == "" {
 		return NodeLive
+	}
+	if !listOK {
+		return NodeUnknown
 	}
 	for _, n := range live {
 		if n.ID == id {
@@ -52,11 +64,11 @@ func nodeAvailByID(live []docker.SwarmNode, id string) NodeAvail {
 // displayInstanceStatus is the honest badge for a DB instance: running when the
 // service converged; node_down/node_removed when its pinned node is unavailable;
 // otherwise the stored status.
-func displayInstanceStatus(running bool, nodeHostname string, live []docker.SwarmNode, stored string) string {
+func displayInstanceStatus(running bool, nodeHostname string, live []docker.SwarmNode, listOK bool, stored string) string {
 	if running {
 		return "running"
 	}
-	switch nodeAvailByHostname(live, nodeHostname) {
+	switch nodeAvailByHostname(live, listOK, nodeHostname) {
 	case NodeRemoved:
 		return "node_removed"
 	case NodeDown:
@@ -67,13 +79,16 @@ func displayInstanceStatus(running bool, nodeHostname string, live []docker.Swar
 
 // displayAppStatus overrides a pinned app's derived status with a node badge
 // when none of its placement nodes are live (so it can never schedule).
-func displayAppStatus(derived, placementMode, placementNodes string, live []docker.SwarmNode) string {
+func displayAppStatus(derived, placementMode, placementNodes string, live []docker.SwarmNode, listOK bool) string {
 	if derived == deploy.StatusRunning || placementMode != "pin" || placementNodes == "" {
 		return derived
 	}
+	if !listOK {
+		return derived // nothing can be said about the pins right now
+	}
 	anyLive, anyDown := false, false
 	for _, id := range splitPlacement(placementNodes) {
-		switch nodeAvailByID(live, id) {
+		switch nodeAvailByID(live, listOK, id) {
 		case NodeLive:
 			anyLive = true
 		case NodeDown:

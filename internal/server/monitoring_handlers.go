@@ -75,7 +75,7 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 
 	// Serve from the per-(org,range) cache while it is fresh: the samples only
 	// change once per interval, so 10s polls must not re-scan Postgres each time.
-	cacheKey := strconv.FormatInt(o.ID, 10) + ":" + rngParam
+	cacheKey := monCacheKey(o.ID, rngParam)
 	ttl := s.cfg.MetricsInterval
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -97,7 +97,14 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	start := now.Add(-rng)
 	x := metrics.GridTimes(start, now, monBuckets)
 
-	samples, _ := s.metrics.Since(r.Context(), start)
+	samples, err := s.metrics.Since(r.Context(), start)
+	if err != nil {
+		// An empty dashboard is indistinguishable from "the cluster is idle".
+		// Fail loudly so the page can say the data could not be read.
+		logFrom(r).Error("monitoringData: read samples failed", "err", err, "org_id", o.ID)
+		http.Error(w, "metrics unavailable", http.StatusInternalServerError)
+		return
+	}
 	// Key series by (node, component) so the same component on two nodes is two
 	// distinct series. Use a unit-separator composite key to avoid collisions.
 	cpuPts := map[string][]metrics.Point{}
@@ -219,7 +226,29 @@ func (s *Server) monCachePut(key string, data []byte) {
 	if s.monCache == nil {
 		s.monCache = map[string]monCacheEntry{}
 	}
-	s.monCache[key] = monCacheEntry{data: data, at: time.Now()}
+	now := time.Now()
+	// Drop entries no TTL could still serve. Without this the map only ever
+	// grows: every (org, range) pair ever requested stays for the process's
+	// lifetime, holding its whole JSON response.
+	for k, e := range s.monCache {
+		if now.Sub(e.at) > monCacheMaxAge {
+			delete(s.monCache, k)
+		}
+	}
+	s.monCache[key] = monCacheEntry{data: data, at: now}
+}
+
+// monCacheMaxAge bounds how long an entry may linger before a later put evicts
+// it. Well above any plausible MetricsInterval-derived TTL, so it never evicts
+// something still servable.
+const monCacheMaxAge = 10 * time.Minute
+
+// monCacheKey builds the cache key from the NORMALIZED range, not the raw query
+// parameter: parseRange collapses everything it does not recognise to 24h, so
+// keying on the raw string let any ?range=<junk> mint a fresh entry for a
+// response that is byte-identical to the default one.
+func monCacheKey(orgID int64, rngParam string) string {
+	return strconv.FormatInt(orgID, 10) + ":" + parseRange(rngParam).String()
 }
 
 // monBucketCount picks how many time buckets to render for a range so each

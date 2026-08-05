@@ -2,6 +2,7 @@ package metrics_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -143,5 +144,55 @@ func TestSamplerSelfCompLearned(t *testing.T) {
 
 	if got := s.SelfComponent(); got != "krill" {
 		t.Fatalf("SelfComponent() = %q, want %q", got, "krill")
+	}
+}
+
+// When the worker list itself cannot be read (a transient DB failure in the
+// lister), SampleAll returned only the control-plane sample — indistinguishable
+// from "this cluster has no workers". The tick then pruned every worker's
+// capacity row, so the monitoring page lost NCPU/MemTotal for the whole cluster
+// until each worker was sampled again.
+func TestTickSkipsOrphanPruneWhenWorkerListUnavailable(t *testing.T) {
+	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 2}}
+	workers := func(ctx context.Context) ([]metrics.Worker, error) {
+		return nil, errors.New("pool exhausted")
+	}
+	cs := metrics.NewClusterSource("cp", local, workers, time.Second)
+	st := &capStore{}
+	s := metrics.NewSampler(cs, st, time.Hour, time.Hour)
+
+	s.TickForTest(context.Background())
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.keptExcept != nil {
+		t.Errorf("pruned orphan capacity to %v while the worker list was unavailable: every worker's capacity row would be dropped", st.keptExcept)
+	}
+	// The control-plane sample itself must still be recorded.
+	if st.caps["cp"] != 2 {
+		t.Errorf("control-plane capacity not recorded: %v", st.caps)
+	}
+}
+
+// A NodeInfo failure left Capacity zero but still reported the node OK, so the
+// tick upserted NCPU=0/MemTotal=0 over good data: the dashboard then showed a
+// node with no capacity and a memory percentage divided by zero.
+func TestNodeInfoFailureDoesNotZeroCapacity(t *testing.T) {
+	local := fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, capErr: errors.New("daemon busy")}
+	workers := func(ctx context.Context) ([]metrics.Worker, error) { return nil, nil }
+	cs := metrics.NewClusterSource("cp", local, workers, time.Second)
+	st := &capStore{}
+	s := metrics.NewSampler(cs, st, time.Hour, time.Hour)
+
+	s.TickForTest(context.Background())
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.caps["cp"]; ok {
+		t.Errorf("capacity upserted as %v despite NodeInfo failing: good values are overwritten with zeros", st.caps)
+	}
+	// Container stats are still useful and must keep flowing.
+	if len(st.ins) == 0 {
+		t.Error("container stats dropped along with the capacity")
 	}
 }
