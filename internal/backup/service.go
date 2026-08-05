@@ -135,16 +135,35 @@ func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) 
 		return s.fail(ctx, backupID, now, uerr)
 	}
 
-	if objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName), s.allowPrivate); lerr == nil {
+	// Retention runs after a successful upload, so a failure here does not make
+	// the run a failure — the dump is stored. It does mean the bucket keeps
+	// growing, which must not be invisible: record it alongside the "ok".
+	objs, lerr := List(ctx, dst, prefixDir(b.Prefix, pg.AppName, pg.DatabaseName), s.allowPrivate)
+	deleteFailures := 0
+	if lerr != nil {
+		slog.Error("backup retention list failed — old backups not pruned", "backup", backupID, "err", lerr)
+	} else {
 		for _, o := range objectsToDelete(objs, b.Retention) {
 			if derr := Delete(ctx, dst, o.Key, s.allowPrivate); derr != nil {
-				slog.Warn("backup retention delete failed", "key", o.Key, "err", derr)
+				deleteFailures++
+				slog.Error("backup retention delete failed", "backup", backupID, "key", o.Key, "err", derr)
 			}
 		}
-	} else {
-		slog.Warn("backup retention list failed", "err", lerr)
 	}
-	return s.store.SetBackupResult(ctx, backupID, now, "ok", "")
+	return s.store.SetBackupResult(ctx, backupID, now, "ok", retentionNote(lerr, deleteFailures))
+}
+
+// retentionNote describes a retention pass that ran after a successful upload.
+// Empty when the prune was clean; otherwise a message for the backup's
+// last_error, which the UI renders under the run status.
+func retentionNote(listErr error, deleteFailures int) string {
+	if listErr != nil {
+		return fmt.Sprintf("backup stored, but old backups could not be pruned (listing failed: %v) — the bucket will keep growing", listErr)
+	}
+	if deleteFailures > 0 {
+		return fmt.Sprintf("backup stored, but %d old backup(s) could not be deleted — the bucket will keep growing", deleteFailures)
+	}
+	return ""
 }
 
 func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) error {
@@ -174,6 +193,21 @@ func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, er
 
 // RestoreByID restores object `key` of a backup config into its DB.
 func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) error {
+	// Share the backup's in-flight guard: restoring into a database while a
+	// pg_dump of it is streaming produces a dump of a half-restored database.
+	s.mu.Lock()
+	if s.inFlight[backupID] {
+		s.mu.Unlock()
+		return ErrBackupRunning
+	}
+	s.inFlight[backupID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.inFlight, backupID)
+		s.mu.Unlock()
+	}()
+
 	b, err := s.store.GetBackup(ctx, backupID)
 	if err != nil {
 		return err

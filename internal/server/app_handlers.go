@@ -827,6 +827,7 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, err.Error())
 		return
 	}
+	s.reloadVolumeBackupSchedules() // app volumes (and their backups) cascaded away
 	logFrom(r).Info("application deleted", "app_id", c.App.ID, "app_name", c.App.Name)
 	s.flashOK(w, r, "flash.ok.app_deleted")
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)

@@ -104,6 +104,7 @@ func (s *Server) deleteVolume(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_volume")
 		return
 	}
+	s.reloadVolumeBackupSchedules() // its volume backups cascade-deleted with the row
 	logFrom(r).Info("volume deleted", "app_id", c.App.ID, "volume_id", v.ID, "name", v.Name)
 	s.flashOK(w, r, "flash.ok.volume_removed")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)

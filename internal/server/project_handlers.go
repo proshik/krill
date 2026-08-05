@@ -132,6 +132,10 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_project")
 		return
 	}
+	// Everything below the project cascaded away: logical databases (→ backups)
+	// and app volumes (→ volume_backups).
+	s.reloadBackupSchedules()
+	s.reloadVolumeBackupSchedules()
 	logFrom(r).Info("project deleted", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
 	s.flashOK(w, r, "flash.ok.project_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -188,6 +192,8 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_environment")
 		return
 	}
+	s.reloadBackupSchedules()
+	s.reloadVolumeBackupSchedules()
 	logFrom(r).Info("environment deleted", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
 	s.flashOK(w, r, "flash.ok.env_deleted")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)

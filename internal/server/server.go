@@ -99,6 +99,26 @@ func (s *Server) SetVolumeBackups(svc *volume.VolumeService, reload func()) {
 	s.reloadVolumeBackups = reload
 }
 
+// reloadBackupSchedules re-reads the DB-backup cron schedule. Call it after any
+// delete that can cascade `backups` rows away (a logical database, its
+// instance, or an environment/project above them) — the scheduler holds cron
+// entries by backup ID, and a deleted row's entry keeps firing until something
+// reloads it.
+func (s *Server) reloadBackupSchedules() {
+	if s.reloadBackups != nil {
+		s.reloadBackups()
+	}
+}
+
+// reloadVolumeBackupSchedules is reloadBackupSchedules for `volume_backups`,
+// which cascade from app volumes (and so from applications, environments and
+// projects above them).
+func (s *Server) reloadVolumeBackupSchedules() {
+	if s.reloadVolumeBackups != nil {
+		s.reloadVolumeBackups()
+	}
+}
+
 // SetNotify wires the notification service (used by the test-message handler).
 func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
 

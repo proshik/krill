@@ -219,6 +219,7 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_database")
 		return
 	}
+	s.reloadBackupSchedules() // its backups cascade-deleted with the row
 	logFrom(r).Info("logical database deleted", "ldb_id", ld.ID, "db_name", ld.DbName)
 	s.flashOK(w, r, "flash.ok.db_deleted")
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)

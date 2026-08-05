@@ -160,6 +160,18 @@ func (s *VolumeService) OpenObject(ctx context.Context, volBackupID int64, key s
 }
 
 func (s *VolumeService) RestoreByID(ctx context.Context, volBackupID int64, key string) error {
+	// Share the backup's in-flight guard: a restore unpacks into the very volume
+	// a running backup streams out of, so letting them overlap archives a
+	// half-restored volume and writes under a reader that assumes a quiesced app.
+	s.mu.Lock()
+	if s.inFlight[volBackupID] {
+		s.mu.Unlock()
+		return ErrVolumeBackupRunning
+	}
+	s.inFlight[volBackupID] = true
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.inFlight, volBackupID); s.mu.Unlock() }()
+
 	b, t, dst, err := s.resolve(ctx, volBackupID)
 	if err != nil {
 		return err

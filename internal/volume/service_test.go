@@ -305,6 +305,44 @@ func assertOrder(t *testing.T, seq []string, steps ...string) {
 	}
 }
 
+// A restore unpacks into the very volume a running backup is streaming out of.
+// RunVolumeBackup took the in-flight guard but RestoreByID did not, so the two
+// could run at once: the archive captures a half-restored volume, and the
+// restore writes under a reader that assumes a quiesced app.
+func TestRestoreRejectedWhileBackupInFlight(t *testing.T) {
+	store, _ := newMinioStore(t, "vol", 7)
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	var startOnce, blockOnce sync.Once
+	eng := &mockVolEngine{
+		archiveFn: func(out io.Writer) error {
+			startOnce.Do(func() { close(started) })
+			blockOnce.Do(func() { <-block })
+			_, err := out.Write([]byte("PAYLOAD-123"))
+			return err
+		},
+	}
+	svc := New(eng, store, true)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- svc.RunVolumeBackup(ctx, 1, time.Now()) }()
+	<-started // backup of id 1 is in-flight
+
+	// A key inside this backup's own prefix, so the containment check passes and
+	// the overlap guard is what the assertion actually exercises.
+	err := svc.RestoreByID(ctx, 1, "vol/42-data/2026-06-15T00-00-00Z.tar.gz")
+	if !errors.Is(err, ErrVolumeBackupRunning) {
+		t.Fatalf("restore during backup err = %v, want ErrVolumeBackupRunning", err)
+	}
+
+	close(block)
+	if err := <-done; err != nil {
+		t.Fatalf("backup run: %v", err)
+	}
+}
+
 func TestRunVolumeBackupInFlight(t *testing.T) {
 	store, _ := newMinioStore(t, "vol", 7)
 

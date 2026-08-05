@@ -116,6 +116,66 @@ func TestVolumeArchiveRestoreRoundtrip(t *testing.T) {
 	}
 }
 
+// A restore must reproduce the backup, not merge into whatever is there. tar -x
+// only overwrites paths present in the archive, so a file created after the
+// backup survived the restore — resurrecting state the point-in-time snapshot
+// does not contain (stale indexes, lock files, deleted uploads).
+func TestVolumeRestoreReplacesExistingContent(t *testing.T) {
+	eng, err := NewEngine("")
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	e, ok := eng.(*dockerEngine)
+	if !ok {
+		t.Fatalf("expected *dockerEngine, got %T", eng)
+	}
+	ctx := context.Background()
+
+	const vol = "krill-test-vol-replace"
+	t.Cleanup(func() { _ = e.VolumeRemove(context.Background(), vol) })
+
+	// Seed the volume with the "current" state: one file from the backup plus a
+	// stray file (and a stray dotfile) that the backup does not contain.
+	var seed bytes.Buffer
+	writeTar(t, &seed, map[string]string{
+		"keep.txt":  "old",
+		"stray.txt": "must not survive",
+		".hidden":   "must not survive either",
+	})
+	if err := e.VolumeRestore(ctx, vol, &seed, ""); err != nil {
+		t.Fatalf("VolumeRestore(seed): %v", err)
+	}
+
+	// Restore a backup that contains only keep.txt.
+	var archive bytes.Buffer
+	writeTar(t, &archive, map[string]string{"keep.txt": "restored"})
+	if err := e.VolumeRestore(ctx, vol, &archive, ""); err != nil {
+		t.Fatalf("VolumeRestore(archive): %v", err)
+	}
+
+	var after bytes.Buffer
+	if err := e.VolumeArchive(ctx, vol, &after, ""); err != nil {
+		t.Fatalf("VolumeArchive: %v", err)
+	}
+	got := tarFiles(t, &after)
+	lookup := func(name string) (string, bool) {
+		if v, ok := got[name]; ok {
+			return v, true
+		}
+		v, ok := got["./"+name]
+		return v, ok
+	}
+	if v, ok := lookup("keep.txt"); !ok || v != "restored" {
+		t.Errorf("keep.txt = %q (present=%v), want %q", v, ok, "restored")
+	}
+	if _, ok := lookup("stray.txt"); ok {
+		t.Errorf("stray.txt survived the restore: got keys %v", keysOf(got))
+	}
+	if _, ok := lookup(".hidden"); ok {
+		t.Errorf("dotfile .hidden survived the restore: got keys %v", keysOf(got))
+	}
+}
+
 func keysOf(m map[string]string) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {

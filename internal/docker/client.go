@@ -608,11 +608,16 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 	return waitContainer(ctx, cli, cid, "volume archive "+volumeName, &stderr)
 }
 
-// VolumeRestore extracts a tar (read from in; the caller gunzips) into the named
-// volume. Mounts the volume read-write; busybox runs as root with no network.
-// Root is required to write into the (root-owned) fresh-volume root and to
-// restore each entry's original ownership (tar's default) so the app can read
-// its data back as whatever uid it runs under.
+// VolumeRestore replaces the named volume's contents with a tar (read from in;
+// the caller gunzips). Mounts the volume read-write; busybox runs as root with
+// no network. Root is required to write into the (root-owned) fresh-volume root
+// and to restore each entry's original ownership (tar's default) so the app can
+// read its data back as whatever uid it runs under.
+//
+// The volume is emptied first. `tar -x` alone only overwrites paths the archive
+// contains, so anything created since the backup would survive a restore and the
+// result would be a merge of two points in time — stale indexes, lock files and
+// deleted uploads coming back from the dead. Callers quiesce the app first.
 func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in io.Reader, swarmNodeID string) error {
 	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
 	if err != nil {
@@ -624,8 +629,12 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 	}
 	resp, err := cli.ContainerCreate(ctx,
 		&container.Config{
-			Image:     busyboxImage,
-			Cmd:       []string{"tar", "-x", "-C", "/vol"},
+			Image: busyboxImage,
+			// Clear the mount point (including dotfiles) then exec tar so it
+			// inherits stdin directly. Unmatched globs are passed through
+			// literally and `rm -f` exits 0 on a missing path, so an empty
+			// volume is not an error.
+			Cmd:       []string{"sh", "-c", `rm -rf /vol/* /vol/.[!.]* /vol/..?* 2>/dev/null; exec tar -x -C /vol`},
 			OpenStdin: true, StdinOnce: true,
 		},
 		&container.HostConfig{

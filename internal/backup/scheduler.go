@@ -24,10 +24,11 @@ type RunFunc func(ctx context.Context, backupID int64)
 
 // Scheduler runs enabled backups on their cron schedules.
 type Scheduler struct {
-	store SchedStore
-	run   RunFunc
-	mu    sync.Mutex
-	cron  *cron.Cron
+	store   SchedStore
+	run     RunFunc
+	mu      sync.Mutex
+	cron    *cron.Cron
+	stopped bool // set by Stop: a later Reload must not resurrect the scheduler
 }
 
 func NewScheduler(store SchedStore, run RunFunc) *Scheduler {
@@ -51,13 +52,20 @@ func (s *Scheduler) Reload() error {
 			slog.Warn("backup scheduler: invalid cron, skipping", "backup", id, "schedule", b.Schedule, "err", aerr)
 		}
 	}
+	// Swap, start and stop under one lock. Starting outside it let two
+	// concurrent Reloads Stop a cron that had not been Started yet and then
+	// Start it anyway, leaving a running instance nobody references — duplicate
+	// backup runs that Stop could no longer reach.
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return nil // shutting down: never start a cron that would outlive Stop
+	}
 	old := s.cron
 	s.cron = c
-	s.mu.Unlock()
 	c.Start()
 	if old != nil {
-		old.Stop()
+		old.Stop() // non-blocking: signals the scheduler goroutine and returns
 	}
 	return nil
 }
@@ -71,10 +79,12 @@ func (s *Scheduler) entryCount() int {
 	return len(s.cron.Entries())
 }
 
-// Stop halts the scheduler.
+// Stop halts the scheduler permanently: a Reload racing shutdown (a backup
+// mutation arriving as the process exits) must not start a fresh cron.
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.stopped = true
 	if s.cron != nil {
 		s.cron.Stop()
 	}

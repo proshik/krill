@@ -531,6 +531,7 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.reloadBackupSchedules() // the instance's logical databases took their backups with them
 	logFrom(r).Info("db instance deleted", "instance_id", inst.ID, "destroy_data", destroy)
 	s.flashOK(w, r, "flash.ok.dbi_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/db-servers", http.StatusSeeOther)
