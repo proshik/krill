@@ -21,6 +21,11 @@ type mockEngine struct {
 	failPull       bool
 	removeErr      error // returned by every ServiceRemove call, after recording it
 	deployErr      error // returned by every ServiceDeploy call, after recording it
+
+	// pullGate, when non-nil, blocks ImagePull until closed — holds a deploy
+	// "in flight" so a second trigger can be observed racing it.
+	pullGate  chan struct{}
+	pullStart chan struct{} // closed once, when the first ImagePull is entered
 }
 
 func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
@@ -86,6 +91,15 @@ func (m *mockEngine) VolumeExistsOn(context.Context, string, string) (bool, erro
 }
 func (m *mockEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
 func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) error {
+	if gate := m.pullGate; gate != nil {
+		m.mu.Lock()
+		if m.pullStart != nil {
+			close(m.pullStart)
+			m.pullStart = nil
+		}
+		m.mu.Unlock()
+		<-gate
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.failPull {
@@ -141,7 +155,13 @@ func (f *fakeStore) GetInstance(_ context.Context, id int64) (Instance, error) {
 	}
 	return f.instance, nil
 }
-func (f *fakeStore) SetInstanceStatus(_ context.Context, id int64, s string) error {
+// SetInstanceStatus honours the context the way a real DB call does: a write on
+// an expired context fails. Terminal status writes must therefore not ride the
+// deploy's own (timing-out) context.
+func (f *fakeStore) SetInstanceStatus(ctx context.Context, id int64, s string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.status[id] = s
@@ -341,5 +361,54 @@ func waitFor(t *testing.T, cond func() bool) {
 			t.Fatal("condition not met")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Two rapid clicks on Deploy used to spawn two goroutines deploying the same
+// instance at once: racing ServiceDeploy calls and racing status writes, with
+// the loser's outcome overwriting the winner's.
+func TestDeployInstanceIgnoresDuplicateTrigger(t *testing.T) {
+	eng := newMockEngine()
+	eng.pullGate = make(chan struct{})
+	eng.pullStart = make(chan struct{})
+	started := eng.pullStart
+	store := newFakeStore(Instance{ID: 1, Engine: "postgres", AppName: "krill-postgres-dup", Image: "postgres:17-alpine", Superuser: "postgres", SuperuserPassword: "pw"})
+	svc := New(eng, store, nil, "krill-net")
+
+	svc.DeployInstance(1)
+	<-started // the first deploy is inside ImagePull
+
+	svc.DeployInstance(1) // must be ignored while the first is in flight
+
+	close(eng.pullGate)
+	waitFor(t, func() bool { return store.st(1) == "running" })
+	// Give a duplicate goroutine a chance to land before asserting.
+	time.Sleep(100 * time.Millisecond)
+
+	eng.mu.Lock()
+	n := len(eng.deployed)
+	eng.mu.Unlock()
+	if n != 1 {
+		t.Errorf("ServiceDeploy called %d times, want 1 (duplicate trigger not suppressed)", n)
+	}
+}
+
+// The deploy runs under a timeout. When it expires, the terminal status write
+// rode that same dead context, so the failure was never persisted and the
+// instance kept showing its previous status forever.
+func TestDeployCoreRecordsStatusOnExpiredContext(t *testing.T) {
+	eng := newMockEngine()
+	eng.deployErr = errors.New("swarm unreachable")
+	store := newFakeStore(Instance{ID: 1, Engine: "postgres", AppName: "krill-postgres-exp", Image: "postgres:17-alpine", Superuser: "postgres", SuperuserPassword: "pw"})
+	svc := New(eng, store, nil, "krill-net")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the deploy's own deadline has passed
+
+	if err := svc.deployCore(ctx, 1, io.Discard); err == nil {
+		t.Fatal("deployCore returned nil on a failing deploy")
+	}
+	if got := store.st(1); got != "error" {
+		t.Errorf("instance status = %q, want %q (a failure on an expired context must still be recorded)", got, "error")
 	}
 }

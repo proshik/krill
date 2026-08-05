@@ -105,8 +105,12 @@ type mockEngine struct {
 	crashLooping     bool
 	rollingBack      bool // swarm rolled the update back (FailureAction=Rollback)
 	updateInProgress bool // StartFirst update: only the OLD task is running
-	chownCalls       []chownCall
-	chownErr         error
+
+	baselineSnapshotFails bool // first ServiceProgress (the pre-deploy snapshot) errors
+	baselineAsked         bool
+
+	chownCalls []chownCall
+	chownErr   error
 }
 
 type chownCall struct {
@@ -143,9 +147,25 @@ func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState,
 // counts only NEW (non-baseline) tasks. updateInProgress models the situation
 // the convergence fix targets — the old StartFirst task still running while
 // the new one starts (ServiceState would report Running=1 here).
-func (m *mockEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+func (m *mockEngine) ServiceProgress(_ context.Context, _ string, baseline []string) (docker.ServiceProgress, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// baselineSnapshotFails models a transient failure of the pre-deploy task
+	// snapshot, then answers baseline-relative like the real engine: the old
+	// task "t-old" counts as new only when the baseline is missing — which is
+	// exactly how a swallowed snapshot error turns into instant false success.
+	if m.baselineSnapshotFails {
+		if !m.baselineAsked {
+			m.baselineAsked = true
+			return docker.ServiceProgress{}, errors.New("task list unavailable")
+		}
+		for _, id := range baseline {
+			if id == "t-old" {
+				return docker.ServiceProgress{Found: true, Desired: 1, Running: 0, UpdateState: "updating", TaskIDs: []string{"t-old"}}, nil
+			}
+		}
+		return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t-old"}}, nil
+	}
 	switch {
 	case m.rollingBack:
 		return docker.ServiceProgress{Found: true, Desired: 1, Running: 0, UpdateState: "rollback_started", TaskIDs: []string{"t-old"}}, nil
@@ -653,6 +673,34 @@ func TestDeployUpdateDoesNotConvergeOnOldTask(t *testing.T) {
 	waitFor(t, func() bool { return st.depStatus(id) == "done" })
 	if got := st.appStatus(1); got != StatusDeploying {
 		t.Errorf("app status = %q, want %q (update in flight must not read as converged)", got, StatusDeploying)
+	}
+}
+
+// The pre-deploy task snapshot is what keeps a rolling update from reporting
+// instant success on the old StartFirst task. Its error was swallowed, leaving
+// the baseline empty — silently restoring the very bug the baseline exists to
+// prevent: the deploy reports "done" while the old version is still serving.
+// A snapshot that cannot be taken must fail the deploy instead.
+func TestDeployBaselineSnapshotFailureFailsDeploy(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	eng := &mockEngine{baselineSnapshotFails: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	// fakeStore records a deployment's status only when it finishes, so wait for
+	// a terminal value rather than for "not running".
+	waitFor(t, func() bool { s := st.depStatus(id); return s == "done" || s == "error" })
+	if got := st.depStatus(id); got != "error" {
+		t.Errorf("deployment status = %q, want %q (a lost baseline must not report success)", got, "error")
+	}
+	if got := st.appStatus(1); got == StatusRunning {
+		t.Errorf("app status = %q: deploy reported success without converging", got)
 	}
 }
 

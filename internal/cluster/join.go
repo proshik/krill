@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -28,6 +29,13 @@ type JoinSpec struct {
 // — never user-supplied free text — so there is no remote-command injection.
 func joinCommand(token, managerAddr string) string {
 	return fmt.Sprintf("docker swarm join --token %s %s", token, managerAddr)
+}
+
+// leaveCommand is the EXACT remote command run to undo a join. --force is
+// required: the node is already a swarm member, and a plain leave refuses.
+// Nothing is interpolated, so there is no remote-command injection.
+func leaveCommand() string {
+	return "docker swarm leave --force"
 }
 
 // hostKeyMatches implements accept-new: an empty stored key is accepted (and the
@@ -77,6 +85,38 @@ func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
 		return nil
 	}
 	return sshDial(spec, cb, timeout)
+}
+
+// Leave makes the worker leave the swarm again. It compensates a join whose
+// bookkeeping failed afterwards: without it the node stays a swarm member that
+// Krill has no row for — invisible in the UI and unremovable through it.
+// spec.HostKey is expected to be set (the join just learned it), so this
+// verifies strictly rather than accepting on first use.
+func Leave(ctx context.Context, spec JoinSpec) error {
+	cl, err := DialVerified(spec, 0)
+	if err != nil {
+		return fmt.Errorf("ssh dial: %w", err)
+	}
+	defer cl.Close()
+	sess, err := cl.NewSession()
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+	var buf bytes.Buffer
+	sess.Stdout, sess.Stderr = &buf, &buf
+	done := make(chan error, 1)
+	go func() { done <- sess.Run(leaveCommand()) }()
+	select {
+	case <-ctx.Done():
+		_ = sess.Close()
+		return fmt.Errorf("swarm leave: %w", ctx.Err())
+	case rerr := <-done:
+		if rerr != nil {
+			return fmt.Errorf("swarm leave: %w (%s)", rerr, strings.TrimSpace(buf.String()))
+		}
+	}
+	return nil
 }
 
 // Join SSHes into the worker, verifies/records the host key (accept-new), and

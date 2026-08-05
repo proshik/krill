@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -103,18 +104,33 @@ func parseInstancePort(v string) (port *int32, ok bool) {
 // the manager and share one port namespace — CountDBInstancesByExternalPort
 // checks both columns) or an app's raw published TCP port. Used when creating
 // a new instance (no row of its own yet to exclude).
-func (s *Server) dbInstancePortInUse(ctx context.Context, port int32) bool {
-	instN, _ := s.q.CountDBInstancesByExternalPort(ctx, &port)
-	apN, _ := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
-	return instN+apN > 0
+// A query failure is reported, never swallowed: treating it as "free" lets two
+// instances claim the same host port, and the collision only surfaces later as
+// a service that cannot publish.
+func (s *Server) dbInstancePortInUse(ctx context.Context, port int32) (bool, error) {
+	instN, err := s.q.CountDBInstancesByExternalPort(ctx, &port)
+	if err != nil {
+		return false, fmt.Errorf("count db instances on port %d: %w", port, err)
+	}
+	apN, err := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
+	if err != nil {
+		return false, fmt.Errorf("count app ports on port %d: %w", port, err)
+	}
+	return instN+apN > 0, nil
 }
 
 // dbInstancePortInUseByOther is dbInstancePortInUse excluding selfID's own
 // row — used when editing an existing instance's ports.
-func (s *Server) dbInstancePortInUseByOther(ctx context.Context, port int32, selfID int64) bool {
-	instN, _ := s.q.CountOtherDBInstancesByExternalPort(ctx, db.CountOtherDBInstancesByExternalPortParams{ExternalPort: &port, ID: selfID})
-	apN, _ := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
-	return instN+apN > 0
+func (s *Server) dbInstancePortInUseByOther(ctx context.Context, port int32, selfID int64) (bool, error) {
+	instN, err := s.q.CountOtherDBInstancesByExternalPort(ctx, db.CountOtherDBInstancesByExternalPortParams{ExternalPort: &port, ID: selfID})
+	if err != nil {
+		return false, fmt.Errorf("count other db instances on port %d: %w", port, err)
+	}
+	apN, err := s.q.CountAppPortsByHostPort(ctx, db.CountAppPortsByHostPortParams{HostPort: port, Protocol: "tcp"})
+	if err != nil {
+		return false, fmt.Errorf("count app ports on port %d: %w", port, err)
+	}
+	return instN+apN > 0, nil
 }
 
 func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
@@ -135,9 +151,17 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_external_port")
 		return
 	}
-	if extPort != nil && s.dbInstancePortInUse(r.Context(), *extPort) {
-		s.flashErrT(w, r, "flash.err.external_port_in_use")
-		return
+	if extPort != nil {
+		inUse, perr := s.dbInstancePortInUse(r.Context(), *extPort)
+		if perr != nil {
+			logFrom(r).Error("createDBInstance: external port conflict check failed", "err", perr, "port", *extPort)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		if inUse {
+			s.flashErrT(w, r, "flash.err.external_port_in_use")
+			return
+		}
 	}
 	// console_external_port is minio's second target (data + console pair) —
 	// the create form only submits it when engine=minio (JS-revealed field);
@@ -148,9 +172,17 @@ func (s *Server) createDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_console_port")
 		return
 	}
-	if consolePort != nil && s.dbInstancePortInUse(r.Context(), *consolePort) {
-		s.flashErrT(w, r, "flash.err.console_port_in_use")
-		return
+	if consolePort != nil {
+		inUse, perr := s.dbInstancePortInUse(r.Context(), *consolePort)
+		if perr != nil {
+			logFrom(r).Error("createDBInstance: console port conflict check failed", "err", perr, "port", *consolePort)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		if inUse {
+			s.flashErrT(w, r, "flash.err.console_port_in_use")
+			return
+		}
 	}
 	if extPort != nil && consolePort != nil && *extPort == *consolePort {
 		s.flashErrT(w, r, "flash.err.console_port_in_use")
@@ -350,9 +382,17 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 		s.flashErrT(w, r, "flash.err.invalid_external_port")
 		return
 	}
-	if ext != nil && s.dbInstancePortInUseByOther(r.Context(), *ext, inst.ID) {
-		s.flashErrT(w, r, "flash.err.external_port_in_use")
-		return
+	if ext != nil {
+		inUse, perr := s.dbInstancePortInUseByOther(r.Context(), *ext, inst.ID)
+		if perr != nil {
+			logFrom(r).Error("setDBInstancePorts: external port conflict check failed", "err", perr, "port", *ext, "instance_id", inst.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		if inUse {
+			s.flashErrT(w, r, "flash.err.external_port_in_use")
+			return
+		}
 	}
 	// console_external_port: no current form submits this field (no engine
 	// uses it yet — it's minio-relevant, landing in a later task), so treat it
@@ -367,9 +407,17 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 		}
 		console = c
 	}
-	if console != nil && s.dbInstancePortInUseByOther(r.Context(), *console, inst.ID) {
-		s.flashErrT(w, r, "flash.err.console_port_in_use")
-		return
+	if console != nil {
+		inUse, perr := s.dbInstancePortInUseByOther(r.Context(), *console, inst.ID)
+		if perr != nil {
+			logFrom(r).Error("setDBInstancePorts: console port conflict check failed", "err", perr, "port", *console, "instance_id", inst.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		if inUse {
+			s.flashErrT(w, r, "flash.err.console_port_in_use")
+			return
+		}
 	}
 	if ext != nil && console != nil && *ext == *console {
 		s.flashErrT(w, r, "flash.err.console_port_in_use")

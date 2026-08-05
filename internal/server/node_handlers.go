@@ -164,6 +164,18 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 		SshKey: secret.Enc(key), HostKey: hostKey, SwarmNodeID: "",
 	})
 	if cerr != nil {
+		// The node is already in the swarm but has no row: it would be invisible
+		// in the UI and unremovable through it. Undo the join.
+		lctx, lcancel := context.WithTimeout(context.WithoutCancel(r.Context()), 60*time.Second)
+		defer lcancel()
+		if lerr := cluster.Leave(lctx, cluster.JoinSpec{
+			Host: host, Port: port, User: user, PrivateKey: []byte(key), HostKey: hostKey,
+		}); lerr != nil {
+			logFrom(r).Error("addNode: could not undo the swarm join after a failed row insert — the node is in the swarm with no Krill row; run 'docker swarm leave --force' on it",
+				"err", lerr, "host", host)
+		} else {
+			logFrom(r).Info("addNode: swarm join rolled back after a failed row insert", "host", host)
+		}
 		logFrom(r).Error("addNode: create node row failed", "err", cerr, "name", name)
 		s.flashErrErr(w, r, "flash.err.node_join", cerr)
 		return
@@ -175,11 +187,19 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	if nodes, nerr := s.engine.Nodes(r.Context()); nerr == nil {
 		for _, n := range nodes {
 			if n.Addr == host || n.Hostname == host {
-				_ = s.q.SetClusterNodeSwarmID(r.Context(), db.SetClusterNodeSwarmIDParams{ID: row.ID, SwarmNodeID: n.ID})
-				resolved = true
+				// A swallowed failure here leaves swarm_node_id empty while
+				// claiming the node resolved — the row then looks healthy but is
+				// un-removable via the UI and invisible to cross-node exec.
+				if serr := s.q.SetClusterNodeSwarmID(r.Context(), db.SetClusterNodeSwarmIDParams{ID: row.ID, SwarmNodeID: n.ID}); serr != nil {
+					logFrom(r).Error("addNode: persist swarm id failed", "err", serr, "id", row.ID, "swarm_node_id", n.ID)
+				} else {
+					resolved = true
+				}
 				break
 			}
 		}
+	} else {
+		logFrom(r).Error("addNode: list swarm nodes failed, cannot resolve swarm id", "err", nerr, "host", host)
 	}
 	if !resolved {
 		logFrom(r).Warn("addNode: joined node not matched to a swarm ID (Addr/hostname mismatch?)", "host", host, "id", row.ID)

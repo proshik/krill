@@ -48,6 +48,25 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 	return i, err
 }
 
+const failOrphanedDeployments = `-- name: FailOrphanedDeployments :execrows
+UPDATE deployments
+SET status = 'error',
+    error_message = 'interrupted: krill restarted while this deploy was running',
+    finished_at = now()
+WHERE status = 'running'
+`
+
+// Reconcile deploys that were in flight when the process died: nothing will
+// ever finish them, so they read as permanently running in the history. Safe to
+// run at startup only — a just-booted control plane has no deploy in flight.
+func (q *Queries) FailOrphanedDeployments(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, failOrphanedDeployments)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishDeployment = `-- name: FinishDeployment :exec
 UPDATE deployments
 SET status = $2, image_tag = $3, error_message = $4, log = $5, finished_at = now()

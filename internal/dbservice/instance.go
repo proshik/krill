@@ -9,6 +9,7 @@ import (
 
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 // Instance — a DBMS server (org-level): one Swarm service on a chosen node,
@@ -78,7 +79,16 @@ func RedisExternalURL(inst Instance, host string) string {
 // HTTP request (which returns immediately with a redirect) so the deploy
 // outlives it.
 func (s *Service) DeployInstance(id int64) {
+	// One deploy per instance at a time: a double-clicked Deploy button would
+	// otherwise race two ServiceDeploy calls and two status writes, and the
+	// loser's outcome would overwrite the winner's.
+	lock := oplock.DBInstanceDeploy(id)
+	if !oplock.TryAcquire(lock) {
+		slog.Warn("db instance deploy already in progress, ignoring duplicate trigger", "instance_id", id)
+		return
+	}
 	go func() {
+		defer oplock.Release(lock)
 		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)
 		defer cancel()
 		s.deployInstance(ctx, id)
@@ -100,6 +110,11 @@ func (s *Service) deployInstance(ctx context.Context, id int64) {
 // setting status running/error. Extracted from deployInstance so the migration
 // job can redeploy inside its own log feed.
 func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error {
+	// Terminal status writes must outlive ctx: a deploy that trips its own
+	// timeout (or is cancelled by shutdown) would otherwise fail to persist the
+	// outcome, leaving the instance showing its previous status forever.
+	stCtx := context.WithoutCancel(ctx)
+
 	inst, err := s.store.GetInstance(ctx, id)
 	if err != nil {
 		slog.Error("get db instance", "err", err)
@@ -109,18 +124,18 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 	if err := s.engine.ImagePull(ctx, inst.Image, out); err != nil {
 		fmt.Fprintf(out, "❌ pull failed: %v\n", err)
 		slog.Error("db instance deploy: image pull failed", "err", err, "instance_id", id, "image", inst.Image)
-		_ = s.store.SetInstanceStatus(ctx, id, "error")
+		_ = s.store.SetInstanceStatus(stCtx, id, "error")
 		return err
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
 	if err := s.engine.ServiceDeploy(ctx, instanceSpec(inst, s.network)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
-		_ = s.store.SetInstanceStatus(ctx, id, "error")
+		_ = s.store.SetInstanceStatus(stCtx, id, "error")
 		return err
 	}
 	fmt.Fprintf(out, "✅ deployed %s\n", inst.AppName)
-	_ = s.store.SetInstanceStatus(ctx, id, "running")
+	_ = s.store.SetInstanceStatus(stCtx, id, "running")
 	if err := s.reconcileProxy(ctx, inst); err != nil {
 		fmt.Fprintf(out, "⚠ external-access proxy: %v\n", err)
 		slog.Warn("db instance: reconcile proxy failed", "err", err, "instance_id", id)

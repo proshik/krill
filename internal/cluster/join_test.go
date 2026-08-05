@@ -14,6 +14,16 @@ func TestJoinCommand(t *testing.T) {
 	}
 }
 
+// Leave undoes a join whose bookkeeping failed. --force is required because the
+// node is already a swarm member and would otherwise refuse to leave.
+func TestLeaveCommand(t *testing.T) {
+	got := leaveCommand()
+	want := "docker swarm leave --force"
+	if got != want {
+		t.Fatalf("leaveCommand = %q, want %q", got, want)
+	}
+}
+
 func TestHostKeyMatches(t *testing.T) {
 	if !hostKeyMatches("", "AAAA") {
 		t.Error("empty stored key must be accepted (accept-new)")

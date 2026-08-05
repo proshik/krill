@@ -3,7 +3,10 @@
 // database inside that instance) across packages without import cycles.
 package oplock
 
-import "sync"
+import (
+	"strconv"
+	"sync"
+)
 
 var (
 	mu   sync.Mutex
@@ -39,3 +42,9 @@ func Held(name string) bool {
 // DBInstance is the lock name for a DB instance, keyed by its unique AppName
 // (both dbservice and backup have it without extra queries).
 func DBInstance(appName string) string { return "dbinst:" + appName }
+
+// DBInstanceDeploy serialises deploys of one DB instance. Keyed by row id
+// because the trigger has the id before it has loaded the row — and separate
+// from DBInstance so a migration, which redeploys internally, is not blocked by
+// its own deploy.
+func DBInstanceDeploy(id int64) string { return "dbinst-deploy:" + strconv.FormatInt(id, 10) }

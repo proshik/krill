@@ -12,6 +12,71 @@ import (
 	"github.com/proshik/krill/internal/testutil"
 )
 
+// A deploy in flight when the process dies leaves its row status='running'
+// forever: nothing ever finishes it, so the history shows a deploy that never
+// ends and the 2s-polled list spins on it. Startup must reconcile those rows —
+// no deploy can be in flight in a process that has just booted.
+func TestFailOrphanedDeployments(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "orph@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-orph", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "P", Slug: "p-orph", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.orph", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+
+	orphan, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	if orphan.Status != "running" {
+		t.Fatalf("fixture precondition: new deployment status = %q, want running", orphan.Status)
+	}
+	finished, _ := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"})
+	if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{
+		ID: finished.ID, Status: "done", ImageTag: "nginx:alpine", ErrorMessage: "", Log: "ok",
+	}); err != nil {
+		t.Fatalf("finish deployment: %v", err)
+	}
+
+	s := NewDBStore(q)
+	n, err := s.FailOrphanedDeployments(ctx)
+	if err != nil {
+		t.Fatalf("FailOrphanedDeployments: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("reconciled %d rows, want 1", n)
+	}
+
+	got, err := q.GetDeployment(ctx, orphan.ID)
+	if err != nil {
+		t.Fatalf("get orphan: %v", err)
+	}
+	if got.Status != "error" {
+		t.Errorf("orphan status = %q, want error", got.Status)
+	}
+	if got.ErrorMessage == "" {
+		t.Error("orphan has no error message explaining the interruption")
+	}
+	if !got.FinishedAt.Valid {
+		t.Error("orphan finished_at not set: the row still reads as in flight")
+	}
+
+	// An already-finished deploy must not be touched.
+	after, _ := q.GetDeployment(ctx, finished.ID)
+	if after.Status != "done" || after.ErrorMessage != "" {
+		t.Errorf("finished deploy was rewritten: status=%q err=%q", after.Status, after.ErrorMessage)
+	}
+}
+
 // A linked database whose stored password cannot be decrypted (rotated or
 // missing KRILL_SECRET_KEY) must fail the deploy. Injecting the link anyway
 // ships the app a connection string built from a bogus password: the app boots,

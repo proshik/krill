@@ -127,6 +127,15 @@ func run() error {
 	notifyStore := notify.NewDBStore(q)
 	notifySvc := notify.New(notifyStore)
 
+	// Deploys interrupted by a crash or a kill -9 are still marked 'running' and
+	// nothing will ever finish them. Reconcile before the worker starts: a
+	// just-booted process owns no in-flight deploy.
+	if n, err := store.FailOrphanedDeployments(ctx); err != nil {
+		slog.Error("could not reconcile interrupted deployments", "err", err)
+	} else if n > 0 {
+		slog.Warn("marked interrupted deployments as failed", "count", n)
+	}
+
 	dep := deploy.New(engine, b, store, hub, cfg.Network)
 	dep.SetNotifier(notifySvc)
 	dep.Start(ctx)

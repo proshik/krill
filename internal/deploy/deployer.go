@@ -269,10 +269,20 @@ func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
 	// satisfy it (it kept redeploys reporting instant false success).
 	var baseline []string
 	if err == nil {
-		if prev, perr := d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil); perr == nil && prev.Found {
-			baseline = prev.TaskIDs
+		// A snapshot we cannot take is not an empty snapshot: an empty baseline
+		// makes the old StartFirst task count as new, so convergence would be
+		// satisfied instantly by the version we are replacing. Fail the deploy
+		// rather than report a success nobody verified. (prev.Found == false is
+		// legitimate — the service does not exist yet on a first deploy.)
+		prev, perr := d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil)
+		if perr != nil {
+			err = fmt.Errorf("snapshot running tasks before deploy: %w", perr)
+		} else {
+			if prev.Found {
+				baseline = prev.TaskIDs
+			}
+			err = d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 		}
-		err = d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 	}
 
 	if err != nil {

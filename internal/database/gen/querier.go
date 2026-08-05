@@ -78,6 +78,10 @@ type Querier interface {
 	DeleteSession(ctx context.Context, token string) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
+	// Reconcile deploys that were in flight when the process died: nothing will
+	// ever finish them, so they read as permanently running in the history. Safe to
+	// run at startup only — a just-booted control plane has no deploy in flight.
+	FailOrphanedDeployments(ctx context.Context) (int64, error)
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)
 	GetApplication(ctx context.Context, id int64) (Application, error)

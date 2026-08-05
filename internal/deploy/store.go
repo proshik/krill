@@ -236,6 +236,15 @@ func (s *DBStore) ClearOldDeploymentLogs(ctx context.Context) error {
 	return s.q.ClearOldDeploymentLogs(ctx)
 }
 
+// FailOrphanedDeployments marks deploys left mid-flight by a crash or a kill -9
+// as failed, returning how many rows it reconciled. Call it once at startup,
+// before the deploy worker runs: a process that has just booted owns no
+// in-flight deploy, so every 'running' row is a leftover that would otherwise
+// spin in the history forever.
+func (s *DBStore) FailOrphanedDeployments(ctx context.Context) (int64, error) {
+	return s.q.FailOrphanedDeployments(ctx)
+}
+
 func strDeref(p *string) string {
 	if p == nil {
 		return ""

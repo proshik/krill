@@ -22,3 +22,13 @@ WHERE id = $1;
 -- name: ClearOldDeploymentLogs :exec
 UPDATE deployments SET log = ''
 WHERE finished_at IS NOT NULL AND finished_at < now() - interval '1 hour' AND log <> '';
+
+-- name: FailOrphanedDeployments :execrows
+-- Reconcile deploys that were in flight when the process died: nothing will
+-- ever finish them, so they read as permanently running in the history. Safe to
+-- run at startup only — a just-booted control plane has no deploy in flight.
+UPDATE deployments
+SET status = 'error',
+    error_message = 'interrupted: krill restarted while this deploy was running',
+    finished_at = now()
+WHERE status = 'running';
