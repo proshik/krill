@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -591,7 +592,7 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 		return err
 	}
 	cid := resp.ID
-	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+	defer removeSidecar(ctx, cli, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -645,7 +646,7 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 		return err
 	}
 	cid := resp.ID
-	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+	defer removeSidecar(ctx, cli, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -703,7 +704,7 @@ func (e *dockerEngine) VolumeChown(ctx context.Context, volumeName string, uid, 
 		return err
 	}
 	cid := resp.ID
-	defer cli.ContainerRemove(ctx, cid, container.RemoveOptions{Force: true})
+	defer removeSidecar(ctx, cli, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -815,6 +816,21 @@ func (e *dockerEngine) ExecInteractive(ctx context.Context, serviceName string, 
 	return &dockerExecSession{cli: cli, att: att, execID: idResp.ID, release: release}, nil
 }
 
+// sidecarCleanupTimeout bounds removal of a helper container.
+const sidecarCleanupTimeout = 30 * time.Second
+
+// removeSidecar force-removes a helper container on a context of its own. The
+// operation that created it may have died precisely because its context
+// expired, and a removal riding that same context cannot run — leaking the
+// container (and its volume mount) on every timeout.
+func removeSidecar(ctx context.Context, cli client.APIClient, cid string) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarCleanupTimeout)
+	defer cancel()
+	if err := cli.ContainerRemove(rctx, cid, container.RemoveOptions{Force: true}); err != nil {
+		slog.Warn("could not remove helper container", "container", cid, "err", err)
+	}
+}
+
 func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error {
 	cli, containerID, release, err := e.clientForContainer(ctx, serviceName)
 	if err != nil {
@@ -842,9 +858,28 @@ func (e *dockerEngine) Exec(ctx context.Context, serviceName string, cmd []strin
 			_ = att.CloseWrite()
 		}()
 	}
+	// StdCopy blocks on the hijacked connection and knows nothing about ctx, so
+	// a timeout (a long pg_dump, a stalled restore) left this goroutine, the
+	// attach, the SSH tunnel and the in-container process all running. Closing
+	// the connection on cancellation unblocks it.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			att.Close()
+		case <-done:
+		}
+	}()
 	var stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(stdout, &stderr, att.Reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("exec %s: %w", serviceName, ctxErr)
+		}
 		return err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("exec %s: %w", serviceName, ctxErr)
 	}
 	insp, err := cli.ContainerExecInspect(ctx, idResp.ID)
 	if err != nil {

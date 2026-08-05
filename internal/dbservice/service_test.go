@@ -26,6 +26,9 @@ type mockEngine struct {
 	// "in flight" so a second trigger can be observed racing it.
 	pullGate  chan struct{}
 	pullStart chan struct{} // closed once, when the first ImagePull is entered
+
+	execCalls int
+	execFail  bool // first Exec fails, later ones succeed
 }
 
 func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
@@ -112,8 +115,30 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
-func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
+// Exec records each invocation and honours the context the way the real engine
+// does (a dead context cannot reach the daemon). execFail, when set, fails the
+// FIRST call only — the shape of "provisioning failed halfway".
+func (m *mockEngine) Exec(ctx context.Context, _ string, _ []string, _ []string, _ io.Reader, _ io.Writer) error {
+	// A dead context never reaches the daemon, so such a call is NOT recorded:
+	// execCount answers "how many statements actually ran".
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.execCalls++
+	first := m.execCalls == 1
+	fail := m.execFail
+	m.mu.Unlock()
+	if fail && first {
+		return errors.New("provisioning step failed")
+	}
 	return nil
+}
+
+func (m *mockEngine) execCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.execCalls
 }
 func (m *mockEngine) ExecInteractive(context.Context, string, []string) (docker.ExecSession, error) {
 	return nil, errors.New("exec not supported")
@@ -410,5 +435,30 @@ func TestDeployCoreRecordsStatusOnExpiredContext(t *testing.T) {
 	}
 	if got := store.st(1); got != "error" {
 		t.Errorf("instance status = %q, want %q (a failure on an expired context must still be recorded)", got, "error")
+	}
+}
+
+// Provisioning compensates a mid-way failure by dropping whatever got created.
+// That compensation ran on the SAME context that just failed, so when the
+// failure WAS the context dying (an aborted request, a timeout) the drop could
+// not run either: the half-created user and database stayed behind, and as the
+// code's own comment notes, every retry then fails forever at CREATE USER.
+func TestProvisionCompensationRunsOnDeadContext(t *testing.T) {
+	eng := newMockEngine()
+	store := newFakeStore(Instance{ID: 1, Engine: "postgres", AppName: "krill-postgres-prov", Superuser: "postgres", SuperuserPassword: "pw"})
+	svc := New(eng, store, nil, "krill-net")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the request the provisioning rode on is gone
+
+	err := svc.ProvisionLogicalDB(ctx, Instance{AppName: "krill-postgres-prov", Superuser: "postgres", SuperuserPassword: "pw"},
+		LogicalDB{DBName: "appdb", Username: "appuser", Password: "pw"})
+	if err == nil {
+		t.Fatal("expected provisioning to fail on a dead context")
+	}
+	// The CREATE died with the request; the compensating DROP must still reach
+	// the daemon, on a context of its own.
+	if n := eng.execCount(); n < 1 {
+		t.Errorf("%d statements reached the daemon: the compensating drop died with the request, leaving a half-created database behind", n)
 	}
 }

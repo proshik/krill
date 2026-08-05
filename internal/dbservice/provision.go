@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // identRe — allowed postgres identifiers we create (db names, usernames).
@@ -54,6 +55,11 @@ func dropDBSQL(dbName, username string) string {
 	return fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE);\nDROP USER IF EXISTS %q;\n", dbName, username)
 }
 
+// provisionCompensateTimeout bounds the compensating drop after a failed
+// provisioning. Short: it is a couple of DDL statements against a container
+// that was reachable moments ago.
+const provisionCompensateTimeout = 30 * time.Second
+
 // psqlExec runs statements as the instance superuser inside its container.
 func (s *Service) psqlExec(ctx context.Context, inst Instance, sqlText string, out io.Writer) error {
 	return s.engine.Exec(ctx, inst.AppName,
@@ -97,8 +103,15 @@ func (s *Service) ProvisionLogicalDB(ctx context.Context, inst Instance, ldb Log
 		// at CREATE USER. dropDBSQL runs DROP DATABASE before DROP USER (both IF
 		// EXISTS, so it's still a no-op for failure points where objects were never
 		// created), which is safe to compensate every failure point above.
-		if cerr := s.psqlExec(ctx, inst, dropDBSQL(ldb.DBName, ldb.Username), io.Discard); cerr != nil {
-			slog.Warn("logical db provisioning compensation failed", "db_name", ldb.DBName, "user", ldb.Username, "err", cerr)
+		// Detached: the failure is often the context itself dying (an aborted
+		// request, a timeout), and compensation riding that same context could
+		// not run at all — leaving exactly the half-created state described
+		// above, which no retry can recover from.
+		cctx, ccancel := context.WithTimeout(context.WithoutCancel(ctx), provisionCompensateTimeout)
+		defer ccancel()
+		if cerr := s.psqlExec(cctx, inst, dropDBSQL(ldb.DBName, ldb.Username), io.Discard); cerr != nil {
+			slog.Error("logical db provisioning compensation failed — a half-created database/user may remain and block retries",
+				"db_name", ldb.DBName, "user", ldb.Username, "err", cerr)
 		}
 		return fmt.Errorf("provision database %s: %w: %s", ldb.DBName, err, strings.TrimSpace(buf.String()))
 	}
