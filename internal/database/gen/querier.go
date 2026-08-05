@@ -126,6 +126,8 @@ type Querier interface {
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
+	// Batched form for the topology view (one query instead of one per app).
+	ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error)
 	// Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
 	// column — for the deploy-history list, which is polled every 2s and never
 	// renders the log. Use GetDeployment for the single-deployment detail/log view.
@@ -133,9 +135,14 @@ type Querier interface {
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)
+	// Batched form for the topology view (one query instead of one per app).
+	ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]Domain, error)
 	ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsRow, error)
 	ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
+	// Batched form for the topology view, which needs every environment of an
+	// organization at once (one query instead of one per project).
+	ListEnvironmentsByProjectIDs(ctx context.Context, dollar_1 []int64) ([]Environment, error)
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
@@ -149,7 +156,6 @@ type Querier interface {
 	// loop). DISTINCT on environments because the app join multiplies env rows.
 	ListProjectsWithCounts(ctx context.Context, organizationID int64) ([]ListProjectsWithCountsRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
-	ListUsers(ctx context.Context) ([]User, error)
 	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
 	ListVolumesByApplication(ctx context.Context, applicationID int64) ([]AppVolume, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.

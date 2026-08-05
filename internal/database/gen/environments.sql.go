@@ -87,3 +87,35 @@ func (q *Queries) ListEnvironments(ctx context.Context, projectID int64) ([]Envi
 	}
 	return items, nil
 }
+
+const listEnvironmentsByProjectIDs = `-- name: ListEnvironmentsByProjectIDs :many
+SELECT id, project_id, name, slug, created_at FROM environments WHERE project_id = ANY($1::bigint[]) ORDER BY created_at
+`
+
+// Batched form for the topology view, which needs every environment of an
+// organization at once (one query instead of one per project).
+func (q *Queries) ListEnvironmentsByProjectIDs(ctx context.Context, dollar_1 []int64) ([]Environment, error) {
+	rows, err := q.db.Query(ctx, listEnvironmentsByProjectIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Environment
+	for rows.Next() {
+		var i Environment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Slug,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

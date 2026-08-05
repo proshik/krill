@@ -91,36 +91,6 @@ func (q *Queries) GetUserIsAdmin(ctx context.Context, id int64) (bool, error) {
 	return is_admin, err
 }
 
-const listUsers = `-- name: ListUsers :many
-SELECT id, email, password_hash, created_at, is_admin FROM users ORDER BY created_at
-`
-
-func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := q.db.Query(ctx, listUsers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []User
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.PasswordHash,
-			&i.CreatedAt,
-			&i.IsAdmin,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const setUserAdmin = `-- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2 WHERE id = $1
 `

@@ -108,13 +108,22 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	type envInfo struct{ Env, Proj string }
 	envMeta := map[int64]envInfo{}
 	var envIDs []int64
+	// One query for every project's environments, not one per project: this view
+	// renders the whole org, so the per-project loop was a query per project on
+	// a page that is already fanning out to docker.
+	projName := make(map[int64]string, len(projects))
+	projIDs := make([]int64, 0, len(projects))
 	for _, p := range projects {
-		envs, err := s.q.ListEnvironments(ctx, p.ID)
+		projName[p.ID] = p.Name
+		projIDs = append(projIDs, p.ID)
+	}
+	if len(projIDs) > 0 {
+		envs, err := s.q.ListEnvironmentsByProjectIDs(ctx, projIDs)
 		if err != nil {
 			return topology.Graph{}, fmt.Errorf("topology: list environments failed: %w", err)
 		}
 		for _, e := range envs {
-			envMeta[e.ID] = envInfo{Env: e.Name, Proj: p.Name}
+			envMeta[e.ID] = envInfo{Env: e.Name, Proj: projName[e.ProjectID]}
 			envIDs = append(envIDs, e.ID)
 		}
 	}
@@ -123,6 +132,30 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		apps, err = s.q.ListApplicationsByEnvironmentIDs(ctx, envIDs)
 		if err != nil {
 			return topology.Graph{}, fmt.Errorf("topology: list applications failed: %w", err)
+		}
+	}
+	// Links and domains for every app in one query each (previously two queries
+	// per application).
+	appIDs := make([]int64, 0, len(apps))
+	for _, a := range apps {
+		appIDs = append(appIDs, a.ID)
+	}
+	linksByApp := map[int64][]db.ListDBLinksByApplicationIDsRow{}
+	domsByApp := map[int64][]db.Domain{}
+	if len(appIDs) > 0 {
+		rows, err := s.q.ListDBLinksByApplicationIDs(ctx, appIDs)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list db links failed: %w", err)
+		}
+		for _, l := range rows {
+			linksByApp[l.ApplicationID] = append(linksByApp[l.ApplicationID], l)
+		}
+		drows, err := s.q.ListDomainsByApplicationIDs(ctx, appIDs)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list domains failed: %w", err)
+		}
+		for _, d := range drows {
+			domsByApp[d.ApplicationID] = append(domsByApp[d.ApplicationID], d)
 		}
 	}
 	for _, a := range apps {
@@ -151,11 +184,7 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			ID: sid, Kind: "app", NodeID: node, Label: a.Name, Sub: m.Proj + " / " + m.Env, Status: status,
 		})
 		// modeled app->DB links
-		modeled, err := s.q.ListDBLinksByApplication(ctx, a.ID)
-		if err != nil {
-			return topology.Graph{}, fmt.Errorf("topology: list db links failed: %w", err)
-		}
-		for _, l := range modeled {
+		for _, l := range linksByApp[a.ID] {
 			li := topology.LinkInput{From: sid, Kind: "db", VarName: l.VarName, Field: l.Field}
 			switch {
 			case l.LogicalDatabaseID != nil:
@@ -172,12 +201,8 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			dbLinks = append(dbLinks, li)
 		}
 		// ingress edges: Traefik -> app per exposed domain
-		doms, err := s.q.ListDomainsByApplication(ctx, a.ID)
-		if err != nil {
-			return topology.Graph{}, fmt.Errorf("topology: list domains failed: %w", err)
-		}
 		var hosts []string
-		for _, d := range doms {
+		for _, d := range domsByApp[a.ID] {
 			if d.Exposed {
 				hosts = append(hosts, d.Host)
 			}

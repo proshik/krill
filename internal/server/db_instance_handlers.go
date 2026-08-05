@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/dbservice/drivers"
@@ -620,7 +621,7 @@ func (s *Server) dbInstanceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appName := inst.AppName
-	release, ok := s.acquireLogSlot()
+	release, ok := s.acquireLogSlotFor(auth.UserID(r.Context()))
 	if !ok {
 		http.Error(w, "too many live log streams, try again shortly", http.StatusServiceUnavailable)
 		return

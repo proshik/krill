@@ -34,3 +34,8 @@ UPDATE domains SET basic_auth_users = $2 WHERE id = $1;
 
 -- name: SetDomainAllowedIPs :exec
 UPDATE domains SET allowed_ips = $2 WHERE id = $1;
+
+-- name: ListDomainsByApplicationIDs :many
+-- Batched form for the topology view (one query instead of one per app).
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+FROM domains WHERE application_id = ANY($1::bigint[]) ORDER BY application_id, is_primary DESC, created_at;

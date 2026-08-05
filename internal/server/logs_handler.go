@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/coder/websocket"
+	"github.com/proshik/krill/internal/auth"
 )
 
 func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
@@ -12,7 +13,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	release, ok := s.acquireLogSlot()
+	release, ok := s.acquireLogSlotFor(auth.UserID(r.Context()))
 	if !ok {
 		http.Error(w, "too many live log streams, try again shortly", http.StatusServiceUnavailable)
 		return

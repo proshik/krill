@@ -57,10 +57,20 @@ type Server struct {
 	// follow stream + goroutines). A buffered channel used as a counting
 	// semaphore so one member can't exhaust the daemon by opening thousands.
 	logSem chan struct{}
+
+	// logSeats counts each user's open streams. The host-wide cap alone let one
+	// member take every slot and leave every other tenant unable to view logs,
+	// so each user also gets a bounded share of it.
+	logSeatMu sync.Mutex
+	logSeats  map[int64]int
 }
 
 // maxLiveLogStreams bounds concurrent docker log-follow WebSockets host-wide.
 const maxLiveLogStreams = 24
+
+// maxLiveLogStreamsPerUser bounds one user's share of that pool: enough for a
+// few tabs, far short of starving other tenants.
+const maxLiveLogStreamsPerUser = 6
 
 type monCacheEntry struct {
 	data []byte
@@ -84,6 +94,42 @@ func (s *Server) acquireLogSlot() (release func(), ok bool) {
 	default:
 		return func() {}, false
 	}
+}
+
+// acquireLogSlotFor is acquireLogSlot bounded by the user's own share, so a
+// single member cannot occupy the whole host-wide pool and deny every other
+// tenant their logs. release is idempotent-safe to call once.
+func (s *Server) acquireLogSlotFor(userID int64) (release func(), ok bool) {
+	s.logSeatMu.Lock()
+	if s.logSeats == nil {
+		s.logSeats = map[int64]int{}
+	}
+	if s.logSeats[userID] >= maxLiveLogStreamsPerUser {
+		s.logSeatMu.Unlock()
+		return func() {}, false
+	}
+	s.logSeats[userID]++
+	s.logSeatMu.Unlock()
+
+	releaseSeat := func() {
+		s.logSeatMu.Lock()
+		defer s.logSeatMu.Unlock()
+		if n := s.logSeats[userID] - 1; n > 0 {
+			s.logSeats[userID] = n
+		} else {
+			delete(s.logSeats, userID) // keep the map from growing with every user ever
+		}
+	}
+
+	rel, ok := s.acquireLogSlot()
+	if !ok {
+		releaseSeat()
+		return func() {}, false
+	}
+	return func() {
+		rel()
+		releaseSeat()
+	}, true
 }
 
 // SetBackups wires the backup service and a reload hook (re-reads the cron

@@ -150,6 +150,43 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 	return items, nil
 }
 
+const listDomainsByApplicationIDs = `-- name: ListDomainsByApplicationIDs :many
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+FROM domains WHERE application_id = ANY($1::bigint[]) ORDER BY application_id, is_primary DESC, created_at
+`
+
+// Batched form for the topology view (one query instead of one per app).
+func (q *Queries) ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]Domain, error) {
+	rows, err := q.db.Query(ctx, listDomainsByApplicationIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Domain
+	for rows.Next() {
+		var i Domain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.Host,
+			&i.Tls,
+			&i.IsPrimary,
+			&i.CreatedAt,
+			&i.Exposed,
+			&i.Paths,
+			&i.BasicAuthUsers,
+			&i.AllowedIps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setDomainAllowedIPs = `-- name: SetDomainAllowedIPs :exec
 UPDATE domains SET allowed_ips = $2 WHERE id = $1
 `

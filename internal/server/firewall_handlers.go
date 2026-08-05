@@ -27,8 +27,9 @@ var errAdvertiseAddrNotIP = errors.New("advertise address does not parse as an I
 
 // clusterIPs returns every node's public IP (the control-plane advertise
 // address plus every worker's ssh_host) — the allowlist the worker nftables
-// ruleset trusts for cluster-scoped swarm traffic. A worker's ssh_host that
-// doesn't parse as an IP is skipped (best-effort), but a non-empty, unparsable
+// ruleset trusts for cluster-scoped swarm traffic. A worker's ssh_host given as
+// a DNS name is resolved (an unresolvable one is a hard error: a node missing
+// from the allowlist is a node cut off from the cluster), and a non-empty, unparsable
 // AdvertiseAddr is a hard error: silently dropping the manager from the
 // allowlist would leave the ruleset non-empty (workers still pass the
 // empty-guard) while missing the one IP every worker needs to keep reaching
@@ -49,13 +50,28 @@ func (s *Server) clusterIPs(r *http.Request) ([]string, error) {
 	for _, n := range rows {
 		if ip := net.ParseIP(n.SshHost); ip != nil {
 			ips = append(ips, ip.String())
+			continue
+		}
+		// A node registered by DNS name used to be skipped silently — and a node
+		// missing from the allowlist is a node cut off from swarm and overlay
+		// traffic the moment the lockdown applies. Resolve it, and refuse the
+		// lockdown outright if we cannot.
+		rctx, cancel := context.WithTimeout(r.Context(), clusterIPResolveTimeout)
+		addrs, rerr := net.DefaultResolver.LookupIPAddr(rctx, n.SshHost)
+		cancel()
+		if rerr != nil || len(addrs) == 0 {
+			return nil, fmt.Errorf("cluster node %q: cannot resolve %q to an IP (it would be locked out of the cluster): %w", n.Name, n.SshHost, rerr)
+		}
+		for _, a := range addrs {
+			ips = append(ips, a.IP.String())
 		}
 	}
 	return ips, nil
 }
 
-// firewallRunner builds a Runner that reaches the given worker over SSH using
-// its stored (encrypted) credentials.
+// clusterIPResolveTimeout bounds one DNS lookup while assembling the allowlist.
+const clusterIPResolveTimeout = 5 * time.Second
+
 // firewallRunner builds the SSH runner for a node. An undecryptable key is
 // reported rather than passed on empty: firewall Apply/Open would fail deep in
 // the SSH handshake with an error that says nothing about the encryption key.

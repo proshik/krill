@@ -144,3 +144,49 @@ func (q *Queries) ListDBLinksByApplication(ctx context.Context, applicationID in
 	}
 	return items, nil
 }
+
+const listDBLinksByApplicationIDs = `-- name: ListDBLinksByApplicationIDs :many
+SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at
+FROM app_db_links WHERE application_id = ANY($1::bigint[]) ORDER BY application_id, var_name
+`
+
+type ListDBLinksByApplicationIDsRow struct {
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	LogicalDatabaseID *int64    `json:"logical_database_id"`
+	InstanceID        *int64    `json:"instance_id"`
+	VarName           string    `json:"var_name"`
+	Scheme            string    `json:"scheme"`
+	Field             string    `json:"field"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// Batched form for the topology view (one query instead of one per app).
+func (q *Queries) ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error) {
+	rows, err := q.db.Query(ctx, listDBLinksByApplicationIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDBLinksByApplicationIDsRow
+	for rows.Next() {
+		var i ListDBLinksByApplicationIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.LogicalDatabaseID,
+			&i.InstanceID,
+			&i.VarName,
+			&i.Scheme,
+			&i.Field,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
