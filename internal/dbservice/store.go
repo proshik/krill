@@ -2,6 +2,7 @@ package dbservice
 
 import (
 	"context"
+	"fmt"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/secret"
@@ -16,10 +17,14 @@ func (s *DBStore) GetInstance(ctx context.Context, id int64) (Instance, error) {
 	if err != nil {
 		return Instance{}, err
 	}
+	pw, err := secret.Dec(r.SuperuserPassword)
+	if err != nil {
+		return Instance{}, fmt.Errorf("db instance %d superuser password: %w", r.ID, err)
+	}
 	return Instance{
 		ID: r.ID, OrganizationID: r.OrganizationID, Engine: r.Engine, Name: r.Name,
 		AppName: r.AppName, Image: r.Image, Superuser: r.Superuser,
-		SuperuserPassword: secret.Dec(r.SuperuserPassword),
+		SuperuserPassword: pw,
 		ExternalPort:      r.ExternalPort, Status: r.Status, NodeHostname: r.NodeHostname,
 		ConsoleExternalPort: r.ConsoleExternalPort,
 	}, nil

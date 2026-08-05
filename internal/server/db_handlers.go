@@ -61,7 +61,13 @@ func (s *Server) createLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.ldb_bad_ident")
 		return
 	}
-	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+	instPW, derr := secret.Dec(inst.SuperuserPassword)
+	if derr != nil {
+		logFrom(r).Error("createLogicalDatabase: instance password undecryptable", "err", derr, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.secret_undecryptable")
+		return
+	}
+	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: instPW}
 	if !s.dbsvc.InstanceRunning(r.Context(), di) {
 		s.flashErrT(w, r, "flash.err.ldb_instance_down")
 		return
@@ -149,10 +155,16 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 	base := envURL(o.ID, p.ID, e.ID) + "/databases/" + strconv.FormatInt(ld.ID, 10)
 	c := templates.LogicalDBCtx{Org: o, Role: role, Project: p, Env: e, LDB: ld, Inst: inst, Base: base}
 	di := dbservice.Instance{AppName: inst.AppName, ExternalPort: inst.ExternalPort}
-	dl := dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username, Password: secret.Dec(ld.Password)}
-	c.Internal = dbservice.PostgresURL("postgresql", di, dl)
-	if inst.ExternalPort != nil {
-		c.External = dbservice.PostgresExternalURL(di, dl, s.cfg.Host)
+	// A connection string built from an undecryptable password would be copied
+	// by the operator and silently fail to authenticate — show none instead.
+	if ldPW, derr := secret.Dec(ld.Password); derr != nil {
+		logFrom(r).Error("logicalDatabaseDetail: password undecryptable", "err", derr, "ldb_id", ld.ID)
+	} else {
+		dl := dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username, Password: ldPW}
+		c.Internal = dbservice.PostgresURL("postgresql", di, dl)
+		if inst.ExternalPort != nil {
+			c.External = dbservice.PostgresExternalURL(di, dl, s.cfg.Host)
+		}
 	}
 	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), ld.ID); err == nil {
 		c.Backups = backups
@@ -186,7 +198,13 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+	instPW, derr := secret.Dec(inst.SuperuserPassword)
+	if derr != nil {
+		logFrom(r).Error("deleteLogicalDatabase: instance password undecryptable", "err", derr, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.secret_undecryptable")
+		return
+	}
+	di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: instPW}
 	if !s.dbsvc.InstanceRunning(r.Context(), di) {
 		s.flashErrT(w, r, "flash.err.ldb_instance_down")
 		return

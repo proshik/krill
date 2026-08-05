@@ -29,7 +29,14 @@ func (s *Server) removeEnvDatabases(ctx context.Context, envID int64) {
 			slog.Error("removeEnvDatabases: instance lookup", "ldb", ld.ID, "err", err)
 			continue
 		}
-		di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: secret.Dec(inst.SuperuserPassword)}
+		instPW, derr := secret.Dec(inst.SuperuserPassword)
+		if derr != nil {
+			// Without the superuser password the DROP cannot run; skip rather
+			// than delete the row and orphan the physical database silently.
+			slog.Error("removeEnvDatabases: instance password undecryptable (physical database left in place)", "ldb", ld.ID, "instance", inst.ID, "err", derr)
+			continue
+		}
+		di := dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: instPW}
 		if err := s.dbsvc.DropLogicalDB(ctx, di, dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username}); err != nil {
 			slog.Error("removeEnvDatabases: drop logical db (physical orphan left)", "ldb", ld.ID, "db_name", ld.DbName, "err", err)
 		}

@@ -82,7 +82,13 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, i18n.T(r.Context(), "notif.test_fail"))
 		return
 	}
-	if err := s.notify.SendTest(r.Context(), secret.Dec(ch.BotToken), ch.ChatID, "Krill: test message"); err != nil {
+	botToken, derr := secret.Dec(ch.BotToken)
+	if derr != nil {
+		logFrom(r).Error("testNotification: bot token undecryptable", "err", derr, "org_id", o.ID)
+		s.flashErrT(w, r, "flash.err.secret_undecryptable")
+		return
+	}
+	if err := s.notify.SendTest(r.Context(), botToken, ch.ChatID, "Krill: test message"); err != nil {
 		logFrom(r).Info("testNotification: send failed", "org_id", o.ID) // never log the token
 		s.flashErr(w, r, i18n.T(r.Context(), "notif.test_fail"))
 		return

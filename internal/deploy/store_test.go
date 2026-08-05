@@ -8,8 +8,78 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/testutil"
 )
+
+// A linked database whose stored password cannot be decrypted (rotated or
+// missing KRILL_SECRET_KEY) must fail the deploy. Injecting the link anyway
+// ships the app a connection string built from a bogus password: the app boots,
+// fails to reach its database, and nothing points at the encryption key as the
+// cause.
+func TestGetApplicationFailsOnUndecryptableDBLinkPassword(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, err := q.CreateUser(ctx, db.CreateUserParams{Email: "rot@k.local", PasswordHash: "h"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	o, err := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-rot", OwnerID: u.ID})
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-rot", Description: ""})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	e, err := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+	if err != nil {
+		t.Fatalf("create environment: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web-rot.x", Port: 80, EnvText: "FOO=bar",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+
+	// Password encrypted under a key that is no longer the active one.
+	secret.Init("old-key")
+	encPW := secret.Enc("secretpw")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db", AppName: "krill-postgres-rot2",
+		Image: "postgres:16-alpine", Superuser: "appuser", SuperuserPassword: encPW,
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "db", DbName: "appdb", Username: "appuser", Password: encPW,
+	})
+	if err != nil {
+		t.Fatalf("create logical database: %v", err)
+	}
+	if _, err := q.CreateDBLink(ctx, db.CreateDBLinkParams{
+		ApplicationID: app.ID, LogicalDatabaseID: &ldb.ID, VarName: "DB_URL", Scheme: "postgres", Field: "url",
+	}); err != nil {
+		t.Fatalf("create db link: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got env %v", got.Env)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
+	}
+}
 
 func sp(s string) *string { return &s }
 func ip(v int32) *int32   { return &v }
@@ -354,6 +424,134 @@ func TestResolveDBLinkValueDispatchesByEngine(t *testing.T) {
 	badRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "BAD", Field: "dbname"}
 	if val, ok, rerr := s.resolveDBLinkValue(ctx, badRow); rerr != nil || ok || val != "" {
 		t.Errorf("minio unknown field: val=%q ok=%v err=%v, want (\"\", false, nil)", val, ok, rerr)
+	}
+}
+
+// A registry password that cannot be decrypted must fail the deploy. Silently
+// dropping the auth turns a private image into an anonymous pull, which fails
+// at the daemon with "manifest unknown" / "unauthorized" and looks like a
+// broken image reference rather than a key problem.
+func TestGetApplicationFailsOnUndecryptableRegistryPassword(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "reg@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-reg", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-reg", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	secret.Init("old-key")
+	encPW := secret.Enc("registry-pw")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	reg, err := q.CreateRegistry(ctx, db.CreateRegistryParams{
+		OrganizationID: o.ID, Name: "ghcr", RegistryUrl: "ghcr.io", Username: "me", Password: encPW,
+	})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "ghcr.io/me/app", Tag: "latest",
+		Domain: "web.reg", Port: 80, EnvText: "",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationRegistry(ctx, db.SetApplicationRegistryParams{ID: app.ID, RegistryID: &reg.ID}); err != nil {
+		t.Fatalf("set registry: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got RegistryAuth=%q", got.RegistryAuth)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
+	}
+}
+
+// A git token that cannot be decrypted must fail the deploy rather than fall
+// back to an anonymous clone of a private repository.
+func TestGetApplicationFailsOnUndecryptableGitToken(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "gt@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-gt", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-gt", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	secret.Init("old-key")
+	encTok := secret.Enc("ghp_secret")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	gc, err := q.CreateGitCredential(ctx, db.CreateGitCredentialParams{
+		OrganizationID: o.ID, Name: "gh", Host: "github.com", Username: "x-access-token", Token: encTok,
+	})
+	if err != nil {
+		t.Fatalf("create git credential: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.gt", Port: 80, EnvText: "",
+		SourceType: "dockerfile", GitUrl: "https://github.com/me/p.git", GitBranch: "main", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationGitCredential(ctx, db.SetApplicationGitCredentialParams{ID: app.ID, GitCredentialID: &gc.ID}); err != nil {
+		t.Fatalf("set git cred: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got GitAuth=%+v", got.GitAuth)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
+	}
+}
+
+// Build secrets that cannot be decrypted must fail the deploy: building without
+// them produces an image that is silently missing whatever they fed.
+func TestGetApplicationFailsOnUndecryptableBuildSecrets(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "bs@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-bs", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-bs", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	secret.Init("old-key")
+	encSecrets := secret.Enc("NPM_TOKEN=abc")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.bs", Port: 80, EnvText: "",
+		SourceType: "dockerfile", GitUrl: "https://github.com/me/p.git", GitBranch: "main", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.UpdateApplicationBuild(ctx, db.UpdateApplicationBuildParams{ID: app.ID, BuildArgs: "A=1", BuildSecrets: encSecrets}); err != nil {
+		t.Fatalf("update build: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got BuildSecrets=%v", got.BuildSecrets)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
 	}
 }
 

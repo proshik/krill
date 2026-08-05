@@ -223,10 +223,15 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 		if s.engine != nil {
 			c.Nodes, _ = s.engine.Nodes(r.Context())
 		}
-		if drv, ok := drivers.Registry.Get(inst.Engine); ok {
+		instPW, derr := secret.Dec(inst.SuperuserPassword)
+		if derr != nil {
+			// Leave c.Conn empty rather than render a connection string with a
+			// blank password that the operator would copy and fail to use.
+			logFrom(r).Error("dbInstanceDetail: superuser password undecryptable", "err", derr, "instance_id", inst.ID)
+		} else if drv, ok := drivers.Registry.Get(inst.Engine); ok {
 			di := drivers.Instance{
 				AppName: inst.AppName, Superuser: inst.Superuser,
-				SuperuserPassword:   secret.Dec(inst.SuperuserPassword),
+				SuperuserPassword:   instPW,
 				ExternalPort:        inst.ExternalPort,
 				ConsoleExternalPort: inst.ConsoleExternalPort,
 			}

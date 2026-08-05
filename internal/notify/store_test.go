@@ -2,6 +2,7 @@ package notify_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -43,6 +44,40 @@ func TestChannelsForOrgDecryptsToken(t *testing.T) {
 	}
 	if chans[0].BotToken != "super-token" {
 		t.Fatalf("token not decrypted: %q", chans[0].BotToken)
+	}
+}
+
+// A bot token that cannot be decrypted (key rotated or KRILL_SECRET_KEY unset)
+// must surface as an error. Handing back the channel with an empty token sends
+// every alert to Telegram with no credential: the send fails with an opaque API
+// error, nothing points at the key, and alerts silently stop arriving.
+func TestChannelsForOrgFailsOnUndecryptableToken(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "n-rot@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+
+	secret.Init("old-key")
+	encTok := secret.Enc("super-token")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	if _, err := q.UpsertNotificationChannel(ctx, db.UpsertNotificationChannelParams{
+		OrgID: o.ID, Type: "telegram", Enabled: true, BotToken: encTok, ChatID: "42",
+		NotifyDeploy: true, NotifyBackup: true, NotifyHealth: true,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	chans, err := notify.NewDBStore(q).ChannelsForOrg(ctx, o.ID)
+	if err == nil {
+		t.Fatalf("expected an error for an undecryptable token, got %+v", chans)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
 	}
 }
 

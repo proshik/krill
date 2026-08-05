@@ -42,7 +42,13 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	if !webhook.VerifyHMAC(secret.Dec(a.WebhookSecret), body, r.Header.Get("X-Hub-Signature-256")) {
+	// An undecryptable secret can never match; log why, then fall through to the
+	// same 404 as a bad signature (no capability disclosure either way).
+	hookSecret, derr := secret.Dec(a.WebhookSecret)
+	if derr != nil {
+		logFrom(r).Error("github webhook: stored secret undecryptable", "err", derr, "app_id", a.ID)
+	}
+	if !webhook.VerifyHMAC(hookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
 		logFrom(r).Warn("github webhook signature mismatch", "app_id", a.ID)
 		// 404 (not 401) so a bad signature is indistinguishable from an
 		// unknown/disabled app: the earlier webhookApp checks already 404, and a
@@ -145,7 +151,10 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 	if tok == "" {
 		tok = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	}
-	want := secret.Dec(a.WebhookSecret)
+	want, derr := secret.Dec(a.WebhookSecret)
+	if derr != nil {
+		logFrom(r).Error("deploy hook: stored secret undecryptable", "err", derr, "app_id", a.ID)
+	}
 	// An empty stored secret must never authenticate: ConstantTimeEqual("","")
 	// is true, so guard it explicitly (defence in depth — enableAutoDeploy always
 	// sets a secret, but a future path must not open a bypass).

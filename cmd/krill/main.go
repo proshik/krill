@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -206,11 +207,15 @@ func run() error {
 			ws = append(ws, metrics.Worker{
 				Name: row.Name,
 				Connect: func(cc context.Context) (metrics.NodeStatsSource, func() error, error) {
+					key, kerr := secret.Dec(row.SshKey)
+					if kerr != nil {
+						return nil, nil, fmt.Errorf("cluster node %d ssh key: %w", row.ID, kerr)
+					}
 					cl, derr := cluster.DialVerified(cluster.JoinSpec{
 						Host:       row.SshHost,
 						Port:       int(row.SshPort),
 						User:       row.SshUser,
-						PrivateKey: []byte(secret.Dec(row.SshKey)),
+						PrivateKey: []byte(key),
 						HostKey:    row.HostKey,
 					}, cfg.MetricsNodeTimeout)
 					if derr != nil {
@@ -254,9 +259,13 @@ func run() error {
 			if err != nil {
 				return nil, nil, err
 			}
+			key, kerr := secret.Dec(row.SshKey)
+			if kerr != nil {
+				return nil, nil, fmt.Errorf("cluster node %d ssh key: %w", row.ID, kerr)
+			}
 			cl, derr := cluster.DialVerified(cluster.JoinSpec{
 				Host: row.SshHost, Port: int(row.SshPort), User: row.SshUser,
-				PrivateKey: []byte(secret.Dec(row.SshKey)), HostKey: row.HostKey,
+				PrivateKey: []byte(key), HostKey: row.HostKey,
 			}, cfg.MetricsNodeTimeout)
 			if derr != nil {
 				return nil, nil, derr

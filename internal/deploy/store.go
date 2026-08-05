@@ -71,7 +71,11 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	out.Healthcheck = buildHealthcheck(a)
 	if a.RegistryID != nil {
 		if reg, rerr := s.q.GetRegistry(ctx, *a.RegistryID); rerr == nil {
-			if auth, aerr := docker.EncodeRegistryAuth(reg.Username, secret.Dec(reg.Password), reg.RegistryUrl); aerr == nil {
+			pw, derr := secret.Dec(reg.Password)
+			if derr != nil {
+				return App{}, fmt.Errorf("registry %d password: %w", reg.ID, derr)
+			}
+			if auth, aerr := docker.EncodeRegistryAuth(reg.Username, pw, reg.RegistryUrl); aerr == nil {
 				out.RegistryAuth = auth
 			}
 		}
@@ -80,13 +84,21 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	if a.SourceType == "dockerfile" {
 		if a.GitCredentialID != nil {
 			if gc, gerr := s.q.GetGitCredential(ctx, *a.GitCredentialID); gerr == nil {
-				out.GitAuth = &builder.GitAuth{Username: gc.Username, Token: secret.Dec(gc.Token)}
+				tok, derr := secret.Dec(gc.Token)
+				if derr != nil {
+					return App{}, fmt.Errorf("git credential %d token: %w", gc.ID, derr)
+				}
+				out.GitAuth = &builder.GitAuth{Username: gc.Username, Token: tok}
 			} else {
 				slog.Warn("git-credential: not found, cloning without auth", "app", a.ID, "git_credential_id", *a.GitCredentialID)
 			}
 		}
 		out.BuildArgs = parseEnvText(a.BuildArgs)
-		out.BuildSecrets = parseEnvText(secret.Dec(a.BuildSecrets))
+		bs, derr := secret.Dec(a.BuildSecrets)
+		if derr != nil {
+			return App{}, fmt.Errorf("app %d build secrets: %w", a.ID, derr)
+		}
+		out.BuildSecrets = parseEnvText(bs)
 	}
 	vols, verr := s.q.ListVolumesByApplication(ctx, a.ID)
 	if verr != nil {
@@ -156,10 +168,14 @@ func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByAppl
 			}
 			return "", false, err
 		}
+		pw, derr := secret.Dec(ld.Password)
+		if derr != nil {
+			return "", false, fmt.Errorf("logical database %d password: %w", ld.ID, derr)
+		}
 		src := drivers.LinkSource{
 			AppName:   inst.AppName,
 			Superuser: ld.Username,
-			Password:  secret.Dec(ld.Password),
+			Password:  pw,
 			DBName:    ld.DbName,
 			Scheme:    l.Scheme,
 		}
@@ -173,10 +189,14 @@ func (s *DBStore) resolveDBLinkValue(ctx context.Context, l db.ListDBLinksByAppl
 			}
 			return "", false, err
 		}
+		pw, derr := secret.Dec(inst.SuperuserPassword)
+		if derr != nil {
+			return "", false, fmt.Errorf("db instance %d superuser password: %w", inst.ID, derr)
+		}
 		src := drivers.LinkSource{
 			AppName:   inst.AppName,
 			Superuser: inst.Superuser,
-			Password:  secret.Dec(inst.SuperuserPassword),
+			Password:  pw,
 			Scheme:    l.Scheme,
 		}
 		val, ok := drivers.LinkValue(inst.Engine, src, l.Field)

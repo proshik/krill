@@ -220,18 +220,25 @@ func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	args := strings.TrimSpace(r.FormValue("build_args"))
-	secrets := strings.TrimSpace(r.FormValue("build_secrets"))
+	args := strings.TrimSpace(r.FormValue("build_args")) // also populates r.Form
 	if err := validBuildText(args); err != nil {
 		s.flashErr(w, r, err.Error())
 		return
 	}
-	if err := validBuildText(secrets); err != nil {
-		s.flashErr(w, r, err.Error())
-		return
+	// Absent field != "clear the secrets". The Advanced tab omits the editor
+	// when the stored value cannot be decrypted, and clearing on submit would
+	// destroy secrets that restoring the original key would bring back.
+	storedSecrets := c.App.BuildSecrets
+	if r.Form.Has("build_secrets") {
+		secrets := strings.TrimSpace(r.FormValue("build_secrets"))
+		if err := validBuildText(secrets); err != nil {
+			s.flashErr(w, r, err.Error())
+			return
+		}
+		storedSecrets = secret.Enc(secrets)
 	}
 	if err := s.q.UpdateApplicationBuild(r.Context(), db.UpdateApplicationBuildParams{
-		ID: c.App.ID, BuildArgs: args, BuildSecrets: secret.Enc(secrets),
+		ID: c.App.ID, BuildArgs: args, BuildSecrets: storedSecrets,
 	}); err != nil {
 		logFrom(r).Error("saveBuild: update failed", "err", err, "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.save_build")
@@ -376,7 +383,14 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	// Build secrets are secrets: only decrypt for the editor when the viewer is an admin.
 	if c.Role == "owner" || c.Role == "admin" {
-		c.BuildSecretsPlain = secret.Dec(c.App.BuildSecrets)
+		// Never render an empty editor for secrets we simply cannot read: the
+		// admin would save the blank field and wipe the stored values.
+		if plain, derr := secret.Dec(c.App.BuildSecrets); derr != nil {
+			logFrom(r).Error("appDetail: build secrets undecryptable", "err", derr, "app_id", c.App.ID)
+			c.BuildSecretsUnreadable = true
+		} else {
+			c.BuildSecretsPlain = plain
+		}
 	}
 	c.AutoDeploy = c.App.AutoDeploy
 	endpoint := "/webhooks/github/"
@@ -385,7 +399,11 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	c.WebhookURL = s.cfg.BaseURL() + endpoint + strconv.FormatInt(c.App.ID, 10)
 	if c.Role == "owner" || c.Role == "admin" {
-		c.WebhookSecret = secret.Dec(c.App.WebhookSecret)
+		if ws, derr := secret.Dec(c.App.WebhookSecret); derr != nil {
+			logFrom(r).Error("appDetail: webhook secret undecryptable", "err", derr, "app_id", c.App.ID)
+		} else {
+			c.WebhookSecret = ws
+		}
 	}
 	if n, err := s.q.CountExposedDomainsByApplication(r.Context(), c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: count exposed domains", "err", err, "app_id", c.App.ID)
@@ -514,7 +532,13 @@ func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := docker.RegistryRepo(reg.RegistryUrl, c.App.Image)
-	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, secret.Dec(reg.Password), repo, s.cfg.AllowPrivateEgress)
+	regPW, derr := secret.Dec(reg.Password)
+	if derr != nil {
+		logFrom(r).Error("appTags: registry password undecryptable", "err", derr, "registry_id", reg.ID)
+		http.Error(w, "registry credentials unreadable", http.StatusBadRequest)
+		return
+	}
+	tags, err := docker.RegistryListTags(r.Context(), reg.RegistryUrl, reg.Username, regPW, repo, s.cfg.AllowPrivateEgress)
 	if err != nil {
 		logFrom(r).Info("appTags: list tags failed", "err", err, "app_id", c.App.ID, "image", c.App.Image)
 		// Return 200 with a visible message: htmx does not swap on 4xx/5xx, so the

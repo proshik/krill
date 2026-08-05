@@ -24,8 +24,8 @@ func TestGitCredentialCRUD(t *testing.T) {
 	if len(creds) != 1 || creds[0].Name != "gh" || creds[0].Host != "github.com" {
 		t.Fatalf("credential not created: %+v", creds)
 	}
-	if secret.Dec(creds[0].Token) != "ghp_x" {
-		t.Errorf("token not stored/decryptable: %q", creds[0].Token)
+	if tok, err := secret.Dec(creds[0].Token); err != nil || tok != "ghp_x" {
+		t.Errorf("token not stored/decryptable: %q (err %v)", creds[0].Token, err)
 	}
 
 	if rec := postForm(t, h, gcURL, cookie, url.Values{"name": {"x"}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
@@ -64,6 +64,33 @@ func TestGitCredentialDeleteGuarded(t *testing.T) {
 	}
 }
 
+// A form submitted WITHOUT a build_secrets field must leave the stored secrets
+// alone. The Advanced tab hides the editor when the stored value cannot be
+// decrypted (rotated KRILL_SECRET_KEY), so treating "absent" as "clear it"
+// would destroy secrets that are still recoverable by restoring the old key.
+func TestSaveBuildKeepsSecretsWhenFieldAbsent(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	base, cookie, appID, _, _ := rpFixture(t, h, q, orgSvc, "gc-keep@k.local")
+
+	if rec := postForm(t, h, base+"/build", cookie, url.Values{"build_args": {"A=1"}, "build_secrets": {"S=x"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("seed want 303, got %d", rec.Code)
+	}
+	before, _ := q.GetApplication(ctx, appID)
+
+	// Same form, build_secrets omitted entirely.
+	if rec := postForm(t, h, base+"/build", cookie, url.Values{"build_args": {"A=2"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save want 303, got %d", rec.Code)
+	}
+	after, _ := q.GetApplication(ctx, appID)
+	if after.BuildArgs != "A=2" {
+		t.Errorf("build_args not updated: %q", after.BuildArgs)
+	}
+	if after.BuildSecrets != before.BuildSecrets {
+		t.Errorf("build_secrets clobbered: %q -> %q", before.BuildSecrets, after.BuildSecrets)
+	}
+}
+
 func TestSaveBuild(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
@@ -77,8 +104,8 @@ func TestSaveBuild(t *testing.T) {
 	if app.BuildArgs != "A=1\nB=2" {
 		t.Errorf("build_args = %q", app.BuildArgs)
 	}
-	if secret.Dec(app.BuildSecrets) != "S=x" {
-		t.Errorf("build_secrets not stored encrypted/decryptable: %q", app.BuildSecrets)
+	if bs, err := secret.Dec(app.BuildSecrets); err != nil || bs != "S=x" {
+		t.Errorf("build_secrets not stored encrypted/decryptable: %q (err %v)", app.BuildSecrets, err)
 	}
 
 	if rec := postForm(t, h, base+"/build", cookie, url.Values{"build_args": {"1BAD=x"}}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {

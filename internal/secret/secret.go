@@ -12,11 +12,19 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"io"
 	"strings"
 )
 
 const prefix = "enc:v1:"
+
+// ErrUndecryptable reports a stored value that carries the encryption tag but
+// cannot be opened: KRILL_SECRET_KEY is unset, was rotated, or the stored bytes
+// are corrupt. Callers MUST NOT fall back to the stored form — it is ciphertext,
+// not a credential, and using it silently corrupts whatever consumes it (an
+// injected app env var, a database connection, an SSH key).
+var ErrUndecryptable = errors.New("secret: value is encrypted but cannot be decrypted (missing, rotated, or wrong KRILL_SECRET_KEY)")
 
 var gcm cipher.AEAD // nil when no key is configured
 
@@ -54,18 +62,26 @@ func Enc(s string) string {
 
 // Dec decrypts a stored value. Untagged (legacy plaintext) values pass through
 // unchanged, so existing data keeps working when a key is later configured.
-func Dec(s string) string {
-	if !strings.HasPrefix(s, prefix) || gcm == nil {
-		return s
+//
+// A tagged value that cannot be opened returns ("", ErrUndecryptable) rather
+// than the stored ciphertext: handing back the raw tagged string would let a
+// bogus credential flow into a deploy, a connection, or an app's environment
+// with no signal that anything went wrong.
+func Dec(s string) (string, error) {
+	if !strings.HasPrefix(s, prefix) {
+		return s, nil
+	}
+	if gcm == nil {
+		return "", ErrUndecryptable
 	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(s, prefix))
 	if err != nil || len(raw) < gcm.NonceSize() {
-		return s
+		return "", ErrUndecryptable
 	}
 	nonce, ct := raw[:gcm.NonceSize()], raw[gcm.NonceSize():]
 	pt, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
-		return s
+		return "", ErrUndecryptable
 	}
-	return string(pt)
+	return string(pt), nil
 }

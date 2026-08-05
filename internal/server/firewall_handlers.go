@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -55,17 +56,24 @@ func (s *Server) clusterIPs(r *http.Request) ([]string, error) {
 
 // firewallRunner builds a Runner that reaches the given worker over SSH using
 // its stored (encrypted) credentials.
-func firewallRunner(n db.ClusterNode) firewall.RealRunner {
+// firewallRunner builds the SSH runner for a node. An undecryptable key is
+// reported rather than passed on empty: firewall Apply/Open would fail deep in
+// the SSH handshake with an error that says nothing about the encryption key.
+func firewallRunner(n db.ClusterNode) (firewall.RealRunner, error) {
+	key, err := secret.Dec(n.SshKey)
+	if err != nil {
+		return firewall.RealRunner{}, fmt.Errorf("cluster node %d ssh key: %w", n.ID, err)
+	}
 	return firewall.RealRunner{
 		Spec: cluster.JoinSpec{
 			Host:       n.SshHost,
 			Port:       int(n.SshPort),
 			User:       n.SshUser,
-			PrivateKey: []byte(secret.Dec(n.SshKey)),
+			PrivateKey: []byte(key),
 			HostKey:    n.HostKey,
 		},
 		Timeout: firewallRunnerTimeout,
-	}
+	}, nil
 }
 
 // firewallPage renders the Network/Firewall page: the org's worker nodes and
@@ -115,7 +123,11 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, n := range rows {
-		rr := firewallRunner(n)
+		rr, kerr := firewallRunner(n)
+		if kerr != nil {
+			logFrom(r).Error("firewall lockdown: node ssh key unusable", "err", kerr, "node", n.Name)
+			continue
+		}
 		if err := firewall.Apply(r.Context(), rr, ruleset); err != nil {
 			logFrom(r).Warn("firewall apply failed", "err", err, "node", n.Name)
 			continue // dead-man switch on the node auto-reverts
@@ -193,7 +205,11 @@ func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, n := range rows {
-		rr := firewallRunner(n)
+		rr, kerr := firewallRunner(n)
+		if kerr != nil {
+			logFrom(r).Error("firewall open: node ssh key unusable", "err", kerr, "node", n.Name)
+			continue
+		}
 		if err := firewall.Open(r.Context(), rr); err != nil {
 			logFrom(r).Warn("firewall open failed", "err", err, "node", n.Name)
 			continue

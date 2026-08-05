@@ -2,6 +2,7 @@ package volume
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -73,7 +74,15 @@ func (s *DBVolumeStore) GetDestination(ctx context.Context, id int64) (backup.De
 	if err != nil {
 		return backup.Destination{}, err
 	}
-	return backup.Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: secret.Dec(d.AccessKey), SecretKey: secret.Dec(d.SecretKey)}, nil
+	ak, err := secret.Dec(d.AccessKey)
+	if err != nil {
+		return backup.Destination{}, fmt.Errorf("destination %d access key: %w", d.ID, err)
+	}
+	sk, err := secret.Dec(d.SecretKey)
+	if err != nil {
+		return backup.Destination{}, fmt.Errorf("destination %d secret key: %w", d.ID, err)
+	}
+	return backup.Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: ak, SecretKey: sk}, nil
 }
 
 func (s *DBVolumeStore) SetVolumeBackupResult(ctx context.Context, id int64, at time.Time, status, errMsg string) error {

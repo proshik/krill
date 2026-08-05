@@ -2,12 +2,54 @@ package volume
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/testutil"
 )
+
+// Mirrors backup.TestGetDestinationFailsOnUndecryptableKeys: a volume backup
+// must not be handed empty S3 credentials when the stored keys cannot be
+// decrypted — it would fail at the far end of the pipeline, long after the
+// archive sidecar has already run.
+func TestGetDestinationFailsOnUndecryptableKeys(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, err := q.CreateUser(ctx, db.CreateUserParams{Email: "vdest@k.local", PasswordHash: "h"})
+	if err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	o, err := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "O", Slug: "o-vdest", OwnerID: u.ID})
+	if err != nil {
+		t.Fatalf("org: %v", err)
+	}
+
+	secret.Init("old-key")
+	ak, sk := secret.Enc("AKIAEXAMPLE"), secret.Enc("s3cret")
+	secret.Init("new-key")
+	defer secret.Init("")
+
+	dest, err := q.CreateDestination(ctx, db.CreateDestinationParams{
+		OrganizationID: o.ID, Name: "minio", Endpoint: "http://localhost:9000",
+		Bucket: "b", Region: "us-east-1", AccessKey: ak, SecretKey: sk,
+	})
+	if err != nil {
+		t.Fatalf("destination: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetDestination(ctx, dest.ID)
+	if err == nil {
+		t.Fatalf("expected an error for undecryptable keys, got %+v", got)
+	}
+	if !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("got err %v, want ErrUndecryptable", err)
+	}
+}
 
 func TestDBVolumeStoreListEnabledBackups(t *testing.T) {
 	pool := testutil.NewTestDB(t)

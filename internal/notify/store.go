@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/secret"
@@ -70,9 +71,13 @@ func (s *DBStore) ChannelsForOrg(ctx context.Context, orgID int64) ([]Channel, e
 	}
 	out := make([]Channel, 0, len(rows))
 	for _, r := range rows {
+		tok, derr := secret.Dec(r.BotToken)
+		if derr != nil {
+			return nil, fmt.Errorf("org %d %s channel token: %w", orgID, r.Type, derr)
+		}
 		out = append(out, Channel{
 			Type: r.Type, Enabled: r.Enabled,
-			BotToken: secret.Dec(r.BotToken), ChatID: r.ChatID,
+			BotToken: tok, ChatID: r.ChatID,
 			NotifyDeploy: r.NotifyDeploy, NotifyBackup: r.NotifyBackup, NotifyHealth: r.NotifyHealth,
 		})
 	}

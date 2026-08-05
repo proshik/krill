@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -61,11 +62,15 @@ func (s *DBStore) GetPGTarget(ctx context.Context, ldbID int64) (PGTarget, error
 	if err != nil {
 		return PGTarget{}, err
 	}
+	pw, err := secret.Dec(ld.Password)
+	if err != nil {
+		return PGTarget{}, fmt.Errorf("logical database %d password: %w", ld.ID, err)
+	}
 	return PGTarget{
 		AppName:          inst.AppName,
 		DatabaseName:     ld.DbName,
 		DatabaseUser:     ld.Username,
-		DatabasePassword: secret.Dec(ld.Password),
+		DatabasePassword: pw,
 	}, nil
 }
 
@@ -74,7 +79,15 @@ func (s *DBStore) GetDestination(ctx context.Context, id int64) (Destination, er
 	if err != nil {
 		return Destination{}, err
 	}
-	return Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: secret.Dec(d.AccessKey), SecretKey: secret.Dec(d.SecretKey)}, nil
+	ak, err := secret.Dec(d.AccessKey)
+	if err != nil {
+		return Destination{}, fmt.Errorf("destination %d access key: %w", d.ID, err)
+	}
+	sk, err := secret.Dec(d.SecretKey)
+	if err != nil {
+		return Destination{}, fmt.Errorf("destination %d secret key: %w", d.ID, err)
+	}
+	return Destination{Endpoint: d.Endpoint, Bucket: d.Bucket, Region: d.Region, AccessKey: ak, SecretKey: sk}, nil
 }
 
 func (s *DBStore) SetBackupResult(ctx context.Context, id int64, at time.Time, status, errMsg string) error {
