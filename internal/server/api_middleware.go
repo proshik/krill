@@ -91,8 +91,7 @@ func (s *Server) RequireAPIToken(next http.Handler) http.Handler {
 			return
 		}
 		if !s.apiLimiter.allow(ident.TokenID, time.Now()) {
-			w.Header().Set("Retry-After", "60")
-			http.Error(w, `{"code":"rate_limited","message":"too many requests for this token"}`, http.StatusTooManyRequests)
+			apiRateLimited(w)
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiIdentityKey, ident)
@@ -106,6 +105,20 @@ func apiUnauthorized(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"code": "unauthorized", "message": "valid bearer token required",
+	})
+}
+
+// apiRateLimited writes the 429 response for a token that has exceeded
+// apiTokenRateLimit. Like apiUnauthorized, it sets Content-Type explicitly:
+// http.Error (used by the brief's original code sample) forces
+// "text/plain; charset=utf-8" unconditionally, which would mislabel this JSON
+// body and break a client that dispatches on Content-Type.
+func apiRateLimited(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "60")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code": "rate_limited", "message": "too many requests for this token",
 	})
 }
 
