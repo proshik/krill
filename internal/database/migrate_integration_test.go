@@ -17,7 +17,7 @@ func TestMigrationsApply(t *testing.T) {
 		"environments", "applications", "deployments", "db_instances",
 		"logical_databases", "domains", "destinations", "backups", "registries",
 		"notification_channels", "metric_samples", "app_volumes", "volume_backups",
-		"app_db_links", "app_ports", "node_capacity",
+		"app_db_links", "app_ports", "node_capacity", "api_tokens",
 	}
 
 	var n int
