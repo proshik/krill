@@ -82,3 +82,63 @@ func TestAuthenticateRejectsUnknownAndExpired(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 }
+
+// TestAuthenticateFailsAfterMembershipRemoved is the exact scenario the
+// design exists for: remove the token owner from the org and the token dies
+// immediately, with no separate revocation step. The last-owner guard that
+// blocks this in the UI (internal/server/org_handlers.go, CountOwners) lives
+// at the HTTP handler layer, not in org.Service or the generated queries, so
+// deleting the seeded owner's own membership row directly is safe here.
+func TestAuthenticateFailsAfterMembershipRemoved(t *testing.T) {
+	q, orgSvc, userID, orgID := seedTokenFixture(t)
+	plain := issue(t, q, userID, orgID, api.LevelWrite, pgtype.Timestamptz{})
+
+	m, err := q.GetMembership(t.Context(), db.GetMembershipParams{OrganizationID: orgID, UserID: userID})
+	if err != nil {
+		t.Fatalf("get membership: %v", err)
+	}
+	if err := q.DeleteMember(t.Context(), m.ID); err != nil {
+		t.Fatalf("delete member: %v", err)
+	}
+
+	a := api.NewAuthenticator(q, orgSvc)
+	if _, err := a.Authenticate(t.Context(), plain, time.Now()); err == nil {
+		t.Fatal("token whose owner is no longer a member was accepted")
+	}
+}
+
+// TestAuthenticateReResolvesRoleOnEveryCall proves rights are resolved live,
+// not cached on the token: the same write token can write, then loses that
+// right the instant its owner is demoted below admin, on the very next call
+// with no re-issue and no separate revocation step. A future "optimization"
+// that trusted the token's stamped level instead of re-checking membership
+// would pass every other test in this file but fail this one.
+func TestAuthenticateReResolvesRoleOnEveryCall(t *testing.T) {
+	q, orgSvc, userID, orgID := seedTokenFixture(t)
+	plain := issue(t, q, userID, orgID, api.LevelWrite, pgtype.Timestamptz{})
+	a := api.NewAuthenticator(q, orgSvc)
+
+	before, err := a.Authenticate(t.Context(), plain, time.Now())
+	if err != nil {
+		t.Fatalf("authenticate (before demotion): %v", err)
+	}
+	if !before.CanWrite() {
+		t.Fatal("owner with write token should be able to write before demotion")
+	}
+
+	m, err := q.GetMembership(t.Context(), db.GetMembershipParams{OrganizationID: orgID, UserID: userID})
+	if err != nil {
+		t.Fatalf("get membership: %v", err)
+	}
+	if err := q.UpdateMemberRole(t.Context(), db.UpdateMemberRoleParams{ID: m.ID, Role: "member"}); err != nil {
+		t.Fatalf("demote: %v", err)
+	}
+
+	after, err := a.Authenticate(t.Context(), plain, time.Now())
+	if err != nil {
+		t.Fatalf("authenticate (after demotion): %v", err)
+	}
+	if after.CanWrite() {
+		t.Fatal("write token should stop writing the instant its owner is demoted below admin")
+	}
+}
