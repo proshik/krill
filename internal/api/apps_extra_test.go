@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -109,5 +111,83 @@ func TestListAppsBatchesAcrossProjectsAndIncludesDomains(t *testing.T) {
 	}
 	if len(rivalApps) != 0 {
 		t.Fatalf("rival org should see no apps, got %+v", rivalApps)
+	}
+}
+
+// TestListEnvLabelsDBLinkSourceAndNeverLeaksItsValue exercises the merge
+// semantics ListEnv implements but the given fixture never creates an
+// app_db_links row for: a DB-link-sourced variable overrides a same-named
+// literal's label, and a DB-link variable absent from env_text still appears.
+// It also confirms the value-leak property holds on this path specifically —
+// a linked variable's value is resolved live at deploy time (never stored in
+// env_text) and must never reach the result either.
+func TestListEnvLabelsDBLinkSourceAndNeverLeaksItsValue(t *testing.T) {
+	f := newAPIFixture(t)
+
+	// A redis instance to link against — a redis link points straight at the
+	// instance (no logical_databases row needed, unlike postgres, which links
+	// via a logical database). The password is a distinctive marker so the
+	// leak check below actually proves something.
+	const linkedPassword = "s3cr3t-redis-instance-pw"
+	inst, err := f.q.CreateDBInstance(t.Context(), db.CreateDBInstanceParams{
+		OrganizationID:    f.ident.OrgID,
+		Engine:            "redis",
+		Name:              "cache",
+		AppName:           "krill-redis-fixture-1",
+		Image:             "redis:7-alpine",
+		Superuser:         "",
+		SuperuserPassword: linkedPassword,
+		NodeHostname:      "",
+	})
+	if err != nil {
+		t.Fatalf("create db instance: %v", err)
+	}
+
+	// PORT already exists as a literal in env_text (fixture: "PORT=8080") — a
+	// link on the same var name must override its label, not duplicate the
+	// key (deploy.GetApplication applies the link's value last, so env_text's
+	// literal is shadowed). REDIS_URL has no env_text line at all: its value
+	// is injected only at deploy time, so it must still surface as a key.
+	if _, err := f.q.CreateDBLink(t.Context(), db.CreateDBLinkParams{
+		ApplicationID: f.appID, InstanceID: &inst.ID, VarName: "PORT", Scheme: "redis", Field: "url",
+	}); err != nil {
+		t.Fatalf("create db link (PORT): %v", err)
+	}
+	if _, err := f.q.CreateDBLink(t.Context(), db.CreateDBLinkParams{
+		ApplicationID: f.appID, InstanceID: &inst.ID, VarName: "REDIS_URL", Scheme: "redis", Field: "url",
+	}); err != nil {
+		t.Fatalf("create db link (REDIS_URL): %v", err)
+	}
+
+	keys, err := f.svc.ListEnv(t.Context(), f.ident, f.appIDString)
+	if err != nil {
+		t.Fatalf("list env: %v", err)
+	}
+	if len(keys) != 3 {
+		t.Fatalf("want 3 keys (PORT, SECRET_TOKEN, REDIS_URL), got %d: %+v", len(keys), keys)
+	}
+	bySource := map[string]string{}
+	for _, k := range keys {
+		bySource[k.Key] = k.Source
+	}
+	if bySource["PORT"] != "db-link" {
+		t.Fatalf("PORT: want db-link (link overrides the same-named literal), got %q", bySource["PORT"])
+	}
+	if bySource["SECRET_TOKEN"] != "literal" {
+		t.Fatalf("SECRET_TOKEN: want literal, got %q", bySource["SECRET_TOKEN"])
+	}
+	if bySource["REDIS_URL"] != "db-link" {
+		t.Fatalf("REDIS_URL: want db-link (injected, absent from env_text), got %q", bySource["REDIS_URL"])
+	}
+
+	blob, err := json.Marshal(keys)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(blob, []byte(linkedPassword)) {
+		t.Fatalf("db instance password leaked into the API response: %s", blob)
+	}
+	if bytes.Contains(blob, []byte("hunter2")) {
+		t.Fatalf("literal env value leaked into the API response: %s", blob)
 	}
 }
