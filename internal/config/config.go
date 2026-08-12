@@ -57,6 +57,10 @@ type Config struct {
 	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
 	// connections to private/loopback/link-local addresses. Default false.
 	AllowPrivateEgress bool `env:"KRILL_ALLOW_PRIVATE_EGRESS" envDefault:"false"`
+	// MCPEnabled toggles the agent-facing API (REST /api/v1 + MCP /mcp). On by
+	// default; set false to disable the surface entirely on an install that
+	// doesn't want it.
+	MCPEnabled bool `env:"KRILL_MCP_ENABLED" envDefault:"true"`
 }
 
 // Load reads the configuration from the environment.

@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/config"
@@ -42,6 +43,12 @@ type Server struct {
 
 	notify  *notify.Service
 	metrics metrics.Store
+
+	// apiAuth/apiSvc/apiLimiter wire the agent-facing API (REST + MCP). A nil
+	// apiAuth disables both surfaces (RequireAPIToken 404s instead of panicking).
+	apiAuth    *api.Authenticator
+	apiSvc     *api.Service
+	apiLimiter *tokenLimiter
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -165,6 +172,14 @@ func (s *Server) reloadVolumeBackupSchedules() {
 	}
 }
 
+// SetAPI wires the agent-facing API (REST + MCP). A nil authenticator disables
+// both surfaces. svc may be nil until Task 8 fills in the operations.
+func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
+	s.apiAuth = a
+	s.apiSvc = svc
+	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
+}
+
 // SetNotify wires the notification service (used by the test-message handler).
 func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
 
@@ -214,6 +229,16 @@ func (s *Server) Router() http.Handler {
 		r.Post("/github/{appID}", s.githubWebhook)
 		r.Post("/deploy/{appID}", s.deployHook)
 	})
+
+	// Agent-facing API: bearer-token auth, no session cookie. Registered only
+	// when an authenticator is wired (SetAPI), same pattern as the other
+	// optional subsystems below.
+	if s.apiAuth != nil {
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Use(s.RequireAPIToken)
+			r.Get("/whoami", s.apiWhoami)
+		})
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
@@ -108,5 +109,6 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
+	srv.SetAPI(api.NewAuthenticator(q, orgSvc), nil)
 	return srv.Router(), q, orgSvc, pool
 }
