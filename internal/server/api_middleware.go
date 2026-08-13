@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,10 +12,6 @@ import (
 
 	"github.com/proshik/krill/internal/api"
 )
-
-type apiCtxKey int
-
-const apiIdentityKey apiCtxKey = iota
 
 // apiTokenRate bounds one token's request rate. An agent stuck in a poll loop
 // is not a human with a mouse: it can issue hundreds of calls a minute and
@@ -94,7 +89,7 @@ func (s *Server) RequireAPIToken(next http.Handler) http.Handler {
 			apiRateLimited(w)
 			return
 		}
-		ctx := context.WithValue(r.Context(), apiIdentityKey, ident)
+		ctx := api.WithIdentity(r.Context(), ident)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -120,11 +115,6 @@ func apiRateLimited(w http.ResponseWriter) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"code": "rate_limited", "message": "too many requests for this token",
 	})
-}
-
-func apiIdentityFrom(ctx context.Context) (api.Identity, bool) {
-	v, ok := ctx.Value(apiIdentityKey).(api.Identity)
-	return v, ok
 }
 
 // writeAPIError maps a service-layer error onto an HTTP status and a JSON body.

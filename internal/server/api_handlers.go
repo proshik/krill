@@ -120,7 +120,7 @@ func SplitAppRef(rest string) (ref, verb string) {
 
 // apiWhoami reports the caller's own resolved identity.
 func (s *Server) apiWhoami(w http.ResponseWriter, r *http.Request) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -135,7 +135,7 @@ func (s *Server) apiWhoami(w http.ResponseWriter, r *http.Request) {
 
 // apiListApps lists every application in the caller's organization.
 func (s *Server) apiListApps(w http.ResponseWriter, r *http.Request) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -183,7 +183,7 @@ func (s *Server) apiAppRouter(w http.ResponseWriter, r *http.Request) {
 
 // apiAppStatus reports one application's live status.
 func (s *Server) apiAppStatus(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -201,7 +201,7 @@ func (s *Server) apiAppStatus(w http.ResponseWriter, r *http.Request, ref string
 // Both are parsed defensively — a non-numeric tail is api.Invalid, not a
 // panic or a silently-ignored value.
 func (s *Server) apiAppLogs(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -226,7 +226,7 @@ func (s *Server) apiAppLogs(w http.ResponseWriter, r *http.Request, ref string) 
 
 // apiListEnv lists an application's environment variable names — never values.
 func (s *Server) apiListEnv(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -242,7 +242,7 @@ func (s *Server) apiListEnv(w http.ResponseWriter, r *http.Request, ref string) 
 // apiListDeployments lists an application's deployment history. Query
 // parameter: limit (row count, clamped server-side), parsed defensively.
 func (s *Server) apiListDeployments(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -268,7 +268,7 @@ func (s *Server) apiListDeployments(w http.ResponseWriter, r *http.Request, ref 
 // A deployment is addressed directly by numeric id (no app in the path), so
 // unlike the /apps/* routes it is registered as an ordinary chi path param.
 func (s *Server) apiDeploymentStatus(w http.ResponseWriter, r *http.Request) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -295,7 +295,7 @@ type apiDeployRequest struct {
 
 // apiDeploy triggers a new deployment, optionally retagging an image app first.
 func (s *Server) apiDeploy(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -316,7 +316,7 @@ func (s *Server) apiDeploy(w http.ResponseWriter, r *http.Request, ref string) {
 
 // apiRebuild forces a from-scratch build of a dockerfile app.
 func (s *Server) apiRebuild(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -332,7 +332,7 @@ func (s *Server) apiRebuild(w http.ResponseWriter, r *http.Request, ref string) 
 
 // apiReload force-restarts the application's current tasks in place.
 func (s *Server) apiReload(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -347,7 +347,7 @@ func (s *Server) apiReload(w http.ResponseWriter, r *http.Request, ref string) {
 
 // apiStop scales the application's service to zero replicas.
 func (s *Server) apiStop(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
@@ -373,7 +373,7 @@ type apiSetEnvRequest struct {
 // CLAUDE.md's logging rule ("never log secrets... connection strings")
 // applies here exactly as it does to the web UI's own env editor.
 func (s *Server) apiSetEnv(w http.ResponseWriter, r *http.Request, ref string) {
-	ident, ok := apiIdentityFrom(r.Context())
+	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return

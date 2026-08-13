@@ -95,3 +95,28 @@ func (a *Authenticator) Authenticate(ctx context.Context, plain string, now time
 	}
 	return Identity{}, ErrInvalidToken
 }
+
+// identityCtxKey is the context key both agent-facing adapters use to carry
+// the caller's resolved Identity from RequireAPIToken (internal/server)
+// through to their own handlers. It lives here, in internal/api, rather than
+// in internal/server where RequireAPIToken is defined: the MCP adapter
+// (internal/mcpsrv) needs to read it too, and internal/mcpsrv must not import
+// internal/server (internal/server mounts internal/mcpsrv's handler, so that
+// import would cycle). Both adapters importing internal/api already is what
+// makes this the one place both can reach.
+type identityCtxKey struct{}
+
+// WithIdentity returns a copy of ctx carrying id, retrievable via IdentityFrom.
+func WithIdentity(ctx context.Context, id Identity) context.Context {
+	return context.WithValue(ctx, identityCtxKey{}, id)
+}
+
+// IdentityFrom reads the Identity stashed by WithIdentity. ok is false when
+// none is present — a route reachable without going through RequireAPIToken
+// first, or (for the MCP adapter) a tool handler invoked on a request that
+// somehow bypassed it. Callers should treat that as an internal error, not
+// silently zero-value the caller's identity.
+func IdentityFrom(ctx context.Context) (Identity, bool) {
+	v, ok := ctx.Value(identityCtxKey{}).(Identity)
+	return v, ok
+}
