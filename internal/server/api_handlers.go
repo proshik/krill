@@ -80,11 +80,24 @@ var apiVerbs = map[string]bool{
 //
 // One accepted consequence of anchoring on the last segment: an application
 // whose path-form reference ends in a segment that is itself a verb word
-// (e.g. a project/environment pair holding an app literally named "deploy")
-// cannot be addressed by its bare status route ("GET .../acme/prod/deploy"
-// parses as verb="deploy" on ref="acme/prod", which is not a valid 3-part
-// path and 400s) — only by numeric id. Reserving verb words as a
-// disallowed app name is a separate concern outside this task's scope.
+// (e.g. an app literally named "deploy" inside acme/production) cannot be
+// addressed by its bare status route, and the two HTTP methods fail
+// differently on the exact same string:
+//   - GET .../acme/production/deploy parses as ref="acme/production",
+//     verb="deploy" (see doc comment above), but there is no GET+"deploy"
+//     combination among the twelve routes (apiAppRouter's switch only
+//     recognizes GET with "", "logs", "env" or "deployments") — so it 404s
+//     in the router itself, indistinguishable from a route that was never
+//     registered, and never reaches resolveApp at all.
+//   - POST .../acme/production/deploy parses the same way, but POST+"deploy"
+//     IS a registered combination, so it dispatches to apiDeploy. There
+//     resolveApp rejects the truncated 2-segment ref "acme/production" as
+//     Invalid (400) — a real error, just from a different layer and for a
+//     different reason than the GET case.
+//
+// Either way the app is only unambiguously reachable by numeric id.
+// Reserving verb words as a disallowed app name is a separate concern
+// outside this task's scope.
 //
 // A trailing slash is trimmed before splitting, so ".../17/logs/" behaves
 // exactly like ".../17/logs".
