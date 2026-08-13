@@ -13,6 +13,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
@@ -885,26 +886,9 @@ func isSlug(s string) bool {
 // parseEnv parses KEY=VALUE lines into a map for the deploy spec and reports any
 // duplicate keys (last value wins in the map). The raw text itself is stored
 // separately (env_text) so the editor preserves the user's order.
+// parseEnv derives the environment from raw env_text and reports any key that
+// appears more than once, so the save handler can refuse a file whose meaning
+// depends on which occurrence a reader happens to keep.
 func parseEnv(raw string) (map[string]string, []string) {
-	env := map[string]string{}
-	var dups []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		k = strings.TrimSpace(k)
-		if k == "" {
-			continue
-		}
-		if _, seen := env[k]; seen {
-			dups = append(dups, k)
-		}
-		env[k] = strings.TrimSpace(v)
-	}
-	return env, dups
+	return envtext.Map(raw)
 }

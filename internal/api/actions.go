@@ -8,6 +8,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/webhook"
 )
 
@@ -171,18 +172,17 @@ func editEnvLine(text, key, value string, remove bool) (string, error) {
 		lines = lines[:0]
 	}
 
+	// envtext.KeyOf is the same predicate the deploy path uses to decide what a
+	// variable line is, so an edit here cannot disagree with what the container
+	// will actually receive.
 	matchIdx := -1
 	matches := 0
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		k, _, ok := strings.Cut(line, "=")
+		k, ok := envtext.KeyOf(line)
 		if !ok {
 			continue
 		}
-		if strings.TrimSpace(k) == key {
+		if k == key {
 			matches++
 			matchIdx = i
 		}

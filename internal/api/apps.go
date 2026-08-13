@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envtext"
 )
 
 // WhoamiResult reports the caller's own resolved identity: which user and
@@ -270,31 +270,6 @@ func (s *Service) AppStatus(ctx context.Context, id Identity, ref string) (AppSt
 	return out, nil
 }
 
-// envTextKeys walks env_text line by line and returns only the variable
-// names, in file order, skipping blank lines and #-comments. It deliberately
-// discards the value half of every KEY=VALUE line the moment it splits the
-// line, so no value is ever held anywhere past this function — ListEnv exists
-// specifically so a stored secret can never reach an API response, and that
-// has to be a structural property of the code path, not just a promise kept
-// by the caller.
-func envTextKeys(raw string) []string {
-	var keys []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, _, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		if k = strings.TrimSpace(k); k != "" {
-			keys = append(keys, k)
-		}
-	}
-	return keys
-}
-
 // ListEnv lists an application's environment variable names — never values.
 // Keys sourced from env_text are "literal". Keys injected by a DB link at
 // deploy time are "db-link": a DB link overrides the same key in env_text
@@ -315,7 +290,7 @@ func (s *Service) ListEnv(ctx context.Context, id Identity, ref string) ([]EnvKe
 	}
 
 	out := make([]EnvKey, 0, len(links)+4)
-	for _, k := range envTextKeys(app.EnvText) {
+	for _, k := range envtext.Keys(app.EnvText) {
 		source := "literal"
 		if fromLink[k] {
 			source = "db-link"

@@ -13,6 +13,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/traefik"
 )
@@ -266,22 +267,12 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// parseEnvText derives the deploy-time environment from env_text. Duplicate
+// keys are not an error here — the deploy must produce an environment either
+// way, and the form save already refuses to store a file containing them.
 func parseEnvText(raw string) map[string]string {
-	m := map[string]string{}
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		if k = strings.TrimSpace(k); k != "" {
-			m[k] = strings.TrimSpace(v)
-		}
-	}
-	return m
+	env, _ := envtext.Map(raw)
+	return env
 }
 
 // buildHealthcheck assembles a HealthcheckSpec from the app's healthcheck
