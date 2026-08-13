@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
@@ -339,6 +340,26 @@ func run() error {
 	app.SetNotify(notifySvc)
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
+
+	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
+	// operations, the same bearer tokens and the same tenancy checks in
+	// internal/api. KRILL_MCP_ENABLED=false leaves the authenticator unwired,
+	// which unmounts both surfaces (RequireAPIToken 404s) — the whole agent
+	// surface is off on an install that doesn't want it.
+	if cfg.MCPEnabled {
+		app.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, engine, dep, hub))
+		// An API token is a bearer credential: whoever reads one off the wire can
+		// replay it until it is revoked. Over plain HTTP a single interception —
+		// any hop between the agent and this process — is enough, so say so at
+		// startup rather than serving tokens in clear text silently.
+		if !strings.HasPrefix(cfg.BaseURL(), "https://") {
+			slog.Warn("agent API enabled but the public URL is not https; bearer tokens will cross the network in clear text",
+				"base_url", cfg.BaseURL())
+		}
+	} else {
+		slog.Info("agent API disabled (KRILL_MCP_ENABLED=false)")
+	}
+
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: app.Router(),

@@ -16,6 +16,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
@@ -49,6 +50,14 @@ type Server struct {
 	apiAuth    *api.Authenticator
 	apiSvc     *api.Service
 	apiLimiter *tokenLimiter
+
+	// mcpHandler serves the MCP adapter (see internal/mcpsrv). It is built once,
+	// in SetAPI, and held here rather than constructed inside Router: a
+	// streamable-HTTP handler owns the session table an incoming request's
+	// Mcp-Session-Id is looked up in, so the two mount points (/mcp and /mcp/*)
+	// MUST share one instance, and a second Router() call must not strand the
+	// sessions a client already negotiated against the first.
+	mcpHandler http.Handler
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -173,11 +182,16 @@ func (s *Server) reloadVolumeBackupSchedules() {
 }
 
 // SetAPI wires the agent-facing API (REST + MCP). A nil authenticator disables
-// both surfaces. svc may be nil until Task 8 fills in the operations.
+// both surfaces (RequireAPIToken 404s). A nil service leaves the MCP handler
+// unbuilt — registering tools over a nil service would turn every tools/call
+// into a panic instead of an error — so /mcp stays unmounted in that case too.
 func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
 	s.apiAuth = a
 	s.apiSvc = svc
 	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
+	if svc != nil {
+		s.mcpHandler = mcpsrv.New(svc).Handler()
+	}
 }
 
 // SetNotify wires the notification service (used by the test-message handler).
@@ -248,6 +262,19 @@ func (s *Server) Router() http.Handler {
 				r.Post("/*", s.apiAppRouter)
 			})
 		})
+
+		// MCP adapter: the same twelve operations over streamable HTTP, behind
+		// the same bearer-token middleware as the REST surface — the caller's
+		// Identity travels from RequireAPIToken into every tool handler through
+		// the request context (api.WithIdentity / api.IdentityFrom). Both
+		// patterns are served by the ONE handler built in SetAPI, so a client's
+		// session survives whichever of the two it addresses; chi's Handle
+		// covers every method, which streamable HTTP needs (POST for messages,
+		// GET for the notification stream, DELETE to end a session).
+		if s.cfg.MCPEnabled && s.mcpHandler != nil {
+			r.With(s.RequireAPIToken).Handle("/mcp", s.mcpHandler)
+			r.With(s.RequireAPIToken).Handle("/mcp/*", s.mcpHandler)
+		}
 	}
 
 	r.Group(func(r chi.Router) {
