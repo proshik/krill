@@ -123,6 +123,7 @@ type Querier interface {
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUser(ctx context.Context, userID int64) ([]ApiToken, error)
+	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)

@@ -246,3 +246,69 @@ func TestRevokeOwnTokenNeedsNoAdmin(t *testing.T) {
 		t.Fatalf("token must be gone after revoke, got %d (err=%v)", len(rows), err)
 	}
 }
+
+// TestListAPITokensScopedToOrg pins that the list page obeys the org in its
+// own URL: a token is genuinely org-bound (Identity.OrgID comes straight from
+// the stored org_id and decides what the token can act on), so a token minted
+// under one org must never appear on a different org's /api-tokens page, even
+// for the very same user. One user, two orgs they own, one token minted in
+// each — each org's page must show exactly its own token and nothing else.
+func TestListAPITokensScopedToOrg(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+
+	uid := mkUser(t, q, "multi-org@k.local")
+	orgA, err := orgSvc.CreateOrg(ctx, uid, "Org A")
+	if err != nil {
+		t.Fatalf("create org A: %v", err)
+	}
+	orgB, err := orgSvc.CreateOrg(ctx, uid, "Org B")
+	if err != nil {
+		t.Fatalf("create org B: %v", err)
+	}
+	cookie := loginAs(t, q, "multi-org@k.local")
+
+	mint := func(orgID int64, name string) {
+		t.Helper()
+		form := url.Values{"name": {name}, "level": {"read"}, "expires": {"never"}}
+		req := httptest.NewRequest(http.MethodPost,
+			fmt.Sprintf("/orgs/%d/api-tokens", orgID), strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("mint %q in org %d: want 303, got %d", name, orgID, rec.Code)
+		}
+	}
+	mint(orgA.ID, "token-in-a")
+	mint(orgB.ID, "token-in-b")
+
+	list := func(orgID int64) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/orgs/%d/api-tokens", orgID), nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list org %d: want 200, got %d", orgID, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	bodyA := list(orgA.ID)
+	if !strings.Contains(bodyA, "token-in-a") {
+		t.Error("org A's page must show its own token")
+	}
+	if strings.Contains(bodyA, "token-in-b") {
+		t.Error("org A's page must not show org B's token")
+	}
+
+	bodyB := list(orgB.ID)
+	if !strings.Contains(bodyB, "token-in-b") {
+		t.Error("org B's page must show its own token")
+	}
+	if strings.Contains(bodyB, "token-in-a") {
+		t.Error("org B's page must not show org A's token")
+	}
+}

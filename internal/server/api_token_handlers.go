@@ -63,20 +63,22 @@ func apiTokenExpiry(preset string) (ts pgtype.Timestamptz, ok bool) {
 	}
 }
 
-// listAPITokens renders the signed-in user's personal access tokens. Tokens
-// are per-user rather than per-org — ListAPITokensByUser is not scoped to the
-// org in the URL — so this shows every token the user holds across every org
-// they belong to; the page hangs off an org purely for Settings navigation.
-// Readable by any org member; only minting a new token is admin-gated.
+// listAPITokens renders the signed-in user's personal access tokens scoped to
+// the org in the URL. A token is genuinely org-bound — its Identity.OrgID
+// (and therefore what it can act on) comes straight from the stored org_id —
+// so the list must obey the org the operator is looking at: every other
+// Settings page (registries, destinations, git credentials, notification
+// channels) is strictly org-scoped, and this one is not an exception. Readable
+// by any org member; only minting a new token is admin-gated.
 func (s *Server) listAPITokens(w http.ResponseWriter, r *http.Request) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
 	uid := auth.UserID(r.Context())
-	tokens, err := s.q.ListAPITokensByUser(r.Context(), uid)
+	tokens, err := s.q.ListAPITokensByUserAndOrg(r.Context(), db.ListAPITokensByUserAndOrgParams{UserID: uid, OrgID: o.ID})
 	if err != nil {
-		logFrom(r).Error("listAPITokens: failed to list tokens", "err", err, "user_id", uid)
+		logFrom(r).Error("listAPITokens: failed to list tokens", "err", err, "user_id", uid, "org_id", o.ID)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

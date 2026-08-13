@@ -159,6 +159,46 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, userID int64) ([]ApiT
 	return items, nil
 }
 
+const listAPITokensByUserAndOrg = `-- name: ListAPITokensByUserAndOrg :many
+SELECT id, user_id, org_id, name, token_hash, prefix, level, expires_at, last_used_at, created_at FROM api_tokens WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC
+`
+
+type ListAPITokensByUserAndOrgParams struct {
+	UserID int64 `json:"user_id"`
+	OrgID  int64 `json:"org_id"`
+}
+
+func (q *Queries) ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error) {
+	rows, err := q.db.Query(ctx, listAPITokensByUserAndOrg, arg.UserID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApiToken
+	for rows.Next() {
+		var i ApiToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OrgID,
+			&i.Name,
+			&i.TokenHash,
+			&i.Prefix,
+			&i.Level,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const touchAPIToken = `-- name: TouchAPIToken :exec
 UPDATE api_tokens SET last_used_at = now() WHERE id = $1
 `
