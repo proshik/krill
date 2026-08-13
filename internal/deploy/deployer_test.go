@@ -51,7 +51,7 @@ func (f *digestMockEngine) ServiceStates(_ context.Context, names []string) (map
 	}
 	return m, nil
 }
-func (f *digestMockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
+func (f *digestMockEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
 func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
@@ -189,7 +189,7 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 	}
 	return out, nil
 }
-func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
+func (m *mockEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
 func (m *mockEngine) ServiceScale(context.Context, string, uint64) error     { return nil }

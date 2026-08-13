@@ -58,7 +58,7 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 	}
 	return out, nil
 }
-func (m *mockEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
+func (m *mockEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
 func (m *mockEngine) ServiceScale(_ context.Context, n string, r uint64) error {

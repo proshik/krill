@@ -207,9 +207,15 @@ func parseLevelFilter(level string) (int, error) {
 
 // AppLogs tails an application's live runtime log (stdout/stderr from its
 // current container), parsed into structured lines and optionally filtered
-// to a minimum severity. tail is clamped by ClampTail; the underlying engine
-// already caps what ServiceLogs itself returns, so tail can only narrow that
-// further, never widen it.
+// to a minimum severity. tail is clamped by ClampTail and passed straight to
+// the engine, which honors it — docker.Engine.ServiceLogs takes an explicit
+// tail argument rather than hardcoding its own window, so asking for 1000
+// lines actually returns up to 1000, not a silent ~200. A scan error partway
+// through the read (an oversized line, a broken connection) is surfaced
+// in-band as a synthetic error-level line rather than silently truncating the
+// result with nothing to say it was cut short — an agent reasoning from an
+// incomplete tail with no signal it's incomplete is worse than a human
+// noticing a short log and scrolling.
 func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int, level string) ([]LogLine, error) {
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
@@ -219,12 +225,13 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 	if err != nil {
 		return nil, err
 	}
+	n := ClampTail(tail)
 	// No engine (unit tests, or docker unreachable): there is no log source to
 	// read from, so report no lines rather than dereferencing a nil engine.
 	if s.engine == nil {
 		return []LogLine{}, nil
 	}
-	rc, err := s.engine.ServiceLogs(ctx, docker.ServiceName(app.ID), false)
+	rc, err := s.engine.ServiceLogs(ctx, docker.ServiceName(app.ID), false, n)
 	if err != nil {
 		return nil, fmt.Errorf("app logs: service logs: %w", err)
 	}
@@ -245,11 +252,16 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 		}
 		lines = append(lines, LogLine{Time: parsed.Time, Level: parsed.Level, Message: parsed.Msg})
 	}
-	// A scan error (e.g. a line over the 1 MiB limit) still leaves everything
-	// read so far usable — return that partial tail rather than discarding it;
-	// for something advisory like log viewing, partial beats empty.
+	// A scan error (e.g. a line over the 1 MiB limit, or a broken connection)
+	// leaves everything read so far usable — append a synthetic notice line
+	// describing what happened rather than either discarding the partial read
+	// or returning it silently. The notice bypasses the level filter above (it
+	// describes the read itself, not application output to filter) and is
+	// appended last, so the tail-clamp below always keeps it.
+	if notice, ok := logparse.ScanEndNotice(sc.Err()); ok {
+		lines = append(lines, LogLine{Time: notice.Time, Level: notice.Level, Message: notice.Msg})
+	}
 
-	n := ClampTail(tail)
 	if len(lines) > n {
 		lines = lines[len(lines)-n:]
 	}

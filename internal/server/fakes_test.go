@@ -43,7 +43,9 @@ func (noopEngine) ServiceStates(_ context.Context, names []string) (map[string]d
 	}
 	return m, nil
 }
-func (noopEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) { return nil, nil }
+func (noopEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
+	return nil, nil
+}
 func (noopEngine) ServiceScale(context.Context, string, uint64) error               { return nil }
 func (noopEngine) ServiceRestart(context.Context, string) error                     { return nil }
 func (noopEngine) ImagePull(context.Context, string, io.Writer) error               { return nil }

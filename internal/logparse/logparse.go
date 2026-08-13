@@ -7,6 +7,8 @@
 package logparse
 
 import (
+	"bufio"
+	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -77,4 +79,25 @@ func normalizeLevel(l string) string {
 		return "fatal"
 	}
 	return ""
+}
+
+// ScanEndNotice describes why a bufio.Scanner reading a docker log stream
+// stopped, as a synthetic error-level LogLine to surface in-band — so a read
+// that ends early (an oversized line, a broken connection) is never silently
+// indistinguishable from a clean end of stream. A nil err (clean EOF, or a
+// bounded non-follow read that simply ran out of log) needs no notice, so
+// ok is false in that case; every other error produces one, with a dedicated
+// message for the 1 MiB scanner-buffer case.
+//
+// Shared by internal/server's WebSocket log-streaming handlers and
+// internal/api's AppLogs — both read a docker log stream through the same
+// bufio.Scanner pattern and need the same signal when it breaks early.
+func ScanEndNotice(err error) (LogLine, bool) {
+	if err == nil {
+		return LogLine{}, false
+	}
+	if errors.Is(err, bufio.ErrTooLong) {
+		return LogLine{Level: "error", Msg: "log stream stopped: a single log line exceeded the 1 MiB limit"}, true
+	}
+	return LogLine{Level: "error", Msg: "log stream stopped: " + err.Error()}, true
 }

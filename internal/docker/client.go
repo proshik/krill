@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -487,12 +488,12 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 	return out, nil
 }
 
-func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error) {
+func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool, tail int) (io.ReadCloser, error) {
 	rc, err := e.cli.ServiceLogs(ctx, name, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     follow,
-		Tail:       "200",
+		Tail:       strconv.Itoa(tail),
 		Timestamps: true,
 	})
 	if err != nil {

@@ -27,7 +27,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
 
-	rc, err := s.engine.ServiceLogs(ctx, dockerName(c.App.ID), true)
+	rc, err := s.engine.ServiceLogs(ctx, dockerName(c.App.ID), true, 200) // 200: the viewer's live-tail window, unchanged from before tail was parameterized
 	if err != nil {
 		logFrom(r).Error("appLogs: service logs unavailable", "err", err, "app_id", c.App.ID)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")

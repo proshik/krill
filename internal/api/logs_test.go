@@ -187,19 +187,46 @@ func TestListDeploymentsRejectsForeignOrg(t *testing.T) {
 }
 
 // stubLogsEngine is a docker.Engine that serves a fixed ServiceLogs body, for
-// exercising AppLogs' parse/filter/clamp logic without a live Swarm. Every
-// other method panics if called — AppLogs must never touch them.
+// exercising AppLogs' parse/filter/clamp logic without a live Swarm. It also
+// records the tail argument its last ServiceLogs call received, so a test can
+// prove AppLogs actually plumbs its clamped tail through to the engine rather
+// than relying on the transport to apply its own default. Every other method
+// panics if called — AppLogs must never touch them.
 type stubLogsEngine struct {
 	docker.Engine
-	body string
-	err  error
+	body    string
+	err     error
+	readErr error // if set, the returned reader fails with this error once body is exhausted, instead of a clean EOF
+	gotTail int   // records the tail argument the last ServiceLogs call received
 }
 
-func (e *stubLogsEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) {
+func (e *stubLogsEngine) ServiceLogs(_ context.Context, _ string, _ bool, tail int) (io.ReadCloser, error) {
+	e.gotTail = tail
 	if e.err != nil {
 		return nil, e.err
 	}
-	return io.NopCloser(strings.NewReader(e.body)), nil
+	var r io.Reader = strings.NewReader(e.body)
+	if e.readErr != nil {
+		r = &errAfterReader{r: r, err: e.readErr}
+	}
+	return io.NopCloser(r), nil
+}
+
+// errAfterReader replays the wrapped reader's content, then returns a
+// caller-supplied error instead of a clean io.EOF once it's exhausted —
+// simulating a docker log stream that dies mid-read rather than ending
+// cleanly, without needing a real broken connection to test against.
+type errAfterReader struct {
+	r   io.Reader
+	err error
+}
+
+func (e *errAfterReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err == io.EOF {
+		return n, e.err
+	}
+	return n, err
 }
 
 const sampleLogBody = "" +
@@ -321,5 +348,125 @@ func TestAppLogsRejectsForeignOrg(t *testing.T) {
 	var aerr *api.Error
 	if !errors.As(err, &aerr) || aerr.Code != api.CodeNotFound {
 		t.Fatalf("want not_found, got %v", err)
+	}
+}
+
+// TestAppLogsPassesClampedTailToEngine is the load-bearing test for plumbing
+// tail through to the transport: docker.Engine.ServiceLogs takes an explicit
+// tail argument now (it no longer hardcodes its own window), so AppLogs must
+// actually pass its clamped value through rather than the engine silently
+// applying a stale default. Without this test, dropping the parameter (or
+// forgetting to clamp before passing it) would compile and every other test
+// in this file would still pass.
+func TestAppLogsPassesClampedTailToEngine(t *testing.T) {
+	f := newAPIFixture(t)
+	eng := &stubLogsEngine{body: sampleLogBody}
+	svc := api.NewService(f.q, eng, nil, nil)
+
+	if _, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 99999, ""); err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if eng.gotTail != api.MaxLogTail {
+		t.Fatalf("tail=99999: engine got tail=%d, want the clamped max %d", eng.gotTail, api.MaxLogTail)
+	}
+
+	if _, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, ""); err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if eng.gotTail != api.DefaultLogTail {
+		t.Fatalf("tail=0: engine got tail=%d, want the default %d", eng.gotTail, api.DefaultLogTail)
+	}
+}
+
+// TestAppLogsScanErrorAppendsNotice proves a stream that breaks partway
+// through — here, a single line over the scanner's 1 MiB buffer — is never
+// silently indistinguishable from a complete, clean read: the caller must see
+// an in-band signal that something was cut.
+func TestAppLogsScanErrorAppendsNotice(t *testing.T) {
+	f := newAPIFixture(t)
+	// No newline anywhere: the scanner exceeds its 1 MiB buffer looking for a
+	// line ending before it ever finds one, so this hits bufio.ErrTooLong via
+	// real bufio.Scanner semantics rather than a mocked scanner error.
+	oversized := strings.Repeat("a", 2*1024*1024)
+	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil, nil)
+
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) == 0 {
+		t.Fatal("want a synthetic notice line, got none")
+	}
+	last := lines[len(lines)-1]
+	if last.Level != "error" || !strings.Contains(last.Message, "1 MiB limit") {
+		t.Fatalf("want a 1 MiB-limit notice, got %+v", last)
+	}
+}
+
+// TestAppLogsReadErrorAppendsNotice proves a broken connection mid-stream
+// (not just an oversized line) also surfaces a notice, and that lines
+// successfully read before the break are still returned rather than
+// discarded.
+func TestAppLogsReadErrorAppendsNotice(t *testing.T) {
+	f := newAPIFixture(t)
+	body := "2026-06-07T19:31:52.000Z level=info msg=ready\n"
+	eng := &stubLogsEngine{body: body, readErr: errors.New("connection reset")}
+	svc := api.NewService(f.q, eng, nil, nil)
+
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("want 1 real line + 1 notice, got %d: %+v", len(lines), lines)
+	}
+	if lines[0].Message != "level=info msg=ready" {
+		t.Fatalf("the line read before the break should still be returned: %+v", lines[0])
+	}
+	last := lines[len(lines)-1]
+	if last.Level != "error" || !strings.Contains(last.Message, "connection reset") {
+		t.Fatalf("want a notice naming the read failure, got %+v", last)
+	}
+}
+
+// TestAppLogsScanErrorNoticeSurvivesLevelFilter proves the synthetic notice
+// bypasses the level filter — it describes the read itself, not application
+// output. The filter here is "fatal", one rank above the notice's own level
+// ("error"): if the notice went through the ordinary floor check like a real
+// log line, it would be dropped. It must survive anyway, or a caller filtering
+// for only the most severe lines would silently lose the one line telling them
+// the read was cut short.
+func TestAppLogsScanErrorNoticeSurvivesLevelFilter(t *testing.T) {
+	f := newAPIFixture(t)
+	oversized := strings.Repeat("a", 2*1024*1024)
+	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil, nil)
+
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "fatal")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 1 || lines[0].Level != "error" {
+		t.Fatalf("scan-end notice must survive a level filter stricter than its own level, got %+v", lines)
+	}
+}
+
+// TestAppLogsScanErrorNoticeSurvivesTailClamp proves the notice is appended
+// after filtering but before the tail clamp, so a tight tail (e.g. 1) never
+// evicts it in favor of an earlier, less important line — the doc comment on
+// AppLogs promises this ordering explicitly.
+func TestAppLogsScanErrorNoticeSurvivesTailClamp(t *testing.T) {
+	f := newAPIFixture(t)
+	eng := &stubLogsEngine{body: sampleLogBody, readErr: errors.New("connection reset")}
+	svc := api.NewService(f.q, eng, nil, nil)
+
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 1, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("tail=1 should keep exactly 1 line, got %d: %+v", len(lines), lines)
+	}
+	if lines[0].Level != "error" || !strings.Contains(lines[0].Message, "connection reset") {
+		t.Fatalf("a tail=1 clamp must keep the truncation notice, not an earlier real log line, got %+v", lines[0])
 	}
 }
