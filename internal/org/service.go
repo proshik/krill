@@ -29,14 +29,20 @@ type Service struct {
 
 func NewService(q *db.Queries) *Service { return &Service{q: q} }
 
-// Membership returns the user's role in the organization (ok=false if not a member).
-func (s *Service) Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool) {
+// Membership returns the user's role in the organization. ok=false means the
+// user is genuinely not a member; a non-nil error means the question could not
+// be answered at all (the query failed) and must not be reported to the caller
+// as "not a member" — that turns an outage into an access-denied answer.
+func (s *Service) Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool, error) {
 	m, err := s.q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: orgID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.RoleMember, false, nil
+	}
 	if err != nil {
-		return auth.RoleMember, false
+		return auth.RoleMember, false, err
 	}
 	r, ok := auth.ParseRole(m.Role)
-	return r, ok
+	return r, ok, nil
 }
 
 // CreateOrg creates an organization and makes the creator the owner.

@@ -48,7 +48,7 @@ type TokenStore interface {
 
 // MemberResolver reports a user's live role in an organization.
 type MemberResolver interface {
-	Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool)
+	Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool, error)
 }
 
 // Authenticator turns a bearer token into an Identity.
@@ -87,7 +87,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, plain string, now time
 		if row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(now) {
 			return Identity{}, ErrTokenExpired
 		}
-		role, ok := a.members.Membership(ctx, row.UserID, row.OrgID)
+		role, ok, err := a.members.Membership(ctx, row.UserID, row.OrgID)
+		if err != nil {
+			// Infrastructure failure, not a credential problem: return it
+			// unwrapped so RequireAPIToken answers 503 rather than 401.
+			return Identity{}, err
+		}
 		if !ok {
 			return Identity{}, ErrNoMembership
 		}

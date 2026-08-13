@@ -52,14 +52,17 @@ func (f *fakeTokenStore) TouchAPIToken(ctx context.Context, id int64) error {
 	return f.touchErr
 }
 
-// fakeMemberResolver is a fixed-answer MemberResolver for unit tests.
+// fakeMemberResolver is a fixed-answer MemberResolver for unit tests. err is
+// set by the test that checks a failed membership lookup is reported as an
+// infrastructure failure rather than as "not a member".
 type fakeMemberResolver struct {
 	role auth.Role
 	ok   bool
+	err  error
 }
 
-func (f *fakeMemberResolver) Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool) {
-	return f.role, f.ok
+func (f *fakeMemberResolver) Membership(ctx context.Context, userID, orgID int64) (auth.Role, bool, error) {
+	return f.role, f.ok, f.err
 }
 
 // TestAuthenticateSkipsPrefixCollisionToFindRealMatch verifies the loop in
@@ -120,5 +123,32 @@ func TestAuthenticateTouchFailureDoesNotFailRequest(t *testing.T) {
 	}
 	if len(store.touchedIDs) != 1 || store.touchedIDs[0] != 7 {
 		t.Fatalf("touch was not attempted as expected: %+v", store.touchedIDs)
+	}
+}
+
+// TestAuthenticateReportsMembershipLookupFailure pins the distinction the
+// middleware relies on: a token whose owner cannot be checked because the
+// query failed must not come back as ErrNoMembership, which the caller maps
+// to 401 "valid bearer token required". An agent reading that would conclude
+// its credential is bad and a human would go reissue tokens, chasing a
+// permissions problem that does not exist.
+func TestAuthenticateReportsMembershipLookupFailure(t *testing.T) {
+	plain, prefix, hash, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	store := &fakeTokenStore{rows: []db.ApiToken{{ID: 1, UserID: 7, OrgID: 3, TokenHash: hash, Prefix: prefix, Level: string(LevelWrite)}}}
+	boom := errors.New("connection refused")
+	a := NewAuthenticator(store, &fakeMemberResolver{err: boom})
+
+	_, err = a.Authenticate(context.Background(), plain, time.Now())
+	if err == nil {
+		t.Fatal("a failed membership lookup was reported as success")
+	}
+	if errors.Is(err, ErrNoMembership) || errors.Is(err, ErrInvalidToken) || errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("infrastructure failure surfaced as a credential sentinel: %v", err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("want the underlying error, got %v", err)
 	}
 }

@@ -28,7 +28,7 @@ type Validator interface {
 
 // MemberResolver reports a user's role in an organization.
 type MemberResolver interface {
-	Membership(ctx context.Context, userID, orgID int64) (Role, bool)
+	Membership(ctx context.Context, userID, orgID int64) (Role, bool, error)
 }
 
 // RequireAuth allows the request through only with a valid session, otherwise → /login.
@@ -61,7 +61,16 @@ func RequireOrgMember(m MemberResolver) func(http.Handler) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
-			role, ok := m.Membership(r.Context(), UserID(r.Context()), orgID)
+			role, ok, err := m.Membership(r.Context(), UserID(r.Context()), orgID)
+			if err != nil {
+				// The membership question failed, so we do not know whether
+				// access is allowed. Saying "not found" here would blame the
+				// user for an outage and send them hunting for a permissions
+				// problem that does not exist.
+				slog.Error("membership lookup failed", "err", err, "user_id", UserID(r.Context()), "org_id", orgID, "path", r.URL.Path)
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			if !ok {
 				slog.Info("org access denied (not a member)", "user_id", UserID(r.Context()), "org_id", orgID, "path", r.URL.Path)
 				http.NotFound(w, r)

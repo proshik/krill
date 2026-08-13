@@ -31,12 +31,15 @@ func TestCreateOrgAndMembership(t *testing.T) {
 	if o.Slug != "default" {
 		t.Errorf("slug = %q", o.Slug)
 	}
-	role, ok := svc.Membership(ctx, uid, o.ID)
+	role, ok, err := svc.Membership(ctx, uid, o.ID)
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
 	if !ok || role.String() != "owner" {
 		t.Errorf("membership = %v %v", role, ok)
 	}
 	// a stranger is not a member
-	if _, ok := svc.Membership(ctx, uid+999, o.ID); ok {
+	if _, ok, err := svc.Membership(ctx, uid+999, o.ID); err != nil || ok {
 		t.Error("stranger must not be a member")
 	}
 }
