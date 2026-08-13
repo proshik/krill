@@ -8,6 +8,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/webhook"
 )
 
 // DeployAccepted is the response to Deploy/Rebuild: the operation is
@@ -43,10 +44,29 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 		return DeployAccepted{}, err
 	}
 
+	if tag != "" && app.SourceType != "image" {
+		return DeployAccepted{}, Invalid("tag applies to image apps only; this is a dockerfile app — use rebuild to build a new image from source")
+	}
+	// Validate the tag with the same rule the CI deploy-hook applies to its
+	// ?tag= parameter (webhook.ValidTag): an LLM caller is exactly the client
+	// likely to send "v1.2.3 " with a stray space, or a whole image reference
+	// like "ghcr.io/acme/bot:v1" where only the tag belongs. Both must be
+	// refused BEFORE the write, because the damage here is persistent: the row
+	// would keep a broken image reference that every later deployment reuses —
+	// including a human pressing Deploy in the web UI — and this API offers no
+	// way to put the old tag back.
+	if tag != "" && !webhook.ValidTag(tag) {
+		return DeployAccepted{}, Invalid(fmt.Sprintf("invalid image tag %q: a tag is the part after the colon (e.g. \"v1.2.3\", \"latest\"), at most 128 characters of letters, digits, '.', '_' and '-' — not a full image reference and with no spaces", tag))
+	}
+
+	// Checked before the retag, not after: a server with no deployer can do
+	// nothing with a new tag, and failing afterwards would leave the app
+	// pointing at an image that was never deployed.
+	if s.dep == nil {
+		return DeployAccepted{}, fmt.Errorf("deploy: no deployer configured")
+	}
+
 	if tag != "" {
-		if app.SourceType != "image" {
-			return DeployAccepted{}, Invalid("tag applies to image apps only; this is a dockerfile app — use rebuild to build a new image from source")
-		}
 		if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
 			ID:    app.ID,
 			Image: app.Image,
@@ -56,9 +76,6 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 		}
 	}
 
-	if s.dep == nil {
-		return DeployAccepted{}, fmt.Errorf("deploy: no deployer configured")
-	}
 	deployID := s.dep.Enqueue(app.ID, "manual")
 	if deployID == 0 {
 		return DeployAccepted{}, fmt.Errorf("deploy: could not enqueue a deployment (queue full or server shutting down)")
@@ -191,6 +208,13 @@ func editEnvLine(text, key, value string, remove bool) (string, error) {
 // (or add) one key's value, or remove one key, without touching any other
 // line of env_text. See editEnvLine for why this must be a line-level edit
 // rather than a round-trip through a parsed map.
+//
+// The edit is persisted only — the running container keeps the OLD value
+// until the app is deployed again (env vars are baked into the Swarm service
+// spec at deploy time). Callers that need the change live must follow with
+// Deploy. This deliberately does NOT redeploy on its own: a write that
+// silently restarts a production service would be the worse surprise, and it
+// would make setting three variables cost three rolling updates.
 func (s *Service) SetEnv(ctx context.Context, id Identity, ref, key, value string, remove bool) error {
 	if err := requireWrite(id); err != nil {
 		return err
@@ -201,6 +225,18 @@ func (s *Service) SetEnv(ctx context.Context, id Identity, ref, key, value strin
 	}
 	if !envKeyRe.MatchString(key) {
 		return Invalid(fmt.Sprintf("invalid env key %q: must match %s", key, envKeyRe.String()))
+	}
+	// The value is appended verbatim to a KEY=VALUE line, so a newline in it
+	// would not store a multi-line value — it would inject extra LINES into
+	// env_text. deploy.parseEnvText would then read the first line as this
+	// key and every following line as a separate (bogus) variable, and if one
+	// of those repeats an existing key the file becomes a duplicate that both
+	// editEnvLine (Conflict) and the web UI's saveEnv refuse to touch until a
+	// human hand-edits it. Multi-line secrets (PEM keys, service-account JSON)
+	// are an ordinary thing for an agent to try, so refuse them explicitly
+	// instead of silently corrupting the file. remove ignores value entirely.
+	if !remove && strings.ContainsAny(value, "\n\r") {
+		return Invalid(fmt.Sprintf("invalid value for env key %q: must be a single line (no newline or carriage return) — this operation changes exactly one KEY=VALUE line; for a multi-line value such as a PEM key, store it encoded (e.g. base64) on one line", key))
 	}
 
 	newText, err := editEnvLine(app.EnvText, key, value, remove)

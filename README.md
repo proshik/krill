@@ -483,11 +483,11 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
 | `GET /api/v1/deployments/{id}` | read | One deployment plus the last ~8 KB of its build log. |
 | `GET /api/v1/apps/{app}/env` | read | Variable **names** and source (`literal` / `db-link`) — values are never returned. |
-| `POST /api/v1/apps/{app}/deploy` | write | Body `{"tag":"…"}` optional (image apps only). Returns `{deployment_id, status}`. |
+| `POST /api/v1/apps/{app}/deploy` | write | Body `{"tag":"…"}` optional (image apps only) — a bare tag, e.g. `v1.2.3`, not a full image reference. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/rebuild` | write | `--no-cache` build; `dockerfile` apps only. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull. |
 | `POST /api/v1/apps/{app}/stop` | write | Scale to 0 replicas; deploy brings it back. |
-| `POST /api/v1/apps/{app}/env` | write | Body `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, rest untouched. |
+| `POST /api/v1/apps/{app}/env` | write | Body `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, rest untouched. The value must be single-line (encode a PEM key or JSON blob, e.g. base64). |
 
 `{app}` is a `project/environment/app` path or a numeric id. Deploys are **asynchronous**: `deploy`/`rebuild` enqueue the job and return a `deployment_id` immediately, and the caller polls `GET /api/v1/deployments/{id}` for `running` → `done` / `error`. An env edit is written to the app's env file but does not restart anything — it takes effect on the next deploy.
 

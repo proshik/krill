@@ -228,6 +228,64 @@ func TestDeployWithTagRejectsDockerfileApp(t *testing.T) {
 	}
 }
 
+// TestDeployRejectsMalformedTagWithoutPersistingIt covers the whole-branch
+// review's finding that Deploy wrote req.Tag straight through with no shape
+// check at all, unlike the other machine-facing retag path (the CI deploy
+// hook, which guards its ?tag= with webhook.ValidTag). An LLM caller is
+// exactly the client that sends a trailing space or a whole image reference.
+//
+// The second assertion is the load-bearing one: the tag must not merely be
+// refused, it must never reach the row. A persisted bad tag is not
+// recoverable through this API and would break every LATER deployment,
+// including a human pressing Deploy in the web UI.
+func TestDeployRejectsMalformedTagWithoutPersistingIt(t *testing.T) {
+	for _, tag := range []string{
+		"v1.2.3 ",                // trailing space
+		"ghcr.io/acme/bot:v1",    // a whole image reference, not a tag
+		"v1;rm -rf /",            // shell-ish junk
+		strings.Repeat("v", 129), // over ValidTag's length cap
+	} {
+		t.Run(tag, func(t *testing.T) {
+			f, svc := newWriteFixture(t)
+			_, err := svc.Deploy(t.Context(), f.ident, f.appIDString, tag)
+			var aerr *api.Error
+			if !errors.As(err, &aerr) || aerr.Code != api.CodeInvalid {
+				t.Fatalf("want invalid for tag %q, got %v", tag, err)
+			}
+			// The message must tell the agent what a tag actually looks like,
+			// otherwise it has nothing to correct towards.
+			if !strings.Contains(aerr.Message, "tag") {
+				t.Fatalf("error should describe the expected tag shape, got %q", aerr.Message)
+			}
+			app, err := f.q.GetApplication(t.Context(), f.appID)
+			if err != nil {
+				t.Fatalf("get app: %v", err)
+			}
+			if app.Tag != "alpine" {
+				t.Fatalf("rejected tag was persisted anyway: tag = %q, want the untouched %q", app.Tag, "alpine")
+			}
+		})
+	}
+}
+
+// TestDeployWithNoDeployerDoesNotRetagTheApp pins the ordering half of the
+// same finding: the retag used to be written BEFORE the nil-deployer check,
+// so a server without a deployer left the app pointing at an image that was
+// never deployed and that the caller had no way to revert.
+func TestDeployWithNoDeployerDoesNotRetagTheApp(t *testing.T) {
+	f := newAPIFixture(t) // f.svc has a nil deployer
+	if _, err := f.svc.Deploy(t.Context(), f.ident, f.appIDString, "v2"); err == nil {
+		t.Fatal("want an error with no deployer configured, got nil")
+	}
+	app, err := f.q.GetApplication(t.Context(), f.appID)
+	if err != nil {
+		t.Fatalf("get app: %v", err)
+	}
+	if app.Tag != "alpine" {
+		t.Fatalf("app was retagged to %q despite the deploy never being enqueued; want the untouched %q", app.Tag, "alpine")
+	}
+}
+
 func TestRebuildSuccessOnDockerfileApp(t *testing.T) {
 	f, svc := newWriteFixture(t)
 	_, ref := createDockerfileApp(t, f)
@@ -392,6 +450,59 @@ func TestSetEnvInvalidKeyRejected(t *testing.T) {
 	var aerr *api.Error
 	if !errors.As(err, &aerr) || aerr.Code != api.CodeInvalid {
 		t.Fatalf("want invalid, got %v", err)
+	}
+}
+
+// TestSetEnvRejectsMultiLineValue covers the whole-branch review's finding
+// that SetEnv validated the KEY but appended the VALUE verbatim. A newline in
+// the value does not store a multi-line value — it injects extra LINES, which
+// deploy.parseEnvText then reads as additional (bogus) variables. Setting a
+// PEM key or a service-account JSON blob is an ordinary thing for an agent to
+// try, so this must be a clear Invalid, not silent corruption.
+//
+// Asserting env_text is untouched is the load-bearing half: without the guard
+// the call SUCCEEDS, so only the stored text reveals the damage.
+func TestSetEnvRejectsMultiLineValue(t *testing.T) {
+	const original = "# db\nPORT=8080\nSECRET_TOKEN=hunter2"
+	for name, value := range map[string]string{
+		"pem-style newline":     "-----BEGIN KEY-----\nabc\n-----END KEY-----",
+		"trailing newline":      "value\n",
+		"carriage return":       "value\rPORT=1",
+		"crlf smuggling a key":  "value\r\nSECRET_TOKEN=stolen",
+		"bare embedded newline": "a\nb",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newAPIFixture(t)
+			err := f.svc.SetEnv(t.Context(), f.ident, f.appIDString, "MY_KEY", value, false)
+			var aerr *api.Error
+			if !errors.As(err, &aerr) || aerr.Code != api.CodeInvalid {
+				t.Fatalf("want invalid for a multi-line value, got %v", err)
+			}
+			app, err := f.q.GetApplication(t.Context(), f.appID)
+			if err != nil {
+				t.Fatalf("get app: %v", err)
+			}
+			if strings.TrimSpace(app.EnvText) != original {
+				t.Fatalf("env_text was modified by a rejected value:\ngot  %q\nwant %q", app.EnvText, original)
+			}
+		})
+	}
+}
+
+// TestSetEnvRemoveIgnoresMultiLineValue guards the guard: remove never uses
+// value, so rejecting one there would be a spurious error for a caller that
+// echoes back the value it is deleting.
+func TestSetEnvRemoveIgnoresMultiLineValue(t *testing.T) {
+	f := newAPIFixture(t)
+	if err := f.svc.SetEnv(t.Context(), f.ident, f.appIDString, "SECRET_TOKEN", "a\nb", true); err != nil {
+		t.Fatalf("remove with an ignored multi-line value: %v", err)
+	}
+	app, err := f.q.GetApplication(t.Context(), f.appID)
+	if err != nil {
+		t.Fatalf("get app: %v", err)
+	}
+	if want := "# db\nPORT=8080"; strings.TrimSpace(app.EnvText) != want {
+		t.Fatalf("env_text:\ngot  %q\nwant %q", app.EnvText, want)
 	}
 }
 
