@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -45,6 +47,7 @@ func TestToolListMatchesRegistry(t *testing.T) {
 type smokeFixture struct {
 	authn   *api.Authenticator
 	svc     *api.Service
+	pool    *pgxpool.Pool
 	orgID   int64
 	orgName string
 	token   string
@@ -92,6 +95,7 @@ func newSmokeFixture(t *testing.T) smokeFixture {
 	return smokeFixture{
 		authn:   api.NewAuthenticator(q, orgSvc),
 		svc:     svc,
+		pool:    pool,
 		orgID:   o.ID,
 		orgName: orgName,
 		token:   plain,
@@ -259,6 +263,115 @@ func TestProtocolSmoke(t *testing.T) {
 	}
 	if !who.CanWrite {
 		t.Fatal("whoami: write-level token, owner role — CanWrite should be true")
+	}
+}
+
+// startSession stands an MCP server up over svc behind the bearer-auth wrapper
+// and completes the initialize handshake, returning the server URL and the
+// negotiated session id — what every subsequent tools/call needs.
+func startSession(t *testing.T, authn *api.Authenticator, svc *api.Service, token string) (string, string) {
+	t.Helper()
+	ts := httptest.NewServer(withBearerAuth(authn, mcpsrv.New(svc).Handler()))
+	t.Cleanup(ts.Close)
+	env, sid := postJSONRPC(t, ts.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"v0"}}}`, token, "")
+	if env.Error != nil {
+		t.Fatalf("initialize: server error: %s", env.Error.Message)
+	}
+	if sid == "" {
+		t.Fatal("initialize: no Mcp-Session-Id returned")
+	}
+	return ts.URL, sid
+}
+
+// callTool sends one tools/call and returns the decoded result. A protocol-level
+// error (a malformed request, an unknown tool) fails the test outright: these
+// tests are about what a *tool* reports, which arrives as a perfectly successful
+// JSON-RPC response carrying isError.
+func callTool(t *testing.T, url, token, sid, body string) wireCallToolResult {
+	t.Helper()
+	env, _ := postJSONRPC(t, url, body, token, sid)
+	if env.Error != nil {
+		t.Fatalf("tools/call: protocol-level error: %s", env.Error.Message)
+	}
+	var result wireCallToolResult
+	if err := json.Unmarshal(env.Result, &result); err != nil {
+		t.Fatalf("decode tools/call result: %v", err)
+	}
+	return result
+}
+
+// TestToolErrorReturnsAPIMessageVerbatim covers toolError's *api.Error branch:
+// a service error authored for a caller passes through as its Message and
+// NOTHING else.
+//
+// The assertion is deliberately an exact string equality on a single content
+// block, not a substring check. Substring matching would still pass if someone
+// later "improved" the message by appending the underlying cause — which is the
+// precise regression this test exists to catch, because that cause can carry a
+// DSN, a host path or a Go type name (see toolError's own doc comment). Any
+// appended detail, or a second content block carrying it, breaks this test.
+func TestToolErrorReturnsAPIMessageVerbatim(t *testing.T) {
+	f := newSmokeFixture(t)
+	url, sid := startSession(t, f.authn, f.svc, f.token)
+
+	// A numeric reference that resolves to no row in this org: resolveApp
+	// (internal/api/service.go) answers NotFound, an *api.Error.
+	result := callTool(t, url, f.token, sid,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"krill_app_status","arguments":{"app":"999999"}}}`)
+
+	if !result.IsError {
+		t.Fatalf("want isError for an unresolvable app reference, got a success result: %+v", result.Content)
+	}
+	if len(result.Content) != 1 {
+		t.Fatalf("want exactly one content block carrying the message, got %d: %+v", len(result.Content), result.Content)
+	}
+	const want = `no application "999999" in this organization`
+	if got := result.Content[0].Text; got != want {
+		t.Fatalf("api.Error message not passed through verbatim:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+// TestToolErrorHidesInternalCause covers toolError's other branch: an error
+// that is NOT an *api.Error is an internal failure, and the caller must get the
+// generic text plus a request id — never err.Error(), which here would read
+// "whoami: get organization: closed pool" and in production can carry a DSN.
+//
+// The failure is injected honestly, with no fake service: the api.Service under
+// test runs on its own pgxpool against the same database, and that pool is
+// closed mid-session. Every query it makes then fails, api.Whoami wraps the
+// failure with fmt.Errorf (internal/api/apps.go), and the tool handler sees a
+// plain error. The authenticator keeps the fixture's live pool, so the bearer
+// token still resolves and the request genuinely reaches the tool.
+func TestToolErrorHidesInternalCause(t *testing.T) {
+	f := newSmokeFixture(t)
+
+	svcPool, err := pgxpool.New(t.Context(), f.pool.Config().ConnString())
+	if err != nil {
+		t.Fatalf("second pool: %v", err)
+	}
+	defer svcPool.Close()
+	svc := api.NewService(db.New(svcPool), nil, nil, deploy.NewLogHub())
+
+	url, sid := startSession(t, f.authn, svc, f.token)
+	svcPool.Close()
+
+	result := callTool(t, url, f.token, sid,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"krill_whoami","arguments":{}}}`)
+
+	if !result.IsError {
+		t.Fatalf("want isError once the service's database is gone, got a success result: %+v", result.Content)
+	}
+	if len(result.Content) != 1 {
+		t.Fatalf("want exactly one content block, got %d: %+v", len(result.Content), result.Content)
+	}
+	// Exact equality again, for the same reason as above. The request id is
+	// empty here because this harness has no chi RequestID middleware in front
+	// of the handler; in production it is populated, and either way it is the
+	// only variable part of the text a caller ever sees.
+	const want = "internal error, see server logs (request_id=)"
+	if got := result.Content[0].Text; got != want {
+		t.Fatalf("internal error text leaked detail beyond the generic message:\ngot  %q\nwant %q", got, want)
 	}
 }
 
