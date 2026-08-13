@@ -237,6 +237,16 @@ func (s *Server) Router() http.Handler {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Use(s.RequireAPIToken)
 			r.Get("/whoami", s.apiWhoami)
+			r.Get("/deployments/{deployID}", s.apiDeploymentStatus)
+			r.Route("/apps", func(r chi.Router) {
+				r.Get("/", s.apiListApps)
+				// Everything below takes an app reference that may itself
+				// contain slashes (project/environment/app), so the
+				// remainder of the path is split by the trailing verb
+				// (see SplitAppRef) rather than by a chi path param.
+				r.Get("/*", s.apiAppRouter)
+				r.Post("/*", s.apiAppRouter)
+			})
 		})
 	}
 

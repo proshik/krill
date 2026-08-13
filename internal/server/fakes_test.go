@@ -111,6 +111,6 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
-	srv.SetAPI(api.NewAuthenticator(q, orgSvc), nil)
+	srv.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, eng, dep, hub))
 	return srv.Router(), q, orgSvc, pool
 }

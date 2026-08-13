@@ -157,11 +157,3 @@ func writeAPIError(w http.ResponseWriter, r *http.Request, err error) {
 		"code": code, "message": msg, "request_id": middleware.GetReqID(r.Context()),
 	})
 }
-
-// apiWhoami is a temporary stub so RequireAPIToken has a route to protect and
-// this task's tests can exercise it end-to-end. Task 5 replaces it with the
-// real whoami operation (resolved user/org/level/role).
-func (s *Server) apiWhoami(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{})
-}
