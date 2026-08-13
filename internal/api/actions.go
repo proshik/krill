@@ -79,6 +79,9 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 
 	deployID := s.dep.Enqueue(app.ID, "manual")
 	if deployID == 0 {
+		if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
+			return DeployAccepted{}, cErr
+		}
 		return DeployAccepted{}, fmt.Errorf("deploy: could not enqueue a deployment (queue full or server shutting down)")
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
@@ -106,6 +109,9 @@ func (s *Service) Rebuild(ctx context.Context, id Identity, ref string) (DeployA
 	}
 	deployID := s.dep.EnqueueRebuild(app.ID, "manual")
 	if deployID == 0 {
+		if cErr := s.inFlightConflict(ctx, app.ID, "rebuild"); cErr != nil {
+			return DeployAccepted{}, cErr
+		}
 		return DeployAccepted{}, fmt.Errorf("rebuild: could not enqueue a deployment (queue full or server shutting down)")
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
@@ -149,6 +155,19 @@ func (s *Service) Stop(ctx context.Context, id Identity, ref string) error {
 		return fmt.Errorf("stop: service scale: %w", err)
 	}
 	return nil
+}
+
+// inFlightConflict reports a deploy that cannot start because one is already
+// running for the app. The deployer enforces the cap itself; this turns its
+// bare rejection into an answer the caller can act on instead of the generic
+// "could not enqueue", which would send an agent into exactly the retry loop
+// the cap exists to stop.
+func (s *Service) inFlightConflict(ctx context.Context, appID int64, op string) error {
+	n, err := s.q.CountRunningDeploymentsByApplication(ctx, appID)
+	if err != nil || n == 0 {
+		return nil
+	}
+	return Conflict(op + ": a deployment for this application is already in progress; poll krill_deployment_status and start another once it finishes")
 }
 
 // editEnvLine makes a single targeted edit to raw env_text and returns the

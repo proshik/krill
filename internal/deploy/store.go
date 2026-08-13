@@ -219,6 +219,12 @@ func (s *DBStore) CreateDeployment(ctx context.Context, appID int64, trigger str
 	return d.ID, nil
 }
 
+// CountRunningDeployments reports how many deploys for this app are still in
+// flight, so enqueue can refuse to pile a second one onto the shared queue.
+func (s *DBStore) CountRunningDeployments(ctx context.Context, appID int64) (int64, error) {
+	return s.q.CountRunningDeploymentsByApplication(ctx, appID)
+}
+
 func (s *DBStore) FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error {
 	return s.q.FinishDeployment(ctx, db.FinishDeploymentParams{
 		ID: deployID, Status: status, ImageTag: imageTag, ErrorMessage: errMsg, Log: log,

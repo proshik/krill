@@ -22,6 +22,24 @@ func (q *Queries) ClearOldDeploymentLogs(ctx context.Context) error {
 	return err
 }
 
+const countRunningDeploymentsByApplication = `-- name: CountRunningDeploymentsByApplication :one
+SELECT count(*) FROM deployments WHERE application_id = $1 AND status = 'running'
+`
+
+// How many deploys for this app are still in flight. Used to refuse a second
+// one: the queue is 64 deep, single-worker and shared by every tenant, so a
+// caller retrying the same app in a loop could otherwise fill it and make
+// every other tenant's deploys fail with "queue full". Reading committed rows
+// rather than an in-memory lock keeps this self-healing — a deploy interrupted
+// by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
+// leaked lock would block the app forever.
+func (q *Queries) CountRunningDeploymentsByApplication(ctx context.Context, applicationID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunningDeploymentsByApplication, applicationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at
 `

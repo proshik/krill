@@ -39,6 +39,14 @@ type Querier interface {
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
+	// How many deploys for this app are still in flight. Used to refuse a second
+	// one: the queue is 64 deep, single-worker and shared by every tenant, so a
+	// caller retrying the same app in a loop could otherwise fill it and make
+	// every other tenant's deploys fail with "queue full". Reading committed rows
+	// rather than an in-memory lock keeps this self-healing — a deploy interrupted
+	// by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
+	// leaked lock would block the app forever.
+	CountRunningDeploymentsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)

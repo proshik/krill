@@ -54,9 +54,9 @@ func (f *digestMockEngine) ServiceStates(_ context.Context, names []string) (map
 func (f *digestMockEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error          { return nil }
-func (f *digestMockEngine) ServiceRestart(context.Context, string) error                { return nil }
-func (f *digestMockEngine) VolumeRemove(context.Context, string) error { return nil }
+func (f *digestMockEngine) ServiceScale(context.Context, string, uint64) error { return nil }
+func (f *digestMockEngine) ServiceRestart(context.Context, string) error       { return nil }
+func (f *digestMockEngine) VolumeRemove(context.Context, string) error         { return nil }
 func (f *digestMockEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
 	return nil
 }
@@ -192,9 +192,9 @@ func (m *mockEngine) ServiceStates(_ context.Context, names []string) (map[strin
 func (m *mockEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (m *mockEngine) ServiceScale(context.Context, string, uint64) error     { return nil }
-func (m *mockEngine) ServiceRestart(context.Context, string) error           { return nil }
-func (m *mockEngine) VolumeRemove(context.Context, string) error { return nil }
+func (m *mockEngine) ServiceScale(context.Context, string, uint64) error { return nil }
+func (m *mockEngine) ServiceRestart(context.Context, string) error       { return nil }
+func (m *mockEngine) VolumeRemove(context.Context, string) error         { return nil }
 func (m *mockEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
 	return nil
 }
@@ -287,6 +287,26 @@ func (f *fakeStore) CreateDeployment(_ context.Context, appID int64, trigger str
 	f.depApp[f.nextID] = appID
 	return f.nextID, nil
 }
+
+// CountRunningDeployments mirrors the real store: a deployment is in flight
+// once created and until finished. A fake that always answered 0 would leave
+// the enqueue guard untested and would hide the behaviour change from every
+// test that deploys the same app twice.
+func (f *fakeStore) CountRunningDeployments(_ context.Context, appID int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var n int64
+	for depID, a := range f.depApp {
+		if a != appID {
+			continue
+		}
+		if _, finished := f.deploys[depID]; !finished {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, imageTag, errMsg, log string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -588,7 +608,9 @@ func TestStopCancelsInflightAndDrainsQueue(t *testing.T) {
 
 	id1 := d.Enqueue(2, "manual") // becomes in-flight, blocks in Build
 	<-bb.started
-	id2 := d.Enqueue(2, "manual") // sits in the queue behind id1
+	// A different app: one app may have only one deploy in flight, so queueing
+	// behind id1 requires a second app.
+	id2 := d.Enqueue(3, "manual") // sits in the queue behind id1
 
 	done := make(chan struct{})
 	go func() { d.Stop(); close(done) }()
@@ -614,15 +636,19 @@ func TestEnqueueQueueFullRejectsImmediately(t *testing.T) {
 	d := newDeployer(eng, &mockBuilder{}, st)
 	// No Start(): nothing drains the queue, so it fills at its capacity.
 
+	// One app per slot: a single app is now capped at one in-flight deploy, so
+	// filling the shared queue takes as many distinct apps as it has slots.
+	// That cap is the point — it is what stops one caller from starving every
+	// other tenant — so this test fills the queue the only way that remains.
 	var lastID int64
 	for i := 0; i < cap(d.queue); i++ {
-		if lastID = d.Enqueue(1, "manual"); lastID == 0 {
+		if lastID = d.Enqueue(int64(i+1), "manual"); lastID == 0 {
 			t.Fatalf("enqueue %d rejected before the queue was full", i)
 		}
 	}
 
 	done := make(chan int64, 1)
-	go func() { done <- d.Enqueue(1, "manual") }()
+	go func() { done <- d.Enqueue(int64(cap(d.queue)+1), "manual") }()
 	select {
 	case got := <-done:
 		if got != 0 {
@@ -896,5 +922,34 @@ func TestChownOwnedVolumesFailsDeploy(t *testing.T) {
 	app := App{Mounts: []docker.MountSpec{{Source: "v", Owner: "1000:1000"}}}
 	if err := d.chownOwnedVolumes(context.Background(), app, io.Discard); err == nil {
 		t.Fatal("want error when VolumeChown fails")
+	}
+}
+
+// One application may have only one deploy in flight. The queue is 64 deep,
+// drained by a single worker and shared by every tenant, so without this a
+// caller retrying one app in a loop — an agent is the obvious way — fills the
+// queue and every other tenant's deploys start failing with "queue full".
+func TestEnqueueRefusesASecondDeployForTheSameApp(t *testing.T) {
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
+	// No Start(): nothing drains the queue, so the first deploy stays in flight.
+
+	first := d.Enqueue(1, "manual")
+	if first == 0 {
+		t.Fatal("first deploy was rejected")
+	}
+	if second := d.Enqueue(1, "manual"); second != 0 {
+		t.Fatalf("second deploy for the same app returned %d, want 0 (rejected)", second)
+	}
+	// A different app is unaffected: the cap is per application, not global.
+	if other := d.Enqueue(2, "manual"); other == 0 {
+		t.Fatal("a deploy for a different app was rejected")
+	}
+	// Once the first finishes, the app can deploy again.
+	if err := st.FinishDeployment(context.Background(), first, "done", "", "", ""); err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if again := d.Enqueue(1, "manual"); again == 0 {
+		t.Fatal("app could not deploy again after its in-flight deploy finished")
 	}
 }

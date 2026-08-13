@@ -32,3 +32,13 @@ SET status = 'error',
     error_message = 'interrupted: krill restarted while this deploy was running',
     finished_at = now()
 WHERE status = 'running';
+
+-- name: CountRunningDeploymentsByApplication :one
+-- How many deploys for this app are still in flight. Used to refuse a second
+-- one: the queue is 64 deep, single-worker and shared by every tenant, so a
+-- caller retrying the same app in a loop could otherwise fill it and make
+-- every other tenant's deploys fail with "queue full". Reading committed rows
+-- rather than an in-memory lock keeps this self-healing — a deploy interrupted
+-- by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
+-- leaked lock would block the app forever.
+SELECT count(*) FROM deployments WHERE application_id = $1 AND status = 'running';

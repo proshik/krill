@@ -55,6 +55,7 @@ type Store interface {
 	GetDeploymentApp(ctx context.Context, deployID int64) (App, error)
 	SetStatus(ctx context.Context, id int64, status string) error
 	CreateDeployment(ctx context.Context, appID int64, trigger string) (int64, error)
+	CountRunningDeployments(ctx context.Context, appID int64) (int64, error)
 	FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error
 }
 
@@ -186,6 +187,19 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	case <-d.done:
 		return 0
 	default:
+	}
+	// Refuse a second deploy for an app that already has one in flight. The
+	// queue is 64 deep, drained by a single worker and shared by every tenant,
+	// so a caller retrying the same app — an agent in a retry loop is the
+	// obvious way this happens — could fill it and make every other tenant's
+	// deploys fail with "queue full". Bounding each app to one pending deploy
+	// caps that at one slot per app.
+	if n, err := d.store.CountRunningDeployments(context.Background(), appID); err != nil {
+		slog.Error("in-flight deploy check failed", "app", appID, "err", err)
+		return 0
+	} else if n > 0 {
+		slog.Info("deploy rejected, one is already in flight", "app", appID, "in_flight", n)
+		return 0
 	}
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
