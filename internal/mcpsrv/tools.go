@@ -385,7 +385,7 @@ func registerStop(srv *mcp.Server, svc *api.Service) {
 func registerSetEnv(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolSetEnv,
-		Description: "Set (or add) one environment variable's value, or remove it, without touching any other line of the app's env file.",
+		Description: "Set (or add) one environment variable's value, or remove it, without touching any other line of the app's env file. The change is saved but NOT applied to the running container: call krill_deploy afterwards for it to take effect. Values must be a single line.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setEnvArgs) (*mcp.CallToolResult, any, error) {
 		id, errRes := callerIdentity(ctx)
 		if errRes != nil {

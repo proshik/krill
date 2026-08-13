@@ -369,6 +369,10 @@ type apiSetEnvRequest struct {
 }
 
 // apiSetEnv makes a single targeted edit to an application's environment.
+// The edit is saved but NOT applied to the running container — env vars are
+// baked into the Swarm service spec at deploy time, so the change takes
+// effect on the next deployment (see api.Service.SetEnv for why this does not
+// redeploy by itself).
 // The audit line deliberately omits the value: it may be a secret, and
 // CLAUDE.md's logging rule ("never log secrets... connection strings")
 // applies here exactly as it does to the web UI's own env editor.

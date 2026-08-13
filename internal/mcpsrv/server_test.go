@@ -47,6 +47,55 @@ func TestToolListMatchesRegistry(t *testing.T) {
 	}
 }
 
+// TestToolDescriptionsStateTheirCaveats reads the descriptions exactly as a
+// raw MCP client does — over tools/list, off the wire — because that listing
+// is the ONLY documentation such a client (or an agent that never loaded the
+// krill-deploy skill) ever sees. The README and the skill both note that
+// krill_set_env does not apply to the running container; the tool description
+// omitted it, so an agent would set a variable and report "environment
+// updated" while the container kept running the old value.
+//
+// No database is needed: registering tools never touches the service, and the
+// handler's own auth is the caller's middleware (see TestProtocolSmoke's
+// withBearerAuth), so tools/list answers on a bare handler.
+func TestToolDescriptionsStateTheirCaveats(t *testing.T) {
+	ts := httptest.NewServer(mcpsrv.New(api.NewService(nil, nil, nil, nil), noIdleTimeout).Handler())
+	defer ts.Close()
+
+	_, sid := postJSONRPC(t, ts.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"docs","version":"v0"}}}`, "", "")
+	if sid == "" {
+		t.Fatal("initialize: no Mcp-Session-Id returned")
+	}
+	listEnv, _ := postJSONRPC(t, ts.URL, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`, "", sid)
+	if listEnv.Error != nil {
+		t.Fatalf("tools/list: server error: %s", listEnv.Error.Message)
+	}
+	var listResult struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(listEnv.Result, &listResult); err != nil {
+		t.Fatalf("decode tools/list result: %v", err)
+	}
+	desc := map[string]string{}
+	for _, tl := range listResult.Tools {
+		desc[tl.Name] = tl.Description
+	}
+
+	got, ok := desc["krill_set_env"]
+	if !ok {
+		t.Fatal("krill_set_env missing from tools/list")
+	}
+	// The caveat must name the follow-up operation, not merely hint at it:
+	// "takes effect later" leaves the agent with nothing to call.
+	if !strings.Contains(got, "krill_deploy") {
+		t.Fatalf("krill_set_env's description must tell the agent to call krill_deploy for the change to take effect, got %q", got)
+	}
+}
+
 // smokeFixture wires a real api.Service over a real (testcontainer) database
 // with one org and one write-level token — everything the protocol smoke
 // test needs to prove a tools/call genuinely reaches internal/api.Service
