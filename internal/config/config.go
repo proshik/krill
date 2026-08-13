@@ -57,6 +57,20 @@ type Config struct {
 	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
 	// connections to private/loopback/link-local addresses. Default false.
 	AllowPrivateEgress bool `env:"KRILL_ALLOW_PRIVATE_EGRESS" envDefault:"false"`
+	// AgentAPIEnabled toggles the agent-facing API (REST /api/v1 + MCP /mcp). On by
+	// default; set false to disable the surface entirely on an install that
+	// doesn't want it.
+	AgentAPIEnabled bool `env:"KRILL_AGENT_API_ENABLED" envDefault:"true"`
+	// MCPSessionTimeout closes an idle MCP session after this long with no
+	// request from its client, releasing the session's goroutine and its slot
+	// in the handler's session table. An MCP session is only ever ended
+	// explicitly by a DELETE /mcp, which an agent that crashes, a CI job that
+	// finishes, a restarted container or a dropped network never sends — so
+	// without this every abandoned connect leaks until the process restarts,
+	// and Krill runs for months as a systemd unit. 0 disables the idle
+	// timeout (sessions then live until an explicit DELETE), matching
+	// KRILL_TERMINAL_IDLE_TIMEOUT's convention.
+	MCPSessionTimeout time.Duration `env:"KRILL_MCP_SESSION_TIMEOUT" envDefault:"30m"`
 }
 
 // Load reads the configuration from the environment.

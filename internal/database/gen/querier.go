@@ -39,6 +39,7 @@ type Querier interface {
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
+	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
@@ -59,6 +60,7 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
+	DeleteAPIToken(ctx context.Context, arg DeleteAPITokenParams) error
 	DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
@@ -88,6 +90,7 @@ type Querier interface {
 	// run at startup only — a just-booted control plane has no deploy in flight.
 	FailOrphanedDeployments(ctx context.Context) (int64, error)
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
+	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
@@ -118,6 +121,9 @@ type Querier interface {
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
+	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
+	ListAPITokensByUser(ctx context.Context, userID int64) ([]ApiToken, error)
+	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
@@ -187,6 +193,7 @@ type Querier interface {
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error
+	TouchAPIToken(ctx context.Context, id int64) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationBuild(ctx context.Context, arg UpdateApplicationBuildParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error

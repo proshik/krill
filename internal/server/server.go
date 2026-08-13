@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/config"
@@ -15,6 +16,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
@@ -42,6 +44,20 @@ type Server struct {
 
 	notify  *notify.Service
 	metrics metrics.Store
+
+	// apiAuth/apiSvc/apiLimiter wire the agent-facing API (REST + MCP). A nil
+	// apiAuth disables both surfaces (RequireAPIToken 404s instead of panicking).
+	apiAuth    *api.Authenticator
+	apiSvc     *api.Service
+	apiLimiter *tokenLimiter
+
+	// mcpHandler serves the MCP adapter (see internal/mcpsrv). It is built once,
+	// in SetAPI, and held here rather than constructed inside Router: a
+	// streamable-HTTP handler owns the session table an incoming request's
+	// Mcp-Session-Id is looked up in, so the two mount points (/mcp and /mcp/*)
+	// MUST share one instance, and a second Router() call must not strand the
+	// sessions a client already negotiated against the first.
+	mcpHandler http.Handler
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -165,6 +181,21 @@ func (s *Server) reloadVolumeBackupSchedules() {
 	}
 }
 
+// SetAPI wires the agent-facing API (REST + MCP). A nil authenticator disables
+// both surfaces (RequireAPIToken 404s). A nil service leaves the MCP handler
+// unbuilt — registering tools over a nil service would turn every tools/call
+// into a panic instead of an error — so /mcp stays unmounted in that case too.
+// The MCP handler's idle-session reaper is configured from
+// KRILL_MCP_SESSION_TIMEOUT (see config.MCPSessionTimeout).
+func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
+	s.apiAuth = a
+	s.apiSvc = svc
+	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
+	if svc != nil {
+		s.mcpHandler = mcpsrv.New(svc, s.cfg.MCPSessionTimeout).Handler()
+	}
+}
+
 // SetNotify wires the notification service (used by the test-message handler).
 func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
 
@@ -215,6 +246,39 @@ func (s *Server) Router() http.Handler {
 		r.Post("/deploy/{appID}", s.deployHook)
 	})
 
+	// Agent-facing API: bearer-token auth, no session cookie. Registered only
+	// when an authenticator is wired (SetAPI), same pattern as the other
+	// optional subsystems below.
+	if s.apiAuth != nil {
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Use(s.RequireAPIToken)
+			r.Get("/whoami", s.apiWhoami)
+			r.Get("/deployments/{deployID}", s.apiDeploymentStatus)
+			r.Route("/apps", func(r chi.Router) {
+				r.Get("/", s.apiListApps)
+				// Everything below takes an app reference that may itself
+				// contain slashes (project/environment/app), so the
+				// remainder of the path is split by the trailing verb
+				// (see SplitAppRef) rather than by a chi path param.
+				r.Get("/*", s.apiAppRouter)
+				r.Post("/*", s.apiAppRouter)
+			})
+		})
+
+		// MCP adapter: the same twelve operations over streamable HTTP, behind
+		// the same bearer-token middleware as the REST surface — the caller's
+		// Identity travels from RequireAPIToken into every tool handler through
+		// the request context (api.WithIdentity / api.IdentityFrom). Both
+		// patterns are served by the ONE handler built in SetAPI, so a client's
+		// session survives whichever of the two it addresses; chi's Handle
+		// covers every method, which streamable HTTP needs (POST for messages,
+		// GET for the notification stream, DELETE to end a session).
+		if s.cfg.AgentAPIEnabled && s.mcpHandler != nil {
+			r.With(s.RequireAPIToken).Handle("/mcp", s.mcpHandler)
+			r.With(s.RequireAPIToken).Handle("/mcp/*", s.mcpHandler)
+		}
+	}
+
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
 		r.Use(auth.WithInstanceAdmin(s.auth))
@@ -234,6 +298,14 @@ func (s *Server) Router() http.Handler {
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
 			r.Get("/git-credentials", s.listGitCredentials)
+			// Listing and revocation need no more than org membership: the page
+			// only ever shows the signed-in user's own tokens scoped to this org
+			// (ListAPITokensByUserAndOrg) and DeleteAPIToken/GetAPIToken below
+			// enforce ownership directly, so a plain member can safely manage
+			// tokens they already hold even without admin. Only minting a new one
+			// is admin-gated (see the RequireRole(RoleAdmin) group below).
+			r.Get("/api-tokens", s.listAPITokens)
+			r.Post("/api-tokens/{tokenID}/delete", s.deleteAPIToken)
 			r.Get("/db-servers", s.listDBInstances)
 			r.Get("/db-servers/{instID}", s.dbInstanceDetail)
 			r.Get("/db-servers/{instID}/status", s.dbInstanceStatus)
@@ -269,6 +341,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/destinations/{destID}/delete", s.deleteDestination)
 				r.Post("/registries", s.createRegistry)
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
+				r.Post("/api-tokens", s.createAPIToken)
 				r.Post("/git-credentials", s.createGitCredential)
 				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
 				r.Post("/db-servers", s.createDBInstance)

@@ -12,7 +12,15 @@ import (
 // complements the SameSite=Lax session cookie as a stateless second layer.
 func csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/webhooks/") {
+		// Bearer-authenticated endpoints are exempt from the origin check: CSRF
+		// protection exists because browsers attach cookies automatically, so a
+		// cross-site request can silently ride along on the victim's session. A
+		// bearer token is never attached automatically — a cross-site request has
+		// no way to carry the caller's Authorization header — so it cannot borrow
+		// the caller's credentials here. The exemption also keeps a client that
+		// *does* send an Origin (e.g. a browser-hosted MCP client) from being
+		// rejected for no security benefit.
+		if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp") {
 			next.ServeHTTP(w, r)
 			return
 		}

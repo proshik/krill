@@ -135,7 +135,7 @@ type Engine interface {
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
 	ServiceStates(ctx context.Context, names []string) (map[string]ServiceState, error)          // bulk: one API round-trip for many services
 	ServiceProgress(ctx context.Context, name string, exclude []string) (ServiceProgress, error) // deploy convergence relative to a pre-deploy baseline task set
-	ServiceLogs(ctx context.Context, name string, follow bool) (io.ReadCloser, error)
+	ServiceLogs(ctx context.Context, name string, follow bool, tail int) (io.ReadCloser, error)  // tail bounds how many trailing lines the transport returns; callers must pass an explicit value, there is no default
 	ServiceScale(ctx context.Context, name string, replicas uint64) error
 	ServiceRestart(ctx context.Context, name string) error // force-restart current tasks without rebuilding
 	ImagePull(ctx context.Context, ref string, out io.Writer) error

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
@@ -42,7 +43,9 @@ func (noopEngine) ServiceStates(_ context.Context, names []string) (map[string]d
 	}
 	return m, nil
 }
-func (noopEngine) ServiceLogs(context.Context, string, bool) (io.ReadCloser, error) { return nil, nil }
+func (noopEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
+	return nil, nil
+}
 func (noopEngine) ServiceScale(context.Context, string, uint64) error               { return nil }
 func (noopEngine) ServiceRestart(context.Context, string) error                     { return nil }
 func (noopEngine) ImagePull(context.Context, string, io.Writer) error               { return nil }
@@ -96,6 +99,15 @@ func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer)
 // that need to poke rows sqlc has no typed query for (e.g. legacy columns).
 func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
+	return newDeployServerWithTokens(t, nil)
+}
+
+// newDeployServerWithTokens is newDeployServer with an injectable
+// api.TokenStore behind the API authenticator, so a test can make the token
+// LOOKUP fail (standing in for "Postgres is down") independently of the token
+// being valid. nil uses the real queries, i.e. exactly newDeployServer.
+func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
@@ -108,5 +120,10 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
+	var tokenStore api.TokenStore = q
+	if tokens != nil {
+		tokenStore = tokens
+	}
+	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep, hub))
 	return srv.Router(), q, orgSvc, pool
 }

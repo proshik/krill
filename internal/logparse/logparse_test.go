@@ -1,4 +1,4 @@
-package server
+package logparse
 
 import (
 	"bufio"
@@ -84,14 +84,16 @@ func TestParseLogLine(t *testing.T) {
 }
 
 // The log stream's scanner error was never checked: a line over the 1 MiB
-// buffer (bufio.ErrTooLong) or a broken read ended the loop and the socket
-// closed with StatusNormalClosure, so the viewer showed a stream that had
-// simply "ended". The user watches a dead panel believing it is live.
+// buffer (bufio.ErrTooLong) or a broken read ended the loop and the caller
+// (the WS viewer, or AppLogs) saw a stream that had simply "ended". A silent
+// stop is worse than an error surfaced in-band: the viewer keeps looking live
+// while showing nothing, and an agent calling AppLogs would reason from a
+// truncated tail believing it were complete.
 func TestScanEndNotice(t *testing.T) {
-	if _, ok := scanEndNotice(nil); ok {
+	if _, ok := ScanEndNotice(nil); ok {
 		t.Error("a clean end of stream must not produce a notice")
 	}
-	line, ok := scanEndNotice(bufio.ErrTooLong)
+	line, ok := ScanEndNotice(bufio.ErrTooLong)
 	if !ok {
 		t.Fatal("an oversized log line produced no notice")
 	}
@@ -101,7 +103,7 @@ func TestScanEndNotice(t *testing.T) {
 	if line.Msg == "" {
 		t.Error("notice has no message explaining the break")
 	}
-	if other, ok := scanEndNotice(errors.New("connection reset")); !ok || !strings.Contains(other.Msg, "connection reset") {
+	if other, ok := ScanEndNotice(errors.New("connection reset")); !ok || !strings.Contains(other.Msg, "connection reset") {
 		t.Errorf("a read failure must surface its cause, got %q (ok=%v)", other.Msg, ok)
 	}
 }

@@ -55,7 +55,7 @@ func TestEngineLifecycle(t *testing.T) {
 	}
 
 	// Logs are available.
-	rc, err := e.ServiceLogs(ctx, name, false)
+	rc, err := e.ServiceLogs(ctx, name, false, 200)
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}

@@ -83,6 +83,7 @@ templ settingsNav(orgID int64) {
 	<div class="k-card flex items-center mb-4 py-2 px-4">
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/registries") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "registries")) }>{ i18n.T(ctx, "reg.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/git-credentials") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "git-credentials")) }>{ i18n.T(ctx, "gitcred.link") }</a>
+		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/api-tokens") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "api-tokens")) }>{ i18n.T(ctx, "api_tokens.link") }</a>
 		if auth.IsInstanceAdmin(ctx) {
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/firewall") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "firewall")) }>{ i18n.T(ctx, "firewall.link") }</a>

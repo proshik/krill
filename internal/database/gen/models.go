@@ -10,6 +10,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ApiToken struct {
+	ID         int64              `json:"id"`
+	UserID     int64              `json:"user_id"`
+	OrgID      int64              `json:"org_id"`
+	Name       string             `json:"name"`
+	TokenHash  string             `json:"token_hash"`
+	Prefix     string             `json:"prefix"`
+	Level      string             `json:"level"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt  time.Time          `json:"created_at"`
+}
+
 type AppDbLink struct {
 	ID                int64     `json:"id"`
 	ApplicationID     int64     `json:"application_id"`
