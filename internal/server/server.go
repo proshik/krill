@@ -296,6 +296,14 @@ func (s *Server) Router() http.Handler {
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
 			r.Get("/git-credentials", s.listGitCredentials)
+			// Listing and revocation need no more than org membership: the page
+			// only ever shows the signed-in user's own tokens (ListAPITokensByUser
+			// is user-scoped, not org-scoped) and DeleteAPIToken/GetAPIToken below
+			// enforce ownership directly, so a plain member can safely manage
+			// tokens they already hold even without admin. Only minting a new one
+			// is admin-gated (see the RequireRole(RoleAdmin) group below).
+			r.Get("/api-tokens", s.listAPITokens)
+			r.Post("/api-tokens/{tokenID}/delete", s.deleteAPIToken)
 			r.Get("/db-servers", s.listDBInstances)
 			r.Get("/db-servers/{instID}", s.dbInstanceDetail)
 			r.Get("/db-servers/{instID}/status", s.dbInstanceStatus)
@@ -331,6 +339,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/destinations/{destID}/delete", s.deleteDestination)
 				r.Post("/registries", s.createRegistry)
 				r.Post("/registries/{regID}/delete", s.deleteRegistry)
+				r.Post("/api-tokens", s.createAPIToken)
 				r.Post("/git-credentials", s.createGitCredential)
 				r.Post("/git-credentials/{gcID}/delete", s.deleteGitCredential)
 				r.Post("/db-servers", s.createDBInstance)

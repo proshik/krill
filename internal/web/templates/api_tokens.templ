@@ -1,0 +1,92 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// APITokens renders the signed-in user's personal access tokens. plainToken
+// is non-empty exactly once, right after creation — it comes from a one-shot
+// flash cookie (see Server.takeFlashToken) and is never persisted, so it can
+// never appear here on a later page load.
+templ APITokens(org db.Organization, role string, tokens []db.ApiToken, plainToken string) {
+	@Layout(i18n.T(ctx, "api_tokens.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "api_tokens.desc") }</p>
+		if plainToken != "" {
+			<div class="k-toast k-toast-ok mb-3 flex items-center gap-3">
+				<span>{ i18n.T(ctx, "api_tokens.created_once") } <b class="k-mono">{ plainToken }</b></span>
+				<button type="button" class="k-copy" data-copy={ plainToken } onclick="krillCopyToClip(this.dataset.copy, 'Token')">{ i18n.T(ctx, "common.copy") }</button>
+			</div>
+		}
+		<div class="k-card">
+			<table class="k-table">
+				<thead>
+					<tr>
+						<th>{ i18n.T(ctx, "api_tokens.name") }</th>
+						<th>{ i18n.T(ctx, "api_tokens.prefix") }</th>
+						<th>{ i18n.T(ctx, "api_tokens.level") }</th>
+						<th>{ i18n.T(ctx, "api_tokens.expires") }</th>
+						<th>{ i18n.T(ctx, "api_tokens.last_used") }</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					if len(tokens) == 0 {
+						<tr><td colspan="6" style="color:var(--color-muted)">{ i18n.T(ctx, "api_tokens.empty") }</td></tr>
+					}
+					for _, t := range tokens {
+						<tr>
+							<td>{ t.Name }</td>
+							<td class="k-mono">{ tokenPrefixDisplay(t.Prefix) }</td>
+							<td>
+								if t.Level == "write" {
+									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "api_tokens.level_write") }</span>
+								} else {
+									<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "api_tokens.level_read") }</span>
+								}
+							</td>
+							<td>
+								if t.ExpiresAt.Valid {
+									{ tsStr(t.ExpiresAt) }
+								} else {
+									{ i18n.T(ctx, "api_tokens.never") }
+								}
+							</td>
+							<td>{ tsStr(t.LastUsedAt) }</td>
+							<td>
+								<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/api-tokens/" + itoa(t.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "api_tokens.revoke_confirm", t.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "api_tokens.revoke") }</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			if role == "owner" || role == "admin" {
+				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/api-tokens") } class="mt-4 flex flex-col gap-2">
+					<div>
+						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.name") }</label>
+						<input class="k-input" name="name" required/>
+					</div>
+					<div>
+						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.level") }</label>
+						<select class="k-select" name="level">
+							<option value="read">{ i18n.T(ctx, "api_tokens.level_read") }</option>
+							<option value="write">{ i18n.T(ctx, "api_tokens.level_write") }</option>
+						</select>
+					</div>
+					<div>
+						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.expires") }</label>
+						<select class="k-select" name="expires">
+							<option value="never">{ i18n.T(ctx, "api_tokens.never") }</option>
+							<option value="30d">{ i18n.T(ctx, "api_tokens.expires_30d") }</option>
+							<option value="90d">{ i18n.T(ctx, "api_tokens.expires_90d") }</option>
+						</select>
+					</div>
+					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "api_tokens.create") }</button></div>
+				</form>
+			}
+		</div>
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice/drivers"
@@ -185,6 +186,14 @@ func scheduleLabel(ctx context.Context, schedule string) string {
 		return schedule
 	}
 	return i18n.T(ctx, "backup.sched."+p)
+}
+
+// tokenPrefixDisplay renders an API token's stored lookup prefix (8 chars,
+// no marker) back into its recognizable form, e.g. "krill_pat_a1b2c3d4…". The
+// full token is never stored, so this is deliberately NOT enough to
+// reconstruct it — just enough for a human to tell tokens apart in the list.
+func tokenPrefixDisplay(prefix string) string {
+	return api.TokenPrefix + prefix + "…"
 }
 
 // humanSize renders a byte count as a short human-readable string.
