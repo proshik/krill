@@ -79,6 +79,10 @@ Features below are grouped by capability and tied to the phase that delivered th
 - An **Ingress lane** shows Internet → Traefik → exposed app, with the domain labelled on the edge and arrows showing request direction.
 - Connections are detected both from modeled DB links and from raw `env_text` connection strings, so an app wired by a plain DSN still shows a thread; multiple per-field links to the same database collapse into one.
 
+### Agent & CI API (MCP + REST)
+- Twelve operations for agents and pipelines — status, logs, deployment history, deploy/rebuild/reload/stop, single-variable env edits — over an **MCP server** (`/mcp`) and a **REST API** (`/api/v1`), both behind org-scoped read/write bearer tokens issued from Settings.
+- No destructive operations at all (no create/delete of anything, no container shell), env values are never returned, and a token's rights are re-resolved from the owner's current role on every request. See [Agents & CI](#agents--ci-rest-api--mcp).
+
 ### Secrets at rest
 - Set `KRILL_SECRET_KEY` to encrypt stored secrets at rest (AES-256-GCM): DB passwords, registry/Git/destination credentials, webhook + notification tokens. Empty key = legacy plaintext (with a startup warning); previously-plaintext values stay readable after a key is added.
 
@@ -283,6 +287,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_METRICS_INTERVAL` | `30s` | No | How often the monitoring sampler records container stats. |
 | `KRILL_METRICS_RETENTION` | `48h` | No | How long metric history is kept before pruning. |
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
+| `KRILL_MCP_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 
@@ -424,6 +429,83 @@ To deploy from a **private** registry image, add registry credentials and select
 3. Deploy: Krill passes the encoded auth to Swarm (`--with-registry-auth`), so the private image is pulled with your credentials.
 
 Notes: credentials are stored plaintext (like other secrets); a single registry per app; token-only registries that need dynamic credentials (AWS ECR, GCP Artifact Registry) are not yet supported — use a static username + password/token (covers GHCR PATs, Docker Hub, GitLab). The live private pull is verified on a real host.
+
+## Agents & CI (REST API + MCP)
+
+Krill exposes twelve operations for AI agents and CI over two surfaces backed by the same code: **REST/JSON at `/api/v1`** for scripts and pipelines, and an **MCP server (streamable HTTP) at `/mcp`** for agents. Both authenticate with the same org-scoped bearer token and run the same tenancy checks.
+
+They **operate apps that already exist** — status, logs, deploy/rebuild/reload/stop, and single-variable env edits. There are no destructive operations at all: nothing creates or deletes an organization, project, environment, app, database, domain or volume, and there is no `docker exec`/terminal. The blast radius is bounded by the surface itself rather than by a permission matrix — a list of twelve operations can be checked by eye; a permission matrix cannot.
+
+### 1. Issue a token
+
+Open the org's **Settings → API tokens** page and create one: a name, a level (**read** or **write**), and an expiry (never / 30 days / 90 days). Creating a token is admin-only; any member can list and revoke their own.
+
+- The plaintext (`krill_pat_…`) is shown **exactly once**, right after creation. It is never recoverable — the database stores only a SHA-256 hash and the 8-character lookup prefix. Lost it? Revoke and issue a new one.
+- Rights are resolved **live on every request**: the effective right is the token's level intersected with the owner's *current* role in that org. Demote the owner to `member`, or remove them from the org, and their write token stops writing immediately — no separate revocation step. It keeps reading as long as membership holds.
+- A token is bound to one organization. An app in another org reports as *not found*, never *forbidden*.
+
+### 2. Connect an agent (MCP)
+
+```bash
+claude mcp add --transport http krill https://krill.example.com/mcp \
+  --header "Authorization: Bearer krill_pat_..."
+```
+
+Read-level tools: `krill_whoami`, `krill_list_apps`, `krill_app_status`, `krill_app_logs`, `krill_deployments`, `krill_deployment_status`, `krill_list_env`.
+Write-level tools: `krill_deploy`, `krill_rebuild`, `krill_reload`, `krill_stop`, `krill_set_env`.
+
+Apps are addressed by `project/environment/app` path or numeric id — `krill_list_apps` returns both.
+
+### 3. Call it from CI (REST)
+
+The token goes in the `Authorization` header and **only** there — never `?token=`, because query strings land in reverse-proxy logs and browser history.
+
+```bash
+# Deploy an image app at a new tag, then poll until it finishes
+DEPLOY=$(curl -sS -X POST \
+  -H "Authorization: Bearer $KRILL_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"v1.2.3"}' \
+  https://krill.example.com/api/v1/apps/acme/production/bot/deploy)
+
+ID=$(echo "$DEPLOY" | jq -r .deployment_id)
+curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
+  "https://krill.example.com/api/v1/deployments/$ID"
+```
+
+| Route | Level | Notes |
+|-------|-------|-------|
+| `GET /api/v1/whoami` | read | User, org, level, live role, `can_write`. |
+| `GET /api/v1/apps` | read | Every app in the org: path, id, status, source type, image, domains. |
+| `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment. |
+| `GET /api/v1/apps/{app}/logs` | read | Runtime log tail. `?tail=` (default 200, max 1000), `?level=` (`trace`…`fatal`). |
+| `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
+| `GET /api/v1/deployments/{id}` | read | One deployment plus the last ~8 KB of its build log. |
+| `GET /api/v1/apps/{app}/env` | read | Variable **names** and source (`literal` / `db-link`) — values are never returned. |
+| `POST /api/v1/apps/{app}/deploy` | write | Body `{"tag":"…"}` optional (image apps only). Returns `{deployment_id, status}`. |
+| `POST /api/v1/apps/{app}/rebuild` | write | `--no-cache` build; `dockerfile` apps only. Returns `{deployment_id, status}`. |
+| `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull. |
+| `POST /api/v1/apps/{app}/stop` | write | Scale to 0 replicas; deploy brings it back. |
+| `POST /api/v1/apps/{app}/env` | write | Body `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, rest untouched. |
+
+`{app}` is a `project/environment/app` path or a numeric id. Deploys are **asynchronous**: `deploy`/`rebuild` enqueue the job and return a `deployment_id` immediately, and the caller polls `GET /api/v1/deployments/{id}` for `running` → `done` / `error`. An env edit is written to the app's env file but does not restart anything — it takes effect on the next deploy.
+
+### 4. Install the skill
+
+`skills/krill-deploy/SKILL.md` in this repo teaches an agent the deploy-and-verify and diagnose-a-failure runbooks (poll on a widening interval, don't retry a failed deploy, never invent a variable's value, ask before touching production). It is meant to run from your *application's* repo, so install it globally:
+
+```bash
+cp -r skills/krill-deploy ~/.claude/skills/
+```
+
+### Notes
+
+- **`KRILL_MCP_ENABLED`** (default `true`) is a single switch over **both** surfaces — setting it to `false` unmounts `/api/v1` as well as `/mcp`, and every request to either 404s. (The name reads MCP-only; it gates the REST API too.)
+- **60 requests per minute per token**, then `429` with `Retry-After`. MCP spends that budget faster than REST: a session costs an `initialize` and a `tools/list` before the first real call.
+- `krill_list_env` / `GET …/env` return **names only, never values** — deliberately, since everything an agent reads reaches its model provider. Writing a value is allowed; reading one is not.
+- Bearer tokens cross the network in clear text over plain HTTP. Krill warns at startup when the agent API is enabled and the public URL is not `https://` — put it behind TLS.
+- Every write logs an INFO audit line with `token_id` and `user_id` (never the token, never an env value).
+- An app whose name is itself one of the route verbs (`logs`, `env`, `deployments`, `deploy`, `rebuild`, `reload`, `stop`) can only be addressed over REST by numeric id — the path form splits on that trailing segment.
 
 ## Data model
 
