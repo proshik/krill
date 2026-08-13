@@ -2,8 +2,11 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -125,5 +128,76 @@ func TestAPIRateLimitReturns429WithJSONContentType(t *testing.T) {
 	}
 	if got := rec.Header().Get("Retry-After"); got == "" {
 		t.Fatal("want a Retry-After header on the 429")
+	}
+}
+
+// brokenTokenStore is an api.TokenStore whose lookup always fails, standing in
+// for "Postgres is unreachable". The error deliberately resembles a real pgx
+// dial failure and matches none of api's sentinels, which is the entire point.
+type brokenTokenStore struct{}
+
+func (brokenTokenStore) ListAPITokensByPrefix(context.Context, string) ([]db.ApiToken, error) {
+	return nil, errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
+}
+
+func (brokenTokenStore) TouchAPIToken(context.Context, int64) error { return nil }
+
+// TestAPIDatabaseFailureIsNot401 pins the distinction the whole-branch review
+// found missing: a token that could not be JUDGED (the lookup itself failed)
+// must not be reported as a token that was judged and rejected. Answering 401
+// to an outage tells an agent its credential is bad — it stops retrying and
+// escalates — and sends the operator off reissuing perfectly good tokens
+// chasing a phantom. Same lesson as commit fc05816.
+//
+// Revert RequireAPIToken to funnelling every Authenticate error into
+// apiUnauthorized and this test fails on the very first assertion.
+func TestAPIDatabaseFailureIsNot401(t *testing.T) {
+	h, _, _, _ := newDeployServerWithTokens(t, brokenTokenStore{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/whoami", nil)
+	req.Header.Set("Authorization", "Bearer krill_pat_anything-at-all")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503 when the token lookup fails, got %d (body=%q)", rec.Code, rec.Body.String())
+	}
+	// No challenge: nothing is wrong with the caller's credential, so inviting
+	// a retry with a different one is precisely the wrong hint.
+	if got := rec.Header().Get("WWW-Authenticate"); got != "" {
+		t.Fatalf("503 must not carry a WWW-Authenticate challenge, got %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("want application/json, got %q", ct)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v (body=%q)", err, rec.Body.String())
+	}
+	if body["code"] != "unavailable" {
+		t.Fatalf("want code=unavailable, got %q", body["code"])
+	}
+	// The underlying error can carry a DSN; it belongs in the log, not the body.
+	if strings.Contains(rec.Body.String(), "5432") {
+		t.Fatalf("503 body leaked the internal error: %q", rec.Body.String())
+	}
+}
+
+// TestAPIBadTokenStillReturns401 is the other half of the same branch: with
+// the store healthy, a genuinely unknown token must still be a 401 with a
+// challenge. Without it, "everything returns 503" would pass the test above.
+func TestAPIBadTokenStillReturns401(t *testing.T) {
+	h, _, _, _ := newDeployServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/whoami", nil)
+	req.Header.Set("Authorization", "Bearer krill_pat_definitely-not-real")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 for an unknown token, got %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") == "" {
+		t.Fatal("want a WWW-Authenticate challenge on the 401")
 	}
 }

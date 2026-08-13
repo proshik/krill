@@ -78,11 +78,23 @@ func (s *Server) RequireAPIToken(next http.Handler) http.Handler {
 		}
 		ident, err := s.apiAuth.Authenticate(r.Context(), strings.TrimPrefix(h, "Bearer "), time.Now())
 		if err != nil {
-			// Deliberately one response for unknown, expired and revoked-membership
-			// tokens: telling them apart is free reconnaissance. The distinction
-			// goes to the log, never to the client.
-			logFrom(r).Info("api token rejected", "err", err)
-			apiUnauthorized(w)
+			switch {
+			case errors.Is(err, api.ErrInvalidToken),
+				errors.Is(err, api.ErrTokenExpired),
+				errors.Is(err, api.ErrNoMembership):
+				// Deliberately one response for unknown, expired and revoked-membership
+				// tokens: telling them apart is free reconnaissance. The distinction
+				// goes to the log, never to the client.
+				logFrom(r).Info("api token rejected", "err", err)
+				apiUnauthorized(w)
+			default:
+				// The credential was never judged — the lookup itself failed
+				// (Postgres down, context cancelled). Answering 401 here would
+				// tell a perfectly valid agent its token is bad and send the
+				// operator off reissuing tokens to chase an outage.
+				logFrom(r).Error("api token authentication failed", "err", err)
+				apiUnavailable(w, r)
+			}
 			return
 		}
 		if !s.apiLimiter.allow(ident.TokenID, time.Now()) {
@@ -100,6 +112,23 @@ func apiUnauthorized(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"code": "unauthorized", "message": "valid bearer token required",
+	})
+}
+
+// apiUnavailable writes the 503 for an authentication attempt that could not
+// be decided at all because the infrastructure behind it failed. It carries no
+// WWW-Authenticate challenge — nothing is wrong with the caller's credential,
+// and inviting a retry with a different one is exactly the wrong hint. The
+// message stays generic (err.Error() can carry a DSN) but the request id lets
+// an operator find the logged cause, the same bargain writeAPIError strikes
+// for a 500.
+func apiUnavailable(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", "5")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code": "unavailable", "message": "authentication is temporarily unavailable, retry shortly",
+		"request_id": middleware.GetReqID(r.Context()),
 	})
 }
 

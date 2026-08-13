@@ -99,6 +99,15 @@ func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer)
 // that need to poke rows sqlc has no typed query for (e.g. legacy columns).
 func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
+	return newDeployServerWithTokens(t, nil)
+}
+
+// newDeployServerWithTokens is newDeployServer with an injectable
+// api.TokenStore behind the API authenticator, so a test can make the token
+// LOOKUP fail (standing in for "Postgres is down") independently of the token
+// being valid. nil uses the real queries, i.e. exactly newDeployServer.
+func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
@@ -111,6 +120,10 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
-	srv.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, eng, dep, hub))
+	var tokenStore api.TokenStore = q
+	if tokens != nil {
+		tokenStore = tokens
+	}
+	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep, hub))
 	return srv.Router(), q, orgSvc, pool
 }

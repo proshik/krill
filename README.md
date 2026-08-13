@@ -503,6 +503,7 @@ cp -r skills/krill-deploy ~/.claude/skills/
 
 - **`KRILL_MCP_ENABLED`** (default `true`) is a single switch over **both** surfaces — setting it to `false` unmounts `/api/v1` as well as `/mcp`, and every request to either 404s. (The name reads MCP-only; it gates the REST API too.)
 - **60 requests per minute per token**, then `429` with `Retry-After`. MCP spends that budget faster than REST: a session costs an `initialize` and a `tools/list` before the first real call.
+- **`401` means the credential was rejected; `503` (`code: "unavailable"`) means it could not be checked at all** (the database behind authentication is down). Only the first is a reason to reissue a token — retry the second.
 - `krill_list_env` / `GET …/env` return **names only, never values** — deliberately, since everything an agent reads reaches its model provider. Writing a value is allowed; reading one is not.
 - Bearer tokens cross the network in clear text over plain HTTP. Krill warns at startup when the agent API is enabled and the public URL is not `https://` — put it behind TLS.
 - Every write logs an INFO audit line with `token_id` and `user_id` (never the token, never an env value).

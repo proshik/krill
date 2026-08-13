@@ -62,8 +62,16 @@ func NewAuthenticator(t TokenStore, m MemberResolver) *Authenticator {
 }
 
 // Authenticate verifies the token and resolves the caller's live rights.
-// Every failure returns one of the sentinel errors and no Identity — callers
-// must not distinguish "unknown token" from "expired" to the client.
+//
+// A CREDENTIAL failure returns one of the sentinel errors (ErrInvalidToken,
+// ErrTokenExpired, ErrNoMembership) and no Identity; callers must answer all
+// three identically — telling "unknown token" from "expired" is free
+// reconnaissance. An INFRASTRUCTURE failure — the token lookup itself failing,
+// e.g. Postgres unreachable — returns that error unwrapped, and it matches
+// none of the sentinels. Callers MUST branch on the sentinels rather than
+// treating every error as a rejected credential: answering 401 when the
+// database is down tells an agent its token is bad and sends the operator off
+// reissuing perfectly good tokens.
 func (a *Authenticator) Authenticate(ctx context.Context, plain string, now time.Time) (Identity, error) {
 	if plain == "" {
 		return Identity{}, ErrInvalidToken
