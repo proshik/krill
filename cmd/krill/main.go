@@ -343,10 +343,10 @@ func run() error {
 
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
-	// internal/api. KRILL_MCP_ENABLED=false leaves the authenticator unwired,
+	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
 	// which unmounts both surfaces (RequireAPIToken 404s) — the whole agent
 	// surface is off on an install that doesn't want it.
-	if cfg.MCPEnabled {
+	if cfg.AgentAPIEnabled {
 		app.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, engine, dep, hub))
 		// An API token is a bearer credential: whoever reads one off the wire can
 		// replay it until it is revoked. Over plain HTTP a single interception —
@@ -357,7 +357,7 @@ func run() error {
 				"base_url", cfg.BaseURL())
 		}
 	} else {
-		slog.Info("agent API disabled (KRILL_MCP_ENABLED=false)")
+		slog.Info("agent API disabled (KRILL_AGENT_API_ENABLED=false)")
 	}
 
 	srv := &http.Server{

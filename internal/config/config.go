@@ -57,10 +57,10 @@ type Config struct {
 	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
 	// connections to private/loopback/link-local addresses. Default false.
 	AllowPrivateEgress bool `env:"KRILL_ALLOW_PRIVATE_EGRESS" envDefault:"false"`
-	// MCPEnabled toggles the agent-facing API (REST /api/v1 + MCP /mcp). On by
+	// AgentAPIEnabled toggles the agent-facing API (REST /api/v1 + MCP /mcp). On by
 	// default; set false to disable the surface entirely on an install that
 	// doesn't want it.
-	MCPEnabled bool `env:"KRILL_MCP_ENABLED" envDefault:"true"`
+	AgentAPIEnabled bool `env:"KRILL_AGENT_API_ENABLED" envDefault:"true"`
 	// MCPSessionTimeout closes an idle MCP session after this long with no
 	// request from its client, releasing the session's goroutine and its slot
 	// in the handler's session table. An MCP session is only ever ended

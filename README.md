@@ -287,7 +287,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_METRICS_INTERVAL` | `30s` | No | How often the monitoring sampler records container stats. |
 | `KRILL_METRICS_RETENTION` | `48h` | No | How long metric history is kept before pruning. |
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
-| `KRILL_MCP_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. |
+| `KRILL_AGENT_API_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. (Called `KRILL_MCP_ENABLED` before 2026-08-13.) |
 | `KRILL_MCP_SESSION_TIMEOUT` | `30m` | No | Closes an idle MCP session (a client that never sent `DELETE /mcp` — a crashed agent, a finished CI job) and frees its goroutine. `0` disables the idle timeout. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
@@ -501,7 +501,7 @@ cp -r skills/krill-deploy ~/.claude/skills/
 
 ### Notes
 
-- **`KRILL_MCP_ENABLED`** (default `true`) is a single switch over **both** surfaces — setting it to `false` unmounts `/api/v1` as well as `/mcp`, and every request to either 404s. (The name reads MCP-only; it gates the REST API too.)
+- **`KRILL_AGENT_API_ENABLED`** (default `true`) is a single switch over **both** surfaces — setting it to `false` unmounts `/api/v1` as well as `/mcp`, and every request to either 404s.
 - **60 requests per minute per token**, then `429` with `Retry-After`. MCP spends that budget faster than REST: a session costs an `initialize` and a `tools/list` before the first real call.
 - **`401` means the credential was rejected; `503` (`code: "unavailable"`) means it could not be checked at all** (the database behind authentication is down). Only the first is a reason to reissue a token — retry the second.
 - `krill_list_env` / `GET …/env` return **names only, never values** — deliberately, since everything an agent reads reaches its model provider. Writing a value is allowed; reading one is not.

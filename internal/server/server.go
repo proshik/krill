@@ -273,7 +273,7 @@ func (s *Server) Router() http.Handler {
 		// session survives whichever of the two it addresses; chi's Handle
 		// covers every method, which streamable HTTP needs (POST for messages,
 		// GET for the notification stream, DELETE to end a session).
-		if s.cfg.MCPEnabled && s.mcpHandler != nil {
+		if s.cfg.AgentAPIEnabled && s.mcpHandler != nil {
 			r.With(s.RequireAPIToken).Handle("/mcp", s.mcpHandler)
 			r.With(s.RequireAPIToken).Handle("/mcp/*", s.mcpHandler)
 		}

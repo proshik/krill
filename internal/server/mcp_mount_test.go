@@ -19,7 +19,7 @@ import (
 	"github.com/proshik/krill/internal/testutil"
 )
 
-// newMCPServers builds two routers over ONE database: one with MCPEnabled set,
+// newMCPServers builds two routers over ONE database: one with AgentAPIEnabled set,
 // one without. internal/mcpsrv's own tests drive the MCP handler through a
 // stand-in auth wrapper (it cannot import internal/server without a cycle);
 // these exercise the production wiring instead — the real chi mount, the real
@@ -31,7 +31,7 @@ func newMCPServers(t *testing.T) (enabled, disabled http.Handler, q *db.Queries,
 	orgSvc = org.NewService(q)
 	hub := deploy.NewLogHub()
 	build := func(mcpEnabled bool) http.Handler {
-		cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", MCPEnabled: mcpEnabled}
+		cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AgentAPIEnabled: mcpEnabled}
 		dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 		srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
 		// Engine/deployer nil: krill_whoami, the only tool called here, touches
@@ -94,7 +94,7 @@ func TestMCPRejectsMissingToken(t *testing.T) {
 	}
 }
 
-// TestMCPDisabledIsNotMounted proves the KRILL_MCP_ENABLED gate is real: with
+// TestMCPDisabledIsNotMounted proves the KRILL_AGENT_API_ENABLED gate is real: with
 // the flag off the route does not exist at all, even for a valid token (404,
 // not 401 — an unmounted path, not a rejected credential).
 func TestMCPDisabledIsNotMounted(t *testing.T) {
@@ -109,7 +109,7 @@ func TestMCPDisabledIsNotMounted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	disabled.ServeHTTP(rec, mcpRequest("/mcp", mcpInitializeBody, token, ""))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("want 404 with MCPEnabled=false, got %d (body=%q)", rec.Code, rec.Body.String())
+		t.Fatalf("want 404 with AgentAPIEnabled=false, got %d (body=%q)", rec.Code, rec.Body.String())
 	}
 }
 
