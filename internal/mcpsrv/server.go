@@ -22,6 +22,7 @@ package mcpsrv
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -42,7 +43,11 @@ type Server struct {
 
 // New builds the MCP server over svc and registers every tool in the
 // registry (see tools.go, toolRegistrations). svc must not be nil.
-func New(svc *api.Service) *Server {
+//
+// sessionTimeout bounds how long an idle session is kept before the handler
+// closes it (see the SessionTimeout comment in New's options literal below);
+// 0 means "never close an idle session", the SDK's zero-value behavior.
+func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 	impl := &mcp.Implementation{Name: "krill", Version: serverVersion}
 	srv := mcp.NewServer(impl, nil)
 	registerTools(srv, svc)
@@ -56,9 +61,18 @@ func New(svc *api.Service) *Server {
 	// spec-compliant streamable-HTTP response shapes ($2.1.5 of the MCP
 	// spec), and JSON is simpler for a caller (and for this package's own
 	// protocol smoke test) to consume without an SSE parser.
+	//
+	// SessionTimeout reclaims idle sessions. The SDK closes a session only on
+	// an explicit DELETE /mcp or a transport error, and its zero value means
+	// "never close an idle session" — so an agent that crashes, a CI job that
+	// exits, a restarted container or a dropped connection would each leave a
+	// session (and the goroutine serving it) alive in both this handler's
+	// session table and the shared *mcp.Server's session list, for the life
+	// of the process. Krill runs for months as a systemd unit on a small VPS,
+	// so that is a slow leak, not a rounding error.
 	s.handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
-	}, &mcp.StreamableHTTPOptions{JSONResponse: true})
+	}, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: sessionTimeout})
 	return s
 }
 

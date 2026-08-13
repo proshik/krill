@@ -185,12 +185,14 @@ func (s *Server) reloadVolumeBackupSchedules() {
 // both surfaces (RequireAPIToken 404s). A nil service leaves the MCP handler
 // unbuilt — registering tools over a nil service would turn every tools/call
 // into a panic instead of an error — so /mcp stays unmounted in that case too.
+// The MCP handler's idle-session reaper is configured from
+// KRILL_MCP_SESSION_TIMEOUT (see config.MCPSessionTimeout).
 func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
 	s.apiAuth = a
 	s.apiSvc = svc
 	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
 	if svc != nil {
-		s.mcpHandler = mcpsrv.New(svc).Handler()
+		s.mcpHandler = mcpsrv.New(svc, s.cfg.MCPSessionTimeout).Handler()
 	}
 }
 

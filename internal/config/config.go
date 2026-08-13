@@ -61,6 +61,16 @@ type Config struct {
 	// default; set false to disable the surface entirely on an install that
 	// doesn't want it.
 	MCPEnabled bool `env:"KRILL_MCP_ENABLED" envDefault:"true"`
+	// MCPSessionTimeout closes an idle MCP session after this long with no
+	// request from its client, releasing the session's goroutine and its slot
+	// in the handler's session table. An MCP session is only ever ended
+	// explicitly by a DELETE /mcp, which an agent that crashes, a CI job that
+	// finishes, a restarted container or a dropped network never sends — so
+	// without this every abandoned connect leaks until the process restarts,
+	// and Krill runs for months as a systemd unit. 0 disables the idle
+	// timeout (sessions then live until an explicit DELETE), matching
+	// KRILL_TERMINAL_IDLE_TIMEOUT's convention.
+	MCPSessionTimeout time.Duration `env:"KRILL_MCP_SESSION_TIMEOUT" envDefault:"30m"`
 }
 
 // Load reads the configuration from the environment.

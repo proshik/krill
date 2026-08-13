@@ -288,6 +288,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_METRICS_RETENTION` | `48h` | No | How long metric history is kept before pruning. |
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
 | `KRILL_MCP_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. |
+| `KRILL_MCP_SESSION_TIMEOUT` | `30m` | No | Closes an idle MCP session (a client that never sent `DELETE /mcp` — a crashed agent, a finished CI job) and frees its goroutine. `0` disables the idle timeout. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 

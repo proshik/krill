@@ -2,9 +2,11 @@ package mcpsrv_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -20,6 +22,11 @@ import (
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/testutil"
 )
+
+// noIdleTimeout is what the tests that are not ABOUT session reclamation pass
+// to mcpsrv.New: they drive a handful of requests over one session and must
+// never race a reaper closing it mid-test.
+const noIdleTimeout = 0
 
 // TestToolListMatchesRegistry pins the exact set of MCP tools this adapter
 // exposes. The tool list IS the adapter's entire security surface — an MCP
@@ -192,7 +199,7 @@ func postJSONRPC(t *testing.T, url, body, token, sid string) (rpcEnvelope, strin
 func TestProtocolSmoke(t *testing.T) {
 	f := newSmokeFixture(t)
 
-	handler := withBearerAuth(f.authn, mcpsrv.New(f.svc).Handler())
+	handler := withBearerAuth(f.authn, mcpsrv.New(f.svc, noIdleTimeout).Handler())
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
@@ -271,7 +278,7 @@ func TestProtocolSmoke(t *testing.T) {
 // negotiated session id — what every subsequent tools/call needs.
 func startSession(t *testing.T, authn *api.Authenticator, svc *api.Service, token string) (string, string) {
 	t.Helper()
-	ts := httptest.NewServer(withBearerAuth(authn, mcpsrv.New(svc).Handler()))
+	ts := httptest.NewServer(withBearerAuth(authn, mcpsrv.New(svc, noIdleTimeout).Handler()))
 	t.Cleanup(ts.Close)
 	env, sid := postJSONRPC(t, ts.URL,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"v0"}}}`, token, "")
@@ -380,7 +387,7 @@ func TestToolErrorHidesInternalCause(t *testing.T) {
 // TestProtocolSmoke's "valid token" premise is exercised, not assumed.
 func TestProtocolSmokeRejectsMissingToken(t *testing.T) {
 	f := newSmokeFixture(t)
-	handler := withBearerAuth(f.authn, mcpsrv.New(f.svc).Handler())
+	handler := withBearerAuth(f.authn, mcpsrv.New(f.svc, noIdleTimeout).Handler())
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
@@ -395,5 +402,134 @@ func TestProtocolSmokeRejectsMissingToken(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401 with no bearer token, got %d", resp.StatusCode)
+	}
+}
+
+// initSession completes an initialize handshake against url and returns the
+// negotiated session id. Unlike startSession it does not stand up a server,
+// so a caller can open many sessions against ONE handler — which is the whole
+// point of the reclamation tests below.
+func initSession(t *testing.T, url, token string) string {
+	t.Helper()
+	_, sid := postJSONRPC(t, url,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"reap","version":"v0"}}}`,
+		token, "")
+	if sid == "" {
+		t.Fatal("initialize: no Mcp-Session-Id returned")
+	}
+	return sid
+}
+
+// sessionStatus posts a trivial tools/list on sid and returns only the HTTP
+// status. A live session answers 200; one the handler has closed and dropped
+// from its session table answers 404 ("session not found"). postJSONRPC
+// cannot be reused here because it t.Fatalf's on any non-200 — the non-200 is
+// exactly what this asks about.
+func sessionStatus(t *testing.T, url, token, sid string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", sid)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// TestIdleSessionIsReclaimed is the behavioral half of the session-leak fix.
+// An MCP session ends only on an explicit DELETE /mcp, which a crashed agent,
+// a finished CI job or a dropped connection never sends; with the SDK's
+// zero-value SessionTimeout such a session — and the goroutine serving it —
+// lives until the process exits. Here the handler is built with a short idle
+// timeout and the session is then abandoned: it must stop being addressable,
+// which is precisely the observable consequence of the SDK closing it and
+// deleting it from the handler's session table.
+//
+// Remove the SessionTimeout from mcpsrv.New's options and this test hangs on
+// the poll loop until it fails: the session answers 200 forever.
+func TestIdleSessionIsReclaimed(t *testing.T) {
+	f := newSmokeFixture(t)
+	const idle = 150 * time.Millisecond
+	ts := httptest.NewServer(withBearerAuth(f.authn, mcpsrv.New(f.svc, idle).Handler()))
+	defer ts.Close()
+
+	sid := initSession(t, ts.URL, f.token)
+	// The session is addressable right after the handshake: without this the
+	// 404 below could just as well mean "the id was never valid".
+	if got := sessionStatus(t, ts.URL, f.token, sid); got != http.StatusOK {
+		t.Fatalf("fresh session: want 200, got %d", got)
+	}
+
+	// Now abandon it — no DELETE, no further requests — and wait for the
+	// reaper. Polling rather than sleeping once keeps this robust on a loaded
+	// CI box: a slow machine takes longer, it does not fail. The gap between
+	// polls must be well clear of idle, because a poll IS a request: the SDK
+	// pauses and restarts the idle timer around every POST, so a tight loop
+	// would keep the session alive forever and this test would measure its own
+	// traffic instead of the timeout.
+	const gap = idle * 10
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		time.Sleep(gap)
+		if got := sessionStatus(t, ts.URL, f.token, sid); got == http.StatusNotFound {
+			return // reclaimed
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session still addressable after 15s of %v-idle gaps with a %v timeout — it is never reclaimed", gap, idle)
+		}
+	}
+}
+
+// TestAbandonedSessionsDoNotLeakGoroutines is the resource half of the same
+// fix, measuring what the reviewer measured: N sessions opened and abandoned
+// with no DELETE must not leave N goroutines behind. It is the reason the
+// timeout exists at all — Krill runs for months as a systemd unit, and every
+// agent reconnect, CI job and container restart opens a session.
+//
+// The wait is a poll loop rather than a fixed settle, so a slow machine costs
+// time instead of flakiness; the tolerance absorbs unrelated churn (httptest,
+// pgx pool) without absorbing a real leak, which would be a full +N.
+func TestAbandonedSessionsDoNotLeakGoroutines(t *testing.T) {
+	f := newSmokeFixture(t)
+	const (
+		idle     = 150 * time.Millisecond
+		sessions = 30
+	)
+	ts := httptest.NewServer(withBearerAuth(f.authn, mcpsrv.New(f.svc, idle).Handler()))
+	defer ts.Close()
+
+	// One warm-up session first: the very first request through httptest and
+	// the SDK starts long-lived machinery that must not be counted as a leak.
+	initSession(t, ts.URL, f.token)
+	time.Sleep(idle * 4)
+	runtime.GC()
+	baseline := runtime.NumGoroutine()
+
+	for i := 0; i < sessions; i++ {
+		initSession(t, ts.URL, f.token)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	var delta int
+	for {
+		runtime.GC()
+		delta = runtime.NumGoroutine() - baseline
+		if delta <= sessions/3 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d abandoned sessions left %d extra goroutines alive after 30s (baseline %d) — sessions are not being reclaimed",
+				sessions, delta, baseline)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
