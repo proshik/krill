@@ -81,7 +81,7 @@ func TestCreateTokenShowsPlaintextOnceThenNever(t *testing.T) {
 		t.Fatal("plaintext token is still rendered on a later page load")
 	}
 
-	rows, err := q.ListAPITokensByUser(t.Context(), userIDFrom(t, q))
+	rows, err := q.ListAPITokensByUserAndOrg(t.Context(), db.ListAPITokensByUserAndOrgParams{UserID: userIDFrom(t, q), OrgID: orgID})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("want exactly one stored token, got %d (err=%v)", len(rows), err)
 	}
@@ -119,7 +119,7 @@ func TestCreateTokenRequiresAdmin(t *testing.T) {
 		t.Fatalf("member create want 403, got %d", rec.Code)
 	}
 
-	rows, err := q.ListAPITokensByUser(ctx, memberID)
+	rows, err := q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: memberID, OrgID: o.ID})
 	if err != nil {
 		t.Fatalf("list tokens: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCreateTokenInvalidLevelRejected(t *testing.T) {
 		t.Fatal("want an error flash for an invalid level")
 	}
 
-	rows, err := q.ListAPITokensByUser(t.Context(), userIDFrom(t, q))
+	rows, err := q.ListAPITokensByUserAndOrg(t.Context(), db.ListAPITokensByUserAndOrgParams{UserID: userIDFrom(t, q), OrgID: orgID})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("invalid level must not create a token, got %d (err=%v)", len(rows), err)
 	}
@@ -177,7 +177,7 @@ func TestRevokeTokenRequiresOwnership(t *testing.T) {
 	if createRec.Code != http.StatusSeeOther {
 		t.Fatalf("create want 303, got %d", createRec.Code)
 	}
-	rows, err := q.ListAPITokensByUser(ctx, ownerID)
+	rows, err := q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: ownerID, OrgID: orgID})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("want exactly one token, got %d (err=%v)", len(rows), err)
 	}
@@ -198,7 +198,7 @@ func TestRevokeTokenRequiresOwnership(t *testing.T) {
 		t.Fatalf("outsider delete want 404, got %d", delRec.Code)
 	}
 
-	rows, err = q.ListAPITokensByUser(ctx, ownerID)
+	rows, err = q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: ownerID, OrgID: orgID})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("owner's token must survive an outsider's delete attempt, got %d (err=%v)", len(rows), err)
 	}
@@ -225,7 +225,7 @@ func TestRevokeOwnTokenNeedsNoAdmin(t *testing.T) {
 	// still an admin, or issued by an admin acting on their behalf pre-Task-10).
 	issueAPIToken(t, q, memberID, o.ID, "read")
 
-	rows, err := q.ListAPITokensByUser(ctx, memberID)
+	rows, err := q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: memberID, OrgID: o.ID})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("seed: want exactly one token, got %d (err=%v)", len(rows), err)
 	}
@@ -241,7 +241,7 @@ func TestRevokeOwnTokenNeedsNoAdmin(t *testing.T) {
 		t.Fatalf("member revoking their own token want 303, got %d", delRec.Code)
 	}
 
-	rows, err = q.ListAPITokensByUser(ctx, memberID)
+	rows, err = q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: memberID, OrgID: o.ID})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("token must be gone after revoke, got %d (err=%v)", len(rows), err)
 	}

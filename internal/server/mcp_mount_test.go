@@ -36,7 +36,7 @@ func newMCPServers(t *testing.T) (enabled, disabled http.Handler, q *db.Queries,
 		srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
 		// Engine/deployer nil: krill_whoami, the only tool called here, touches
 		// nothing but the database.
-		srv.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, nil, nil, hub))
+		srv.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, nil, nil))
 		return srv.Router()
 	}
 	return build(true), build(false), q, orgSvc

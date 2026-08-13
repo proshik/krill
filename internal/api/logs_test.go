@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -241,7 +243,7 @@ const sampleLogBody = "" +
 // populated from the raw docker-timestamped input.
 func TestAppLogsParsesLines(t *testing.T) {
 	f := newAPIFixture(t)
-	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil, nil)
+	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -266,7 +268,7 @@ func TestAppLogsParsesLines(t *testing.T) {
 // must drop debug and info (both < warn).
 func TestAppLogsLevelFilterKeepsAtOrAboveFloor(t *testing.T) {
 	f := newAPIFixture(t)
-	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil, nil)
+	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "warn")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -291,7 +293,7 @@ func TestAppLogsLevelFilterKeepsAtOrAboveFloor(t *testing.T) {
 // unbounded log would evict the agent's own context.
 func TestAppLogsTailClampsAfterFiltering(t *testing.T) {
 	f := newAPIFixture(t)
-	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil, nil)
+	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody}, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 2, "")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -361,8 +363,7 @@ func TestAppLogsRejectsForeignOrg(t *testing.T) {
 func TestAppLogsPassesClampedTailToEngine(t *testing.T) {
 	f := newAPIFixture(t)
 	eng := &stubLogsEngine{body: sampleLogBody}
-	svc := api.NewService(f.q, eng, nil, nil)
-
+	svc := api.NewService(f.q, eng, nil)
 	if _, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 99999, ""); err != nil {
 		t.Fatalf("app logs: %v", err)
 	}
@@ -388,8 +389,7 @@ func TestAppLogsScanErrorAppendsNotice(t *testing.T) {
 	// line ending before it ever finds one, so this hits bufio.ErrTooLong via
 	// real bufio.Scanner semantics rather than a mocked scanner error.
 	oversized := strings.Repeat("a", 2*1024*1024)
-	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil, nil)
-
+	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -411,8 +411,7 @@ func TestAppLogsReadErrorAppendsNotice(t *testing.T) {
 	f := newAPIFixture(t)
 	body := "2026-06-07T19:31:52.000Z level=info msg=ready\n"
 	eng := &stubLogsEngine{body: body, readErr: errors.New("connection reset")}
-	svc := api.NewService(f.q, eng, nil, nil)
-
+	svc := api.NewService(f.q, eng, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -424,7 +423,7 @@ func TestAppLogsReadErrorAppendsNotice(t *testing.T) {
 		t.Fatalf("the line read before the break should still be returned: %+v", lines[0])
 	}
 	last := lines[len(lines)-1]
-	if last.Level != "error" || !strings.Contains(last.Message, "connection reset") {
+	if last.Level != "error" || !strings.Contains(last.Message, "log stream stopped") {
 		t.Fatalf("want a notice naming the read failure, got %+v", last)
 	}
 }
@@ -439,8 +438,7 @@ func TestAppLogsReadErrorAppendsNotice(t *testing.T) {
 func TestAppLogsScanErrorNoticeSurvivesLevelFilter(t *testing.T) {
 	f := newAPIFixture(t)
 	oversized := strings.Repeat("a", 2*1024*1024)
-	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil, nil)
-
+	svc := api.NewService(f.q, &stubLogsEngine{body: oversized}, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "fatal")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -457,8 +455,7 @@ func TestAppLogsScanErrorNoticeSurvivesLevelFilter(t *testing.T) {
 func TestAppLogsScanErrorNoticeSurvivesTailClamp(t *testing.T) {
 	f := newAPIFixture(t)
 	eng := &stubLogsEngine{body: sampleLogBody, readErr: errors.New("connection reset")}
-	svc := api.NewService(f.q, eng, nil, nil)
-
+	svc := api.NewService(f.q, eng, nil)
 	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 1, "")
 	if err != nil {
 		t.Fatalf("app logs: %v", err)
@@ -466,7 +463,33 @@ func TestAppLogsScanErrorNoticeSurvivesTailClamp(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("tail=1 should keep exactly 1 line, got %d: %+v", len(lines), lines)
 	}
-	if lines[0].Level != "error" || !strings.Contains(lines[0].Message, "connection reset") {
+	if lines[0].Level != "error" || !strings.Contains(lines[0].Message, "log stream stopped") {
 		t.Fatalf("a tail=1 clamp must keep the truncation notice, not an earlier real log line, got %+v", lines[0])
+	}
+}
+
+// The in-band notice must not quote the underlying error. It is handed to
+// whoever is reading the log — for this surface, an agent, whose context
+// reaches a model provider — and the cause can name a docker socket path or a
+// host. The cause belongs in the server log, not in the answer.
+func TestAppLogsScanErrorNoticeHidesTheCause(t *testing.T) {
+	f := newAPIFixture(t)
+	secret := "dial unix /var/run/docker.sock: connection reset"
+	eng := &stubLogsEngine{body: sampleLogBody, readErr: errors.New(secret)}
+	svc := api.NewService(f.q, eng, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 100, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	blob, err := json.Marshal(lines)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(blob, []byte("docker.sock")) || bytes.Contains(blob, []byte("connection reset")) {
+		t.Fatalf("the underlying scan error leaked to the caller: %s", blob)
+	}
+	last := lines[len(lines)-1]
+	if last.Level != "error" || !strings.Contains(last.Message, "log stream stopped") {
+		t.Fatalf("want a generic stream-stopped notice, got %+v", last)
 	}
 }

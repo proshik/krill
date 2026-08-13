@@ -124,6 +124,6 @@ func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handle
 	if tokens != nil {
 		tokenStore = tokens
 	}
-	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep, hub))
+	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep))
 	return srv.Router(), q, orgSvc, pool
 }

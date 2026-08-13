@@ -105,7 +105,7 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 	level := api.Level(r.FormValue("level"))
 	if level != api.LevelRead && level != api.LevelWrite {
-		s.flashErrT(w, r, "flash.api_token_invalid_level")
+		s.flashErrT(w, r, "flash.err.api_token_invalid_level")
 		return
 	}
 	expiresAt, ok := apiTokenExpiry(r.FormValue("expires"))
@@ -160,8 +160,13 @@ func (s *Server) deleteAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := auth.UserID(r.Context())
 	tok, err := s.q.GetAPIToken(r.Context(), id)
-	if err != nil || tok.UserID != uid {
-		logFrom(r).Info("deleteAPIToken: token not found or not owned by caller", "token_id", id, "user_id", uid)
+	// The org in the path is part of the identity of the thing being revoked:
+	// the list this page renders is scoped to it, so a token belonging to a
+	// different org is not on this page and must not be revocable through it —
+	// even though it is the caller's own. Otherwise this handler is the one
+	// place on the page that ignores the org the URL names.
+	if err != nil || tok.UserID != uid || tok.OrgID != o.ID {
+		logFrom(r).Info("deleteAPIToken: token not found, not owned by caller, or not in this org", "token_id", id, "user_id", uid, "org_id", o.ID)
 		http.NotFound(w, r)
 		return
 	}

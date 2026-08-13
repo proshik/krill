@@ -99,5 +99,9 @@ func ScanEndNotice(err error) (LogLine, bool) {
 	if errors.Is(err, bufio.ErrTooLong) {
 		return LogLine{Level: "error", Msg: "log stream stopped: a single log line exceeded the 1 MiB limit"}, true
 	}
-	return LogLine{Level: "error", Msg: "log stream stopped: " + err.Error()}, true
+	// Deliberately generic: this line is handed to whoever is reading the log —
+	// including an agent, whose context reaches a model provider — and the
+	// underlying error can name a docker socket path or a host. Callers log the
+	// real cause.
+	return LogLine{Level: "error", Msg: "log stream stopped unexpectedly"}, true
 }

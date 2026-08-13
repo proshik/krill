@@ -103,7 +103,17 @@ func TestScanEndNotice(t *testing.T) {
 	if line.Msg == "" {
 		t.Error("notice has no message explaining the break")
 	}
-	if other, ok := ScanEndNotice(errors.New("connection reset")); !ok || !strings.Contains(other.Msg, "connection reset") {
-		t.Errorf("a read failure must surface its cause, got %q (ok=%v)", other.Msg, ok)
+	// The notice is deliberately generic: it is handed to whoever is reading
+	// the log, and the cause can name a docker socket path or a host. Callers
+	// log the real error instead.
+	other, ok := ScanEndNotice(errors.New("dial unix /var/run/docker.sock: connection reset"))
+	if !ok {
+		t.Fatal("a read failure produced no notice")
+	}
+	if other.Level != "error" || other.Msg == "" {
+		t.Errorf("notice = %+v, want an error-level message", other)
+	}
+	if strings.Contains(other.Msg, "docker.sock") || strings.Contains(other.Msg, "connection reset") {
+		t.Errorf("the notice leaked the underlying cause: %q", other.Msg)
 	}
 }

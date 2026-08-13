@@ -7,7 +7,6 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
-	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/testutil"
 )
@@ -71,11 +70,9 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		t.Fatalf("application: %v", err)
 	}
 
-	hub := deploy.NewLogHub()
 	// Engine and deployer are nil: these tests exercise resolution, tenancy and
 	// the level gate, none of which touch docker.
-	svc := api.NewService(q, nil, nil, hub)
-
+	svc := api.NewService(q, nil, nil)
 	return &apiFixture{
 		q:           q,
 		svc:         svc,

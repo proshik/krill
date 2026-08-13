@@ -347,7 +347,7 @@ func run() error {
 	// which unmounts both surfaces (RequireAPIToken 404s) — the whole agent
 	// surface is off on an install that doesn't want it.
 	if cfg.AgentAPIEnabled {
-		app.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, engine, dep, hub))
+		app.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, engine, dep))
 		// An API token is a bearer credential: whoever reads one off the wire can
 		// replay it until it is revoked. Over plain HTTP a single interception —
 		// any hop between the agent and this process — is enough, so say so at

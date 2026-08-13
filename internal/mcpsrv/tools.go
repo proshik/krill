@@ -50,7 +50,12 @@ type deployArgs struct {
 type logsArgs struct {
 	App   string `json:"app"`
 	Tail  int    `json:"tail,omitempty" jsonschema:"lines to return, default 200, max 1000"`
-	Level string `json:"level,omitempty" jsonschema:"minimum level: debug, info, warn, error"`
+	Level string `json:"level,omitempty" jsonschema:"minimum level: trace, debug, info, warn, error, fatal"`
+}
+
+type deploymentsArgs struct {
+	App   string `json:"app" jsonschema:"application reference: numeric id or project/environment/app path"`
+	Limit int    `json:"limit,omitempty" jsonschema:"rows to return, default 20, max 50"`
 }
 
 type deploymentArgs struct {
@@ -152,7 +157,10 @@ func errorResult(msg string) *mcp.CallToolResult {
 func toolError(ctx context.Context, err error) *mcp.CallToolResult {
 	var aerr *api.Error
 	if errors.As(err, &aerr) {
-		return errorResult(aerr.Message)
+		// Prefix the code: the REST adapter returns {code,message} and an agent
+		// branching on "not_found" versus "invalid" needs the same signal here,
+		// where the only channel is text.
+		return errorResult(string(aerr.Code) + ": " + aerr.Message)
 	}
 	reqID := middleware.GetReqID(ctx)
 	slog.Error("mcp internal error", "err", err, "request_id", reqID)
@@ -280,14 +288,13 @@ func registerDeployments(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolDeployments,
 		Description: "List an application's deployment history, most recent first.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deploymentsArgs) (*mcp.CallToolResult, any, error) {
 		id, errRes := callerIdentity(ctx)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
-		// limit=0 requests the service's own default window (20 rows, capped
-		// at 50) — the MCP surface exposes no separate limit argument.
-		res, err := svc.ListDeployments(ctx, id, in.App, 0)
+		// limit=0 requests the service's own default window (20 rows, capped at 50).
+		res, err := svc.ListDeployments(ctx, id, in.App, in.Limit)
 		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
@@ -325,7 +332,7 @@ func registerDeploy(srv *mcp.Server, svc *api.Service) {
 		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
-		slog.Info("mcp deploy requested", "app_ref", in.App, "deployment_id", res.DeploymentID, "token_id", id.TokenID, "user_id", id.UserID)
+		slog.InfoContext(ctx, "mcp deploy requested", "app_ref", in.App, "deployment_id", res.DeploymentID, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, res), nil, nil
 	})
 }
@@ -343,7 +350,7 @@ func registerRebuild(srv *mcp.Server, svc *api.Service) {
 		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
-		slog.Info("mcp rebuild requested", "app_ref", in.App, "deployment_id", res.DeploymentID, "token_id", id.TokenID, "user_id", id.UserID)
+		slog.InfoContext(ctx, "mcp rebuild requested", "app_ref", in.App, "deployment_id", res.DeploymentID, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, res), nil, nil
 	})
 }
@@ -360,7 +367,7 @@ func registerReload(srv *mcp.Server, svc *api.Service) {
 		if err := svc.Reload(ctx, id, in.App); err != nil {
 			return toolError(ctx, err), nil, nil
 		}
-		slog.Info("mcp reload requested", "app_ref", in.App, "token_id", id.TokenID, "user_id", id.UserID)
+		slog.InfoContext(ctx, "mcp reload requested", "app_ref", in.App, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, okResult), nil, nil
 	})
 }
@@ -377,7 +384,7 @@ func registerStop(srv *mcp.Server, svc *api.Service) {
 		if err := svc.Stop(ctx, id, in.App); err != nil {
 			return toolError(ctx, err), nil, nil
 		}
-		slog.Info("mcp stop requested", "app_ref", in.App, "token_id", id.TokenID, "user_id", id.UserID)
+		slog.InfoContext(ctx, "mcp stop requested", "app_ref", in.App, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, okResult), nil, nil
 	})
 }
@@ -397,7 +404,7 @@ func registerSetEnv(srv *mcp.Server, svc *api.Service) {
 		// The audit line omits the value, which may be a secret — the same
 		// rule CLAUDE.md states for the web UI's env editor, and that the
 		// REST adapter's apiSetEnv already follows.
-		slog.Info("mcp set env requested", "app_ref", in.App, "key", in.Key, "remove", in.Remove, "token_id", id.TokenID, "user_id", id.UserID)
+		slog.InfoContext(ctx, "mcp set env requested", "app_ref", in.App, "key", in.Key, "remove", in.Remove, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, okResult), nil, nil
 	})
 }

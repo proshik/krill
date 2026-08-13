@@ -17,7 +17,6 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
-	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/testutil"
@@ -59,7 +58,7 @@ func TestToolListMatchesRegistry(t *testing.T) {
 // handler's own auth is the caller's middleware (see TestProtocolSmoke's
 // withBearerAuth), so tools/list answers on a bare handler.
 func TestToolDescriptionsStateTheirCaveats(t *testing.T) {
-	ts := httptest.NewServer(mcpsrv.New(api.NewService(nil, nil, nil, nil), noIdleTimeout).Handler())
+	ts := httptest.NewServer(mcpsrv.New(api.NewService(nil, nil, nil), noIdleTimeout).Handler())
 	defer ts.Close()
 
 	_, sid := postJSONRPC(t, ts.URL,
@@ -147,7 +146,7 @@ func newSmokeFixture(t *testing.T) smokeFixture {
 	}
 
 	// Engine/deployer/hub are nil: krill_whoami touches only the database.
-	svc := api.NewService(q, nil, nil, deploy.NewLogHub())
+	svc := api.NewService(q, nil, nil)
 	return smokeFixture{
 		authn:   api.NewAuthenticator(q, orgSvc),
 		svc:     svc,
@@ -382,9 +381,11 @@ func TestToolErrorReturnsAPIMessageVerbatim(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("want exactly one content block carrying the message, got %d: %+v", len(result.Content), result.Content)
 	}
-	const want = `no application "999999" in this organization`
+	// The code is prefixed so an agent can branch on it the way a REST caller
+	// branches on {"code":...}; nothing else may be appended.
+	const want = `not_found: no application "999999" in this organization`
 	if got := result.Content[0].Text; got != want {
-		t.Fatalf("api.Error message not passed through verbatim:\ngot  %q\nwant %q", got, want)
+		t.Fatalf("api.Error not surfaced as code+message:\ngot  %q\nwant %q", got, want)
 	}
 }
 
@@ -407,7 +408,7 @@ func TestToolErrorHidesInternalCause(t *testing.T) {
 		t.Fatalf("second pool: %v", err)
 	}
 	defer svcPool.Close()
-	svc := api.NewService(db.New(svcPool), nil, nil, deploy.NewLogHub())
+	svc := api.NewService(db.New(svcPool), nil, nil)
 
 	url, sid := startSession(t, f.authn, svc, f.token)
 	svcPool.Close()

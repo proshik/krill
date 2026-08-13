@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -259,6 +260,8 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 	// describes the read itself, not application output to filter) and is
 	// appended last, so the tail-clamp below always keeps it.
 	if notice, ok := logparse.ScanEndNotice(sc.Err()); ok {
+		// The notice handed to the reader is generic; the cause belongs here.
+		slog.Error("log stream scan ended with an error", "err", sc.Err())
 		lines = append(lines, LogLine{Time: notice.Time, Level: notice.Level, Message: notice.Msg})
 	}
 

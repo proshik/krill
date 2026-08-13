@@ -19,15 +19,15 @@ type Service struct {
 	q      *db.Queries
 	engine docker.Engine
 	dep    *deploy.Deployer
-	hub    *deploy.DeployLogHub
 }
 
 // NewService wires a Service on top of the generated queries, the Docker
-// engine, and the deployer/log hub used by later tasks (deploys, logs).
+// engine and the deployer. Deploy logs are read from the deployments table,
+// not from the live log hub, so the hub is deliberately not a dependency.
 // engine may be nil in tests that only exercise resolution/tenancy/env — every
 // docker-touching path checks for that and falls back to stored state.
-func NewService(q *db.Queries, eng docker.Engine, dep *deploy.Deployer, hub *deploy.DeployLogHub) *Service {
-	return &Service{q: q, engine: eng, dep: dep, hub: hub}
+func NewService(q *db.Queries, eng docker.Engine, dep *deploy.Deployer) *Service {
+	return &Service{q: q, engine: eng, dep: dep}
 }
 
 // requireWrite is the single gate every mutating operation calls first.

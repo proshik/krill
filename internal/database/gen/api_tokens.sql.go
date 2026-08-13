@@ -124,41 +124,6 @@ func (q *Queries) ListAPITokensByPrefix(ctx context.Context, prefix string) ([]A
 	return items, nil
 }
 
-const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-SELECT id, user_id, org_id, name, token_hash, prefix, level, expires_at, last_used_at, created_at FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC
-`
-
-func (q *Queries) ListAPITokensByUser(ctx context.Context, userID int64) ([]ApiToken, error) {
-	rows, err := q.db.Query(ctx, listAPITokensByUser, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ApiToken
-	for rows.Next() {
-		var i ApiToken
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.OrgID,
-			&i.Name,
-			&i.TokenHash,
-			&i.Prefix,
-			&i.Level,
-			&i.ExpiresAt,
-			&i.LastUsedAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listAPITokensByUserAndOrg = `-- name: ListAPITokensByUserAndOrg :many
 SELECT id, user_id, org_id, name, token_hash, prefix, level, expires_at, last_used_at, created_at FROM api_tokens WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC
 `

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/coder/websocket"
@@ -30,6 +31,8 @@ func streamParsedLogsToWS(ctx context.Context, conn *websocket.Conn, rc io.Reade
 		}
 	}
 	if notice, ok := logparse.ScanEndNotice(sc.Err()); ok {
+		// The notice handed to the reader is generic; the cause belongs here.
+		slog.Error("log stream scan ended with an error", "err", sc.Err())
 		if b, err := json.Marshal(notice); err == nil {
 			wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			_ = conn.Write(wctx, websocket.MessageText, b)

@@ -99,7 +99,7 @@ func newWriteFixture(t *testing.T) (*apiFixture, *api.Service) {
 	dep := deploy.New(eng, noopBuilder{}, deploy.NewDBStore(f.q), hub, "krill-net")
 	dep.Start(context.Background())
 	t.Cleanup(dep.Stop)
-	svc := api.NewService(f.q, eng, dep, hub)
+	svc := api.NewService(f.q, eng, dep)
 	return f, svc
 }
 
@@ -340,7 +340,7 @@ func (e *stubActionsEngine) ServiceScale(_ context.Context, name string, replica
 func TestReloadRestartsTheAppsService(t *testing.T) {
 	f := newAPIFixture(t)
 	eng := &stubActionsEngine{}
-	svc := api.NewService(f.q, eng, nil, nil)
+	svc := api.NewService(f.q, eng, nil)
 	if err := svc.Reload(t.Context(), f.ident, f.appIDString); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestReloadRestartsTheAppsService(t *testing.T) {
 func TestStopScalesTheAppsServiceToZero(t *testing.T) {
 	f := newAPIFixture(t)
 	eng := &stubActionsEngine{}
-	svc := api.NewService(f.q, eng, nil, nil)
+	svc := api.NewService(f.q, eng, nil)
 	if err := svc.Stop(t.Context(), f.ident, f.appIDString); err != nil {
 		t.Fatalf("stop: %v", err)
 	}

@@ -6,9 +6,6 @@ RETURNING *;
 -- name: ListAPITokensByPrefix :many
 SELECT * FROM api_tokens WHERE prefix = $1;
 
--- name: ListAPITokensByUser :many
-SELECT * FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC;
-
 -- name: ListAPITokensByUserAndOrg :many
 SELECT * FROM api_tokens WHERE user_id = $1 AND org_id = $2 ORDER BY created_at DESC;
 

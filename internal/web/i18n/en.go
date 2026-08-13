@@ -683,7 +683,7 @@ var en = map[string]string{
 	"api_tokens.empty":                     "No API tokens yet.",
 	"flash.api_token_created":              "API token created",
 	"flash.api_token_revoked":              "API token revoked",
-	"flash.api_token_invalid_level":        "Level must be \"read\" or \"write\"",
+	"flash.err.api_token_invalid_level":        "Level must be \"read\" or \"write\"",
 	"flash.err.api_token_name_required":    "name is required",
 	"flash.err.api_token_invalid_expires":  "expires must be one of: never, 30d, 90d",
 	"flash.err.create_api_token":           "failed to create API token",

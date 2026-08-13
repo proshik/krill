@@ -20,7 +20,7 @@ func csrfGuard(next http.Handler) http.Handler {
 		// the caller's credentials here. The exemption also keeps a client that
 		// *does* send an Origin (e.g. a browser-hosted MCP client) from being
 		// rejected for no security benefit.
-		if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/mcp") {
+		if strings.HasPrefix(r.URL.Path, "/webhooks/") || strings.HasPrefix(r.URL.Path, "/api/") || (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/mcp/")) {
 			next.ServeHTTP(w, r)
 			return
 		}

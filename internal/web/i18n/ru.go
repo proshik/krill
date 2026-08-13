@@ -683,7 +683,7 @@ var ru = map[string]string{
 	"api_tokens.empty":                     "Пока нет API-токенов.",
 	"flash.api_token_created":              "API-токен создан",
 	"flash.api_token_revoked":              "API-токен отозван",
-	"flash.api_token_invalid_level":        "Уровень должен быть \"read\" или \"write\"",
+	"flash.err.api_token_invalid_level":        "Уровень должен быть \"read\" или \"write\"",
 	"flash.err.api_token_name_required":    "название обязательно",
 	"flash.err.api_token_invalid_expires":  "expires должен быть одним из: never, 30d, 90d",
 	"flash.err.create_api_token":           "не удалось создать API-токен",
