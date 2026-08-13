@@ -86,3 +86,17 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		appIDString: strconv.FormatInt(app.ID, 10),
 	}
 }
+
+// seedDeployment creates a deployment row for the fixture's app (bot, in
+// acme) and returns its id. Call it multiple times to seed a history.
+func (f *apiFixture) seedDeployment(t *testing.T) int64 {
+	t.Helper()
+	dep, err := f.q.CreateDeployment(t.Context(), db.CreateDeploymentParams{
+		ApplicationID: f.appID,
+		Trigger:       "manual",
+	})
+	if err != nil {
+		t.Fatalf("seed deployment: %v", err)
+	}
+	return dep.ID
+}
