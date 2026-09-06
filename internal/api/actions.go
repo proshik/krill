@@ -67,6 +67,23 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 		return DeployAccepted{}, fmt.Errorf("deploy: no deployer configured")
 	}
 
+	// Checked before the retag for the same reason the nil-deployer check is,
+	// and it is the more likely of the two to fire: Enqueue refuses a second
+	// deployment while one is already in flight, and learning that only
+	// afterwards would leave the application pointing at a tag nothing ever
+	// deployed. That is not a transient failure the caller can shrug off —
+	// the retag is persistent, this API offers no way to put the old tag
+	// back, and every later deployment reuses it, including one a human
+	// starts from the web UI.
+	//
+	// The post-Enqueue check below stays. This one closes the window that
+	// costs something; the other still catches a deploy that started between
+	// these two calls, and Enqueue also returns 0 when the queue is full or
+	// the server is shutting down, which is not a conflict at all.
+	if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
+		return DeployAccepted{}, cErr
+	}
+
 	if tag != "" {
 		if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
 			ID:    app.ID,

@@ -286,6 +286,32 @@ func TestDeployWithNoDeployerDoesNotRetagTheApp(t *testing.T) {
 	}
 }
 
+// TestDeployWithTagDoesNotRetagWhenADeployIsAlreadyInFlight is the same
+// ordering hazard as TestDeployWithNoDeployerDoesNotRetagTheApp, at the check
+// that actually fires in production. Enqueue refuses a second deployment
+// while one is in flight, and the conflict used to be detected only from its
+// zero return — after the retag had already been written. So the caller who
+// lost the race got a 409 AND an application left pointing at a tag nothing
+// ever deployed, which every later deployment would reuse, including one a
+// human starts from the web UI. There is no API to put the old tag back.
+func TestDeployWithTagDoesNotRetagWhenADeployIsAlreadyInFlight(t *testing.T) {
+	f, svc := newWriteFixture(t)
+	f.seedDeployment(t) // deployments.status defaults to 'running'
+
+	_, err := svc.Deploy(t.Context(), f.ident, f.appIDString, "v2")
+	var aerr *api.Error
+	if !errors.As(err, &aerr) || aerr.Code != api.CodeConflict {
+		t.Fatalf("want conflict while a deploy is in flight, got %v", err)
+	}
+	app, err := f.q.GetApplication(t.Context(), f.appID)
+	if err != nil {
+		t.Fatalf("get app: %v", err)
+	}
+	if app.Tag != "alpine" {
+		t.Fatalf("app was retagged to %q despite the deploy being refused; want the untouched %q", app.Tag, "alpine")
+	}
+}
+
 func TestRebuildSuccessOnDockerfileApp(t *testing.T) {
 	f, svc := newWriteFixture(t)
 	_, ref := createDockerfileApp(t, f)
