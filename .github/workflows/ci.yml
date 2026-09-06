@@ -52,6 +52,23 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # The CLI may import the server's packages; the server must never
+      # import the CLI's. internal/api in particular is imported by
+      # internal/mcpsrv and internal/server, and an edge back into
+      # internal/krillcli would drag a cobra command tree into the server
+      # binary and make a client refactor able to break a deploy.
+      #
+      # `go list -deps` ignores test imports, so the drift test in
+      # internal/krillcli/client (which imports internal/api on purpose, in
+      # the correct direction) does not trip this.
+      - name: Server must not depend on the CLI
+        run: |
+          if go list -deps ./cmd/krill ./internal/api ./internal/server | grep -q 'krill/internal/krillcli'; then
+            echo "::error::a server package now imports internal/krillcli; the dependency may only point CLI -> server"
+            go list -deps ./cmd/krill ./internal/api ./internal/server | grep 'krill/internal/krillcli'
+            exit 1
+          fi
+
   docker-build:
     name: docker image build (no push)
     runs-on: ubuntu-latest

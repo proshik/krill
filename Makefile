@@ -1,4 +1,4 @@
-.PHONY: generate build run test test-integration tidy db-up db-down css css-watch
+.PHONY: generate build build-cli run test test-integration tidy db-up db-down css css-watch
 
 TAILWIND = ./tools/tailwindcss
 
@@ -15,6 +15,14 @@ css-watch:
 
 build: generate
 	go build -o bin/krill ./cmd/krill
+
+# The CLI deliberately does NOT depend on `generate`: it imports none of the
+# templ, sqlc or Tailwind output, and requiring ./tools/tailwindcss to exist
+# just to build a client binary would be a pointless prerequisite.
+CLI_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+build-cli:
+	go build -trimpath -ldflags "-s -w -X main.version=$(CLI_VERSION)" -o bin/krill-cli ./cmd/krill-cli
 
 run: generate
 	go run ./cmd/krill
