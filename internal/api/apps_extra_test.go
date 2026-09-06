@@ -191,3 +191,67 @@ func TestListEnvLabelsDBLinkSourceAndNeverLeaksItsValue(t *testing.T) {
 		t.Fatalf("literal env value leaked into the API response: %s", blob)
 	}
 }
+
+// TestAppTagIsPublishedForImageAppsOnly covers the field that makes an
+// application's configured tag readable at all. Before it, Image carried the
+// repository alone and the only other tag in the API — DeploymentSummary's —
+// records what was deployed, which resolveImageRef has usually rewritten into
+// a digest reference that Deploy refuses to take back.
+//
+// The dockerfile half is the load-bearing one, and it is not hypothetical:
+// the tag column survives a change of source_type, so an app created from an
+// image and later switched to a dockerfile keeps whatever tag it was last
+// deployed at. That value describes nothing afterwards — a dockerfile app is
+// built from a git ref, not moved between tags — and publishing it would
+// invite a caller to "deploy the current tag" of an app that has none. The
+// test plants exactly that history, so the field must be absent from the
+// JSON, not merely empty.
+func TestAppTagIsPublishedForImageAppsOnly(t *testing.T) {
+	f, svc := newWriteFixture(t)
+	dfID, dfRef := createDockerfileApp(t, f)
+
+	// Leave a stale tag behind, the way switching an image app to a
+	// dockerfile one does.
+	if err := f.q.UpdateApplicationImage(t.Context(), db.UpdateApplicationImageParams{
+		ID: dfID, Image: "ghcr.io/acme/old", Tag: "v9",
+	}); err != nil {
+		t.Fatalf("plant stale tag: %v", err)
+	}
+
+	apps, err := svc.ListApps(t.Context(), f.ident)
+	if err != nil {
+		t.Fatalf("list apps: %v", err)
+	}
+	byName := map[string]string{}
+	for _, a := range apps {
+		byName[a.Name] = a.Tag
+	}
+	if got := byName["bot"]; got != "alpine" {
+		t.Fatalf("image app tag: want alpine, got %q", got)
+	}
+	if got := byName["builder-app"]; got != "" {
+		t.Fatalf("dockerfile app should publish no tag even with a stale one stored, got %q", got)
+	}
+
+	st, err := svc.AppStatus(t.Context(), f.ident, f.appIDString)
+	if err != nil {
+		t.Fatalf("app status: %v", err)
+	}
+	if st.Tag != "alpine" {
+		t.Fatalf("app status tag: want alpine, got %q", st.Tag)
+	}
+
+	// omitempty is the contract a client reads, so assert on the wire form
+	// rather than on the zero value behind it.
+	dfStatus, err := svc.AppStatus(t.Context(), f.ident, dfRef)
+	if err != nil {
+		t.Fatalf("app status (dockerfile): %v", err)
+	}
+	raw, err := json.Marshal(dfStatus)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(raw, []byte(`"tag"`)) {
+		t.Fatalf("dockerfile app status should omit the tag key entirely, got %s", raw)
+	}
+}
