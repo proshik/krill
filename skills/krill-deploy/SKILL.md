@@ -10,8 +10,8 @@ Krill exposes twelve tools. They **operate apps that already exist**: nothing he
 | Tool | Level | What it does |
 |---|---|---|
 | `krill_whoami` | read | Who the token acts as, which org, and whether it may write |
-| `krill_list_apps` | read | Every app in the org: path, id, status, source type, image, domains |
-| `krill_app_status` | read | One app: status, `running/desired` replicas, node, domains, last deployment |
+| `krill_list_apps` | read | Every app in the org: path, id, status, source type, image repository + tag, domains |
+| `krill_app_status` | read | One app: status, `running/desired` replicas, node, domains, last deployment; `image` is the repository, `tag` the configured tag |
 | `krill_app_logs` | read | Runtime log tail, parsed; `tail` (default 200, max 1000) and a minimum `level` |
 | `krill_deployments` | read | Deployment history, newest first |
 | `krill_deployment_status` | read | One deployment: status plus the tail of its build log |
@@ -37,6 +37,19 @@ An app is addressed as `project/environment/app` or by numeric id — `krill_lis
 6. On `error`, read the `log_tail` the same call returned, name the cause, and stop (rule 2).
 
 `krill_set_env` writes the variable but does **not** restart anything: the app keeps running the old value until the next deploy. If the change is meant to take effect, deploy after it — and say that you are about to.
+
+## When the image has to be built locally
+
+`krill_deploy` moves an `image` app to a tag that **already exists in a registry**. It cannot build one: the image bytes live on the user's machine, and no MCP tool can carry them.
+
+So when the user's change is source code that has not been built and pushed yet, the deploy tool is not the answer — `krill-cli` is. If it is installed and you are working in the application's own repository:
+
+1. Check there is a `krill.yaml` (`krill-cli` needs one; `krill-cli init` writes it).
+2. Run `krill-cli deploy` through the shell. It builds locally, pushes, deploys and waits, and it verifies the token, the app and the image repository *before* the build.
+3. Read its exit code rather than its prose: `0` ok · `1` the deployment failed · `2` configuration · `3` another deploy was in flight · `4` timed out watching · `5` deployed but not running · `6` authentication.
+4. Verify with `krill_app_status` as usual.
+
+Two things this branch does not change. **Rule 4 still applies** — building and shipping arbitrary local code to production is a bigger action than moving a tag, not a smaller one, so ask first. And if `krill-cli` is not installed, or the shell is not in the application's repository, say so and stop; do not hand-roll `docker build` and `docker push` to work around it.
 
 ## Diagnose a failure
 
