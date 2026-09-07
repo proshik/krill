@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -123,20 +122,4 @@ func (c *Client) SetEnv(ctx context.Context, ref, key, value string, remove bool
 		body["value"] = value
 	}
 	return c.do(ctx, http.MethodPost, appPath(ref, "env"), body, nil)
-}
-
-// FindApp resolves a user-typed application reference against the org's
-// applications, so a mistyped path is answered with the list of what exists
-// instead of a bare not-found.
-func (c *Client) FindApp(ctx context.Context, ref string) (App, error) {
-	apps, err := c.ListApps(ctx)
-	if err != nil {
-		return App{}, err
-	}
-	for _, a := range apps {
-		if a.Path == ref || strconv.FormatInt(a.ID, 10) == ref {
-			return a, nil
-		}
-	}
-	return App{}, fmt.Errorf("no application %q in this organization; run `krill-cli apps` to see what there is", ref)
 }

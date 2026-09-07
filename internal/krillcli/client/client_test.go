@@ -280,28 +280,60 @@ func TestAppStatusFlattens(t *testing.T) {
 	}
 }
 
-func TestFindAppSuggestsWhenMissing(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":17,"path":"acme/production/bot","name":"bot","source_type":"image","status":"running"}]`))
-	})
-	if _, err := c.FindApp(context.Background(), "acme/production/typo"); err == nil {
-		t.Fatal("want an error")
-	} else if !strings.Contains(err.Error(), "krill-cli apps") {
-		t.Fatalf("error should point at the listing command, got %q", err)
+// TestRedirectsAreRefused pins the failure mode that only shows up after the
+// expensive part. Go rewrites a redirected POST into a body-less GET
+// (301/302/303), so an operator's http→https redirect in front of Krill turns
+// `POST /apps/x/deploy {"tag":…}` into `GET /apps/x/deploy` — which the router
+// answers 404 with the tag silently dropped. Every pre-flight check is a GET
+// and sails through, so this used to surface only after the build AND the
+// push.
+func TestRedirectsAreRefused(t *testing.T) {
+	var sawMethods []string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawMethods = append(sawMethods, r.Method)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer target.Close()
+
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusMovedPermanently)
+	}))
+	defer front.Close()
+
+	c, err := client.New(front.URL, "krill_pat_x", "test")
+	if err != nil {
+		t.Fatalf("new: %v", err)
 	}
-	got, err := c.FindApp(context.Background(), "17")
-	if err != nil || got.Path != "acme/production/bot" {
-		t.Fatalf("FindApp by id: %+v %v", got, err)
+	_, err = c.Deploy(context.Background(), "acme/production/bot", "v2")
+	if err == nil {
+		t.Fatal("a redirected deploy reported success")
+	}
+	var ae *client.APIError
+	if !errors.As(err, &ae) || ae.Code != "redirected" {
+		t.Fatalf("want a redirect error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), target.URL) {
+		t.Fatalf("the error should name where the redirect points, got %v", err)
+	}
+	if len(sawMethods) != 0 {
+		t.Fatalf("the request was forwarded as %v; a redirected POST arrives as a body-less GET", sawMethods)
 	}
 }
 
-func TestDeploymentTerminal(t *testing.T) {
-	for _, tc := range []struct {
-		status string
-		want   bool
-	}{{"running", false}, {"done", true}, {"error", true}} {
-		if got := (client.Deployment{Status: tc.status}).Terminal(); got != tc.want {
-			t.Fatalf("Terminal(%q) = %v, want %v", tc.status, got, tc.want)
-		}
+// TestRedirectIsCaughtOnTheFirstReadToo: the point of refusing is that the
+// very first call fails, long before anything is built.
+func TestRedirectIsCaughtOnTheFirstReadToo(t *testing.T) {
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://elsewhere.example/api/v1/whoami", http.StatusFound)
+	}))
+	defer front.Close()
+
+	c, err := client.New(front.URL, "krill_pat_x", "test")
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	if _, err := c.Whoami(context.Background()); err == nil {
+		t.Fatal("a redirected whoami reported success")
 	}
 }

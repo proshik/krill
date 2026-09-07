@@ -24,11 +24,12 @@ type API interface {
 	Deploy(ctx context.Context, ref, tag string) (client.Accepted, error)
 }
 
-// Docker is the part of the docker CLI this flow uses.
+// Docker is the part of the docker CLI this flow uses. Stream is deliberately
+// absent: only the unimplemented upload path needs it, and putting it here
+// would make every fake implement a method nothing calls.
 type Docker interface {
 	Run(ctx context.Context, args ...string) error
 	Output(ctx context.Context, args ...string) (string, error)
-	Stream(ctx context.Context, args ...string) (io.ReadCloser, error)
 }
 
 // Options is one invocation of `krill-cli deploy`.
@@ -51,6 +52,10 @@ type Options struct {
 	// AllowImageMismatch proceeds even when krill.yaml and the server
 	// disagree about the repository — for a mirror, or a deliberate move.
 	AllowImageMismatch bool
+	// AllowMissingImage proceeds with --skip-push even when the tag cannot be
+	// found in the registry, for a registry whose manifest endpoint this
+	// client cannot query.
+	AllowMissingImage bool
 	// NoWaitForLock exits instead of waiting out somebody else's deployment.
 	NoWaitForLock bool
 	// CanWriteHint is false when the stored context is known to be a
@@ -116,6 +121,16 @@ func (f *Flow) Run(ctx context.Context, o Options) error {
 
 // check runs every verification that can be done before the expensive part.
 func (f *Flow) check(ctx context.Context, o Options) (client.AppStatus, string, error) {
+	// Refused here rather than at the point of use, because the point of use
+	// is after the build: this command's own promise is that everything which
+	// can fail fails before a four-minute build, and an unimplemented delivery
+	// mode is the most certain failure there is.
+	if o.Delivery == project.DeliveryUpload {
+		return client.AppStatus{}, "", fail(ExitUsage,
+			"delivery: upload is not implemented yet — this build of krill-cli can only push to a registry.\n"+
+				"Set delivery: registry in krill.yaml (or pass --registry) and give Krill a repository it can pull from.")
+	}
+
 	// Confirms the token works AND that its level survives the owner's
 	// current role, which the cached hint above cannot.
 	who, err := f.API.Whoami(ctx)
@@ -143,8 +158,8 @@ func (f *Flow) check(ctx context.Context, o Options) (client.AppStatus, string, 
 	if app.SourceType != "image" {
 		return client.AppStatus{}, "", fail(ExitUsage,
 			"%s is a %s app: it is built by Krill from git, so there is no local image to push.\n"+
-				"Use `krill-cli rebuild` for that, or change the app to an image source in the Krill UI.",
-			app.Path, app.SourceType)
+				"Use `krill-cli rebuild %s` for that, or change the app to an image source in the Krill UI.",
+			app.Path, app.SourceType, o.Ref)
 	}
 
 	// The mismatch that is otherwise invisible: pushing to one repository
@@ -217,15 +232,22 @@ func (f *Flow) build(ctx context.Context, o Options, ref string) error {
 
 // ship gets the image to where Krill can get it.
 func (f *Flow) ship(ctx context.Context, o Options, ref string) error {
-	if o.Delivery == project.DeliveryUpload {
-		return fail(ExitUsage,
-			"delivery: upload is not available in this build of krill-cli — use delivery: registry")
-	}
 	if o.SkipPush {
 		// A tag that was never pushed fails as a pull error on the server,
-		// minutes later and with no obvious link back to here.
+		// minutes later and with no obvious link back to here — and by then
+		// the app has been retagged to it, which this API cannot undo, so the
+		// web UI's Deploy button fails on it too. Refusing costs one rerun;
+		// proceeding costs a broken application row.
 		if _, err := f.Docker.Output(ctx, dockercli.ManifestInspectArgs(ref)...); err != nil {
-			f.printf("! push skipped, and %s was not found in the registry — the deploy will fail to pull it\n", ref)
+			if !o.AllowMissingImage {
+				return fail(ExitUsage,
+					"--skip-push was given but %s is not in the registry (%v).\n"+
+						"Deploying would move the app to a tag Krill cannot pull, and nothing here can put the old one back. Either:\n"+
+						"  • drop --skip-push so the image is pushed, or\n"+
+						"  • pass --allow-missing-image if your registry cannot answer a manifest query",
+					ref, err)
+			}
+			f.printf("! push     skipped; %s was not found in the registry, continuing anyway\n", ref)
 		} else {
 			f.printf("· push     skipped (%s already in the registry)\n", ref)
 		}
@@ -240,7 +262,7 @@ func (f *Flow) ship(ctx context.Context, o Options, ref string) error {
 }
 
 func (f *Flow) deployAndWatch(ctx context.Context, o Options, tag string) error {
-	acc, err := f.API.Deploy(ctx, o.Ref, tag)
+	acc, err := f.postDeploy(ctx, o, tag)
 	if err != nil {
 		var ae *client.APIError
 		if errors.As(err, &ae) && ae.IsConflict() {
@@ -282,11 +304,49 @@ func (f *Flow) resolveConflict(ctx context.Context, o Options, tag string) (clie
 			return client.Accepted{}, err
 		}
 	}
-	acc, err := f.API.Deploy(ctx, o.Ref, tag)
+	acc, err := f.postDeploy(ctx, o, tag)
 	if err != nil {
 		return client.Accepted{}, f.authAware(err, "could not start the deployment after waiting")
 	}
 	return acc, nil
+}
+
+// maxDeployRetries bounds how many times a throttled deploy POST is resent.
+const maxDeployRetries = 4
+
+// postDeploy sends the deploy request, resending only when the server refused
+// to look at it.
+//
+// 429 and 503 are the two answers that mean "nothing happened": the rate
+// limiter rejects before the handler runs, and 503 is authentication being
+// temporarily unavailable. Neither enqueued anything, so resending cannot
+// produce a second deployment — which matters here more than usual, because
+// every accepted deploy rewrites the application's tag and there is no
+// operation that puts the old one back. Every other status is returned as-is:
+// a conflict is handled by the caller, and nothing else improves by repeating.
+func (f *Flow) postDeploy(ctx context.Context, o Options, tag string) (client.Accepted, error) {
+	for attempt := 0; ; attempt++ {
+		acc, err := f.API.Deploy(ctx, o.Ref, tag)
+		if err == nil {
+			return acc, nil
+		}
+		var ae *client.APIError
+		if !errors.As(err, &ae) || !ae.IsRetryable() || attempt >= maxDeployRetries {
+			return client.Accepted{}, err
+		}
+		wait := ae.RetryAfter
+		if wait <= 0 {
+			wait = time.Duration(attempt+1) * 2 * time.Second
+		}
+		why := "the server is temporarily unavailable"
+		if ae.IsRateLimited() {
+			why = "the rate limit for this token is used up"
+		}
+		f.printf("· deploy   %s; retrying in %s\n", why, wait)
+		if serr := f.Sleep(ctx, wait); serr != nil {
+			return client.Accepted{}, fail(ExitTimeout, "interrupted before the deployment was started")
+		}
+	}
 }
 
 func (f *Flow) watch(ctx context.Context, o Options, id int64) error {
@@ -297,21 +357,76 @@ func (f *Flow) watch(ctx context.Context, o Options, id int64) error {
 	// the rollout is confirmed against the service, not the job.
 	st, err := f.API.AppStatus(ctx, o.Ref)
 	if err != nil {
-		f.printf("✓ rollout  deployment finished; could not read the service state: %v\n", err)
-		return nil
+		// Not success. The deployment finished, but whether the service came
+		// up is exactly what this call was for, and an unknown answer must not
+		// be reported as a green one — a CI job would mark a dead service
+		// deployed. ExitTimeout is the code that already means "unknown".
+		return fail(ExitTimeout,
+			"deployment #%d finished, but the service state could not be read (%v).\n"+
+				"The rollout is unconfirmed — check it with `krill-cli status %s`.",
+			id, err, o.Ref)
 	}
 	running, desired, ok := parseReplicas(st.Replicas)
-	if ok && running >= desired && desired > 0 {
+	switch {
+	case ok && desired > 0 && running >= desired:
 		f.printf("✓ rollout  %s running\n", st.Replicas)
-		for _, d := range st.Domains {
-			f.printf("\nhttps://%s\n", d)
-		}
+		f.printDomains(st)
 		return nil
+	case !ok:
+		return fail(ExitTimeout,
+			"deployment #%d finished, but the service reports its replicas as %q, which this client cannot read.\n"+
+				"The rollout is unconfirmed — check it with `krill-cli status %s`.",
+			id, st.Replicas, o.Ref)
 	}
+	// Two different causes land here and the log is what tells them apart, so
+	// the message names both rather than asserting the more dramatic one: a
+	// container that started and exited, and one that is still starting after
+	// Krill stopped waiting for it (KRILL_CONVERGE_TIMEOUT on the server,
+	// which a slow healthcheck start_period routinely outlasts).
 	return fail(ExitNotRunning,
-		"the deployment finished but the service reports %s replicas — the container started and exited.\nRun `krill-cli logs %s` to see why.",
-		st.Replicas, o.Ref)
+		"the deployment finished but the service reports %s replicas.\n"+
+			"Either the container started and exited, or it is still starting and Krill stopped waiting.\n"+
+			"Run `krill-cli logs %s` to tell which, then `krill-cli status %s` to re-check.",
+		st.Replicas, o.Ref, o.Ref)
 }
+
+// printDomains lists the app's domains without inventing a scheme for them.
+//
+// The API sends host names only — it carries neither the per-domain "exposed"
+// flag nor whether TLS is on — and a new app's automatic domain is created
+// unexposed, with Traefik told not to route it at all. Printing an https URL
+// for that produces a link that cannot work, which reads as a broken deploy.
+func (f *Flow) printDomains(st client.AppStatus) {
+	if len(st.Domains) == 0 {
+		return
+	}
+	f.printf("\n")
+	for _, d := range st.Domains {
+		f.printf("  domain   %s\n", d)
+	}
+}
+
+// Follow watches an existing deployment to completion, printing new log
+// output as it arrives.
+//
+// It shares await with the deploy flow rather than reimplementing the loop, so
+// rejoining a deployment behaves identically to watching one: the same
+// widening poll, the same Retry-After handling, the same bounded wait, and the
+// same refusal to call a lost connection a failed deployment.
+func (f *Flow) Follow(ctx context.Context, id int64, timeout time.Duration) error {
+	if f.Sleep == nil {
+		f.Sleep = sleep
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	return f.await(ctx, Options{Timeout: timeout}, id, f.Out)
+}
+
+// maxWatchTransportFailures bounds how many consecutive unreachable polls are
+// tolerated before the watch gives up. With the widening poll schedule this is
+// roughly half a minute of trying.
+const maxWatchTransportFailures = 5
 
 // await polls one deployment to a terminal state, streaming new log output to
 // logOut when it is non-nil.
@@ -319,21 +434,55 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut io.Writer)
 	deadline := time.Now().Add(o.Timeout)
 	start := time.Now()
 	anchor := ""
+	var retryAfter time.Duration
+	transportFailures := 0
+	var lastTransportErr error
 
 	for attempt := 0; ; attempt++ {
-		if err := f.Sleep(ctx, PollDelay(attempt, time.Since(start))); err != nil {
+		// Checked at the TOP so every path through the loop is bounded by the
+		// timeout. Checking only after a successful poll means the branches
+		// that `continue` — a throttled server, an unreachable one — never
+		// reach it, and the watch runs forever on a deploy the user asked to
+		// wait two minutes for.
+		if time.Now().After(deadline) {
+			return f.timedOut(o, id, lastTransportErr)
+		}
+		delay := PollDelay(attempt, time.Since(start))
+		if retryAfter > delay {
+			// The server said how long to wait; guessing shorter just earns
+			// another 429.
+			delay = retryAfter
+		}
+		retryAfter = 0
+		if err := f.Sleep(ctx, delay); err != nil {
 			return fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
 		}
+
 		d, err := f.API.Deployment(ctx, id)
 		if err != nil {
 			var ae *client.APIError
-			// A shared budget means somebody else's traffic can push this
-			// over; skipping a poll is the correct response, not failing.
-			if errors.As(err, &ae) && ae.IsRetryable() {
-				continue
+			if errors.As(err, &ae) {
+				// A shared budget means somebody else's traffic can push this
+				// over; skipping a poll is the correct response, not failing.
+				if ae.IsRetryable() {
+					retryAfter = ae.RetryAfter
+					continue
+				}
+				return f.authAware(err, "lost track of deployment #%d", id)
 			}
-			return f.authAware(err, "lost track of deployment #%d", id)
+			// Not an answer from Krill at all — a dropped link, a proxy
+			// hiccup. The deployment is running on the SERVER and is not
+			// affected by this machine losing the connection, so reporting a
+			// failed deployment here would be a lie; keep polling, and if it
+			// never comes back report it as unknown rather than as failed.
+			lastTransportErr = err
+			transportFailures++
+			if transportFailures > maxWatchTransportFailures {
+				return f.timedOut(o, id, err)
+			}
+			continue
 		}
+		transportFailures, lastTransportErr = 0, nil
 
 		if logOut != nil && d.LogTail != "" {
 			out, elided := NewTail(anchor, d.LogTail)
@@ -352,12 +501,21 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut io.Writer)
 		case "error":
 			return fail(ExitFailed, "deployment #%d failed", id)
 		}
-		if time.Now().After(deadline) {
-			return fail(ExitTimeout,
-				"deployment #%d is still running after %s — it may still succeed.\nRejoin with `krill-cli deployment %d --watch`",
-				id, o.Timeout, id)
-		}
 	}
+}
+
+// timedOut is the one "we stopped watching" message, which is never a failure
+// verdict: the deployment is the server's and may still succeed.
+func (f *Flow) timedOut(o Options, id int64, transport error) error {
+	if transport != nil {
+		return fail(ExitTimeout,
+			"lost contact with the server while watching deployment #%d (%v).\n"+
+				"The deployment is unaffected and may still succeed — rejoin with `krill-cli deployment %d --watch`",
+			id, transport, id)
+	}
+	return fail(ExitTimeout,
+		"deployment #%d is still running after %s — it may still succeed.\nRejoin with `krill-cli deployment %d --watch`",
+		id, o.Timeout, id)
 }
 
 // authAware maps a transport or API error onto the right exit code, so CI can

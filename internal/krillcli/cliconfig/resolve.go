@@ -58,36 +58,49 @@ func (r Resolved) CanWriteHint() bool { return r.Level != "read" }
 // production must not ship a project that belongs to staging — but below the
 // flag and the environment, because those are someone typing an override now.
 //
-// KRILL_TOKEN short-circuits all of it and forms an unnamed context, which is
-// how the same binary runs in CI with no config file on disk.
+// KRILL_TOKEN replaces the CREDENTIAL, never the choice of server. It used to
+// short-circuit the whole function, which quietly defeated every selector
+// above: `--context staging` with a staging token exported would send that
+// token to whichever server happened to be current, and the project pin whose
+// entire purpose is to stop a production shell from shipping a staging project
+// was bypassed by any exported token. The token says who you are; the context
+// says where you are, and the two are answered separately.
 func Resolve(s *Store, o Options) (Resolved, error) {
-	if tok := strings.TrimSpace(o.EnvToken); tok != "" {
-		server := firstNonEmpty(o.ServerFlag, o.EnvServer)
-		if server == "" {
-			// Same server, different token: a common way to use a
-			// short-lived CI token against an already-configured host.
-			if cur, ok := s.Contexts[s.Current]; ok {
-				server = cur.Server
-			}
-		}
-		if server == "" {
-			return Resolved{}, fmt.Errorf("%s is set but no server is: pass --server or set %s", EnvToken, EnvServer)
-		}
-		return Resolved{Server: server, Token: tok}, nil
-	}
+	envToken := strings.TrimSpace(o.EnvToken)
 
 	name := firstNonEmpty(o.ContextFlag, o.EnvContext, o.ProjectContext, s.Current)
 	if name == "" {
-		return Resolved{}, fmt.Errorf("not logged in to any Krill server — run `krill-cli login --server https://krill.example.com`")
+		// No stored context at all. With a token and a server in the
+		// environment this is a CI runner with no config file, which is a
+		// supported way to run; without them there is nothing to act as.
+		if envToken == "" {
+			return Resolved{}, fmt.Errorf("not logged in to any Krill server — run `krill-cli login --server https://krill.example.com`")
+		}
+		server := firstNonEmpty(o.ServerFlag, o.EnvServer)
+		if server == "" {
+			return Resolved{}, fmt.Errorf("%s is set but no server is: pass --server or set %s", EnvToken, EnvServer)
+		}
+		return Resolved{Server: server, Token: envToken}, nil
 	}
+
 	c, ok := s.Contexts[name]
 	if !ok {
+		// An explicitly named context that does not exist is an error even
+		// when a token is exported: silently falling back would send it
+		// somewhere the user did not name.
 		if name == o.ProjectContext {
 			return Resolved{}, fmt.Errorf("%s pins this project to context %q, which does not exist here — run `krill-cli login --server <url> --name %s`", "krill.yaml", name, name)
 		}
 		return Resolved{}, fmt.Errorf("no context named %q; run `krill-cli context` to list them", name)
 	}
-	server := firstNonEmpty(o.ServerFlag, c.Server)
+
+	server := firstNonEmpty(o.ServerFlag, o.EnvServer, c.Server)
+	if envToken != "" {
+		// The stored level describes the stored token, not this one, so it is
+		// deliberately left empty: a cached "read" would refuse a write token
+		// the environment just supplied.
+		return Resolved{Name: name, Server: server, Token: envToken, OrgName: c.OrgName}, nil
+	}
 	if trimmed(c.Token) == "" {
 		return Resolved{}, fmt.Errorf("context %q has no token — run `krill-cli login --server %s --name %s`", name, server, name)
 	}

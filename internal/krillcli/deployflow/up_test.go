@@ -3,7 +3,6 @@ package deployflow_test
 import (
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -39,11 +38,6 @@ func (d *fakeDocker) Output(_ context.Context, args ...string) (string, error) {
 	return d.outValue, nil
 }
 
-func (d *fakeDocker) Stream(_ context.Context, args ...string) (io.ReadCloser, error) {
-	d.record(args)
-	return io.NopCloser(strings.NewReader("")), nil
-}
-
 func (d *fakeDocker) verbs() []string {
 	var out []string
 	for _, c := range d.calls {
@@ -64,14 +58,25 @@ type fakeAPI struct {
 	deps       []client.Deployment
 	statuses   []client.DeploymentDetail // consumed in order
 	statusCall int
+	// statusErrs are returned by the first len(statusErrs) Deployment calls;
+	// statusErrAlways is returned by every one of them.
+	statusErrs      []error
+	statusErrAlways error
+	// appAfterErr fails the post-rollout status check specifically.
+	appAfterErr error
 }
 
 func (a *fakeAPI) Whoami(context.Context) (client.Whoami, error) { return a.who, a.whoErr }
 
 func (a *fakeAPI) AppStatus(context.Context, string) (client.AppStatus, error) {
 	a.appCalls++
-	if a.appCalls > 1 && a.appAfter != nil {
-		return *a.appAfter, nil
+	if a.appCalls > 1 {
+		if a.appAfterErr != nil {
+			return client.AppStatus{}, a.appAfterErr
+		}
+		if a.appAfter != nil {
+			return *a.appAfter, nil
+		}
 	}
 	return a.app, a.appErr
 }
@@ -81,10 +86,16 @@ func (a *fakeAPI) Deployments(context.Context, string, int) ([]client.Deployment
 }
 
 func (a *fakeAPI) Deployment(_ context.Context, id int64) (client.DeploymentDetail, error) {
-	if a.statusCall < len(a.statuses) {
-		d := a.statuses[a.statusCall]
-		a.statusCall++
-		return d, nil
+	call := a.statusCall
+	a.statusCall++
+	if a.statusErrAlways != nil {
+		return client.DeploymentDetail{}, a.statusErrAlways
+	}
+	if call < len(a.statusErrs) && a.statusErrs[call] != nil {
+		return client.DeploymentDetail{}, a.statusErrs[call]
+	}
+	if call < len(a.statuses) {
+		return a.statuses[call], nil
 	}
 	if len(a.statuses) == 0 {
 		return client.DeploymentDetail{Deployment: client.Deployment{ID: id, Status: "done"}}, nil
@@ -475,7 +486,12 @@ func TestMissingAppNamesTheReservedVerbTrap(t *testing.T) {
 	}
 }
 
-func TestUploadDeliveryIsReportedAsUnavailable(t *testing.T) {
+// TestUploadDeliveryIsRefusedBeforeBuilding: an unimplemented delivery mode is
+// the most certain failure there is, so it must be reported before the build
+// rather than after it. The zero docker calls are the whole assertion — the
+// refusal used to live past the build, which is exactly the four-minute wait
+// followed by a rejection that this command's ordering promises to prevent.
+func TestUploadDeliveryIsRefusedBeforeBuilding(t *testing.T) {
 	api := okAPI()
 	d := &fakeDocker{outValue: "sha256:abc"}
 	f, _ := newFlow(api, d)
@@ -483,11 +499,245 @@ func TestUploadDeliveryIsReportedAsUnavailable(t *testing.T) {
 	o := okOptions()
 	o.Delivery = "upload"
 	err := f.Run(context.Background(), o)
-	if err == nil || !strings.Contains(err.Error(), "registry") {
-		t.Fatalf("upload delivery should fail with a pointer to registry, got %v", err)
+	if deployflow.CodeOf(err) != deployflow.ExitUsage {
+		t.Fatalf("want ExitUsage, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "registry") {
+		t.Fatalf("the refusal should point at the registry mode, got %v", err)
+	}
+	if len(d.calls) != 0 {
+		t.Fatalf("docker ran before the delivery mode was refused: %v", d.verbs())
 	}
 	if api.deployCall != 0 {
 		t.Fatal("deploy ran despite delivery being unavailable")
+	}
+}
+
+// TestUploadDeliveryIsRefusedEvenOnDryRun: a dry run that prints a plan and
+// exits 0 tells the user the configuration is fine, which is the opposite of
+// true.
+func TestUploadDeliveryIsRefusedEvenOnDryRun(t *testing.T) {
+	f, _ := newFlow(okAPI(), &fakeDocker{})
+	o := okOptions()
+	o.Delivery, o.DryRun = "upload", true
+	if err := f.Run(context.Background(), o); err == nil {
+		t.Fatal("a dry run with an unavailable delivery mode reported success")
+	}
+}
+
+// TestSkipPushRefusesAnImageMissingFromTheRegistry pins the irreversibility:
+// deploying a tag the registry does not have moves the application row to it,
+// and no API operation moves it back — so the web UI's Deploy button fails on
+// it too, forever. A warning was not enough.
+func TestSkipPushRefusesAnImageMissingFromTheRegistry(t *testing.T) {
+	api := okAPI()
+	d := &fakeDocker{outValue: "sha256:abc", outErr: map[string]error{
+		"manifest inspect": errors.New("manifest unknown"),
+	}}
+	f, _ := newFlow(api, d)
+
+	o := okOptions()
+	o.SkipBuild, o.SkipPush = true, true
+	err := f.Run(context.Background(), o)
+	if deployflow.CodeOf(err) != deployflow.ExitUsage {
+		t.Fatalf("want ExitUsage, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if api.deployCall != 0 {
+		t.Fatal("the app was retagged to an image the registry does not have")
+	}
+	if !strings.Contains(err.Error(), "--allow-missing-image") {
+		t.Fatalf("the refusal should name its escape hatch, got %v", err)
+	}
+}
+
+func TestSkipPushProceedsWithAllowMissingImage(t *testing.T) {
+	api := okAPI()
+	d := &fakeDocker{outValue: "sha256:abc", outErr: map[string]error{
+		"manifest inspect": errors.New("manifest unknown"),
+	}}
+	f, out := newFlow(api, d)
+
+	o := okOptions()
+	o.SkipBuild, o.SkipPush, o.AllowMissingImage = true, true, true
+	if err := f.Run(context.Background(), o); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(out.String(), "continuing anyway") {
+		t.Fatalf("the override should still say what it overrode:\n%s", out)
+	}
+}
+
+// TestWatchStopsWhenTheServerKeepsThrottling is the bug this ordering exists
+// for: the retryable branch used to `continue` PAST the only deadline check,
+// so a 429 or 503 on every poll looped forever and --timeout never fired.
+func TestWatchStopsWhenTheServerKeepsThrottling(t *testing.T) {
+	api := okAPI()
+	api.statusErrAlways = &client.APIError{HTTPStatus: 503, Code: "unavailable", Message: "try later"}
+	d := &fakeDocker{outValue: "sha256:abc"}
+
+	var out strings.Builder
+	f := &deployflow.Flow{
+		API: api, Docker: d, Out: &out,
+		// A real, tiny sleep: the deadline is wall-clock, so a no-op sleep
+		// would make the loop unbounded no matter what the code does.
+		Sleep: func(context.Context, time.Duration) error {
+			time.Sleep(2 * time.Millisecond)
+			return nil
+		},
+	}
+	o := okOptions()
+	o.Timeout = 40 * time.Millisecond
+
+	err := f.Run(context.Background(), o)
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+}
+
+// TestWatchSurvivesATransportBlip: the deployment runs on the SERVER, so this
+// machine losing its connection for a poll or two says nothing about it.
+func TestWatchSurvivesATransportBlip(t *testing.T) {
+	api := okAPI()
+	api.statusErrs = []error{errors.New("cannot reach https://k: connection reset"), errors.New("cannot reach https://k: i/o timeout")}
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	if err := f.Run(context.Background(), okOptions()); err != nil {
+		t.Fatalf("a dropped connection was reported as a failure: %v", err)
+	}
+}
+
+// TestLostContactIsUnknownNotFailed: when it never comes back, the answer is
+// "unknown" (exit 4), never "the deployment failed" (exit 1) — CI acting on
+// the latter reports broken code for a deploy that succeeded.
+func TestLostContactIsUnknownNotFailed(t *testing.T) {
+	api := okAPI()
+	api.statusErrAlways = errors.New("cannot reach https://k: no route to host")
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	err := f.Run(context.Background(), okOptions())
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "--watch") {
+		t.Fatalf("the message should say how to rejoin, got %v", err)
+	}
+}
+
+// TestUnreadableRolloutIsNotSuccess: the post-deploy status check exists to
+// catch a container that started and died. When the check itself fails, the
+// answer is unknown — reporting exit 0 marks a dead service green.
+func TestUnreadableRolloutIsNotSuccess(t *testing.T) {
+	api := okAPI()
+	api.appAfterErr = errors.New("cannot reach https://k: connection refused")
+	f, out := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	err := f.Run(context.Background(), okOptions())
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if strings.Contains(out.String(), "✓ rollout") {
+		t.Fatalf("an unread rollout was printed as confirmed:\n%s", out)
+	}
+}
+
+// TestUnreadableReplicasAreNotReportedAsCrashed: "?/1" is what the API sends
+// when docker has no service to ask, which is not the same as a container that
+// exited — and the difference matters, because one of them is a diagnosis.
+func TestUnreadableReplicasAreNotReportedAsCrashed(t *testing.T) {
+	api := okAPI()
+	after := api.app
+	after.Replicas = "?/1"
+	api.appAfter = &after
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	err := f.Run(context.Background(), okOptions())
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+}
+
+// TestNotRunningNamesBothCauses: 0/1 after a finished deployment has two
+// causes and only the log tells them apart. Asserting the more dramatic one
+// sends people to debug a crash that never happened.
+func TestNotRunningNamesBothCauses(t *testing.T) {
+	api := okAPI()
+	after := api.app
+	after.Replicas = "0/1"
+	api.appAfter = &after
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	err := f.Run(context.Background(), okOptions())
+	if deployflow.CodeOf(err) != deployflow.ExitNotRunning {
+		t.Fatalf("want ExitNotRunning, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	for _, sub := range []string{"started and exited", "still starting"} {
+		if !strings.Contains(err.Error(), sub) {
+			t.Fatalf("the message should mention %q, got %v", sub, err)
+		}
+	}
+}
+
+// TestDomainsArePrintedWithoutAScheme: the wire carries host names only — no
+// exposed flag, no TLS flag — and a new app's automatic domain is created
+// unexposed, with Traefik told not to route it. An https:// link there cannot
+// work, and a link that cannot work reads as a broken deploy.
+func TestDomainsArePrintedWithoutAScheme(t *testing.T) {
+	f, out := newFlow(okAPI(), &fakeDocker{outValue: "sha256:abc"})
+	if err := f.Run(context.Background(), okOptions()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if strings.Contains(out.String(), "https://") {
+		t.Fatalf("a scheme was invented for a domain whose exposure is unknown:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "bot.example.com") {
+		t.Fatalf("the domain should still be listed:\n%s", out)
+	}
+}
+
+// TestThrottledDeployIsResent: 429 and 503 mean the request was never looked
+// at, so resending cannot produce a second deployment — and not resending
+// throws away a completed build.
+func TestThrottledDeployIsResent(t *testing.T) {
+	api := okAPI()
+	api.deployErr = []error{&client.APIError{HTTPStatus: 429, Code: "rate_limited", Message: "slow down"}}
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	if err := f.Run(context.Background(), okOptions()); err != nil {
+		t.Fatalf("a throttled deploy was not retried: %v", err)
+	}
+	if api.deployCall != 2 {
+		t.Fatalf("Deploy called %d times, want 2", api.deployCall)
+	}
+}
+
+// TestPersistentThrottlingGivesUp bounds the retry: a server that answers 429
+// forever must end the command, not the user's patience.
+func TestPersistentThrottlingGivesUp(t *testing.T) {
+	api := okAPI()
+	for i := 0; i < 20; i++ {
+		api.deployErr = append(api.deployErr, &client.APIError{HTTPStatus: 429, Code: "rate_limited", Message: "slow down"})
+	}
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+
+	if err := f.Run(context.Background(), okOptions()); err == nil {
+		t.Fatal("persistent throttling reported success")
+	}
+	if api.deployCall > 6 {
+		t.Fatalf("Deploy was resent %d times, want a bounded number", api.deployCall)
+	}
+}
+
+// TestDockerfileAppPointsAtACommandThatExists guards the advice, not the
+// refusal: the message used to name `krill-cli rebuild`, which was not a
+// registered command, so following it printed "unknown command".
+func TestDockerfileAppPointsAtACommandThatExists(t *testing.T) {
+	api := okAPI()
+	api.app.SourceType = "dockerfile"
+	f, _ := newFlow(api, &fakeDocker{})
+
+	err := f.Run(context.Background(), okOptions())
+	if err == nil || !strings.Contains(err.Error(), "rebuild") {
+		t.Fatalf("want a pointer to rebuild, got %v", err)
 	}
 }
 

@@ -159,16 +159,33 @@ func TestResolvePrecedence(t *testing.T) {
 			wantServer: "https://staging", wantToken: "tok-staging", wantName: "staging",
 		},
 		{
-			name:       "env token forms an unnamed context",
+			// A CI runner with a token and a server and no config file. The
+			// store below has contexts, so this case is covered separately in
+			// TestResolveEnvTokenWithNoStoredContexts.
+			name:       "env token with an explicit server",
 			opts:       cliconfig.Options{EnvToken: "ci-token", EnvServer: "https://ci"},
-			wantServer: "https://ci", wantToken: "ci-token", wantName: "",
+			wantServer: "https://ci", wantToken: "ci-token", wantName: "prod",
 		},
 		{
 			// Same server, different token — a short-lived CI credential
 			// against an already-configured host.
 			name:       "env token inherits the current server",
 			opts:       cliconfig.Options{EnvToken: "ci-token"},
-			wantServer: "https://prod", wantToken: "ci-token", wantName: "",
+			wantServer: "https://prod", wantToken: "ci-token", wantName: "prod",
+		},
+		{
+			// The regression this ordering exists for: an exported token must
+			// not also decide WHICH server it is sent to. It used to
+			// short-circuit every selector, so a staging token plus --context
+			// staging was transmitted to whatever host happened to be current.
+			name:       "env token does not override the chosen context",
+			opts:       cliconfig.Options{EnvToken: "ci-token", ContextFlag: "staging"},
+			wantServer: "https://staging", wantToken: "ci-token", wantName: "staging",
+		},
+		{
+			name:       "env token does not override the project pin",
+			opts:       cliconfig.Options{EnvToken: "ci-token", ProjectContext: "staging"},
+			wantServer: "https://staging", wantToken: "ci-token", wantName: "staging",
 		},
 		{
 			name:       "server flag overrides the stored server",
@@ -187,6 +204,61 @@ func TestResolvePrecedence(t *testing.T) {
 					got, tc.wantServer, tc.wantToken, tc.wantName)
 			}
 		})
+	}
+}
+
+// TestResolveEnvTokenWithNoStoredContexts covers the CI shape: no config file
+// on disk at all, credentials entirely from the environment.
+func TestResolveEnvTokenWithNoStoredContexts(t *testing.T) {
+	empty := &cliconfig.Store{Contexts: map[string]cliconfig.Context{}}
+
+	got, err := cliconfig.Resolve(empty, cliconfig.Options{EnvToken: "ci-token", EnvServer: "https://ci"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Server != "https://ci" || got.Token != "ci-token" || got.Name != "" {
+		t.Fatalf("resolve = %+v, want an unnamed context on https://ci", got)
+	}
+
+	if _, err := cliconfig.Resolve(empty, cliconfig.Options{EnvToken: "ci-token"}); err == nil {
+		t.Fatal("a token with no server and no stored context should fail")
+	}
+}
+
+// TestResolveEnvTokenDoesNotInventAContext pins the other half: naming a
+// context that does not exist is an error even with a token exported, rather
+// than silently falling back to whichever one is current.
+func TestResolveEnvTokenDoesNotInventAContext(t *testing.T) {
+	store := &cliconfig.Store{
+		Current:  "prod",
+		Contexts: map[string]cliconfig.Context{"prod": {Server: "https://prod", Token: "tok"}},
+	}
+	_, err := cliconfig.Resolve(store, cliconfig.Options{EnvToken: "ci-token", ContextFlag: "staging"})
+	if err == nil {
+		t.Fatal("want an error for an unknown context name")
+	}
+	if !strings.Contains(err.Error(), "staging") {
+		t.Fatalf("the error should name the missing context, got %q", err)
+	}
+}
+
+// TestResolveEnvTokenDropsTheCachedLevel: the stored level describes the
+// stored token. Carrying it over would let a cached "read" refuse a write
+// token the environment just supplied, before a single request.
+func TestResolveEnvTokenDropsTheCachedLevel(t *testing.T) {
+	store := &cliconfig.Store{
+		Current:  "ro",
+		Contexts: map[string]cliconfig.Context{"ro": {Server: "https://k", Token: "tok", Level: "read"}},
+	}
+	got, err := cliconfig.Resolve(store, cliconfig.Options{EnvToken: "write-token"})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Level != "" {
+		t.Fatalf("level = %q, want it cleared", got.Level)
+	}
+	if !got.CanWriteHint() {
+		t.Fatal("an environment token must not be refused on the stored token's level")
 	}
 }
 

@@ -2,11 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/proshik/krill/internal/krillcli/client"
 	"github.com/proshik/krill/internal/krillcli/deployflow"
 	"github.com/spf13/cobra"
 )
@@ -24,7 +24,7 @@ func newAppsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "apps",
 		Short: "List the applications in your organization",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -61,7 +61,7 @@ func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status [APP]",
 		Short: "Show one application's live status",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -114,7 +114,7 @@ There is no follow mode. Live streaming exists in Krill only over a WebSocket
 that authenticates with a browser session cookie, which an API token cannot
 produce — so this prints a snapshot. Re-run it, or watch a deploy with
 ` + "`krill-cli deployment ID --watch`" + `.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -150,7 +150,7 @@ func newDeploymentsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deployments [APP]",
 		Short: "List recent deployments, newest first",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -183,11 +183,11 @@ func newDeploymentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deployment ID",
 		Short: "Show one deployment, optionally following it to completion",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := strconv.ParseInt(args[0], 10, 64)
 			if err != nil {
-				return fmt.Errorf("deployment id must be a number, got %q", args[0])
+				return usageErr(fmt.Errorf("deployment id must be a number, got %q", args[0]))
 			}
 			s, err := connect(false)
 			if err != nil {
@@ -208,39 +208,27 @@ func newDeploymentCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment finishes")
+	cmd.Flags().DurationVar(&watchTimeout, "timeout", 10*time.Minute, "how long to keep watching")
 	return cmd
 }
 
-// followDeployment reuses the same widening poll and log-diffing the deploy
-// flow uses, so rejoining a deploy looks exactly like watching one.
+// watchTimeout bounds --watch. Ten minutes matches the server's own job
+// timeout, so the client gives up at the point the deployment itself would.
+var watchTimeout = 10 * time.Minute
+
+// followDeployment rejoins a running deployment.
+//
+// It calls the deploy flow's own watcher rather than repeating its loop: the
+// copy that used to live here had no deadline at all (so a throttled or
+// unreachable server looped forever) and slept with time.Sleep, which ignores
+// Ctrl-C. One implementation, one set of properties.
 func followDeployment(cmd *cobra.Command, s *session, id int64) error {
-	start := time.Now()
-	anchor := ""
-	for attempt := 0; ; attempt++ {
-		time.Sleep(deployflow.PollDelay(attempt, time.Since(start)))
-		d, err := s.api.Deployment(cmd.Context(), id)
-		if err != nil {
-			var ae *client.APIError
-			if asAPIError(err, &ae) && ae.IsRetryable() {
-				continue
-			}
-			return err
-		}
-		if out, elided := deployflow.NewTail(anchor, d.LogTail); out != "" {
-			if elided {
-				fmt.Println("  … earlier output scrolled out of the server's log window …")
-			}
-			fmt.Print(out)
-		}
-		anchor = deployflow.LastLine(d.LogTail)
-		switch d.Status {
-		case "done":
-			fmt.Printf("\n#%d done\n", id)
-			return nil
-		case "error":
-			return fmt.Errorf("deployment #%d failed", id)
-		}
+	flow := &deployflow.Flow{API: s.api, Out: os.Stdout}
+	if err := flow.Follow(cmd.Context(), id, watchTimeout); err != nil {
+		return err
 	}
+	fmt.Printf("\n#%d done\n", id)
+	return nil
 }
 
 func lastSegment(path string) string {

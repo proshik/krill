@@ -550,7 +550,7 @@ Set `delivery:` in `krill.yaml`:
 | | What happens | Cost |
 |---|---|---|
 | `registry` (default) | `docker push`, then Krill pulls | Only the layers that changed cross the network — usually a few MB per deploy. Needs a registry account. |
-| `upload` | the image is streamed to Krill, which loads it locally | No registry at all, but **every** deploy ships the whole image, not just what changed. Needs `KRILL_IMAGE_UPLOAD_ENABLED=true` on the server, and a single-node cluster. |
+| `upload` | **planned, not implemented** — setting it is refused before anything is built | It would stream the image straight to Krill with no registry at all, at the cost of shipping the whole image on **every** deploy rather than only the changed layers. The server side does not exist yet. |
 
 For a private repository, Krill still needs its own pull credentials — that is the
 [Registries](#private-images-registries) page, unrelated to your local `docker login`.

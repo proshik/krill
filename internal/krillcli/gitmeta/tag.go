@@ -30,8 +30,15 @@ type Info struct {
 	// SHA is the abbreviated commit hash, empty when not in a repo.
 	SHA string
 	// Dirty reports uncommitted changes; Modified counts the files.
+	//
+	// "Uncommitted" includes UNTRACKED files, unlike `git describe --dirty`.
+	// That is deliberate: an untracked source file is copied into the image by
+	// the build exactly like a modified one, so a tag naming only the commit
+	// would identify something other than what was shipped.
 	Dirty    bool
 	Modified int
+	// DirtyPaths lists a few of the paths involved, for the warning.
+	DirtyPaths []string
 }
 
 // TagConfig is the krill.yaml `tag:` block.

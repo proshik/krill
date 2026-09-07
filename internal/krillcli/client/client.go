@@ -27,7 +27,13 @@ type Client struct {
 
 	// hc handles ordinary calls, which are small and quick.
 	hc *http.Client
-	// upload handles the image upload. It is a SEPARATE client with no
+	// upload handles the image upload. Nothing calls it yet — the upload
+	// delivery mode is refused at pre-flight until the server endpoint exists
+	// (see docs/superpowers/specs/2026-09-06-krill-cli-design.md §8) — and it
+	// is kept rather than deleted because the reason it is a separate client
+	// is the kind of thing that gets rediscovered the hard way:
+	//
+	// It is a SEPARATE client with no
 	// Client.Timeout at all: that field covers the entire request including
 	// the body transfer, so any value large enough for a 500 MB upload would
 	// be useless as a timeout for anything else, and any value sensible for
@@ -56,10 +62,21 @@ func New(server, token, userAgent string) (*Client, error) {
 		base:   s,
 		token:  strings.TrimSpace(token),
 		ua:     userAgent,
-		hc:     &http.Client{Timeout: 30 * time.Second},
-		upload: &http.Client{},
+		hc:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: noRedirect},
+		upload: &http.Client{CheckRedirect: noRedirect},
 	}, nil
 }
+
+// noRedirect stops the client from following redirects.
+//
+// Following one is worse than it looks. Go rewrites a redirected POST into a
+// body-less GET (301/302/303), so an operator's plain http→https redirect in
+// front of Krill turns `POST /apps/x/deploy {"tag":…}` into `GET
+// /apps/x/deploy`, which the router answers 404 — and only after the build and
+// the push, because every pre-flight check is a GET and sails through. The
+// Authorization header travels along for the ride. Refusing surfaces it on the
+// first request instead, with a message that names the fix.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // Server returns the base URL, for messages that point the user at the web UI.
 func (c *Client) Server() string { return c.base }
@@ -128,6 +145,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 300 && resp.StatusCode <= 399 {
+		return redirectError(c.base, resp)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return parseAPIError(resp)
 	}
@@ -171,6 +191,23 @@ func parseAPIError(resp *http.Response) error {
 	e.Message = strings.TrimSpace(string(raw))
 	if e.Message == "" {
 		e.Message = http.StatusText(resp.StatusCode)
+	}
+	return e
+}
+
+// redirectError explains a redirect rather than following it. It is nearly
+// always a proxy in front of Krill upgrading http to https, and the fix is to
+// log in to the address the proxy redirects TO.
+func redirectError(base string, resp *http.Response) error {
+	loc := strings.TrimSpace(resp.Header.Get("Location"))
+	e := &APIError{
+		HTTPStatus: resp.StatusCode,
+		Code:       "redirected",
+		Message: fmt.Sprintf("%s redirected this request (%d) and krill-cli does not follow redirects: "+
+			"a POST would arrive as a body-less GET and the deploy would silently do nothing", base, resp.StatusCode),
+	}
+	if loc != "" {
+		e.Message += fmt.Sprintf(". It points at %s — run `krill-cli login --server <that base URL>`", loc)
 	}
 	return e
 }

@@ -156,3 +156,69 @@ func TestBuildPathsResolveAgainstTheFile(t *testing.T) {
 		t.Fatalf("dockerfile = %q, want %q", c.DockerfilePath(), want)
 	}
 }
+
+// TestBuildPathsAreAbsolute pins the property `docker build -f` depends on.
+//
+// A relative -f is resolved by docker against the PROCESS's working directory,
+// not against the context it was handed — so a relative one names a different
+// file depending on where the command was run from, and Find deliberately
+// walks up the tree, which invites running from a subdirectory. The failure is
+// worse than an error: with a Dockerfile present in the current directory,
+// docker builds THAT one against the project's context and the deploy goes
+// green on the wrong image.
+func TestBuildPathsAreAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, project.FileName), `
+app: acme/production/bot
+image:
+  repository: ghcr.io/acme/bot
+build:
+  context: .
+  dockerfile: Dockerfile
+`)
+	c, err := project.Load(filepath.Join(dir, project.FileName))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !filepath.IsAbs(c.BuildContextPath()) {
+		t.Fatalf("build context %q is not absolute", c.BuildContextPath())
+	}
+	if !filepath.IsAbs(c.DockerfilePath()) {
+		t.Fatalf("dockerfile %q is not absolute", c.DockerfilePath())
+	}
+	if got, want := c.DockerfilePath(), filepath.Join(dir, "Dockerfile"); got != want {
+		t.Fatalf("dockerfile = %q, want %q", got, want)
+	}
+}
+
+// TestAbsoluteBuildContextIsNotJoined: filepath.Join("/proj", "/abs/app")
+// yields "/proj/abs/app", so an absolute context used to be silently rewritten
+// into a path that does not exist, reported as a missing Dockerfile.
+func TestAbsoluteBuildContextIsNotJoined(t *testing.T) {
+	dir := t.TempDir()
+	ctxDir := t.TempDir()
+	write(t, filepath.Join(dir, project.FileName), `
+app: acme/production/bot
+image:
+  repository: ghcr.io/acme/bot
+build:
+  context: `+ctxDir+`
+`)
+	c, err := project.Load(filepath.Join(dir, project.FileName))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.BuildContextPath() != ctxDir {
+		t.Fatalf("build context = %q, want the absolute path as given, %q", c.BuildContextPath(), ctxDir)
+	}
+	if got, want := c.DockerfilePath(), filepath.Join(ctxDir, "Dockerfile"); got != want {
+		t.Fatalf("dockerfile = %q, want %q", got, want)
+	}
+}
+
+func write(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}

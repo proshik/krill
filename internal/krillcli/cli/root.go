@@ -14,6 +14,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/proshik/krill/internal/krillcli/cliconfig"
 	"github.com/proshik/krill/internal/krillcli/client"
@@ -42,10 +43,66 @@ func Execute(v string) int {
 	root := newRoot()
 	if err := root.Execute(); err != nil {
 		// Cobra has already printed usage errors; everything else is ours.
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		return exitCodeFor(err)
+		fmt.Fprintln(os.Stderr, "Error:", classifyHint(err))
+		return exitCodeFor(classify(err))
 	}
 	return 0
+}
+
+// classify gives every error an exit code, not just the ones the deploy flow
+// produced.
+//
+// The documented contract (2 configuration, 3 in flight, 6 authentication) used
+// to hold only inside `deploy`: a bad flag, a malformed argument, or a revoked
+// token on `status` all fell through as 1 — which the same contract defines as
+// "the deployment failed". A caller acting on that reads a broken pipeline as
+// broken code.
+func classify(err error) error {
+	if err == nil {
+		return nil
+	}
+	var f *deployflow.Failure
+	if errors.As(err, &f) {
+		return err
+	}
+	var ae *client.APIError
+	if errors.As(err, &ae) {
+		switch {
+		case ae.IsUnauthorized(), ae.IsForbidden():
+			return &deployflow.Failure{Code: deployflow.ExitAuth, Err: err}
+		case ae.IsConflict():
+			return &deployflow.Failure{Code: deployflow.ExitBusy, Err: err}
+		case ae.HTTPStatus >= 400 && ae.HTTPStatus < 500:
+			// Includes 404: the app, deployment or route named does not
+			// exist, which is something to fix in the invocation.
+			return &deployflow.Failure{Code: deployflow.ExitUsage, Err: err}
+		}
+	}
+	return err
+}
+
+// classifyHint adds the explanation for the one API answer that is routinely
+// misread. A 404 from the ROUTER (rather than from a handler) means the
+// request never reached the agent API — the URL is wrong, or the server has
+// KRILL_AGENT_API_ENABLED=false — but it reads as "your token was rejected",
+// and people regenerate tokens for hours over it.
+func classifyHint(err error) error {
+	var ae *client.APIError
+	if !errors.As(err, &ae) || !ae.IsNotFound() {
+		return err
+	}
+	if !strings.Contains(strings.ToLower(ae.Message), "page not found") {
+		return err
+	}
+	return fmt.Errorf("%w\n\n  → this 404 came from the server's router, not from Krill's API: the agent API is\n"+
+		"    switched off there (KRILL_AGENT_API_ENABLED=false), or --server points at the wrong\n"+
+		"    base URL. A new token will not help", err)
+}
+
+// usageArgs marks an argument-count violation as a usage error, so a mistyped
+// invocation exits 2 like every other configuration problem instead of 1.
+func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(c *cobra.Command, args []string) error { return usageErr(v(c, args)) }
 }
 
 func newRoot() *cobra.Command {
@@ -61,16 +118,20 @@ The image reaches the server one of two ways, chosen by "delivery" in krill.yaml
                        every deploy after the first. Needs a registry account
                        (Docker Hub, GHCR, or your own).
 
-  upload               the image is streamed straight to Krill, which loads it
-                       locally. No registry needed, but EVERY deploy ships the
-                       whole image rather than the changed layers, and the
-                       server must have KRILL_IMAGE_UPLOAD_ENABLED=true.
+  upload               PLANNED, not implemented yet. The image would be
+                       streamed straight to Krill with no registry needed, at
+                       the cost of shipping the whole image on every deploy
+                       rather than only the changed layers. Setting it today
+                       is refused before anything is built.
 
 Applications, projects and environments are created in the Krill web UI;
 this tool only deploys ones that already exist.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// An unknown or malformed flag is a configuration problem, not a failed
+	// deployment.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr(err) })
 	root.PersistentFlags().StringVarP(&g.contextName, "context", "c", "", "login context to use (see `krill-cli context`)")
 	root.PersistentFlags().StringVar(&g.server, "server", "", "override the context's server URL")
 	root.PersistentFlags().BoolVar(&g.asJSON, "json", false, "print machine-readable JSON where supported")
@@ -88,6 +149,7 @@ this tool only deploys ones that already exist.`,
 		newEnvCmd(),
 		newStopCmd(),
 		newReloadCmd(),
+		newRebuildCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -168,13 +230,19 @@ func connect(needProject bool) (*session, error) {
 
 	var proj *project.Config
 	if path, err := project.Find("."); err == nil {
-		if c, lerr := project.Load(path); lerr != nil {
-			// A malformed project file is worth reporting even for commands
-			// that could have run without it — it is almost certainly the
-			// thing the user is about to hit.
-			return nil, usageErr(lerr)
-		} else {
+		c, lerr := project.Load(path)
+		switch {
+		case lerr == nil:
 			proj = c
+		case needProject:
+			return nil, usageErr(lerr)
+		default:
+			// Reported, not fatal. Failing here would make a broken
+			// krill.yaml block every command in the tree — including `init
+			// --force`, whose entire job is to rewrite that file, leaving
+			// hand-deletion as the only way out. Commands that do not need
+			// the file carry on without it.
+			fmt.Fprintf(os.Stderr, "warning: %v\n", lerr)
 		}
 	} else if needProject {
 		return nil, usageErr(fmt.Errorf("no %s here or in any parent directory — run `krill-cli init` in your project", project.FileName))

@@ -1,7 +1,10 @@
 package dockercli_test
 
 import (
+	"context"
+	"io"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -130,6 +133,33 @@ func TestValidateBuildArgKey(t *testing.T) {
 	for _, bad := range []string{"", "1FOO", "foo-bar", "foo bar", "FOO=BAR"} {
 		if err := dockercli.ValidateBuildArgKey(bad); err == nil {
 			t.Fatalf("ValidateBuildArgKey(%q) = nil, want an error", bad)
+		}
+	}
+}
+
+// TestRunErrorCarriesDockersOwnMessage is the linkage the hint table depends
+// on. exec.ExitError stringifies to the process state alone ("exit status 1"),
+// so an error built from it can never match "denied", "no such image" or
+// "exec format error" — every hint in Hint() was unreachable in production
+// while the streamed stderr was thrown away. This runs the real binary,
+// because a fake Runner cannot reproduce the shape that was wrong.
+func TestRunErrorCarriesDockersOwnMessage(t *testing.T) {
+	if !dockercli.Available() {
+		t.Skip("docker is not on PATH")
+	}
+	// bareExit matches an error that ends at the process status, which is the
+	// defect: whatever docker printed has to be in there after it.
+	bareExit := regexp.MustCompile(`exit status \d+$`)
+
+	// Both fail inside the CLI itself, so neither needs a running daemon.
+	for _, args := range [][]string{{"krill-cli-no-such-command"}, {"push"}} {
+		e := dockercli.Exec{Stdout: io.Discard, Stderr: io.Discard}
+		err := e.Run(context.Background(), args...)
+		if err == nil {
+			t.Skipf("docker %v unexpectedly succeeded", args)
+		}
+		if bareExit.MatchString(err.Error()) {
+			t.Fatalf("docker %v: the error is only the exit status, so no hint could ever match it: %q", args, err)
 		}
 	}
 }

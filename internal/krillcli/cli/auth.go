@@ -3,10 +3,15 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/proshik/krill/internal/krillcli/cliconfig"
@@ -28,10 +33,10 @@ is shown once and is not recoverable.
 The token is read from standard input, never from a flag — a flag would put
 it in your shell history and in the process list. It is stored in
 ~/.config/krill/config.json with owner-only permissions.`,
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server == "" {
-				return fmt.Errorf("--server is required, e.g. --server https://krill.example.com")
+				return usageErr(errors.New("--server is required, e.g. --server https://krill.example.com"))
 			}
 			token, err := readToken()
 			if err != nil {
@@ -55,6 +60,24 @@ it in your shell history and in the process list. It is stored in
 			ctxName := name
 			if ctxName == "" {
 				ctxName = who.OrgName
+			}
+			if strings.TrimSpace(ctxName) == "" {
+				ctxName = "default"
+			}
+			// The default name is the ORGANIZATION's, and every Krill install
+			// seeds its first org as "Default" — so logging in to a second
+			// server would land on the same name and replace the first one's
+			// token with no sign that anything was lost, leaving a krill.yaml
+			// pinned to that name pointing at the wrong server. Re-logging in
+			// to the SAME server is the ordinary case and still just updates.
+			if name == "" {
+				if existing, ok := store.Contexts[ctxName]; ok && existing.Server != api.Server() {
+					return fmt.Errorf(
+						"context %q already points at %s, and this login is for %s.\n"+
+							"Both organizations are named %q, which is why the default name collides.\n"+
+							"Pass --name to say which is which, e.g. --name prod",
+						ctxName, existing.Server, api.Server(), who.OrgName)
+				}
 			}
 			store.Set(ctxName, cliconfig.Context{
 				Server: api.Server(), Token: token,
@@ -88,28 +111,66 @@ func readToken() (string, error) {
 	if env := strings.TrimSpace(os.Getenv(cliconfig.EnvToken)); env != "" {
 		return env, nil
 	}
-	interactive := isTerminal(os.Stdin)
-	if interactive {
+	if stdinIsTerminal() {
 		fmt.Print("API token (input hidden): ")
-		if err := sttyEcho(false); err != nil {
+		restore, hidden := hideEcho()
+		if !hidden {
 			fmt.Println()
 			fmt.Fprintln(os.Stderr, "warning: cannot disable terminal echo; the token will be visible as you type")
 		} else {
 			defer func() {
-				_ = sttyEcho(true)
+				restore()
 				fmt.Println()
 			}()
 		}
 	}
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil && line == "" {
-		return "", fmt.Errorf("no token read from standard input")
+		return "", usageErr(errors.New("no token read from standard input"))
 	}
 	token := strings.TrimSpace(line)
 	if token == "" {
-		return "", fmt.Errorf("no token given")
+		return "", usageErr(errors.New("no token given"))
 	}
 	return token, nil
+}
+
+// hideEcho turns terminal echo off and returns the function that puts it back,
+// reporting whether it managed to.
+//
+// The restore is wired to SIGINT and SIGTERM as well as to the caller's defer,
+// because a defer does not run when the process is signalled — and Ctrl-C at a
+// hidden prompt is the single most likely way this read ends, when somebody
+// realises they have to go and copy the token. Without the handler that leaves
+// the user's shell with echo off and no visible keystrokes until they think to
+// type `stty sane` blind.
+func hideEcho() (restore func(), ok bool) {
+	if err := sttyEcho(false); err != nil {
+		return func() {}, false
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	restore = func() {
+		once.Do(func() {
+			_ = sttyEcho(true)
+			close(done)
+		})
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		defer signal.Stop(sig)
+		select {
+		case <-sig:
+			restore()
+			fmt.Fprintln(os.Stderr)
+			// 128+SIGINT, the conventional status for "killed by Ctrl-C".
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	return restore, true
 }
 
 func sttyEcho(on bool) error {
@@ -122,16 +183,25 @@ func sttyEcho(on bool) error {
 	return cmd.Run()
 }
 
-func isTerminal(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
+// stdinIsTerminal reports whether stdin is an interactive terminal.
+//
+// It asks stty rather than looking at os.ModeCharDevice, which is true for
+// /dev/null — the very thing cron, nohup and CI redirect stdin from. Believing
+// the mode bit means printing a prompt nobody will answer and then failing on
+// an immediate EOF, with a warning about terminal echo on top.
+func stdinIsTerminal() bool {
+	cmd := exec.CommandContext(context.Background(), "stty")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 func newContextCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "context",
 		Short: "List the Krill servers you are logged in to",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(*cobra.Command, []string) error {
 			store, err := cliconfig.Load()
 			if err != nil {
@@ -157,7 +227,7 @@ func newContextCmd() *cobra.Command {
 	use := &cobra.Command{
 		Use:   "use NAME",
 		Short: "Make a context the default",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(_ *cobra.Command, args []string) error {
 			store, err := cliconfig.Load()
 			if err != nil {
@@ -178,12 +248,13 @@ func newContextCmd() *cobra.Command {
 		Use:     "rm NAME",
 		Aliases: []string{"logout"},
 		Short:   "Forget a context and its token",
-		Args:    cobra.ExactArgs(1),
+		Args:    usageArgs(cobra.ExactArgs(1)),
 		RunE: func(_ *cobra.Command, args []string) error {
 			store, err := cliconfig.Load()
 			if err != nil {
 				return err
 			}
+			wasCurrent := store.Current == args[0]
 			if err := store.Remove(args[0]); err != nil {
 				return err
 			}
@@ -191,6 +262,11 @@ func newContextCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Removed context %q. The token still exists on the server — revoke it there if it is no longer wanted.\n", args[0])
+			// Removing the current context silently repoints it at another
+			// server, and the next unpinned deploy would go there. Say so.
+			if wasCurrent && store.Current != "" {
+				fmt.Printf("That was the current context; %q is now current (%s).\n", store.Current, store.Contexts[store.Current].Server)
+			}
 			return nil
 		},
 	}

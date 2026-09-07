@@ -48,12 +48,45 @@ func (e Exec) cmd(ctx context.Context, args ...string) *exec.Cmd {
 func (e Exec) Run(ctx context.Context, args ...string) error {
 	cmd := e.cmd(ctx, args...)
 	cmd.Stdout = orStd(e.Stdout, os.Stdout)
-	cmd.Stderr = orStd(e.Stderr, os.Stderr)
+	// Streamed AND retained. Streaming alone is what the user watches, but an
+	// exec.ExitError carries only the process state ("exit status 1"), so an
+	// error built from it says nothing a hint could be matched against — the
+	// whole point of dockercli.Hint is to recognise "denied", "no such image"
+	// or "exec format error", and none of those words would ever reach it.
+	tail := &tailBuffer{}
+	cmd.Stderr = io.MultiWriter(orStd(e.Stderr, os.Stderr), tail)
 	if err := cmd.Run(); err != nil {
+		if msg := tail.String(); msg != "" {
+			// Wrapped, not replaced: callers match on the text, and a reader
+			// still wants the exit status.
+			return fmt.Errorf("docker %s: %w\n%s", args[0], err, msg)
+		}
 		return fmt.Errorf("docker %s: %w", args[0], err)
 	}
 	return nil
 }
+
+// maxStderrTail is how much of a failing command's stderr is kept for the
+// error message. A build streams megabytes of progress; the diagnosis is
+// always in the last few lines, and a terminal cannot use more than that.
+const maxStderrTail = 8 << 10
+
+// tailBuffer keeps the LAST maxStderrTail bytes written to it. Bounded on
+// purpose: BuildKit progress output is unbounded, and this feeds an error
+// string.
+type tailBuffer struct {
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > maxStderrTail {
+		t.buf = t.buf[len(t.buf)-maxStderrTail:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return strings.TrimSpace(string(t.buf)) }
 
 func (e Exec) Output(ctx context.Context, args ...string) (string, error) {
 	cmd := e.cmd(ctx, args...)

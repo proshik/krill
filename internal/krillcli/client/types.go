@@ -83,6 +83,3 @@ type Accepted struct {
 	DeploymentID int64  `json:"deployment_id"`
 	Status       string `json:"status"`
 }
-
-// Terminal reports whether a deployment status will not change again.
-func (d Deployment) Terminal() bool { return d.Status == "done" || d.Status == "error" }

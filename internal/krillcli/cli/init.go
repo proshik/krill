@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,11 +26,11 @@ The image repository is read from the application's own configuration in
 Krill rather than typed, because a repository that does not match the one
 Krill pulls from is the single most confusing failure in this workflow: the
 push succeeds, the deploy goes green, and the old image keeps running.`,
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dest := filepath.Join(".", project.FileName)
 			if _, err := os.Stat(dest); err == nil && !force {
-				return fmt.Errorf("%s already exists here; pass --force to overwrite it", dest)
+				return usageErr(fmt.Errorf("%s already exists here; pass --force to overwrite it", dest))
 			}
 			s, err := connect(false)
 			if err != nil {
@@ -59,7 +60,19 @@ push succeeds, the deploy goes green, and the old image keeps running.`,
 				fmt.Fprintf(os.Stderr, "warning: %s has no image repository set in Krill; edit image.repository in %s and set the same value in the Krill UI.\n", app.Path, dest)
 			}
 
-			body := renderConfig(app.Path, repo)
+			// An app whose NAME is one of the API's verbs cannot be reached by
+			// path — the server reads that segment as an operation — so pin
+			// the file to its numeric id instead of writing a reference that
+			// will 404 on the first command.
+			ref := app.Path
+			if reservedVerbs[lastSegment(app.Path)] {
+				ref = strconv.FormatInt(app.ID, 10)
+				fmt.Fprintf(os.Stderr,
+					"note: %s is named after an API verb, so it can only be addressed by id; wrote app: %s\n",
+					app.Path, ref)
+			}
+
+			body := renderConfig(ref, repo)
 			if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
 				return err
 			}
@@ -72,6 +85,20 @@ push succeeds, the deploy goes green, and the old image keeps running.`,
 	return cmd
 }
 
+// yamlScalar renders a value that is safe as a YAML scalar.
+//
+// Project and environment names are free text in Krill, so a project called
+// "Bot: prod" produces `app: Bot: prod/production/bot` — which is not a
+// mapping value error the user can act on, it is a file that no later command
+// can read at all.
+func yamlScalar(v string) string {
+	if v != "" && v == strings.TrimSpace(v) && !strings.ContainsAny(v, ":#'\"\\\n\t{}[],&*?|<>=!%@`") {
+		return v
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\t", `\t`)
+	return `"` + r.Replace(v) + `"`
+}
+
 func pickApp(apps []client.App, ref string) (client.App, error) {
 	if ref != "" {
 		for _, a := range apps {
@@ -79,10 +106,10 @@ func pickApp(apps []client.App, ref string) (client.App, error) {
 				return a, nil
 			}
 		}
-		return client.App{}, fmt.Errorf("no application %q in this organization", ref)
+		return client.App{}, usageErr(fmt.Errorf("no application %q in this organization", ref))
 	}
-	if !isTerminal(os.Stdin) {
-		return client.App{}, fmt.Errorf("stdin is not a terminal — pass --app project/environment/app")
+	if !stdinIsTerminal() {
+		return client.App{}, usageErr(errors.New("stdin is not a terminal — pass --app project/environment/app"))
 	}
 	fmt.Println("Which application does this project deploy to?")
 	for i, a := range apps {
@@ -91,11 +118,11 @@ func pickApp(apps []client.App, ref string) (client.App, error) {
 	fmt.Print("Number: ")
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
-		return client.App{}, fmt.Errorf("nothing chosen")
+		return client.App{}, usageErr(errors.New("nothing chosen"))
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil || n < 1 || n > len(apps) {
-		return client.App{}, fmt.Errorf("expected a number between 1 and %d", len(apps))
+		return client.App{}, usageErr(fmt.Errorf("expected a number between 1 and %d", len(apps)))
 	}
 	return apps[n-1], nil
 }
@@ -137,12 +164,12 @@ tag:
 #   registry  (default) docker push, then Krill pulls. Only the layers that
 #             changed cross the network — usually a few MB per deploy.
 #
-#   upload    the image is streamed to Krill, which loads it locally. No
-#             registry account needed, but EVERY deploy ships the whole image
-#             (hundreds of MB), not just what changed, and the server must
-#             have KRILL_IMAGE_UPLOAD_ENABLED=true.
+#   upload    PLANNED, not implemented yet. Setting it is refused before
+#             anything is built. It would stream the image straight to Krill
+#             with no registry account needed, at the cost of shipping the
+#             whole image (hundreds of MB) on every deploy.
 delivery: registry
 
 # context: prod       # pin this project to one login context
-`, appPath, repo, project.DefaultPlatform)
+`, yamlScalar(appPath), repo, project.DefaultPlatform)
 }

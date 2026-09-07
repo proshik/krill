@@ -175,7 +175,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	if filepath.IsAbs(c.Build.Dockerfile) {
-		return fmt.Errorf(`"build.dockerfile" must be relative to the project directory, got %q`, c.Build.Dockerfile)
+		return fmt.Errorf(`"build.dockerfile" must be relative to "build.context", got %q`, c.Build.Dockerfile)
 	}
 	return nil
 }
@@ -200,8 +200,23 @@ func validAppRef(ref string) error {
 // BuildContextPath and DockerfilePath resolve the build inputs against the
 // directory holding krill.yaml, so the CLI behaves the same run from the
 // project root or from a subdirectory.
-func (c *Config) BuildContextPath() string { return filepath.Join(c.Dir, c.Build.Context) }
+//
+// Both return ABSOLUTE paths, and that is load-bearing rather than tidy:
+// `docker build -f` resolves a relative Dockerfile against the process's
+// working directory, not against the context it was handed, so a relative one
+// would name a different file every time the command ran from a different
+// directory — and Find deliberately walks up the tree, which is an invitation
+// to do exactly that.
+func (c *Config) BuildContextPath() string {
+	if filepath.IsAbs(c.Build.Context) {
+		return filepath.Clean(c.Build.Context)
+	}
+	return filepath.Join(c.Dir, c.Build.Context)
+}
 
+// DockerfilePath resolves build.dockerfile against the build context, the way
+// Compose does, so a context of ./app with the default Dockerfile means
+// ./app/Dockerfile.
 func (c *Config) DockerfilePath() string {
 	return filepath.Join(c.BuildContextPath(), c.Build.Dockerfile)
 }

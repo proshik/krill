@@ -42,11 +42,48 @@ func Describe(ctx context.Context, dir string) (Info, error) {
 
 	// --porcelain is the stable, script-facing format; the human one is not
 	// guaranteed across git versions or locales.
-	if out, err := git(ctx, dir, "status", "--porcelain"); err == nil && out != "" {
+	//
+	// The `-- .` pathspec scopes the answer to dir's subtree rather than to
+	// the whole repository. Without it, a monorepo holding one service per
+	// directory reports every service's edits as this one's: editing
+	// services/web marks a deploy of services/bot dirty, tags the image
+	// -dirty, and refuses the build outright under require_clean — for changes
+	// that are not in the build context and cannot reach the image.
+	if out, err := git(ctx, dir, "status", "--porcelain", "--", "."); err == nil && out != "" {
+		lines := strings.Split(out, "\n")
 		info.Dirty = true
-		info.Modified = len(strings.Split(out, "\n"))
+		info.Modified = len(lines)
+		// Kept for the warning: "3 uncommitted changes" sends the reader to
+		// `git status`, whereas naming the files usually ends the question on
+		// the spot — most often it is one generated or untracked file.
+		for _, l := range lines {
+			if p := porcelainPath(l); p != "" {
+				info.DirtyPaths = append(info.DirtyPaths, p)
+			}
+			if len(info.DirtyPaths) == maxDirtyPaths {
+				break
+			}
+		}
 	}
 	return info, nil
+}
+
+// maxDirtyPaths caps how many paths the warning names.
+const maxDirtyPaths = 3
+
+// porcelainPath takes the path out of one `git status --porcelain` line.
+//
+// It cannot use a fixed offset. The format is two status columns and a space,
+// but the common " M path" case begins with a space, and git() trims the whole
+// output — which eats that leading column on the FIRST line only, so a fixed
+// slice loses a character from exactly one of the paths it prints.
+func porcelainPath(line string) string {
+	l := strings.TrimSpace(line)
+	i := strings.IndexByte(l, ' ')
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(l[i+1:])
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {

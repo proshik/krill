@@ -46,7 +46,7 @@ So when the user's change is source code that has not been built and pushed yet,
 
 1. Check there is a `krill.yaml` (`krill-cli` needs one; `krill-cli init` writes it).
 2. Run `krill-cli deploy` through the shell. It builds locally, pushes, deploys and waits, and it verifies the token, the app and the image repository *before* the build.
-3. Read its exit code rather than its prose: `0` ok · `1` the deployment failed · `2` configuration · `3` another deploy was in flight · `4` timed out watching · `5` deployed but not running · `6` authentication.
+3. Read its exit code rather than its prose: `0` ok · `1` the deployment failed · `2` configuration, arguments or a missing app · `3` another deploy was in flight (only with `--no-wait-for-lock`; by default it waits) · `4` timed out watching, **or the outcome could not be read** · `5` deployed but not running · `6` authentication. Codes `4` and `5` both mean "do not assume this worked" — check with `krill_app_status` before reporting anything.
 4. Verify with `krill_app_status` as usual.
 
 Two things this branch does not change. **Rule 4 still applies** — building and shipping arbitrary local code to production is a bigger action than moving a tag, not a smaller one, so ask first. And if `krill-cli` is not installed, or the shell is not in the application's repository, say so and stop; do not hand-roll `docker build` and `docker push` to work around it.

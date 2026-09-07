@@ -1,21 +1,17 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/proshik/krill/internal/krillcli/client"
 	"github.com/spf13/cobra"
 )
-
-func asAPIError(err error, target **client.APIError) bool { return errors.As(err, target) }
 
 func newStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [APP]",
 		Short: "Scale the application to zero replicas",
 		Long:  "Scale the application to zero replicas. `krill-cli deploy` brings it back; nothing is deleted.",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -43,7 +39,7 @@ func newReloadCmd() *cobra.Command {
 Reload does NOT pick up environment changes. Variables are baked into the
 service definition when a deployment is created, so a variable set with
 ` + "`krill-cli env set`" + ` takes effect on the next deploy, not on a reload.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -62,6 +58,48 @@ service definition when a deployment is created, so a variable set with
 	}
 }
 
+// newRebuildCmd exists because the deploy flow tells dockerfile apps to run
+// it. It is the operation Krill offers for an app whose image it builds
+// itself: there is no local image to push, so `deploy` cannot help.
+func newRebuildCmd() *cobra.Command {
+	var watch bool
+	cmd := &cobra.Command{
+		Use:   "rebuild [APP]",
+		Short: "Rebuild a dockerfile app from its git source, on the server",
+		Long: `Rebuild a dockerfile app from source, with no build cache.
+
+This is the server-side build: Krill clones the app's git repository and runs
+docker build ON THE SERVER. It is the opposite of ` + "`krill-cli deploy`" + `,
+which builds on this machine and ships the result — and it is what a dockerfile
+app needs, because such an app has no image of its own to push.
+
+Image apps have no source to rebuild and are refused.`,
+		Args: usageArgs(cobra.MaximumNArgs(1)),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := connect(false)
+			if err != nil {
+				return err
+			}
+			ref, err := s.appRef(args)
+			if err != nil {
+				return err
+			}
+			acc, err := s.api.Rebuild(cmd.Context(), ref)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Rebuild of %s queued as #%d.\n", ref, acc.DeploymentID)
+			if !watch {
+				fmt.Printf("Follow it with `krill-cli deployment %d --watch`.\n", acc.DeploymentID)
+				return nil
+			}
+			return followDeployment(cmd, s, acc.DeploymentID)
+		},
+	}
+	cmd.Flags().BoolVar(&watch, "watch", false, "follow the build to completion")
+	return cmd
+}
+
 func newEnvCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "env [APP]",
@@ -70,7 +108,7 @@ func newEnvCmd() *cobra.Command {
 
 Values are never returned by the API, deliberately: anything a tool reads can
 end up in a log, a transcript or a model provider's servers.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -97,11 +135,11 @@ end up in a log, a transcript or a model provider's servers.`,
 	set := &cobra.Command{
 		Use:   "set KEY=VALUE [APP]",
 		Short: "Set or add one variable",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  usageArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value, ok := cutOne(args[0], '=')
 			if !ok {
-				return fmt.Errorf("expected KEY=VALUE, got %q", args[0])
+				return usageErr(fmt.Errorf("expected KEY=VALUE, got %q", args[0]))
 			}
 			s, err := connect(false)
 			if err != nil {
@@ -125,7 +163,7 @@ end up in a log, a transcript or a model provider's servers.`,
 	rm := &cobra.Command{
 		Use:   "rm KEY [APP]",
 		Short: "Remove one variable",
-		Args:  cobra.RangeArgs(1, 2),
+		Args:  usageArgs(cobra.RangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := connect(false)
 			if err != nil {
@@ -151,7 +189,7 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the version",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		Run: func(*cobra.Command, []string) {
 			fmt.Println(userAgent())
 		},

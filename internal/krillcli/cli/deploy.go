@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/proshik/krill/internal/krillcli/deployflow"
@@ -17,21 +17,22 @@ import (
 
 func newDeployCmd() *cobra.Command {
 	var (
-		app        string
-		tag        string
-		platform   string
-		useUpload  bool
-		useReg     bool
-		skipBuild  bool
-		skipPush   bool
-		noWatch    bool
-		dryRun     bool
-		noCache    bool
-		reqClean   bool
-		allowMism  bool
-		noWaitLock bool
-		timeout    time.Duration
-		buildArgs  []string
+		app          string
+		tag          string
+		platform     string
+		useUpload    bool
+		useReg       bool
+		skipBuild    bool
+		skipPush     bool
+		noWatch      bool
+		dryRun       bool
+		noCache      bool
+		reqClean     bool
+		allowMism    bool
+		allowMissing bool
+		noWaitLock   bool
+		timeout      time.Duration
+		buildArgs    []string
 	)
 
 	cmd := &cobra.Command{
@@ -49,10 +50,13 @@ rejection is the failure this ordering exists to prevent.
 To deploy an image that is already in the registry, pass --skip-build
 --skip-push with the tag you want.
 
+If another deployment is already running, this waits for it and then deploys
+once. Pass --no-wait-for-lock to exit with code 3 instead.
+
 Exit codes: 0 ok · 1 the deployment failed · 2 configuration · 3 another
-deploy was in flight · 4 timed out watching · 5 deployed but not running ·
-6 authentication.`,
-		Args: cobra.NoArgs,
+deploy was in flight (--no-wait-for-lock) · 4 timed out watching, or the
+outcome could not be read · 5 deployed but not running · 6 authentication.`,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !dockercli.Available() {
 				return usageErr(fmt.Errorf("docker is not on PATH — krill-cli builds the image locally, so it needs one"))
@@ -80,12 +84,25 @@ deploy was in flight · 4 timed out watching · 5 deployed but not running ·
 				delivery = project.DeliveryRegistry
 			}
 
+			// Run for BOTH branches. --tag used to skip this entirely, which
+			// meant it also skipped tag.require_clean and the dirty warning:
+			// a team that set require_clean got an uncommitted tree built and
+			// shipped under a clean-looking tag, which is the one thing that
+			// setting exists to prevent.
+			info, err := gitState(cmd.Context(), p)
+			if err != nil {
+				return usageErr(err)
+			}
+			if err := enforceClean(info, p, reqClean); err != nil {
+				return usageErr(err)
+			}
 			if tag == "" {
-				tag, err = deriveTag(cmd.Context(), p, reqClean)
+				tag, err = deriveTag(info, p)
 				if err != nil {
 					return usageErr(err)
 				}
 			}
+			warnDirty(info)
 
 			// Checked here rather than inside the flow so the message can
 			// name the file and the resolved path.
@@ -113,7 +130,7 @@ deploy was in flight · 4 timed out watching · 5 deployed but not running ·
 				Repository:         p.Image.Repository,
 				Platform:           platform,
 				Tag:                tag,
-				Dockerfile:         relDockerfile(p),
+				Dockerfile:         p.DockerfilePath(),
 				Context:            p.BuildContextPath(),
 				BuildArgs:          merged,
 				Delivery:           delivery,
@@ -123,6 +140,7 @@ deploy was in flight · 4 timed out watching · 5 deployed but not running ·
 				DryRun:             dryRun,
 				NoCache:            noCache,
 				AllowImageMismatch: allowMism,
+				AllowMissingImage:  allowMissing,
 				NoWaitForLock:      noWaitLock,
 				CanWriteHint:       s.resolved.CanWriteHint(),
 				Timeout:            timeout,
@@ -143,28 +161,45 @@ deploy was in flight · 4 timed out watching · 5 deployed but not running ·
 	f.BoolVar(&noCache, "no-cache", false, "build without using cached layers")
 	f.BoolVar(&reqClean, "require-clean", false, "refuse to build with uncommitted changes")
 	f.BoolVar(&allowMism, "allow-image-mismatch", false, "proceed even if krill.yaml and Krill disagree about the repository")
+	f.BoolVar(&allowMissing, "allow-missing-image", false, "with --skip-push, proceed even if the tag is not found in the registry")
 	f.BoolVar(&noWaitLock, "no-wait-for-lock", false, "exit instead of waiting for another deployment to finish")
 	f.DurationVar(&timeout, "timeout", 10*time.Minute, "how long to wait for the rollout")
 	f.StringArrayVar(&buildArgs, "build-arg", nil, "extra build argument, KEY=VALUE (repeatable)")
 	return cmd
 }
 
-func deriveTag(ctx context.Context, p *project.Config, requireClean bool) (string, error) {
-	info := gitmeta.Info{}
-	if gitmeta.Available() {
-		var err error
-		info, err = gitmeta.Describe(ctx, p.Dir)
-		if err != nil {
-			return "", err
-		}
+// gitState reads the working tree, scoped to the BUILD CONTEXT rather than to
+// the repository root: what makes a build reproducible is the state of the
+// files that go into the image, and in a monorepo the rest of the tree does
+// not.
+func gitState(ctx context.Context, p *project.Config) (gitmeta.Info, error) {
+	if !gitmeta.Available() {
+		return gitmeta.Info{}, nil
 	}
+	return gitmeta.Describe(ctx, p.BuildContextPath())
+}
+
+// enforceClean applies tag.require_clean regardless of where the tag came
+// from.
+func enforceClean(info gitmeta.Info, p *project.Config, requireClean bool) error {
+	if !(p.Tag.RequireClean || requireClean) || !info.Dirty {
+		return nil
+	}
+	return fmt.Errorf("%w — commit or stash first, or drop --require-clean%s",
+		&gitmeta.ErrDirty{Modified: info.Modified}, dirtyPathsSuffix(info))
+}
+
+func deriveTag(info gitmeta.Info, p *project.Config) (string, error) {
 	if !info.InRepo && p.Tag.Strategy == "git" {
 		fmt.Fprintln(os.Stderr, "warning: not a git repository — falling back to a timestamp tag")
 	}
 	cfg := gitmeta.TagConfig{
-		Strategy:     p.Tag.Strategy,
-		Prefix:       p.Tag.Prefix,
-		RequireClean: p.Tag.RequireClean || requireClean,
+		Strategy: p.Tag.Strategy,
+		Prefix:   p.Tag.Prefix,
+		// Already enforced by enforceClean, which runs for an explicit --tag
+		// too; leaving it on here would report the same refusal twice with
+		// different wording.
+		RequireClean: false,
 	}
 	tag, err := gitmeta.DeriveTag(info, cfg, time.Now())
 	if err != nil {
@@ -174,20 +209,30 @@ func deriveTag(ctx context.Context, p *project.Config, requireClean bool) (strin
 		}
 		return "", err
 	}
-	if info.Dirty {
-		fmt.Fprintf(os.Stderr, "warning: %d uncommitted change(s); the tag is marked -dirty and identifies no commit\n", info.Modified)
-	}
 	return tag, nil
 }
 
-// relDockerfile expresses the Dockerfile relative to the build context, which
-// is what `docker build -f` expects when the context is passed separately.
-func relDockerfile(p *project.Config) string {
-	rel, err := filepath.Rel(p.BuildContextPath(), p.DockerfilePath())
-	if err != nil {
-		return p.DockerfilePath()
+func warnDirty(info gitmeta.Info) {
+	if !info.Dirty {
+		return
 	}
-	return rel
+	fmt.Fprintf(os.Stderr, "warning: %d uncommitted change(s); the tag identifies no commit%s\n",
+		info.Modified, dirtyPathsSuffix(info))
+}
+
+// dirtyPathsSuffix names a few of the offending files. "3 uncommitted changes"
+// sends the reader to `git status`; naming them usually ends the question —
+// most often it is one generated or untracked file, sometimes krill.yaml
+// itself right after `krill-cli init`.
+func dirtyPathsSuffix(info gitmeta.Info) string {
+	if len(info.DirtyPaths) == 0 {
+		return ""
+	}
+	more := ""
+	if info.Modified > len(info.DirtyPaths) {
+		more = ", …"
+	}
+	return " (" + strings.Join(info.DirtyPaths, ", ") + more + ")"
 }
 
 func parseBuildArgs(pairs []string) (map[string]string, error) {
