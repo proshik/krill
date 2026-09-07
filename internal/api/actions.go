@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -67,6 +68,18 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 		return DeployAccepted{}, fmt.Errorf("deploy: no deployer configured")
 	}
 
+	// Checked before the retag for the same reason the nil-deployer check is,
+	// and it is the more likely of the two to fire: Enqueue refuses a second
+	// deployment while one is already in flight, and learning that only
+	// afterwards would leave the application pointing at a tag nothing ever
+	// deployed. That is not a transient failure the caller can shrug off —
+	// the retag is persistent, this API offers no way to put the old tag
+	// back, and every later deployment reuses it, including one a human
+	// starts from the web UI.
+	if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
+		return DeployAccepted{}, cErr
+	}
+
 	if tag != "" {
 		if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
 			ID:    app.ID,
@@ -79,12 +92,43 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 
 	deployID := s.dep.Enqueue(app.ID, "manual")
 	if deployID == 0 {
+		// The check above closes the ordinary conflict, but Enqueue also
+		// returns 0 with a full queue, on shutdown, and when it cannot write
+		// the deployment row — none of which is a conflict, and all of which
+		// would otherwise leave the tag moved with no deployment behind it.
+		// Put it back: a persistent retag nothing deployed is the one outcome
+		// this operation must never produce, because the next Deploy from the
+		// web UI would ship it.
+		s.restoreTag(ctx, app, tag)
 		if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
 			return DeployAccepted{}, cErr
 		}
 		return DeployAccepted{}, fmt.Errorf("deploy: could not enqueue a deployment (queue full or server shutting down)")
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
+}
+
+// restoreTag undoes a retag whose deployment never got queued.
+//
+// Best-effort by construction: if this write fails too, the row keeps the new
+// tag and only a log line records it. A stronger guarantee would need the tag
+// to travel WITH the job rather than through the application row — the
+// deployer reads applications.tag when the worker picks the job up, so two
+// deploys racing here still resolve to whichever tag was written last. That is
+// a deployer-shaped change, not an API-shaped one; this narrows the window to
+// a failed enqueue and says so rather than pretending the race is closed.
+func (s *Service) restoreTag(ctx context.Context, app db.Application, attempted string) {
+	if attempted == "" || attempted == app.Tag {
+		return
+	}
+	if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
+		ID:    app.ID,
+		Image: app.Image,
+		Tag:   app.Tag,
+	}); err != nil {
+		slog.Error("deploy: could not restore the previous image tag after a failed enqueue",
+			"app_id", app.ID, "attempted_tag", attempted, "previous_tag", app.Tag, "err", err)
+	}
 }
 
 // Rebuild forces a from-scratch build (docker build --no-cache) of a
@@ -164,7 +208,14 @@ func (s *Service) Stop(ctx context.Context, id Identity, ref string) error {
 // the cap exists to stop.
 func (s *Service) inFlightConflict(ctx context.Context, appID int64, op string) error {
 	n, err := s.q.CountRunningDeploymentsByApplication(ctx, appID)
-	if err != nil || n == 0 {
+	if err != nil {
+		// Reporting "no conflict" on a failed read is the wrong default for
+		// the pre-retag call: it would let an unreadable database wave through
+		// exactly the persistent retag the check exists to prevent. Fail
+		// closed — the caller retries, and a retry costs nothing.
+		return fmt.Errorf("%s: could not check for a deployment already in progress: %w", op, err)
+	}
+	if n == 0 {
 		return nil
 	}
 	return Conflict(op + ": a deployment for this application is already in progress; poll krill_deployment_status and start another once it finishes")

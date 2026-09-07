@@ -7,6 +7,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/testutil"
 )
@@ -19,6 +20,17 @@ type apiFixture struct {
 	otherIdent  api.Identity // write-level, a different org
 	appID       int64
 	appIDString string
+	// dep is set by newWriteFixture; stopDeployer makes Enqueue refuse
+	// without it being a conflict.
+	dep *deploy.Deployer
+}
+
+// stopDeployer shuts the deployer down so Enqueue returns 0 for a reason that
+// is NOT an in-flight conflict — the only such reason a test can reach.
+func (f *apiFixture) stopDeployer() {
+	if f.dep != nil {
+		f.dep.Stop()
+	}
 }
 
 // newAPIFixture builds two orgs: "acme" with project acme-proj / env production

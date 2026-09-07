@@ -29,8 +29,31 @@ type AppSummary struct {
 	Name       string   `json:"name"`
 	SourceType string   `json:"source_type"` // image | dockerfile
 	Image      string   `json:"image,omitempty"`
-	Status     string   `json:"status"` // idle | deploying | running | error
+	Tag        string   `json:"tag,omitempty"` // image apps only; Image is the repository alone
+	Status     string   `json:"status"`        // idle | deploying | running | error
 	Domains    []string `json:"domains,omitempty"`
+}
+
+// imageTagOf reports the configured tag of an image application.
+//
+// It exists because Image carries the repository alone, so without this the
+// tag an app is configured to deploy is unreadable through the API: the only
+// other place a tag surfaces is DeploymentSummary.ImageTag, and that records
+// what was actually deployed — which resolveImageRef has usually rewritten
+// into a digest-pinned "repo@sha256:..." reference that cannot be fed back to
+// Deploy. Callers need the configured tag to show what an app is on and to
+// confirm a retag before making it, since Deploy's retag is persistent and
+// this API offers no way to put the old tag back.
+//
+// A dockerfile app has no image reference of its own — its tag column holds
+// whatever a past edit left there — so the field is left empty for one, and
+// omitempty keeps it out of the response entirely rather than publishing a
+// meaningless value.
+func imageTagOf(app db.Application) string {
+	if app.SourceType != "image" {
+		return ""
+	}
+	return app.Tag
 }
 
 // AppStatus is the detail-view shape: the summary plus live/last-deploy facts.
@@ -170,6 +193,7 @@ func (s *Service) ListApps(ctx context.Context, id Identity) ([]AppSummary, erro
 			Name:       a.Name,
 			SourceType: a.SourceType,
 			Image:      a.Image,
+			Tag:        imageTagOf(a),
 			Status:     deploy.DeriveStatus(states[docker.ServiceName(a.ID)], a.Status),
 			Domains:    domsByApp[a.ID],
 		})
@@ -250,6 +274,7 @@ func (s *Service) AppStatus(ctx context.Context, id Identity, ref string) (AppSt
 			Name:       app.Name,
 			SourceType: app.SourceType,
 			Image:      app.Image,
+			Tag:        imageTagOf(app),
 			Status:     deploy.DeriveStatus(state, app.Status),
 			Domains:    domains,
 		},

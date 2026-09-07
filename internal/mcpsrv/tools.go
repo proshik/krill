@@ -16,6 +16,16 @@ import (
 // Tool names. This is the entire security surface of the MCP adapter: an
 // agent can call exactly what is registered in toolRegistrations (below) and
 // nothing else.
+//
+// There is deliberately no tool for uploading an image, even though krill-cli
+// has a delivery mode for it. Three reasons, in order of weight: a model has
+// no image bytes to send and no business having them; MCP has no binary
+// channel, so hundreds of megabytes would have to travel base64-encoded
+// inside a JSON-RPC string and be materialized in memory twice; and it would
+// be the first tool that puts caller-chosen code on the host, at an
+// autonomous agent's discretion. Deploying a tag that already exists in a
+// registry covers what an agent legitimately needs. Do not add a thirteenth
+// tool to make the surface symmetrical with the CLI's.
 const (
 	toolWhoami           = "krill_whoami"
 	toolListApps         = "krill_list_apps"

@@ -477,8 +477,8 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | Route | Level | Notes |
 |-------|-------|-------|
 | `GET /api/v1/whoami` | read | User, org, level, live role, `can_write`. |
-| `GET /api/v1/apps` | read | Every app in the org: path, id, status, source type, image, domains. |
-| `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment. |
+| `GET /api/v1/apps` | read | Every app in the org: path, id, status, source type, image repository + tag, domains. |
+| `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment. `image` is the repository and `tag` the configured tag (image apps only). |
 | `GET /api/v1/apps/{app}/logs` | read | Runtime log tail. `?tail=` (default 200, max 1000), `?level=` (`trace`…`fatal`). |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
 | `GET /api/v1/deployments/{id}` | read | One deployment plus the last ~8 KB of its build log. |
@@ -508,6 +508,102 @@ cp -r skills/krill-deploy ~/.claude/skills/
 - Bearer tokens cross the network in clear text over plain HTTP. Krill warns at startup when the agent API is enabled and the public URL is not `https://` — put it behind TLS.
 - Every write logs an INFO audit line with `token_id` and `user_id` (never the token, never an env value).
 - An app whose name is itself one of the route verbs (`logs`, `env`, `deployments`, `deploy`, `rebuild`, `reload`, `stop`) can only be addressed over REST by numeric id — the path form splits on that trailing segment.
+
+## krill-cli — build locally, deploy to Krill
+
+`krill-cli` builds a container image **on your machine** and deploys it. It exists for when
+building in CI is not an option — free build minutes run out, and a 2 vCPU / 1.9 GB VPS is
+not where you want to run `docker build` either.
+
+It deploys applications that already exist; projects, environments and applications are
+created in the web UI.
+
+```bash
+make build-cli                  # → bin/krill-cli
+krill-cli login --server https://krill.example.com   # token is read from stdin
+cd ~/code/my-bot
+krill-cli init                  # pick the app; writes krill.yaml
+krill-cli deploy
+```
+
+```
+$ krill-cli deploy
+
+  app       acme/production/bot  (image)
+  image     ghcr.io/proshik/bot
+  tag       main-a1b2c3d4e5f6
+  platform  linux/amd64
+  via       registry
+
+✓ build    18.4s
+✓ push     ghcr.io/proshik/bot:main-a1b2c3d4e5f6   41.2s
+✓ deploy   queued  #418
+✓ rollout  1/1 running
+
+https://bot.example.com
+```
+
+### How the image reaches the server
+
+Set `delivery:` in `krill.yaml`:
+
+| | What happens | Cost |
+|---|---|---|
+| `registry` (default) | `docker push`, then Krill pulls | Only the layers that changed cross the network — usually a few MB per deploy. Needs a registry account. |
+| `upload` | **planned, not implemented** — setting it is refused before anything is built | It would stream the image straight to Krill with no registry at all, at the cost of shipping the whole image on **every** deploy rather than only the changed layers. The server side does not exist yet. |
+
+For a private repository, Krill still needs its own pull credentials — that is the
+[Registries](#private-images-registries) page, unrelated to your local `docker login`.
+
+### `krill.yaml`
+
+Committed with your application; it holds **no secrets** (the token lives in
+`~/.config/krill/config.json`). An unknown key is a hard parse error, which is what keeps a
+`token:` from quietly ending up in a commit.
+
+```yaml
+app: acme/production/bot
+image:
+  repository: ghcr.io/proshik/bot   # must match the app's Image in Krill
+  platform: linux/amd64             # what the SERVER runs, not your Mac
+build: { context: ., dockerfile: Dockerfile }
+tag:   { strategy: git }            # git | timestamp
+delivery: registry
+```
+
+**`platform` defaults to `linux/amd64`, not to your machine.** Building for an Apple-silicon
+host and deploying to an amd64 VPS produces an image that loads fine and dies on start with
+`exec format error`, visible only in the container log. If your server is arm64, say so here.
+
+### Commands
+
+`deploy` (alias `up`) · `init` · `login` · `context [use|rm]` · `apps` · `status` · `logs` ·
+`deployments` · `deployment ID --watch` · `env [set|rm]` · `stop` · `reload` · `version` ·
+`completion`
+
+Exit codes: `0` ok · `1` the deployment failed · `2` configuration · `3` another deploy was
+in flight · `4` timed out watching · `5` deployed but not running · `6` authentication.
+
+### Notes
+
+- **Checks run before the build, not after.** The token's level, the app's existence and
+  source type, and whether `image.repository` matches what Krill actually pulls are all
+  verified first — a repository mismatch otherwise produces a green deploy of the *old*
+  image, which looks like the build did nothing.
+- **`krill-cli` and the MCP server do not replace each other.** MCP has no binary channel,
+  so an agent cannot carry an image; the CLI is where a build happens. An agent working in
+  your application's repo can run `krill-cli deploy` over Bash and then verify with
+  `krill_app_status` / `krill_app_logs`.
+- **Use a separate token per machine.** The 60 requests/minute limit is *per token*, so a
+  token shared with an MCP session makes the two compete.
+- **There is no `logs -f`.** Live streaming is a WebSocket authenticated with a browser
+  session cookie, which an API token cannot produce.
+- A dirty working tree still builds; the tag is marked `-dirty-<HHMMSS>` so two different
+  trees can never share one tag. `tag.require_clean: true` refuses instead.
+- Distribution is currently `make build-cli` or `go install github.com/proshik/krill/cmd/krill-cli@latest`,
+  plus release tarballs for linux/darwin × amd64/arm64. A Homebrew tap needs the repository
+  to be public first.
+
 
 ## Data model
 

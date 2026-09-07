@@ -99,6 +99,7 @@ func newWriteFixture(t *testing.T) (*apiFixture, *api.Service) {
 	dep := deploy.New(eng, noopBuilder{}, deploy.NewDBStore(f.q), hub, "krill-net")
 	dep.Start(context.Background())
 	t.Cleanup(dep.Stop)
+	f.dep = dep
 	svc := api.NewService(f.q, eng, dep)
 	return f, svc
 }
@@ -283,6 +284,62 @@ func TestDeployWithNoDeployerDoesNotRetagTheApp(t *testing.T) {
 	}
 	if app.Tag != "alpine" {
 		t.Fatalf("app was retagged to %q despite the deploy never being enqueued; want the untouched %q", app.Tag, "alpine")
+	}
+}
+
+// TestDeployWithTagDoesNotRetagWhenADeployIsAlreadyInFlight is the same
+// ordering hazard as TestDeployWithNoDeployerDoesNotRetagTheApp, at the check
+// that actually fires in production. Enqueue refuses a second deployment
+// while one is in flight, and the conflict used to be detected only from its
+// zero return — after the retag had already been written. So the caller who
+// lost the race got a 409 AND an application left pointing at a tag nothing
+// ever deployed, which every later deployment would reuse, including one a
+// human starts from the web UI. There is no API to put the old tag back.
+func TestDeployWithTagDoesNotRetagWhenADeployIsAlreadyInFlight(t *testing.T) {
+	f, svc := newWriteFixture(t)
+	f.seedDeployment(t) // deployments.status defaults to 'running'
+
+	_, err := svc.Deploy(t.Context(), f.ident, f.appIDString, "v2")
+	var aerr *api.Error
+	if !errors.As(err, &aerr) || aerr.Code != api.CodeConflict {
+		t.Fatalf("want conflict while a deploy is in flight, got %v", err)
+	}
+	app, err := f.q.GetApplication(t.Context(), f.appID)
+	if err != nil {
+		t.Fatalf("get app: %v", err)
+	}
+	if app.Tag != "alpine" {
+		t.Fatalf("app was retagged to %q despite the deploy being refused; want the untouched %q", app.Tag, "alpine")
+	}
+}
+
+// TestDeployRestoresTheTagWhenTheEnqueueFails covers the half of the hazard
+// the in-flight check cannot reach.
+//
+// Enqueue returns 0 for four different reasons and only one of them is a
+// conflict: the queue can be full, the server can be shutting down, and the
+// deployment row can fail to write. In every one of those the app had already
+// been retagged, so it kept pointing at an image nothing deployed — and the
+// next Deploy from the web UI would ship it. A stopped deployer is the
+// reachable one of the four: it returns 0 immediately with no conflict.
+func TestDeployRestoresTheTagWhenTheEnqueueFails(t *testing.T) {
+	f, svc := newWriteFixture(t)
+	f.stopDeployer() // Enqueue now returns 0 without a conflict
+
+	_, err := svc.Deploy(t.Context(), f.ident, f.appIDString, "v2")
+	if err == nil {
+		t.Fatal("want an error when the deployment cannot be enqueued, got nil")
+	}
+	var aerr *api.Error
+	if errors.As(err, &aerr) && aerr.Code == api.CodeConflict {
+		t.Fatalf("a stopped deployer is not a conflict, got %v", err)
+	}
+	app, gerr := f.q.GetApplication(t.Context(), f.appID)
+	if gerr != nil {
+		t.Fatalf("get app: %v", gerr)
+	}
+	if app.Tag != "alpine" {
+		t.Fatalf("app was left on %q after a failed enqueue; want the untouched %q", app.Tag, "alpine")
 	}
 }
 
