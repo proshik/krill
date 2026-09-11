@@ -29,7 +29,7 @@ type Client struct {
 	hc *http.Client
 	// upload handles the image upload. Nothing calls it yet — the upload
 	// delivery mode is refused at pre-flight until the server endpoint exists
-	// (see docs/superpowers/specs/2026-09-06-krill-cli-design.md §8) — and it
+	// (see "Direct image upload" in ROADMAP.md) — and it
 	// is kept rather than deleted because the reason it is a separate client
 	// is the kind of thing that gets rediscovered the hard way:
 	//

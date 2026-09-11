@@ -2,7 +2,7 @@
 
 A minimal self-hosted PaaS written in Go: deploy containerized apps and managed databases onto a single-node Docker Swarm, routed by Traefik, managed from a dark web control plane.
 
-> **Status:** Active development — a learning project, running in production for the author's bot. Phases 0–7 are complete (image apps, Dockerfile builds, projects/RBAC, managed Postgres/Redis, S3 backups, domains/TLS, and realtime ops: Telegram notifications, web terminal, monitoring, structured log viewer) plus **Phase 6 — GitHub auto-deploy**. The **deploy-parity** track (gaps vs Dokploy for deploying a real private app) is fully closed, and **multi-server** (Swarm worker nodes joined over SSH, with placement) plus **cluster-wide monitoring** work too. Managed databases were rebuilt around org-level **DB instances** holding env-scoped **logical databases** (replacing one container per database); a new admin **Topology** page draws the live cluster map with app↔DB threads and an ingress lane; and **backups** now use schedule presets (including on-demand) with inline storage setup. Still open: Phase 8 (flexible state placement) and email/Slack channels. Not yet broadly production-hardened.
+> **Status:** Active development. Krill runs in production for the author's own small apps, but it is not yet hardened for anyone else's production: a single control plane with no high availability, no automatic backup of Krill's own state database, and several features verified in code and tests but not yet on a live cluster. See [ROADMAP.md](ROADMAP.md).
 
 ## Why Krill
 
@@ -163,9 +163,6 @@ docker rm -f krill-postgres && docker volume rm krill-pg-data   # destroys Krill
 
 Prefer a container instead of the host binary? The multi-arch image is published
 at `ghcr.io/proshik/krill` (see [Docker & CI](#docker--ci)).
-
-See the [installer design spec](./docs/superpowers/specs/2026-06-09-krill-installer-design.md)
-for the full rationale.
 
 ## Architecture
 
@@ -626,27 +623,31 @@ State is stored in PostgreSQL (24 tables as of migration `000030`), created by e
 
 ## Roadmap & status
 
-Phases 0–7 are complete and E2E-verified, plus **Phase 6 (GitHub auto-deploy)**, the full **deploy-parity** track, **multi-server** clustering, **cluster-wide monitoring**, the managed-database rebuild onto **DB instances + logical databases**, the visual **Topology** page, and the **backup UX simplification**. The UI is bilingual (English + Russian). See [ROADMAP.md](ROADMAP.md) for the detailed, living tracker.
+Krill covers the full path of deploying a real app on one VPS or a small Swarm cluster: image and Dockerfile apps, managed databases with S3 backups, domains with Let's Encrypt, GitHub auto-deploy, multi-node placement, monitoring, and an agent API. The UI is bilingual (English + Russian).
 
-What's left:
+What is *not* there yet, and matters before you run it for anyone else:
 
-- **Phase 8 — flexible state placement:** choose local Postgres/Redis or remote managed instances (via DSN) at install time, instead of always running state containers on the host.
-- **Email / Slack notifications:** extend the notification channels (Telegram alerts on deploy/backup failures + app-health transitions already ship).
-- Assorted deferred items: per-node load alerts and disk/network metrics, SSH deploy-keys, volume-backup encryption, and GitHub OAuth/App (the current auto-deploy uses webhook + PAT).
+- **No high availability.** One control plane and one deploy worker; if the control-plane node goes down, the UI and the ingress go with it.
+- **Krill's own state database is not backed up automatically.** Managed databases you create get scheduled S3 backups; the bundled `krill-postgres` holding Krill's configuration does not — back it up yourself, or point the installer at an external managed Postgres (`KRILL_DATABASE_URL`).
+- **Some features are verified in code and tests but not yet on a live cluster** — see the acceptance queue in [ROADMAP.md](ROADMAP.md).
+
+[ROADMAP.md](ROADMAP.md) lists what is open and planned.
 
 ## Documentation
 
-- [PLAN.md](PLAN.md) — current working plan.
-- [ROADMAP.md](ROADMAP.md) — phase roadmap and status.
-- [`docs/superpowers/specs/`](docs/superpowers/specs/) — per-phase design docs (e.g. [`2026-06-02-krill-phase3-managed-databases-design.md`](docs/superpowers/specs/2026-06-02-krill-phase3-managed-databases-design.md), [`2026-07-04-krill-topology-graph-design.md`](docs/superpowers/specs/2026-07-04-krill-topology-graph-design.md), [`2026-07-05-krill-backup-ux-simplification-design.md`](docs/superpowers/specs/2026-07-05-krill-backup-ux-simplification-design.md)).
-- [`docs/superpowers/plans/`](docs/superpowers/plans/) — per-phase implementation plans.
+- [ROADMAP.md](ROADMAP.md) — what is done, what is open, and the live-acceptance queue.
+- [SECURITY.md](SECURITY.md) — how to report a vulnerability, and notes on running Krill safely.
 - [CLAUDE.md](CLAUDE.md) — conventions and guidance for contributors and AI agents.
 
 ## Conventions
 
-- **Language:** all code — comments, log messages, error strings — is written in English. Only the planning docs (`PLAN.md`, `ROADMAP.md`, `docs/superpowers/**`) are kept in Russian.
+- **Language:** everything in the repository — code, comments, log messages, error strings, docs — is in English. The one exception is the Russian UI catalog (`internal/web/i18n/ru.go`).
 - **Commits:** Conventional Commits (`feat(scope): …`, `fix(scope): …`). No `Co-Authored-By` / attribution trailers.
 - **i18n:** all user-facing strings go through `i18n.T(ctx, "key")`; add a locale by adding a translation map, not by editing templates.
 - **Errors:** never swallow errors in handlers — log and/or return 500.
 
 See [CLAUDE.md](CLAUDE.md) for the full conventions and the spec → plan → execute workflow.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

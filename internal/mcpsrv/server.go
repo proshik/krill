@@ -7,9 +7,8 @@
 // identity, decodes arguments, calls the service, and maps the result or the
 // error (see tools.go).
 //
-// Architecture note (why one shared *mcp.Server, identity from ctx): Task 0's
-// spike (docs/superpowers/plans/2026-08-13-krill-mcp-agent-api.md, section
-// "Результат спайка") verified that the Identity RequireAPIToken
+// Architecture note (why one shared *mcp.Server, identity from ctx): a spike
+// run before this package was written verified that the Identity RequireAPIToken
 // (internal/server) stashes on the *http.Request's context via
 // api.WithIdentity DOES reach a tool handler's ctx.Value(...) — confirmed
 // across three independent runs, using a single shared *mcp.Server rather
