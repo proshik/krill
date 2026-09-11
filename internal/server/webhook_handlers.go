@@ -147,17 +147,11 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The Authorization header is the supported way to present the token. The
-	// ?token= form still works so existing CI keeps deploying, but a query
-	// parameter is recorded verbatim by any reverse proxy's access log (and by
-	// anything else that logs request URIs), so its use is called out.
+	// The token is accepted ONLY from the Authorization header. A ?token=
+	// query parameter is deliberately never read: query strings are recorded
+	// verbatim by reverse-proxy access logs and browser history, which would
+	// leak the secret to places nobody treats as secret.
 	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if tok == "" {
-		if q := r.URL.Query().Get("token"); q != "" {
-			tok = q
-			logFrom(r).Warn("deploy hook authenticated with a ?token= query parameter, which upstream proxies log verbatim; send 'Authorization: Bearer <secret>' instead", "app_id", a.ID)
-		}
-	}
 	want, derr := secret.Dec(a.WebhookSecret)
 	if derr != nil {
 		logFrom(r).Error("deploy hook: stored secret undecryptable", "err", derr, "app_id", a.ID)

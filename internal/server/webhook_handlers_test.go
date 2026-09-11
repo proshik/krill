@@ -194,9 +194,10 @@ func TestDeployHook(t *testing.T) {
 	const sec = "tok123"
 	seedAutoDeploy(t, q, appID, sec)
 	path := "/webhooks/deploy/" + i64(appID)
+	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
 
 	// valid token → 202 + deployment
-	rec := postWebhook(t, h, path+"?token="+sec, "", nil, nil)
+	rec := postWebhook(t, h, path, "", nil, bearer(sec))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("deploy hook: want 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -206,13 +207,23 @@ func TestDeployHook(t *testing.T) {
 	}
 
 	// bad token → 404 (indistinguishable from unknown/disabled app)
-	rec = postWebhook(t, h, path+"?token=nope", "", nil, nil)
+	rec = postWebhook(t, h, path, "", nil, bearer("nope"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bad token: want 404, got %d", rec.Code)
 	}
 
+	// the correct secret in ?token= is ignored → 404: query strings land in
+	// proxy logs and browser history, so the header is the only accepted form
+	rec = postWebhook(t, h, path+"?token="+sec, "", nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("?token= must not authenticate: want 404, got %d", rec.Code)
+	}
+	if deps, _ := q.ListDeploymentsByApplication(context.Background(), appID); len(deps) != 1 {
+		t.Fatalf("?token= must not enqueue a deployment, got %d deployments", len(deps))
+	}
+
 	// ?tag=v2 updates the app tag
-	rec = postWebhook(t, h, path+"?token="+sec+"&tag=v2", "", nil, nil)
+	rec = postWebhook(t, h, path+"?tag=v2", "", nil, bearer(sec))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("tag update: want 202, got %d", rec.Code)
 	}
@@ -224,7 +235,7 @@ func TestDeployHook(t *testing.T) {
 	// dockerfile app on the deploy endpoint → 404
 	df := dockerfileAppFixture(t, q, orgSvc, "main")
 	seedAutoDeploy(t, q, df, "x")
-	rec = postWebhook(t, h, "/webhooks/deploy/"+i64(df)+"?token=x", "", nil, nil)
+	rec = postWebhook(t, h, "/webhooks/deploy/"+i64(df), "", nil, bearer("x"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("dockerfile on deploy endpoint: want 404, got %d", rec.Code)
 	}
