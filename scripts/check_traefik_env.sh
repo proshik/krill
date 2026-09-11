@@ -2,7 +2,7 @@
 # Minimal check: whether DOCKER_API_VERSION actually lands in Traefik's ContainerSpec.Env,
 # and whether it helps. Completely fresh traefik (we wait for the old one to be removed).
 set -uo pipefail
-R=.
+R="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$R"
 HTTP_PORT=18080; PG_PORT=55432; PG_NAME=krill-e2e-pg; APP=e2eweb
 

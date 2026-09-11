@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Debug Traefik routing: bring up the stack, inspect the service labels and Traefik logs.
 set -uo pipefail
-R=.
+R="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$R"
 HTTP_PORT=18080; PG_PORT=55432; PG_NAME=krill-e2e-pg; APP=e2eweb
 

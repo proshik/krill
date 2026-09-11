@@ -73,7 +73,7 @@ func TestBaseURL(t *testing.T) {
 		want string
 	}{
 		{"explicit override", Config{PublicURL: "https://krill.example.com", Host: "ignored", CookieSecure: false}, "https://krill.example.com"},
-		{"https from cookie_secure", Config{Host: "krill.example.com", CookieSecure: true}, "https://krill.example.com"},
+		{"https from cookie_secure", Config{Host: "krill.example.net", CookieSecure: true}, "https://krill.example.net"},
 		{"http default", Config{Host: "localhost", CookieSecure: false}, "http://localhost"},
 	}
 	for _, tc := range cases {

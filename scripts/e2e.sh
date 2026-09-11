@@ -5,7 +5,7 @@
 # Flow: login → resolve default org → project → environment → app → deploy →
 #       Traefik routing → save env → rolling-update (tag 1.27-alpine).
 set -uo pipefail
-R=.
+R="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$R"
 
 HTTP_PORT=18080
