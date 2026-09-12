@@ -76,3 +76,11 @@ UPDATE applications SET webhook_secret = $2, updated_at = now() WHERE id = $1;
 -- name: ListPinnedApplications :many
 SELECT id, name, placement_mode, placement_nodes FROM applications
 WHERE placement_mode IN ('pin','global') AND placement_nodes <> '';
+
+-- name: ListApplicationIDsByOrg :many
+SELECT a.id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+ORDER BY a.id;

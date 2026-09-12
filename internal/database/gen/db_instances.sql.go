@@ -138,6 +138,30 @@ func (q *Queries) GetDBInstance(ctx context.Context, id int64) (DbInstance, erro
 	return i, err
 }
 
+const listDBInstanceIDsByOrg = `-- name: ListDBInstanceIDsByOrg :many
+SELECT id FROM db_instances WHERE organization_id = $1 ORDER BY id
+`
+
+func (q *Queries) ListDBInstanceIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDBInstanceIDsByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDBInstancesByNodeHostname = `-- name: ListDBInstancesByNodeHostname :many
 SELECT id, organization_id, name, engine, node_hostname FROM db_instances WHERE node_hostname = $1 ORDER BY name
 `

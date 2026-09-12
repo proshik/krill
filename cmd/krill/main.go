@@ -215,6 +215,37 @@ func run() error {
 	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
 	dbSvc.SetNotifier(notifySvc)
 
+	// An install that predates per-organization networks has every service —
+	// every tenant's — on the single shared overlay, where any container can
+	// resolve and reach any other by name. Nothing but a redeploy moves a Swarm
+	// service between networks, so move them here, at startup, once.
+	//
+	// This runs AFTER traefik.Reconcile on purpose: the gateway is already in
+	// each organization network by now, so a service that moves is reachable the
+	// moment it comes up. A failure never stops the boot — the operator needs
+	// the UI and the logs far more than a completed migration, and the pass is
+	// idempotent, so the next startup picks up where this one stopped.
+	migrator := &orgnet.Migrator{
+		Store:         orgnet.NewDBStore(q),
+		EnsureNetwork: engine.NetworkEnsure,
+		RedeployInstance: func(_ context.Context, id int64) error {
+			dbSvc.DeployInstance(id) // fire-and-forget: the deploy runs in its own goroutine
+			return nil
+		},
+		RedeployApp: func(_ context.Context, id int64) error {
+			// EnqueueSystem, not Enqueue: the per-app and per-organization caps
+			// would silently refuse most of a large organization's apps and leave
+			// them stranded on the shared network.
+			if dep.EnqueueSystem(id) == 0 {
+				return errors.New("deploy could not be queued")
+			}
+			return nil
+		},
+	}
+	if err := migrator.Run(ctx); err != nil {
+		slog.Error("organization network migration failed (continuing)", "err", err)
+	}
+
 	// Health watcher: polls service state for app down/recovered alerts.
 	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
 	go watcher.Run(ctx)

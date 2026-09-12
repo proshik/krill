@@ -221,6 +221,23 @@ func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
 	return d.enqueue(appID, trigger, true)
 }
 
+// EnqueueSystem queues a deploy the control plane submits for itself, skipping
+// both the per-app in-flight guard and the per-organization cap. Those caps
+// exist to stop one tenant from monopolising the single shared build worker;
+// the startup migration onto per-organization networks is not a tenant, and has
+// to move every service of an organization in one pass — the per-org cap would
+// silently refuse it from the third app onward and leave the rest of the
+// organization stranded on the old network. Nothing but that migration may use
+// this.
+func (d *Deployer) EnqueueSystem(appID int64) int64 {
+	select {
+	case <-d.done:
+		return 0
+	default:
+	}
+	return d.submit(appID, "manual", false)
+}
+
 func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	select {
 	case <-d.done:
@@ -255,6 +272,12 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 			return 0
 		}
 	}
+	return d.submit(appID, trigger, noCache)
+}
+
+// submit creates the deployment row and hands the job to the worker. It is the
+// part of enqueue that both the capped (tenant) path and EnqueueSystem share.
+func (d *Deployer) submit(appID int64, trigger string, noCache bool) int64 {
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
 		slog.Error("create deployment failed", "app", appID, "err", err)
