@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,6 +14,20 @@ import (
 )
 
 const maxWebhookBody = 5 << 20 // 5 MiB
+
+// webhookRetryAfter is the Retry-After (seconds) sent with a refused webhook
+// deploy: long enough for a sibling deploy to make progress, short enough that a
+// CI retry loop still lands the deploy within minutes.
+const webhookRetryAfter = "30"
+
+// refuseWebhookDeploy answers a webhook whose deploy could not be queued. The
+// per-app in-flight guard, the per-organization cap and a full queue all refuse
+// a deploy, and acknowledging one with 202 tells CI it shipped when nothing did.
+// 503 with Retry-After is what a CI retry loop (curl --retry, for one) acts on.
+func refuseWebhookDeploy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", webhookRetryAfter)
+	http.Error(w, "deploy could not be queued, retry later", http.StatusServiceUnavailable)
+}
 
 // webhookApp loads an app by the {appID} path param and confirms auto-deploy is
 // on and the source type matches. It returns ok=false (and writes a generic 404)
@@ -76,7 +91,11 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	s.deployer.Enqueue(a.ID, "webhook")
+	if s.deployer.Enqueue(a.ID, "webhook") == 0 {
+		logFrom(r).Warn("github webhook deploy refused (already in flight, organization limit reached, or queue full)", "app_id", a.ID, "branch", a.GitBranch)
+		refuseWebhookDeploy(w)
+		return
+	}
 	logFrom(r).Info("github webhook deploy enqueued", "app_id", a.ID, "branch", a.GitBranch)
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -166,9 +185,26 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if tag := r.URL.Query().Get("tag"); tag != "" {
-		if !webhook.ValidTag(tag) {
-			http.Error(w, "bad tag", http.StatusBadRequest)
+	tag := r.URL.Query().Get("tag")
+	if tag != "" && !webhook.ValidTag(tag) {
+		http.Error(w, "bad tag", http.StatusBadRequest)
+		return
+	}
+	retag := tag != "" && tag != a.Tag
+	if retag {
+		// Refuse before retagging when this app already has a deploy in flight
+		// — the likeliest refusal. The worker reads applications.tag when it
+		// picks a job up, so a retag written now could be shipped by that
+		// earlier deploy even though this request is answered with a refusal.
+		n, err := s.q.CountRunningDeploymentsByApplication(r.Context(), a.ID)
+		if err != nil {
+			logFrom(r).Error("deploy hook in-flight check failed", "err", err, "app_id", a.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if n > 0 {
+			logFrom(r).Warn("deploy hook refused, a deploy is already in flight", "app_id", a.ID)
+			refuseWebhookDeploy(w)
 			return
 		}
 		if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: a.ID, Image: a.Image, Tag: tag}); err != nil {
@@ -177,7 +213,19 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.deployer.Enqueue(a.ID, "webhook")
+	if s.deployer.Enqueue(a.ID, "webhook") == 0 {
+		if retag {
+			// Put the previous tag back. A tag nothing deployed must not stay on
+			// the app: the next deploy from anywhere — the UI included — would
+			// ship it. Best-effort, like api.Service.restoreTag.
+			if err := s.q.UpdateApplicationImage(context.WithoutCancel(r.Context()), db.UpdateApplicationImageParams{ID: a.ID, Image: a.Image, Tag: a.Tag}); err != nil {
+				logFrom(r).Error("deploy hook: could not restore the previous image tag after a refused deploy", "err", err, "app_id", a.ID, "attempted_tag", tag, "previous_tag", a.Tag)
+			}
+		}
+		logFrom(r).Warn("deploy hook refused (already in flight, organization limit reached, or queue full)", "app_id", a.ID)
+		refuseWebhookDeploy(w)
+		return
+	}
 	logFrom(r).Info("deploy hook enqueued", "app_id", a.ID)
 	w.WriteHeader(http.StatusAccepted)
 }

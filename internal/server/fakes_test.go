@@ -112,6 +112,20 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 // being valid. nil uses the real queries, i.e. exactly newDeployServer.
 func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
+	h, q, orgSvc, pool, _ := buildDeployServer(t, tokens)
+	return h, q, orgSvc, pool
+}
+
+// newDeployServerWithDeployer is newDeployServer that also hands back the
+// deployer, so a test can tune it (e.g. the per-organization in-flight cap).
+func newDeployServerWithDeployer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *deploy.Deployer) {
+	t.Helper()
+	h, q, orgSvc, _, dep := buildDeployServer(t, nil)
+	return h, q, orgSvc, dep
+}
+
+func buildDeployServer(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool, *deploy.Deployer) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
@@ -129,5 +143,5 @@ func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handle
 		tokenStore = tokens
 	}
 	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep))
-	return srv.Router(), q, orgSvc, pool
+	return srv.Router(), q, orgSvc, pool, dep
 }

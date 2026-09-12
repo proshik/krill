@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/org"
@@ -222,7 +223,9 @@ func TestDeployHook(t *testing.T) {
 		t.Fatalf("?token= must not enqueue a deployment, got %d deployments", len(deps))
 	}
 
-	// ?tag=v2 updates the app tag
+	// ?tag=v2 updates the app tag. The first deploy must be finished first: a
+	// deploy hook arriving while one is in flight is refused, not acknowledged.
+	waitNoDeployInFlight(t, q, appID)
 	rec = postWebhook(t, h, path+"?tag=v2", "", nil, bearer(sec))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("tag update: want 202, got %d", rec.Code)
@@ -238,5 +241,126 @@ func TestDeployHook(t *testing.T) {
 	rec = postWebhook(t, h, "/webhooks/deploy/"+i64(df), "", nil, bearer("x"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("dockerfile on deploy endpoint: want 404, got %d", rec.Code)
+	}
+}
+
+// waitNoDeployInFlight blocks until the app has no running deployment (the
+// worker finishes a noopEngine deploy almost at once, but asynchronously).
+func waitNoDeployInFlight(t *testing.T, q *db.Queries, appID int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		n, err := q.CountRunningDeploymentsByApplication(context.Background(), appID)
+		if err != nil {
+			t.Fatalf("count running deployments: %v", err)
+		}
+		if n == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("app %d still has %d deployment(s) in flight", appID, n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func assertRetryLater(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a refused deploy must not be acknowledged: want 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("a refused deploy must tell the caller when to retry (Retry-After)")
+	}
+}
+
+// A push whose deploy the deployer refuses (here: one already in flight for the
+// app) must not be answered 202 — CI would report a deploy that never happened.
+func TestGithubWebhookRefusedDeployAsksCIToRetry(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	appID := dockerfileAppFixture(t, q, orgSvc, "main")
+	const sec = "topsecret"
+	seedAutoDeploy(t, q, appID, sec)
+	// A deployment row with no job behind it stays "running": the in-flight guard refuses the next one.
+	if _, err := q.CreateDeployment(context.Background(), db.CreateDeploymentParams{ApplicationID: appID, Trigger: "manual"}); err != nil {
+		t.Fatalf("seed in-flight deployment: %v", err)
+	}
+	body := []byte(`{"ref":"refs/heads/main","deleted":false}`)
+
+	rec := postWebhook(t, h, "/webhooks/github/"+i64(appID), "push", body, map[string]string{"X-Hub-Signature-256": ghSign(sec, body)})
+	assertRetryLater(t, rec)
+	if deps, _ := q.ListDeploymentsByApplication(context.Background(), appID); len(deps) != 1 {
+		t.Fatalf("no deployment may be added, got %d", len(deps))
+	}
+}
+
+// The deploy hook retags BEFORE it enqueues. When the organization's in-flight
+// cap then refuses the deploy — two sibling apps deploying is enough — the old
+// tag must be put back, or the next deploy from anywhere would ship a tag that
+// nothing deployed.
+func TestDeployHookRestoresTheTagWhenTheDeployIsRefused(t *testing.T) {
+	h, q, orgSvc, dep := newDeployServerWithDeployer(t)
+	ctx := context.Background()
+	dep.SetMaxBuildsPerOrg(1)
+
+	o, err := orgSvc.CreateOrg(ctx, mkUser(t, q, "wh-cap@k.local"), "Cap Org")
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	p, err := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	e, err := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	if err != nil {
+		t.Fatalf("create env: %v", err)
+	}
+	mkApp := func(name string) db.Application {
+		a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+			EnvironmentID: e.ID, Name: name, Image: "nginx", Tag: "alpine",
+			Domain: name + ".example.com", Port: 80, SourceType: "image", DockerfilePath: "Dockerfile",
+		})
+		if err != nil {
+			t.Fatalf("create app %s: %v", name, err)
+		}
+		return a
+	}
+	app, sibling := mkApp("hooked"), mkApp("sibling")
+	const sec = "tok-cap"
+	seedAutoDeploy(t, q, app.ID, sec)
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: sibling.ID, Trigger: "manual"}); err != nil {
+		t.Fatalf("seed sibling deployment: %v", err)
+	}
+
+	rec := postWebhook(t, h, "/webhooks/deploy/"+i64(app.ID)+"?tag=v9", "", nil, map[string]string{"Authorization": "Bearer " + sec})
+	assertRetryLater(t, rec)
+	got, err := q.GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatalf("get app: %v", err)
+	}
+	if got.Tag != "alpine" {
+		t.Fatalf("tag = %q, a refused deploy must leave the previous tag (alpine)", got.Tag)
+	}
+	if deps, _ := q.ListDeploymentsByApplication(ctx, app.ID); len(deps) != 0 {
+		t.Fatalf("no deployment may be recorded, got %d", len(deps))
+	}
+}
+
+// With a deploy of the same app already in flight the hook refuses before it
+// retags, so the earlier deploy can never pick up a tag this request refused.
+func TestDeployHookRefusesBeforeRetaggingWhileADeployIsInFlight(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	appID := imageAppFixture(t, q, orgSvc)
+	const sec = "tok-busy"
+	seedAutoDeploy(t, q, appID, sec)
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: appID, Trigger: "manual"}); err != nil {
+		t.Fatalf("seed in-flight deployment: %v", err)
+	}
+
+	rec := postWebhook(t, h, "/webhooks/deploy/"+i64(appID)+"?tag=v9", "", nil, map[string]string{"Authorization": "Bearer " + sec})
+	assertRetryLater(t, rec)
+	if a, _ := q.GetApplication(ctx, appID); a.Tag != "alpine" {
+		t.Fatalf("tag = %q, it must not move while a deploy is in flight", a.Tag)
 	}
 }
