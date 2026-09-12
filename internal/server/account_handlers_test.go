@@ -88,3 +88,70 @@ func TestMustChangePasswordGatesEveryPage(t *testing.T) {
 		t.Fatalf("after the change the user must pass: %d", rec.Code)
 	}
 }
+
+// TestChangePasswordIsReachableFromTheLayout pins the entry point: every
+// organization page links to the change-password form — for a plain member
+// too, who has no Settings — and that form renders inside the normal layout, so
+// the user can navigate away. A user who is not forced to change their password
+// and lands on the standalone /account/password is sent to that page as well.
+func TestChangePasswordIsReachableFromTheLayout(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "owner-pw@k.local")
+	o, err := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	memberID := mkUser(t, q, "member-pw@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	cookie := loginWithPassword(t, h, "member-pw@k.local", "pw")
+	orgURL := "/orgs/" + i64(o.ID)
+	pageURL := orgURL + "/account/password"
+
+	get := func(target string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := get(orgURL)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: want 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `href="`+pageURL+`"`) {
+		t.Fatal("the layout must link to the change-password page")
+	}
+
+	rec = get(pageURL)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change-password page: want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="`+pageURL+`"`) {
+		t.Fatal("the in-layout form must post back to the organization page")
+	}
+	if !strings.Contains(body, `href="`+orgURL+`"`) || !strings.Contains(body, `action="/logout"`) {
+		t.Fatal("the change-password page must render inside the normal layout, with navigation")
+	}
+
+	rec = get("/account/password")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != pageURL {
+		t.Fatalf("a user who is not forced must be sent to the in-layout page, got %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+
+	rec = postForm(t, h, pageURL, cookie, url.Values{"current": {"pw"}, "next": {"a-new-password-1"}, "repeat": {"nope"}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `action="/logout"`) {
+		t.Fatalf("a refused change must re-render inside the layout, got %d", rec.Code)
+	}
+
+	rec = postForm(t, h, pageURL, cookie, url.Values{"current": {"pw"}, "next": {"a-new-password-1"}, "repeat": {"a-new-password-1"}})
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != orgURL {
+		t.Fatalf("change: want 303 to %s, got %d %s", orgURL, rec.Code, rec.Header().Get("Location"))
+	}
+	loginWithPassword(t, h, "member-pw@k.local", "a-new-password-1")
+}

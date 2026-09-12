@@ -699,5 +699,7 @@ var en = map[string]string{
 	"account.password_mismatch":            "The new password and its repeat do not match",
 	"account.password_wrong":               "The current password is incorrect",
 	"account.password_weak":                "The new password is too short",
+	"account.password_back":                "← Back",
+	"nav.change_password":                  "Change password",
 	"flash.ok.password_changed":            "Password changed",
 }

@@ -36,7 +36,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Per-app environment variables with in-UI editing.
 - A default organization is bootstrapped on first run (the seed admin becomes its owner).
 - Each organization gets its own Docker overlay network (`krill-org-<id>`); apps and databases in different organizations can no longer resolve or reach each other by name. Traefik attaches to every organization's network, so routing keeps working across all of them.
-- Users can change their own password from Settings; an invited user must set a new password before doing anything else, and changing a password revokes that account's other sessions.
+- Users can change their own password from the "Change password" link in the sidebar; an invited user must set a new password before doing anything else, and changing a password revokes that account's other sessions.
 
 ### Managed databases: DB instances + logical databases (Phase 3)
 - Org-level **DB instances** — one Swarm service per Postgres or Redis server, backed by a named volume, optionally pinned to a cluster node.

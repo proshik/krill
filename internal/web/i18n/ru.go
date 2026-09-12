@@ -699,5 +699,7 @@ var ru = map[string]string{
 	"account.password_mismatch":            "Новый пароль и его повтор не совпадают",
 	"account.password_wrong":               "Неверный текущий пароль",
 	"account.password_weak":                "Новый пароль слишком короткий",
+	"account.password_back":                "← Назад",
+	"nav.change_password":                  "Сменить пароль",
 	"flash.ok.password_changed":            "Пароль изменён",
 }

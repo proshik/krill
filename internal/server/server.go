@@ -317,6 +317,10 @@ func (s *Server) Router() http.Handler {
 			r.Use(auth.RequireOrgMember(s.org))
 
 			r.Get("/", s.orgDashboard)
+			// Every member may change their own password; the page lives under
+			// the organization only so it renders inside the normal layout.
+			r.Get("/account/password", s.orgAccountPasswordPage)
+			r.Post("/account/password", s.orgAccountPasswordSubmit)
 			r.Get("/members", s.listMembers)
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
