@@ -53,6 +53,15 @@ type Config struct {
 	MetricsRetention time.Duration `env:"KRILL_METRICS_RETENTION" envDefault:"48h"`
 	// MetricsNodeTimeout caps how long the sampler waits per worker node.
 	MetricsNodeTimeout time.Duration `env:"KRILL_METRICS_NODE_TIMEOUT" envDefault:"10s"`
+	// DefaultMemoryLimit / DefaultCPULimit are the instance-wide resource limits
+	// applied to any app or DB instance that has no explicit value of its own —
+	// an unlimited container can take the whole host and starve every other
+	// tenant, so "no limit" is not a safe default. Human units, parsed by
+	// docker.ParseMemoryBytes / docker.ParseNanoCPUs ("512m", "1.0"). Empty
+	// means "no default" for that resource; the Advanced tab still overrides
+	// these per app.
+	DefaultMemoryLimit string `env:"KRILL_DEFAULT_MEMORY_LIMIT" envDefault:"512m"`
+	DefaultCPULimit    string `env:"KRILL_DEFAULT_CPU_LIMIT" envDefault:"1.0"`
 	// AllowPrivateEgress disables the SSRF egress guard (internal/netguard) for
 	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
 	// connections to private/loopback/link-local addresses. Default false.

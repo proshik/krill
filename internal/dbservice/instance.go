@@ -34,9 +34,19 @@ type LogicalDB struct {
 func InstanceFeedID(id int64) int64 { return -id }
 
 // instanceSpec dispatches to the instance's engine driver — the per-engine
-// env/args/mounts knowledge now lives in internal/dbservice/drivers.
-func instanceSpec(inst Instance, network string) docker.ServiceSpec {
-	return drivers.Registry.MustGet(inst.Engine).BuildSpec(inst, network)
+// env/args/mounts knowledge lives in internal/dbservice/drivers, which must
+// not import dbservice, so the instance-wide resource defaults (config-driven,
+// not known to a driver) are applied here instead when the driver's spec
+// leaves them unset. A method (not a package function) so it can read them.
+func (s *Service) instanceSpec(inst Instance, network string) docker.ServiceSpec {
+	spec := drivers.Registry.MustGet(inst.Engine).BuildSpec(inst, network)
+	if spec.MemoryLimitBytes == 0 {
+		spec.MemoryLimitBytes = s.defaultMemBytes
+	}
+	if spec.NanoCPUs == 0 {
+		spec.NanoCPUs = s.defaultNanoCPUs
+	}
+	return spec
 }
 
 // PostgresURL — connection string for a logical DB over the overlay network.
@@ -128,7 +138,7 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 		return err
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
-	if err := s.engine.ServiceDeploy(ctx, instanceSpec(inst, s.network)); err != nil {
+	if err := s.engine.ServiceDeploy(ctx, s.instanceSpec(inst, s.network)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")

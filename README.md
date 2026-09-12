@@ -286,6 +286,8 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
 | `KRILL_AGENT_API_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. (Called `KRILL_MCP_ENABLED` before 2026-08-13.) |
 | `KRILL_MCP_SESSION_TIMEOUT` | `30m` | No | Closes an idle MCP session (a client that never sent `DELETE /mcp` — a crashed agent, a finished CI job) and frees its goroutine. `0` disables the idle timeout. |
+| `KRILL_DEFAULT_MEMORY_LIMIT` | `512m` | No | Default memory limit applied to any app or DB instance that has no explicit value of its own (human units, e.g. `256m`, `1g`). Empty disables the default. Per-app, the Advanced tab overrides it. |
+| `KRILL_DEFAULT_CPU_LIMIT` | `1.0` | No | Default CPU limit (in cores, e.g. `0.5`, `2`) applied to any app or DB instance that has no explicit value of its own. Empty disables the default. Per-app, the Advanced tab overrides it. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 

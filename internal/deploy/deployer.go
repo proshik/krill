@@ -100,6 +100,30 @@ type Deployer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	runCancel context.CancelFunc // cancels the in-flight job's context on Stop
+
+	defaultMemBytes int64 // instance-wide default memory limit, 0 = none
+	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
+}
+
+// SetResourceDefaults wires the instance-wide memory/CPU limits applied to any
+// app that has no explicit value of its own (wired from config at startup).
+// 0 means no default for that resource.
+func (d *Deployer) SetResourceDefaults(memBytes, nanoCPUs int64) {
+	d.defaultMemBytes = memBytes
+	d.defaultNanoCPUs = nanoCPUs
+}
+
+// withResourceDefaults fills in the instance-wide limits for an app that has
+// none. An unlimited container can starve every other tenant on the host, so
+// "no limit" is not a safe default; an explicit per-app value always wins.
+func (d *Deployer) withResourceDefaults(a App) App {
+	if a.MemoryLimitBytes == 0 {
+		a.MemoryLimitBytes = d.defaultMemBytes
+	}
+	if a.NanoCPUs == 0 {
+		a.NanoCPUs = d.defaultNanoCPUs
+	}
+	return a
 }
 
 func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub, network string) *Deployer {
@@ -430,6 +454,7 @@ func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, im
 }
 
 func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
+	app = d.withResourceDefaults(app)
 	name := docker.ServiceName(app.ID)
 	domains := app.Domains
 	if len(domains) == 0 {

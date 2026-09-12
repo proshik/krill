@@ -31,6 +31,9 @@ type Service struct {
 
 	notifier       Notifier
 	migrateTimeout time.Duration
+
+	defaultMemBytes int64 // instance-wide default memory limit, 0 = none
+	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
 }
 
 func New(engine docker.Engine, store Store, hub *deploy.DeployLogHub, network string) *Service {
@@ -42,6 +45,14 @@ func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // SetMigrateTimeout overrides the default migration timeout (0 keeps default).
 func (s *Service) SetMigrateTimeout(d time.Duration) { s.migrateTimeout = d }
+
+// SetResourceDefaults wires the instance-wide memory/CPU limits applied to any
+// DB instance whose driver-built spec has no limit of its own (wired from
+// config at startup). 0 means no default for that resource.
+func (s *Service) SetResourceDefaults(memBytes, nanoCPUs int64) {
+	s.defaultMemBytes = memBytes
+	s.defaultNanoCPUs = nanoCPUs
+}
 
 // dbDeployTimeout bounds a detached DB deploy so a stalled ImagePull (registry
 // blackhole) can't leak the goroutine and keep the log feed open forever.

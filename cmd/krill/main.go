@@ -139,6 +139,25 @@ func run() error {
 
 	dep := deploy.New(engine, b, store, hub, cfg.Network)
 	dep.SetNotifier(notifySvc)
+
+	// Instance-wide default resource limits: an unlimited container can take
+	// the whole host and starve every other tenant, so apps/DB instances with
+	// no explicit value fall back to these. Empty means "no default" (not an
+	// error, ParseMemoryBytes/ParseNanoCPUs already return (0, nil) for it); a
+	// non-empty value that fails to parse is a misconfiguration — warn and fall
+	// back to no limit rather than aborting startup over it.
+	defaultMemBytes, err := docker.ParseMemoryBytes(cfg.DefaultMemoryLimit)
+	if err != nil {
+		slog.Warn("invalid KRILL_DEFAULT_MEMORY_LIMIT, no default memory limit will be applied", "value", cfg.DefaultMemoryLimit, "err", err)
+		defaultMemBytes = 0
+	}
+	defaultNanoCPUs, err := docker.ParseNanoCPUs(cfg.DefaultCPULimit)
+	if err != nil {
+		slog.Warn("invalid KRILL_DEFAULT_CPU_LIMIT, no default CPU limit will be applied", "value", cfg.DefaultCPULimit, "err", err)
+		defaultNanoCPUs = 0
+	}
+	dep.SetResourceDefaults(defaultMemBytes, defaultNanoCPUs)
+
 	dep.Start(ctx)
 	defer dep.Stop()
 
@@ -164,6 +183,7 @@ func run() error {
 
 	dbStore := dbservice.NewDBStore(q)
 	dbSvc := dbservice.New(engine, dbStore, hub, cfg.Network)
+	dbSvc.SetResourceDefaults(defaultMemBytes, defaultNanoCPUs)
 
 	// Boot sweep: a control-plane restart kills any in-process migration job,
 	// leaving rows stuck at 'migrating' (the oplock is in-memory, so a fresh
