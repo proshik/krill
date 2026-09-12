@@ -25,7 +25,7 @@ What is done, what is waiting for live verification, and what is open.
 - **Operations:** live structured logs, web terminal, CPU/memory monitoring across
   all nodes, Telegram alerts, a visual cluster topology page.
 - **Multi-node:** worker nodes joined over SSH, placement (any / pinned / global),
-  database instances pinned to a node, firewall lockdown of workers, moving a
+  database instances pinned to a node, firewall lockdown of every node, moving a
   database instance's volume between nodes.
 - **Automation:** GitHub push webhook and CI deploy hook, an agent API (REST +
   MCP) with org-scoped tokens, and `krill-cli` to build locally and deploy.

@@ -21,9 +21,9 @@ func TestApplySchedulesRevertBeforeApplying(t *testing.T) {
 		t.Fatalf("apply: %v", err)
 	}
 	joined := strings.Join(f.cmds, "\n")
-	saveIdx := strings.Index(joined, revertSavePath)   // prev saved
-	revertIdx := strings.Index(joined, "systemd-run")  // revert scheduled
-	applyIdx := strings.LastIndex(joined, "nft -f -")  // new ruleset applied via stdin
+	saveIdx := strings.Index(joined, revertSavePath)  // prev saved
+	revertIdx := strings.Index(joined, "systemd-run") // revert scheduled
+	applyIdx := strings.LastIndex(joined, "nft -f -") // new ruleset applied via stdin
 	if !(saveIdx >= 0 && revertIdx > saveIdx && applyIdx > revertIdx) {
 		t.Fatalf("order wrong: save=%d revert=%d apply=%d\n%s", saveIdx, revertIdx, applyIdx, joined)
 	}
@@ -108,5 +108,58 @@ func TestRunCtxReturnsWorkResultOnSuccess(t *testing.T) {
 	}
 	if closeCalled {
 		t.Fatal("closeSess must not be called on success")
+	}
+}
+
+type scriptedRunner struct{ out string }
+
+func (s scriptedRunner) Run(ctx context.Context, stdin, cmd string) (string, error) {
+	return s.out, nil
+}
+
+// A host without nft used to report "no" — shown as an open firewall — when
+// the lockdown could not be applied there at all.
+func TestStatusReportsMissingNft(t *testing.T) {
+	if _, err := Status(context.Background(), scriptedRunner{out: "nft-missing\n"}); !errors.Is(err, ErrNftMissing) {
+		t.Fatalf("want ErrNftMissing, got %v", err)
+	}
+	locked, err := Status(context.Background(), scriptedRunner{out: "yes\n"})
+	if err != nil || !locked {
+		t.Fatalf("want locked, got %v %v", locked, err)
+	}
+	locked, err = Status(context.Background(), scriptedRunner{out: "no\n"})
+	if err != nil || locked {
+		t.Fatalf("want open, got %v %v", locked, err)
+	}
+}
+
+func TestLocalRunnerFeedsStdinAndReturnsOutput(t *testing.T) {
+	out, err := LocalRunner{Timeout: 5 * time.Second}.Run(context.Background(), "table inet krill {}\n", "cat")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if out != "table inet krill {}\n" {
+		t.Fatalf("stdin not passed through: %q", out)
+	}
+}
+
+func TestLocalRunnerReportsNonZeroExit(t *testing.T) {
+	out, err := LocalRunner{Timeout: 5 * time.Second}.Run(context.Background(), "", "echo boom >&2; exit 3")
+	if err == nil {
+		t.Fatal("non-zero exit must be an error")
+	}
+	if !strings.Contains(out, "boom") {
+		t.Fatalf("stderr must be captured: %q", out)
+	}
+}
+
+func TestLocalRunnerHonorsTimeout(t *testing.T) {
+	start := time.Now()
+	_, err := LocalRunner{Timeout: 200 * time.Millisecond}.Run(context.Background(), "", "sleep 10")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("timeout not enforced: took %v", time.Since(start))
 	}
 }

@@ -5,12 +5,29 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// Firewall renders the worker-firewall page: the org's worker nodes with
-// their current firewall_managed state, plus the lockdown/open actions.
-templ Firewall(org db.Organization, role string, rows []db.ClusterNode) {
+// ControlPlaneFirewall is the control plane's live firewall state. It has no
+// cluster_nodes row, so the state is read from the host on every render.
+type ControlPlaneFirewall struct {
+	Available bool // false: no runner wired, or the state could not be read (e.g. no nft)
+	Locked    bool // the lockdown table is present
+	Pending   bool // applied but not yet confirmed: the dead-man switch will revert it
+}
+
+// Firewall renders the cluster-firewall page: the control plane's live state,
+// the worker nodes with their firewall_managed state, and the lockdown, open
+// and confirm actions.
+templ Firewall(org db.Organization, role string, rows []db.ClusterNode, cp ControlPlaneFirewall) {
 	@Layout(i18n.T(ctx, "firewall.title"), org, role) {
 		@settingsNav(org.ID)
 		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "firewall.desc") }</p>
+		if cp.Pending && (role == "owner" || role == "admin") {
+			<div class="k-card mb-4">
+				<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "firewall.cp_pending_desc") }</p>
+				<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/confirm") }>
+					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "firewall.cp_confirm") }</button>
+				</form>
+			</div>
+		}
 		<div class="k-card">
 			<table class="k-table">
 				<thead>
@@ -20,9 +37,20 @@ templ Firewall(org db.Organization, role string, rows []db.ClusterNode) {
 					</tr>
 				</thead>
 				<tbody>
-					if len(rows) == 0 {
-						<tr><td colspan="2" class="k-muted">{ i18n.T(ctx, "nodes.empty") }</td></tr>
-					}
+					<tr>
+						<td class="k-mono">control-plane</td>
+						<td>
+							if !cp.Available {
+								<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.unavailable") }</span>
+							} else if cp.Pending {
+								<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.pending") }</span>
+							} else if cp.Locked {
+								<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.locked") }</span>
+							} else {
+								<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.open") }</span>
+							}
+						</td>
+					</tr>
 					for _, n := range rows {
 						<tr>
 							<td class="k-mono">{ n.Name }</td>

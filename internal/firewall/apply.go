@@ -3,7 +3,10 @@ package firewall
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/proshik/krill/internal/cluster"
@@ -15,7 +18,12 @@ const (
 	revertDelaySec = 120
 )
 
-// Runner runs a remote command on one node, feeding stdin, returning stdout+stderr.
+// ErrNftMissing is returned by Status when the node has no `nft` binary: the
+// lockdown cannot be applied there, and reporting the table as merely absent
+// ("open") would hide that.
+var ErrNftMissing = errors.New("firewall: nft is not installed on the node")
+
+// Runner runs a command on one node, feeding stdin, returning stdout+stderr.
 type Runner interface {
 	Run(ctx context.Context, stdin, cmd string) (string, error)
 }
@@ -57,11 +65,52 @@ func Open(ctx context.Context, r Runner) error {
 
 // Status reports whether the lockdown table is present on the node.
 func Status(ctx context.Context, r Runner) (bool, error) {
-	out, err := r.Run(ctx, "", "nft list table inet krill >/dev/null 2>&1 && echo yes || echo no")
+	out, err := r.Run(ctx, "", "command -v nft >/dev/null 2>&1 || { echo nft-missing; exit 0; }; nft list table inet krill >/dev/null 2>&1 && echo yes || echo no")
 	if err != nil {
 		return false, err
 	}
-	return bytes.Contains([]byte(out), []byte("yes")), nil
+	if strings.Contains(out, "nft-missing") {
+		return false, ErrNftMissing
+	}
+	return strings.Contains(out, "yes"), nil
+}
+
+// RevertPending reports whether an Apply is still awaiting Confirm, i.e. the
+// dead-man switch is armed and will restore the previous ruleset when it fires.
+func RevertPending(ctx context.Context, r Runner) (bool, error) {
+	out, err := r.Run(ctx, "", fmt.Sprintf("systemctl is-active --quiet %s.timer && echo yes || echo no", revertUnit))
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, "yes"), nil
+}
+
+// LocalRunner runs commands on this host through `sh -c`. It exists for the
+// control plane, which has no cluster_nodes row and no SSH credentials to
+// itself. The dead-man switch Apply schedules is a separate transient systemd
+// unit, so it still fires if this process dies in the meantime.
+type LocalRunner struct {
+	Timeout time.Duration // per command; <= 0 means only ctx bounds it
+}
+
+func (lr LocalRunner) Run(ctx context.Context, stdin, cmd string) (string, error) {
+	if lr.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, lr.Timeout)
+		defer cancel()
+	}
+	c := exec.CommandContext(ctx, "sh", "-c", cmd)
+	if stdin != "" {
+		c.Stdin = strings.NewReader(stdin)
+	}
+	// A background grandchild holding the output pipe open must not keep Run
+	// blocked past the deadline.
+	c.WaitDelay = 2 * time.Second
+	out, err := c.CombinedOutput()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return string(out), ctxErr
+	}
+	return string(out), err
 }
 
 // RealRunner runs commands over SSH using the cluster dial helper.

@@ -17,6 +17,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
@@ -65,6 +66,10 @@ type Server struct {
 	// recreates the Traefik task, and POST /orgs is open to any authenticated
 	// user. Nil in tests and when no reconciler is wired.
 	reconcileGateway func()
+
+	// cpFirewall applies the nftables lockdown on the control-plane host itself
+	// (see SetControlPlaneFirewall). Nil leaves the control plane out of it.
+	cpFirewall firewall.Runner
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -355,6 +360,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/firewall", s.firewallPage)
 				r.Post("/firewall/lockdown", s.lockdownWorkers)
 				r.Post("/firewall/open", s.openWorkers)
+				r.Post("/firewall/confirm", s.confirmControlPlaneFirewall)
 			})
 
 			r.Group(func(r chi.Router) {

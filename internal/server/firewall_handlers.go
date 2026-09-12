@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -13,60 +14,103 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
-// firewallRunnerTimeout bounds each SSH command run against a worker during
-// lockdown/open.
+// firewallRunnerTimeout bounds each command run against a node (over SSH for a
+// worker, locally for the control plane) during lockdown/open.
 const firewallRunnerTimeout = 20 * time.Second
 
-// errAdvertiseAddrNotIP is returned by clusterIPs when KRILL_ADVERTISE_ADDR is
-// set but doesn't parse as an IP — locking down workers on an incomplete
-// allowlist would drop the manager's swarm ports and strand the workers.
-var errAdvertiseAddrNotIP = errors.New("advertise address does not parse as an IP")
+// errAdvertiseAddrUnset is returned by clusterIPs when KRILL_ADVERTISE_ADDR is
+// empty. The ruleset's own empty-set guard cannot catch this: with workers
+// registered the allowlist is non-empty, it just lacks the manager — and a
+// lockdown on that list cuts every worker off from the manager's swarm ports.
+var errAdvertiseAddrUnset = errors.New("advertise address is not set")
 
-// clusterIPs returns every node's public IP (the control-plane advertise
-// address plus every worker's ssh_host) — the allowlist the worker nftables
-// ruleset trusts for cluster-scoped swarm traffic. A worker's ssh_host given as
-// a DNS name is resolved (an unresolvable one is a hard error: a node missing
-// from the allowlist is a node cut off from the cluster), and a non-empty, unparsable
-// AdvertiseAddr is a hard error: silently dropping the manager from the
-// allowlist would leave the ruleset non-empty (workers still pass the
-// empty-guard) while missing the one IP every worker needs to keep reaching
-// the swarm — see errAdvertiseAddrNotIP.
+// errAdvertiseAddrUnresolvable is returned by clusterIPs when
+// KRILL_ADVERTISE_ADDR is neither an IP nor a name that resolves to one.
+var errAdvertiseAddrUnresolvable = errors.New("advertise address does not resolve to an IP")
+
+// clusterIPs returns the allowlist the nftables rulesets trust for
+// cluster-scoped swarm traffic: the control-plane advertise address, every
+// worker's ssh_host, and the address swarm itself reports for every node.
+//
+// The advertise address and a worker's ssh_host may be DNS names; both are
+// resolved the same way (a `docker swarm join` works with a name, so refusing
+// one here would let nodes join a cluster they could then not lock down). An
+// unresolvable name is a hard error: a node missing from the allowlist is a
+// node cut off from the cluster. The swarm-reported addresses matter when swarm
+// runs over a private overlay such as WireGuard — the peers' swarm traffic then
+// comes from their tunnel addresses, not from the public ssh_host.
 func (s *Server) clusterIPs(r *http.Request) ([]string, error) {
-	rows, err := s.q.ListClusterNodes(r.Context())
+	ctx := r.Context()
+	rows, err := s.q.ListClusterNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if s.cfg.AdvertiseAddr == "" {
+		return nil, errAdvertiseAddrUnset
+	}
 	var ips []string
-	if s.cfg.AdvertiseAddr != "" {
-		ip := net.ParseIP(s.cfg.AdvertiseAddr)
-		if ip == nil {
-			return nil, errAdvertiseAddrNotIP
+	seen := map[string]bool{}
+	add := func(ip net.IP) {
+		if k := ip.String(); !seen[k] {
+			seen[k] = true
+			ips = append(ips, k)
 		}
-		ips = append(ips, ip.String())
+	}
+	addrs, err := resolveHostIPs(ctx, s.cfg.AdvertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %q: %v", errAdvertiseAddrUnresolvable, s.cfg.AdvertiseAddr, err)
+	}
+	for _, ip := range addrs {
+		add(ip)
 	}
 	for _, n := range rows {
-		if ip := net.ParseIP(n.SshHost); ip != nil {
-			ips = append(ips, ip.String())
-			continue
+		addrs, err := resolveHostIPs(ctx, n.SshHost)
+		if err != nil {
+			return nil, fmt.Errorf("cluster node %q: cannot resolve %q to an IP (it would be locked out of the cluster): %w", n.Name, n.SshHost, err)
 		}
-		// A node registered by DNS name used to be skipped silently — and a node
-		// missing from the allowlist is a node cut off from swarm and overlay
-		// traffic the moment the lockdown applies. Resolve it, and refuse the
-		// lockdown outright if we cannot.
-		rctx, cancel := context.WithTimeout(r.Context(), clusterIPResolveTimeout)
-		addrs, rerr := net.DefaultResolver.LookupIPAddr(rctx, n.SshHost)
-		cancel()
-		if rerr != nil || len(addrs) == 0 {
-			return nil, fmt.Errorf("cluster node %q: cannot resolve %q to an IP (it would be locked out of the cluster): %w", n.Name, n.SshHost, rerr)
+		for _, ip := range addrs {
+			add(ip)
 		}
-		for _, a := range addrs {
-			ips = append(ips, a.IP.String())
+	}
+	if s.engine != nil {
+		nodes, err := s.engine.Nodes(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list swarm nodes: %w", err)
+		}
+		for _, n := range nodes {
+			// A manager may report 0.0.0.0; it carries no usable source address.
+			if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
+				add(ip)
+			}
 		}
 	}
 	return ips, nil
+}
+
+// resolveHostIPs returns host itself when it is an IP literal, otherwise the
+// addresses it resolves to (bounded by clusterIPResolveTimeout).
+func resolveHostIPs(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	rctx, cancel := context.WithTimeout(ctx, clusterIPResolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(rctx, host)
+	if err != nil {
+		return nil, err
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no addresses for %q", host)
+	}
+	out := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.IP)
+	}
+	return out, nil
 }
 
 // clusterIPResolveTimeout bounds one DNS lookup while assembling the allowlist.
@@ -92,8 +136,59 @@ func firewallRunner(n db.ClusterNode) (firewall.RealRunner, error) {
 	}, nil
 }
 
-// firewallPage renders the Network/Firewall page: the org's worker nodes and
-// their current firewall_managed state, plus lockdown/open controls.
+// controlPlaneServicePorts returns the host-bound TCP ports the control plane
+// must keep serving under lockdown: HTTP/HTTPS ingress and the Krill UI port
+// from listenAddr (":8080", "0.0.0.0:8080", "[::]:8080"). An unparsable listen
+// address is an error rather than a silent omission — a ruleset without the UI
+// port locks the operator out of the page the lockdown was started from.
+func controlPlaneServicePorts(listenAddr string) ([]int, error) {
+	_, portStr, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("parse listen address %q: %w", listenAddr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("listen address %q: invalid port %q", listenAddr, portStr)
+	}
+	return []int{80, 443, port}, nil
+}
+
+// SetControlPlaneFirewall wires the runner that applies the firewall on the
+// control-plane host itself (firewall.LocalRunner in production). Nil — tests,
+// or a build that doesn't want it — leaves the control plane out of lockdown
+// and shows its status as unavailable.
+func (s *Server) SetControlPlaneFirewall(r firewall.Runner) { s.cpFirewall = r }
+
+// controlPlaneFirewallState reads the live lockdown state of the control plane.
+// It has no cluster_nodes row, so there is nothing persisted to fall back on.
+func (s *Server) controlPlaneFirewallState(ctx context.Context) templates.ControlPlaneFirewall {
+	if s.cpFirewall == nil {
+		return templates.ControlPlaneFirewall{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, firewallStatusTimeout)
+	defer cancel()
+	locked, err := firewall.Status(ctx, s.cpFirewall)
+	if err != nil {
+		slog.Warn("control-plane firewall status unavailable", "err", err)
+		return templates.ControlPlaneFirewall{}
+	}
+	st := templates.ControlPlaneFirewall{Available: true, Locked: locked}
+	if locked {
+		pending, err := firewall.RevertPending(ctx, s.cpFirewall)
+		if err != nil {
+			slog.Warn("control-plane firewall revert state unavailable", "err", err)
+		}
+		st.Pending = pending
+	}
+	return st
+}
+
+// firewallStatusTimeout bounds the live status read on page render.
+const firewallStatusTimeout = 5 * time.Second
+
+// firewallPage renders the Network/Firewall page: the control plane's live
+// firewall state, the worker nodes with their firewall_managed state, and the
+// lockdown/open/confirm controls.
 func (s *Server) firewallPage(w http.ResponseWriter, r *http.Request) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {
@@ -105,24 +200,37 @@ func (s *Server) firewallPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, templates.Firewall(o, role, rows))
+	cp := s.controlPlaneFirewallState(r.Context())
+	if cp.Pending {
+		// The confirmation must arrive on a connection opened AFTER the ruleset
+		// was applied, or it proves nothing — see confirmControlPlaneFirewall.
+		w.Header().Set("Connection", "close")
+	}
+	render(w, r, http.StatusOK, templates.Firewall(o, role, rows, cp))
 }
 
-// lockdownWorkers applies the nftables allowlist to every worker node with the
-// dead-man switch, confirming on success. Instance-admin only. v1 scope:
-// ListClusterNodes returns only worker rows (the control-plane isn't one), so
-// this locks down workers only.
+// lockdownWorkers applies the nftables allowlist to every worker node, then to
+// the control plane, each with the dead-man switch. Instance-admin only.
+//
+// Workers are confirmed here once they are verified swarm-Ready. The control
+// plane is not: whether the operator can still reach the UI can only be proven
+// by the operator's browser, so its switch stays armed until
+// confirmControlPlaneFirewall receives a request over a fresh connection.
 func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
+	back := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/firewall"
 	ips, err := s.clusterIPs(r)
 	if err != nil {
 		logFrom(r).Error("lockdownWorkers: list cluster IPs failed", "err", err)
-		if errors.Is(err, errAdvertiseAddrNotIP) {
+		switch {
+		case errors.Is(err, errAdvertiseAddrUnset):
+			s.flashErrT(w, r, "flash.err.firewall_advertise_unset")
+		case errors.Is(err, errAdvertiseAddrUnresolvable):
 			s.flashErrT(w, r, "flash.err.firewall_advertise_not_ip")
-		} else {
+		default:
 			s.flashErrT(w, r, "flash.err.internal")
 		}
 		return
@@ -131,6 +239,20 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.flashErrT(w, r, "flash.err.firewall_no_nodes")
 		return
+	}
+	// Build the control-plane ruleset before touching any node, so a config
+	// problem refuses the whole lockdown instead of leaving it half-applied.
+	var cpRuleset string
+	if s.cpFirewall != nil {
+		ports, err := controlPlaneServicePorts(s.cfg.ListenAddr)
+		if err == nil {
+			cpRuleset, err = firewall.BuildManagerRuleset(ips, ports)
+		}
+		if err != nil {
+			logFrom(r).Error("lockdownWorkers: build control-plane ruleset failed", "err", err)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
 	}
 	rows, err := s.q.ListClusterNodes(r.Context())
 	if err != nil {
@@ -153,7 +275,7 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		// just got cut off. Verify the node is still swarm-Ready before
 		// cancelling the auto-revert — if it isn't, leave the dead-man
 		// switch armed so the node reverts itself.
-		if !s.nodeSwarmReady(r.Context(), n.SwarmNodeID) {
+		if !s.nodesSwarmReady(r.Context(), []string{n.SwarmNodeID}) {
 			logFrom(r).Warn("firewall lockdown: node not swarm-ready after apply; skipping confirm, auto-revert will fire", "node", n.Name)
 			continue
 		}
@@ -165,19 +287,115 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("lockdownWorkers: persist firewall_managed failed", "err", err, "node", n.Name)
 		}
 	}
-	s.flashOK(w, r, "flash.ok.firewall_locked")
-	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/firewall", http.StatusSeeOther)
+	if s.cpFirewall == nil {
+		s.flashOK(w, r, "flash.ok.firewall_locked")
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	if key := s.lockdownControlPlane(r, cpRuleset); key != "" {
+		s.setFlash(w, "err", i18n.T(r.Context(), key))
+	} else {
+		s.flashOK(w, r, "flash.ok.firewall_cp_pending")
+	}
+	// Close this connection so the browser reaches the redirect — and later the
+	// confirmation — over new connections that the fresh ruleset has to admit.
+	w.Header().Set("Connection", "close")
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// nodeSwarmReady polls the live swarm node list a few times over ~10-15s and
-// reports whether swarmNodeID stays Ready/Active throughout — swarm takes a
-// few seconds to notice a node whose overlay traffic just got cut off by a
-// firewall change, so a single snapshot right after Apply isn't trustworthy.
-// s.engine == nil (unit tests, or a single-node deployment with no cluster to
-// check) returns true: the SSH-based Apply/Confirm round-trip already ran and
-// there's no swarm to inspect.
-func (s *Server) nodeSwarmReady(ctx context.Context, swarmNodeID string) bool {
+// lockdownControlPlane applies ruleset to the control-plane host and returns an
+// i18n error key, or "" when the ruleset is in place awaiting the operator's
+// confirmation. It never confirms: see confirmControlPlaneFirewall.
+func (s *Server) lockdownControlPlane(r *http.Request, ruleset string) string {
+	// Snapshot which nodes are healthy BEFORE applying: a node that was already
+	// down must not make the check fail, and one that goes down right after the
+	// apply is the manager dropping its swarm traffic.
+	healthy, err := s.readySwarmNodeIDs(r.Context())
+	if err != nil {
+		logFrom(r).Error("control-plane firewall: list swarm nodes failed", "err", err)
+		return "flash.err.internal"
+	}
+	if err := firewall.Apply(r.Context(), s.cpFirewall, ruleset); err != nil {
+		logFrom(r).Warn("control-plane firewall apply failed", "err", err)
+		return "flash.err.firewall_cp_apply"
+	}
+	if !s.nodesSwarmReady(r.Context(), healthy) {
+		logFrom(r).Warn("control-plane firewall: swarm nodes dropped after apply; leaving the auto-revert armed")
+		return "flash.err.firewall_cp_cluster"
+	}
+	logFrom(r).Info("control-plane firewall applied; awaiting operator confirmation")
+	return ""
+}
+
+// confirmControlPlaneFirewall cancels the control plane's dead-man switch.
+// Instance-admin only.
+//
+// A health probe from this process cannot stand in for this request: the
+// host's traffic to its own addresses enters through the loopback interface,
+// which the ruleset always accepts, so a self-probe succeeds even when the
+// operator has been locked out. Reaching this handler at all is the proof —
+// the lockdown response and the page carrying this form both close their
+// connection, so this request arrives over a connection the new ruleset had to
+// admit. (A keep-alive connection another tab opened before the apply could
+// still carry it; that residue is accepted.)
+func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	if s.cpFirewall == nil {
+		http.NotFound(w, r)
+		return
+	}
+	back := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/firewall"
+	pending, err := firewall.RevertPending(r.Context(), s.cpFirewall)
+	if err != nil {
+		logFrom(r).Error("confirm control-plane firewall: read revert state failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	if !pending {
+		// Too late: the switch already fired and restored the previous ruleset.
+		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
+		return
+	}
+	if err := firewall.Confirm(r.Context(), s.cpFirewall); err != nil {
+		logFrom(r).Error("confirm control-plane firewall failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	logFrom(r).Info("control-plane firewall confirmed")
+	s.flashOK(w, r, "flash.ok.firewall_cp_confirmed")
+	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// readySwarmNodeIDs returns the IDs of swarm nodes that are currently Ready and
+// Active. s.engine == nil returns none (nothing to watch).
+func (s *Server) readySwarmNodeIDs(ctx context.Context) ([]string, error) {
 	if s.engine == nil {
+		return nil, nil
+	}
+	nodes, err := s.engine.Nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, n := range nodes {
+		if n.State == "ready" && n.Availability == "active" {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids, nil
+}
+
+// nodesSwarmReady polls the live swarm node list a few times over ~10-15s and
+// reports whether every node in ids stays Ready/Active throughout — swarm
+// takes a few seconds to notice a node whose overlay traffic just got cut off
+// by a firewall change, so a single snapshot right after Apply isn't
+// trustworthy. s.engine == nil (unit tests, or a single-node deployment with no
+// cluster to check) or an empty ids returns true: there's no swarm to inspect.
+func (s *Server) nodesSwarmReady(ctx context.Context, ids []string) bool {
+	if s.engine == nil || len(ids) == 0 {
 		return true
 	}
 	const checks = 3
@@ -193,22 +411,21 @@ func (s *Server) nodeSwarmReady(ctx context.Context, swarmNodeID string) bool {
 		if err != nil {
 			return false
 		}
-		ready := false
+		ready := make(map[string]bool, len(nodes))
 		for _, n := range nodes {
-			if n.ID == swarmNodeID {
-				ready = n.State == "ready" && n.Availability == "active"
-				break
-			}
+			ready[n.ID] = n.State == "ready" && n.Availability == "active"
 		}
-		if !ready {
-			return false
+		for _, id := range ids {
+			if !ready[id] {
+				return false
+			}
 		}
 	}
 	return true
 }
 
-// openWorkers removes the lockdown table on every worker node. Instance-admin
-// only.
+// openWorkers removes the lockdown table on every worker node and on the
+// control plane. Instance-admin only.
 func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 	o, _, ok := s.loadOrg(w, r)
 	if !ok {
@@ -232,6 +449,11 @@ func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.q.SetClusterNodeFirewallManaged(r.Context(), db.SetClusterNodeFirewallManagedParams{ID: n.ID, FirewallManaged: false}); err != nil {
 			logFrom(r).Error("openWorkers: persist firewall_managed failed", "err", err, "node", n.Name)
+		}
+	}
+	if s.cpFirewall != nil {
+		if err := firewall.Open(r.Context(), s.cpFirewall); err != nil {
+			logFrom(r).Warn("control-plane firewall open failed", "err", err)
 		}
 	}
 	s.flashOK(w, r, "flash.ok.firewall_opened")
