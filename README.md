@@ -167,7 +167,7 @@ Useful overrides (prefix the command): `KRILL_VERSION=v0.1.0` pins a release,
 `KRILL_DOMAIN=apps.example.com` sets the base domain, `KRILL_ACME_EMAIL=...` sets
 the Let's Encrypt contact, `KRILL_ADVERTISE_ADDR=...` overrides the Swarm address,
 `KRILL_BINARY=/path/to/krill` installs a binary already on the host (skips the
-download — handy when the repo/release is private; `scp` the binary up first),
+download — handy for an air-gapped host or a custom build; `scp` the binary up first),
 `KRILL_SKIP_VERIFY=1` allows installing a downloaded binary when the release has
 no `checksums.txt` (by default the installer refuses — fail closed).
 
@@ -655,8 +655,7 @@ in flight · `4` timed out watching · `5` deployed but not running · `6` authe
 - A dirty working tree still builds; the tag is marked `-dirty-<HHMMSS>` so two different
   trees can never share one tag. `tag.require_clean: true` refuses instead.
 - Distribution is currently `make build-cli` or `go install github.com/proshik/krill/cmd/krill-cli@latest`,
-  plus release tarballs for linux/darwin × amd64/arm64. A Homebrew tap needs the repository
-  to be public first.
+  plus release tarballs for linux/darwin × amd64/arm64. A Homebrew tap is not set up yet.
 
 
 ## Data model

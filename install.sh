@@ -20,7 +20,7 @@
 #   KRILL_REPO            owner/repo to pull releases from   (default proshik/krill)
 #   KRILL_VERSION         release tag to install, e.g. v0.1.0 (default latest)
 #   KRILL_BINARY          path to a krill binary already on the host (skips the
-#                         download — useful when the repo/release is private)
+#                         download — useful for an air-gapped host or a custom build)
 #   KRILL_SKIP_VERIFY     "1" installs a downloaded binary even when the release
 #                         has no checksums.txt (default: refuse — fail closed)
 #   KRILL_DOMAIN          base domain (sets KRILL_BASE_DOMAIN)
