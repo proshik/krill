@@ -265,6 +265,9 @@ type fakeStore struct {
 	deploys map[int64]string // deployID -> final status
 	nextID  int64
 	depApp  map[int64]int64 // deployID -> appID
+
+	runningByOrg int64 // stubbed CountRunningDeploymentsByOrg result
+	orgCountErr  error // stubbed CountRunningDeploymentsByOrg error
 }
 
 func newFakeStore(a App) *fakeStore {
@@ -305,6 +308,19 @@ func (f *fakeStore) CountRunningDeployments(_ context.Context, appID int64) (int
 		}
 	}
 	return n, nil
+}
+
+// CountRunningDeploymentsByOrg is a plain stub (unlike CountRunningDeployments,
+// which derives its answer from depApp/deploys): the per-org cap test wants to
+// set the in-flight count directly, independent of what per-app bookkeeping
+// happens to hold.
+func (f *fakeStore) CountRunningDeploymentsByOrg(_ context.Context, appID int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.orgCountErr != nil {
+		return 0, f.orgCountErr
+	}
+	return f.runningByOrg, nil
 }
 
 func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, imageTag, errMsg, log string) error {

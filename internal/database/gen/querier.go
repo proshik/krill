@@ -47,6 +47,9 @@ type Querier interface {
 	// by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
 	// leaked lock would block the app forever.
 	CountRunningDeploymentsByApplication(ctx context.Context, applicationID int64) (int64, error)
+	// In-flight deployments across the whole organization that owns $1. One tenant
+	// must not be able to fill the single build worker's queue for everyone else.
+	CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)

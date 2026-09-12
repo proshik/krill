@@ -288,6 +288,9 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_MCP_SESSION_TIMEOUT` | `30m` | No | Closes an idle MCP session (a client that never sent `DELETE /mcp` — a crashed agent, a finished CI job) and frees its goroutine. `0` disables the idle timeout. |
 | `KRILL_DEFAULT_MEMORY_LIMIT` | `512m` | No | Default memory limit applied to any app or DB instance that has no explicit value of its own (human units, e.g. `256m`, `1g`). Empty disables the default. Per-app, the Advanced tab overrides it. |
 | `KRILL_DEFAULT_CPU_LIMIT` | `1.0` | No | Default CPU limit (in cores, e.g. `0.5`, `2`) applied to any app or DB instance that has no explicit value of its own. Empty disables the default. Per-app, the Advanced tab overrides it. |
+| `KRILL_MAX_BUILDS_PER_ORG` | `2` | No | Caps how many deploys one organization may have in flight on the shared build queue at once, so one tenant with many apps can't hold it and stall every other tenant's deploys. `<= 0` disables the cap. |
+| `KRILL_BUILD_CACHE_LIMIT` | `5gb` | No | `--keep-storage` value passed to `docker builder prune` on each `KRILL_BUILD_PRUNE_INTERVAL` tick. Nothing else ever trims the BuildKit cache, so on a small VPS the disk fills silently until builds start failing. Empty disables pruning. |
+| `KRILL_BUILD_PRUNE_INTERVAL` | `24h` | No | How often the BuildKit cache is pruned. `<= 0` disables pruning. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 

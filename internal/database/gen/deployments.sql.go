@@ -40,6 +40,31 @@ func (q *Queries) CountRunningDeploymentsByApplication(ctx context.Context, appl
 	return count, err
 }
 
+const countRunningDeploymentsByOrg = `-- name: CountRunningDeploymentsByOrg :one
+SELECT count(*)
+FROM deployments d
+JOIN applications a ON a.id = d.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE d.status = 'running'
+  AND p.organization_id = (
+    SELECT p2.organization_id
+    FROM applications a2
+    JOIN environments e2 ON e2.id = a2.environment_id
+    JOIN projects p2 ON p2.id = e2.project_id
+    WHERE a2.id = $1
+  )
+`
+
+// In-flight deployments across the whole organization that owns $1. One tenant
+// must not be able to fill the single build worker's queue for everyone else.
+func (q *Queries) CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunningDeploymentsByOrg, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at
 `

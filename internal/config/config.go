@@ -80,6 +80,19 @@ type Config struct {
 	// timeout (sessions then live until an explicit DELETE), matching
 	// KRILL_TERMINAL_IDLE_TIMEOUT's convention.
 	MCPSessionTimeout time.Duration `env:"KRILL_MCP_SESSION_TIMEOUT" envDefault:"30m"`
+	// MaxBuildsPerOrg caps how many deploys one organization may have in flight
+	// on the shared build queue at once. The queue is one worker shared by every
+	// tenant, so without this an org with many apps could hold it indefinitely
+	// and stall every other tenant's deploys. <= 0 disables the cap.
+	MaxBuildsPerOrg int `env:"KRILL_MAX_BUILDS_PER_ORG" envDefault:"2"`
+	// BuildCacheLimit is the --keep-storage value passed to `docker builder
+	// prune` on each BuildPruneInterval tick. Nothing else ever trims the
+	// BuildKit cache, so on a small VPS the disk fills silently until builds
+	// start failing. Empty disables pruning.
+	BuildCacheLimit string `env:"KRILL_BUILD_CACHE_LIMIT" envDefault:"5gb"`
+	// BuildPruneInterval is how often the BuildKit cache is pruned. <= 0
+	// disables pruning.
+	BuildPruneInterval time.Duration `env:"KRILL_BUILD_PRUNE_INTERVAL" envDefault:"24h"`
 }
 
 // Load reads the configuration from the environment.

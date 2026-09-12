@@ -268,6 +268,13 @@ func (s *DBStore) CountRunningDeployments(ctx context.Context, appID int64) (int
 	return s.q.CountRunningDeploymentsByApplication(ctx, appID)
 }
 
+// CountRunningDeploymentsByOrg reports how many deploys are still in flight
+// across the whole organization that owns appID, so enqueue can refuse to let
+// one tenant fill the single shared build worker's queue for everyone else.
+func (s *DBStore) CountRunningDeploymentsByOrg(ctx context.Context, appID int64) (int64, error) {
+	return s.q.CountRunningDeploymentsByOrg(ctx, appID)
+}
+
 func (s *DBStore) FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error {
 	return s.q.FinishDeployment(ctx, db.FinishDeploymentParams{
 		ID: deployID, Status: status, ImageTag: imageTag, ErrorMessage: errMsg, Log: log,

@@ -157,9 +157,15 @@ func run() error {
 		defaultNanoCPUs = 0
 	}
 	dep.SetResourceDefaults(defaultMemBytes, defaultNanoCPUs)
+	dep.SetMaxBuildsPerOrg(cfg.MaxBuildsPerOrg)
 
 	dep.Start(ctx)
 	defer dep.Stop()
+
+	// Nothing else ever trims the BuildKit cache: every Dockerfile build leaves
+	// layers behind, and on a small VPS the disk fills silently until builds
+	// start failing.
+	builder.StartCachePrune(ctx, cfg.DockerHost, cfg.BuildPruneInterval, cfg.BuildCacheLimit)
 
 	stopCleanup := deploy.StartLogCleanup(ctx, store, 10*time.Minute)
 	defer stopCleanup()

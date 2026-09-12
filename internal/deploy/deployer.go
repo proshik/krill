@@ -56,6 +56,7 @@ type Store interface {
 	SetStatus(ctx context.Context, id int64, status string) error
 	CreateDeployment(ctx context.Context, appID int64, trigger string) (int64, error)
 	CountRunningDeployments(ctx context.Context, appID int64) (int64, error)
+	CountRunningDeploymentsByOrg(ctx context.Context, appID int64) (int64, error)
 	FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error
 }
 
@@ -103,6 +104,15 @@ type Deployer struct {
 
 	defaultMemBytes int64 // instance-wide default memory limit, 0 = none
 	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
+
+	maxBuildsPerOrg int // cap on in-flight deploys per organization, 0 = no cap
+}
+
+// SetMaxBuildsPerOrg wires the per-organization in-flight-deploy cap (wired
+// from config at startup). <= 0 means no cap: the per-org check in enqueue is
+// skipped entirely rather than merely being satisfied by a large number.
+func (d *Deployer) SetMaxBuildsPerOrg(n int) {
+	d.maxBuildsPerOrg = n
 }
 
 // SetResourceDefaults wires the instance-wide memory/CPU limits applied to any
@@ -224,6 +234,21 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	} else if n > 0 {
 		slog.Info("deploy rejected, one is already in flight", "app", appID, "in_flight", n)
 		return 0
+	}
+	// Cap in-flight deploys per organization. Without this, one tenant with many
+	// apps can hold the single shared build worker indefinitely and stall every
+	// other organization's deploys. 0 (the default when unset) means no cap, and
+	// skips the query entirely rather than relying on a huge threshold.
+	if d.maxBuildsPerOrg > 0 {
+		n, err := d.store.CountRunningDeploymentsByOrg(context.Background(), appID)
+		if err != nil {
+			slog.Error("per-org in-flight check failed", "app", appID, "err", err)
+			return 0
+		}
+		if n >= int64(d.maxBuildsPerOrg) {
+			slog.Info("deploy rejected, the organization is at its in-flight limit", "app", appID, "in_flight", n)
+			return 0
+		}
 	}
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
