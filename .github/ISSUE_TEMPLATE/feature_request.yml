@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest something Krill should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [ROADMAP.md](https://github.com/proshik/krill/blob/master/ROADMAP.md) first — it may already be planned, or listed as not planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How you'd like it to work. Mention how other platforms handle it, if relevant.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds
+      description: What you do instead for now.
