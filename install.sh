@@ -79,9 +79,9 @@ preflight_external_db() {
 
 # ensure_state_network — create the dedicated network for the control-plane
 # Postgres container (idempotent). The container must not share the default
-# bridge with build containers and app containers: anything on that bridge
-# can reach it by IP, and the loopback-only port publish does not stop that
-# (it only blocks connections from outside the host).
+# bridge with build containers: anything on that bridge can reach it by IP,
+# and the loopback-only port publish does not stop that (it only blocks
+# connections from outside the host).
 ensure_state_network() {
 	docker network inspect "$PG_NETWORK" >/dev/null 2>&1 ||
 		docker network create "$PG_NETWORK" >/dev/null || die "failed to create the $PG_NETWORK network"
@@ -213,10 +213,10 @@ if [ "$MANAGE_PG" = "yes" ]; then
 			info "Postgres container '$PG_CONTAINER' already running on $PG_NETWORK."
 		else
 			# Existing installs had the container on the default bridge, which build
-			# containers and app containers also use. Recreate it on the isolated
-			# network; the data lives in the krill-pg-data volume, not the container.
+			# containers also use. Recreate it on the isolated network; the data
+			# lives in the krill-pg-data volume, not the container.
 			info "Moving $PG_CONTAINER onto the $PG_NETWORK network (recreating the container; data is preserved) ..."
-			docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || die "failed to remove $PG_CONTAINER to migrate it onto $PG_NETWORK"
+			docker rm -f "$PG_CONTAINER" >/dev/null || die "failed to remove $PG_CONTAINER to migrate it onto $PG_NETWORK"
 			start_pg_container
 		fi
 	else
