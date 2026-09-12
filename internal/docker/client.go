@@ -763,6 +763,16 @@ func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, lab
 	return err
 }
 
+// ServiceLabels returns the service-level labels of the named service and
+// whether it exists at all.
+func (e *dockerEngine) ServiceLabels(ctx context.Context, name string) (map[string]string, bool, error) {
+	cur, found, err := e.findService(ctx, name)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return cur.Spec.Annotations.Labels, true, nil
+}
+
 // runningContainerID returns the container ID of a running task of serviceName,
 // along with the ID of the node that task is running on (for exec routing).
 func (e *dockerEngine) runningContainerID(ctx context.Context, serviceName string) (containerID, nodeID string, err error) {

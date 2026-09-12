@@ -116,6 +116,11 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
+
+func (m *mockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
+}
+
 // Exec records each invocation and honours the context the way the real engine
 // does (a dead context cannot reach the daemon). execFail, when set, fails the
 // FIRST call only — the shape of "provisioning failed halfway".

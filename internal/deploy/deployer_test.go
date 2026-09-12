@@ -73,6 +73,9 @@ func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error  
 func (f *digestMockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
+func (f *digestMockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
+}
 func (f *digestMockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }
@@ -214,6 +217,9 @@ func (m *mockEngine) VolumeChown(_ context.Context, vol string, uid, gid int, no
 func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error { return nil }
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
+}
+func (m *mockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
 }
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil

@@ -65,6 +65,9 @@ func (noopEngine) VolumeChown(context.Context, string, int, int, string) error  
 func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
+func (noopEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
+}
 func (noopEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }

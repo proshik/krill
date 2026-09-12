@@ -117,3 +117,15 @@ func (c Config) BaseURL() string {
 	}
 	return scheme + "://" + c.Host
 }
+
+// AcmeContact is the Let's Encrypt contact address: the explicit
+// KRILL_ACME_EMAIL, falling back to the admin's address. Traefik's spec is
+// fingerprinted for reconciliation, so every caller has to derive the contact
+// the same way — a second, slightly different fallback would make the gateway
+// flap between two specs.
+func (c Config) AcmeContact() string {
+	if c.AcmeEmail != "" {
+		return c.AcmeEmail
+	}
+	return c.AdminEmail
+}

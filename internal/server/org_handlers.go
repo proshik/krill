@@ -7,6 +7,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/orgnet"
+	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -79,6 +80,13 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	if err := s.q.SetOrganizationNetwork(r.Context(), db.SetOrganizationNetworkParams{ID: o.ID, NetworkName: netName}); err != nil {
 		logFrom(r).Error("could not store the organization network", "err", err, "org_id", o.ID)
 	}
+
+	// The gateway lives in every organization network; until it joins this one,
+	// nothing deployed here is reachable from outside. A failure is logged but
+	// does not roll the organization back: the next startup reconciles the
+	// gateway, and an organization whose apps are merely unreachable is still
+	// worth keeping (unlike one with no network at all, handled above).
+	s.reconcileGateway(r)
 
 	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -283,4 +291,28 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("member removed", "member_id", mID, "org_id", o.ID)
 	s.flashOK(w, r, "flash.ok.member_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
+}
+
+// reconcileGateway re-attaches Traefik to the base network plus every
+// organization network. Called after an organization is created (and would be
+// called after one is deleted, once deleting an organization is a thing the UI
+// can do). Errors are logged, never returned: the caller's operation has
+// already succeeded and startup reconciles the gateway anyway.
+func (s *Server) reconcileGateway(r *http.Request) {
+	orgs, err := s.q.ListOrganizations(r.Context())
+	if err != nil {
+		logFrom(r).Error("could not list organizations for the gateway", "err", err)
+		return
+	}
+	// Derived from the id, not read from network_name: an organization that has
+	// not been migrated yet still has an empty column, and the gateway has to be
+	// in its network before the startup migration moves anything there.
+	nets := make([]string, 0, len(orgs))
+	for _, o := range orgs {
+		nets = append(nets, orgnet.Name(o.ID))
+	}
+	acme := traefik.AcmeConfig{Email: s.cfg.AcmeContact(), Staging: s.cfg.AcmeStaging}
+	if err := traefik.Reconcile(r.Context(), s.engine, s.cfg.Network, nets, acme); err != nil {
+		logFrom(r).Error("could not attach the gateway to every organization network", "err", err)
+	}
 }
