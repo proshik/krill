@@ -112,7 +112,8 @@ The installer is idempotent — **re-run it to upgrade** (it pulls the latest
 release binary and restarts the service; your Postgres and secrets are kept).
 
 **Upgrading from an older install, read this first — the first start after
-upgrading does two one-time things:**
+upgrading does the following, and the second point has a consequence worth
+planning for:**
 
 - The installer removes and recreates the `krill-postgres` container to move
   it onto its own `krill-state` Docker network — same volume, same data, just
@@ -124,9 +125,21 @@ upgrading does two one-time things:**
   Dockerfile app this is a rebuild (from the build cache, not `--no-cache`).
   **On an install with several such apps, expect the first while after the
   upgrade to be slower than usual** while services move over and become
-  routable again; nothing is down for the whole duration, and the pass picks
-  up where it left off if the process restarts mid-way. A fresh install has
-  nothing to move, so this is instant.
+  routable again; nothing is down for the whole duration. If the process
+  restarts before an organization's pass finishes, that organization's
+  **whole** pass is retried from scratch on the next start rather than
+  resumed — services it had already moved get redeployed again too. A fresh
+  install has nothing to move, so this is instant.
+- **This same forced redeploy is also the first time
+  `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` apply** to any app
+  or database instance that has no explicit limit of its own — every deploy
+  applies the current defaults, and this migration redeploys everything. An
+  app or database currently running above the default (`512m` / `1.0` CPU)
+  can be OOM-killed or throttled by this background pass, even though nobody
+  explicitly redeployed it. **Before upgrading**, either set an explicit
+  memory/CPU limit for anything that needs more (the app's Advanced tab, or
+  the database instance's own settings), or raise — or empty, to disable —
+  `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` first.
 
 It:
 
@@ -296,7 +309,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_ADMIN_PASSWORD` | — | **Yes** | Seed admin password. |
 | `KRILL_DOCKER_HOST` | — | No | Docker daemon socket/host (e.g. a Colima socket path). |
 | `KRILL_BASE_DOMAIN` | `127-0-0-1.sslip.io` | No | Domain suffix for deployed apps (via sslip.io). |
-| `KRILL_NETWORK` | `krill-net` | No | Swarm overlay network name. |
+| `KRILL_NETWORK` | `krill-net` | No | Traefik's default provider network, and the fallback network for any organization not yet migrated onto its own (`krill-org-<id>`) — not the network apps and databases run on once migrated. |
 | `KRILL_HOST` | `localhost` | No | Public hostname used in generated external DB connection strings. |
 | `KRILL_COOKIE_SECURE` | `false` | No | Set the `Secure` flag on session cookies. |
 | `KRILL_TRUST_PROXY` | `false` | No | Trust `X-Forwarded-For` when identifying the client IP (login rate limiting). Enable **only** behind a reverse proxy that sets the header — otherwise a client can forge it and get its own rate-limit bucket. Without it, every request behind a proxy shares one bucket. |
