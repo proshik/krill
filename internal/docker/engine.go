@@ -135,7 +135,11 @@ type NodeInfo struct {
 
 // Engine — a narrow, mockable interface to Docker/Swarm.
 type Engine interface {
-	NetworkEnsure(ctx context.Context, name string) error
+	// NetworkEnsure creates the overlay network if it is missing and reports
+	// whether it actually created it. A recreated network gets a NEW id, and a
+	// service's stored spec still refers to the old one — so a caller that
+	// skips redundant deploys has to treat "created" as a reason to deploy.
+	NetworkEnsure(ctx context.Context, name string) (created bool, err error)
 	NetworkRemove(ctx context.Context, name string) error      // idempotent: "network not found" is not an error
 	ServiceDeploy(ctx context.Context, spec ServiceSpec) error // create-or-rolling-update by name
 	ServiceRemove(ctx context.Context, name string) error

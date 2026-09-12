@@ -221,6 +221,10 @@ func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
 	return d.enqueue(appID, trigger, true)
 }
 
+// systemQueueRetry is how long EnqueueSystem waits between attempts while the
+// shared queue is full. One worker drains it, so retrying sooner only burns CPU.
+const systemQueueRetry = 2 * time.Second
+
 // EnqueueSystem queues a deploy the control plane submits for itself, skipping
 // both the per-app in-flight guard and the per-organization cap. Those caps
 // exist to stop one tenant from monopolising the single shared build worker;
@@ -229,14 +233,44 @@ func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
 // silently refuse it from the third app onward and leave the rest of the
 // organization stranded on the old network. Nothing but that migration may use
 // this.
-func (d *Deployer) EnqueueSystem(appID int64) int64 {
-	select {
-	case <-d.done:
-		return 0
-	default:
+//
+// It also waits for room rather than failing when the queue is full: an
+// organization with more applications than the queue is deep would otherwise
+// lose its tail, and a dropped system deploy strands that service on the shared
+// network with nothing to retry it. ctx bounds the wait.
+func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
+	for {
+		select {
+		case <-d.done:
+			return 0
+		case <-ctx.Done():
+			slog.Warn("system deploy gave up waiting for a queue slot", "app", appID)
+			return 0
+		default:
+		}
+		if !d.queueFull() {
+			if id := d.submit(appID, "manual", false); id != 0 {
+				return id
+			}
+			// submit only fails for a full queue (lost the race for the slot we
+			// just saw free) or a store error. A store error will not fix itself.
+			if !d.queueFull() {
+				return 0
+			}
+		}
+		select {
+		case <-d.done:
+			return 0
+		case <-ctx.Done():
+			slog.Warn("system deploy gave up waiting for a queue slot", "app", appID)
+			return 0
+		case <-time.After(systemQueueRetry):
+		}
 	}
-	return d.submit(appID, "manual", false)
 }
+
+// queueFull reports whether the shared job queue has no room left.
+func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
 
 func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	select {

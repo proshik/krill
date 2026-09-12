@@ -7,7 +7,6 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/orgnet"
-	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -68,7 +67,7 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	// A half-made organization (a row with no working network) must not
 	// survive: an org that can never deploy anything is worse than none.
 	netName := orgnet.Name(o.ID)
-	if err := s.engine.NetworkEnsure(r.Context(), netName); err != nil {
+	if _, err := s.engine.NetworkEnsure(r.Context(), netName); err != nil {
 		logFrom(r).Error("could not create the organization network", "err", err, "org_id", o.ID)
 		if derr := s.q.DeleteOrganization(r.Context(), o.ID); derr != nil {
 			logFrom(r).Error("could not roll back an organization left without a network", "err", derr, "org_id", o.ID)
@@ -82,11 +81,13 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The gateway lives in every organization network; until it joins this one,
-	// nothing deployed here is reachable from outside. A failure is logged but
-	// does not roll the organization back: the next startup reconciles the
-	// gateway, and an organization whose apps are merely unreachable is still
-	// worth keeping (unlike one with no network at all, handled above).
-	s.reconcileGateway(r)
+	// nothing deployed here is reachable from outside. The reconcile is
+	// requested, not performed: it recreates the Traefik task and rebinds
+	// :80/:443, and creating an organization needs no role — doing it inline
+	// would let a loop of POST /orgs hold ingress down for every tenant.
+	if s.reconcileGateway != nil {
+		s.reconcileGateway()
+	}
 
 	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -291,28 +292,4 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("member removed", "member_id", mID, "org_id", o.ID)
 	s.flashOK(w, r, "flash.ok.member_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/members", http.StatusSeeOther)
-}
-
-// reconcileGateway re-attaches Traefik to the base network plus every
-// organization network. Called after an organization is created (and would be
-// called after one is deleted, once deleting an organization is a thing the UI
-// can do). Errors are logged, never returned: the caller's operation has
-// already succeeded and startup reconciles the gateway anyway.
-func (s *Server) reconcileGateway(r *http.Request) {
-	orgs, err := s.q.ListOrganizations(r.Context())
-	if err != nil {
-		logFrom(r).Error("could not list organizations for the gateway", "err", err)
-		return
-	}
-	// Derived from the id, not read from network_name: an organization that has
-	// not been migrated yet still has an empty column, and the gateway has to be
-	// in its network before the startup migration moves anything there.
-	nets := make([]string, 0, len(orgs))
-	for _, o := range orgs {
-		nets = append(nets, orgnet.Name(o.ID))
-	}
-	acme := traefik.AcmeConfig{Email: s.cfg.AcmeContact(), Staging: s.cfg.AcmeStaging}
-	if err := traefik.Reconcile(r.Context(), s.engine, s.cfg.Network, nets, acme); err != nil {
-		logFrom(r).Error("could not attach the gateway to every organization network", "err", err)
-	}
 }

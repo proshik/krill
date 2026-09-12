@@ -15,7 +15,7 @@ import (
 
 func skipNoSwarm(t *testing.T, e docker.Engine) {
 	t.Helper()
-	if err := e.NetworkEnsure(context.Background(), "krill-net"); err != nil {
+	if _, err := e.NetworkEnsure(context.Background(), "krill-net"); err != nil {
 		t.Skipf("swarm unavailable: %v", err)
 	}
 }

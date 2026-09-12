@@ -39,9 +39,9 @@ func (f *digestMockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec
 func (f *digestMockEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t1"}}, nil
 }
-func (f *digestMockEngine) NetworkEnsure(context.Context, string) error { return nil }
-func (f *digestMockEngine) NetworkRemove(context.Context, string) error { return nil }
-func (f *digestMockEngine) ServiceRemove(context.Context, string) error { return nil }
+func (f *digestMockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (f *digestMockEngine) NetworkRemove(context.Context, string) error         { return nil }
+func (f *digestMockEngine) ServiceRemove(context.Context, string) error         { return nil }
 func (f *digestMockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
@@ -123,8 +123,8 @@ type chownCall struct {
 	node     string
 }
 
-func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
-func (m *mockEngine) NetworkRemove(context.Context, string) error { return nil }
+func (m *mockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (m *mockEngine) NetworkRemove(context.Context, string) error         { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -336,6 +336,11 @@ func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, 
 	defer f.mu.Unlock()
 	f.deploys[deployID] = status
 	return nil
+}
+func (f *fakeStore) deploymentCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.depApp)
 }
 func (f *fakeStore) appStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.status[id] }
 func (f *fakeStore) depStatus(id int64) string {

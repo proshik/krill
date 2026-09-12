@@ -1,0 +1,141 @@
+package server_test
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"sync"
+	"testing"
+
+	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/backup"
+	"github.com/proshik/krill/internal/config"
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/org"
+	"github.com/proshik/krill/internal/server"
+	"github.com/proshik/krill/internal/testutil"
+)
+
+// labelEngine is a noopEngine that records the labels written by
+// ServiceUpdateLabels.
+type labelEngine struct {
+	noopEngine
+	mu   sync.Mutex
+	last map[string]string
+}
+
+func (e *labelEngine) ServiceUpdateLabels(_ context.Context, _ string, labels map[string]string) error {
+	e.mu.Lock()
+	e.last = labels
+	e.mu.Unlock()
+	return nil
+}
+
+func (e *labelEngine) lastLabels() map[string]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.last
+}
+
+func newServerWithLabelEngine(t *testing.T, eng *labelEngine) (http.Handler, *db.Queries, *org.Service) {
+	t.Helper()
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
+	hub := deploy.NewLogHub()
+	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
+	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
+	return srv.Router(), q, orgSvc
+}
+
+// A domain mutation re-applies the app's Traefik labels on the live service.
+// Those labels tell Traefik which network to reach the app on, so they must
+// name the app's ORGANIZATION network — the one the app actually runs in. The
+// configured (shared) network would point the gateway at a network the app left,
+// silently breaking routing until the next full deploy rewrote the label.
+func TestDomainMutationKeepsTheOrganizationNetworkInTheLabels(t *testing.T) {
+	eng := &labelEngine{}
+	h, q, orgSvc := newServerWithLabelEngine(t, eng)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "owner-net@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	orgNet := "krill-org-" + i64(o.ID)
+	if err := q.SetOrganizationNetwork(ctx, db.SetOrganizationNetworkParams{ID: o.ID, NetworkName: orgNet}); err != nil {
+		t.Fatalf("set organization network: %v", err)
+	}
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.example.test", Port: 80, SourceType: "image",
+		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	// The network label is only emitted for a router, i.e. for an exposed
+	// domain; an internal-only app carries traefik.enable=false and nothing else.
+	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: a.ID, Host: "web.example.test", Tls: false, IsPrimary: true, Exposed: true, Paths: "",
+	}); err != nil {
+		t.Fatalf("create primary domain: %v", err)
+	}
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
+	cookie := loginAs(t, q, "owner-net@k.local")
+
+	rec := postForm(t, h, base+"/domains", cookie, url.Values{"host": {"extra.example.test"}})
+	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusOK {
+		t.Fatalf("add domain: status %d", rec.Code)
+	}
+
+	labels := eng.lastLabels()
+	if labels == nil {
+		t.Fatal("the domain mutation did not re-apply any labels")
+	}
+	if got := labels["traefik.docker.network"]; got != orgNet {
+		t.Fatalf("traefik.docker.network = %q, want the organization network %q", got, orgNet)
+	}
+}
+
+// An organization that has not been migrated yet has an empty network_name; the
+// configured network stays the fallback, exactly as the deployer does it.
+func TestDomainMutationFallsBackToTheConfiguredNetwork(t *testing.T) {
+	eng := &labelEngine{}
+	h, q, orgSvc := newServerWithLabelEngine(t, eng)
+	ctx := context.Background()
+
+	ownerID := mkUser(t, q, "owner-net2@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org") // network_name left empty
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web2.example.test", Port: 80, SourceType: "image",
+		GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create application: %v", err)
+	}
+	if _, err := q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: a.ID, Host: "web2.example.test", Tls: false, IsPrimary: true, Exposed: true, Paths: "",
+	}); err != nil {
+		t.Fatalf("create primary domain: %v", err)
+	}
+	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
+	cookie := loginAs(t, q, "owner-net2@k.local")
+
+	postForm(t, h, base+"/domains", cookie, url.Values{"host": {"extra2.example.test"}})
+
+	labels := eng.lastLabels()
+	if labels == nil {
+		t.Fatal("the domain mutation did not re-apply any labels")
+	}
+	if got := labels["traefik.docker.network"]; got != "krill-net" {
+		t.Fatalf("traefik.docker.network = %q, want the configured fallback %q", got, "krill-net")
+	}
+}

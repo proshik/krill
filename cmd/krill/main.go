@@ -122,10 +122,13 @@ func run() error {
 	// A failed listing must not reconcile: an empty list is indistinguishable
 	// from "this install has no organizations", and applying it would detach the
 	// running gateway from every organization network over a transient DB error.
+	gatewayReady := false
 	if orgNets, nerr := orgNetworks(ctx, q); nerr != nil {
 		slog.Warn("could not list organization networks; leaving the gateway as it is", "err", nerr)
 	} else if rerr := traefik.Reconcile(ctx, engine, cfg.Network, orgNets, acme); rerr != nil {
 		slog.Warn("traefik reconcile failed (continuing)", "err", rerr)
+	} else {
+		gatewayReady = true
 	}
 
 	store := deploy.NewDBStore(q)
@@ -220,30 +223,19 @@ func run() error {
 	// resolve and reach any other by name. Nothing but a redeploy moves a Swarm
 	// service between networks, so move them here, at startup, once.
 	//
-	// This runs AFTER traefik.Reconcile on purpose: the gateway is already in
-	// each organization network by now, so a service that moves is reachable the
-	// moment it comes up. A failure never stops the boot — the operator needs
-	// the UI and the logs far more than a completed migration, and the pass is
-	// idempotent, so the next startup picks up where this one stopped.
-	migrator := &orgnet.Migrator{
-		Store:         orgnet.NewDBStore(q),
-		EnsureNetwork: engine.NetworkEnsure,
-		RedeployInstance: func(_ context.Context, id int64) error {
-			dbSvc.DeployInstance(id) // fire-and-forget: the deploy runs in its own goroutine
-			return nil
-		},
-		RedeployApp: func(_ context.Context, id int64) error {
-			// EnqueueSystem, not Enqueue: the per-app and per-organization caps
-			// would silently refuse most of a large organization's apps and leave
-			// them stranded on the shared network.
-			if dep.EnqueueSystem(id) == 0 {
-				return errors.New("deploy could not be queued")
-			}
-			return nil
-		},
-	}
-	if err := migrator.Run(ctx); err != nil {
-		slog.Error("organization network migration failed (continuing)", "err", err)
+	// It runs only when the gateway reconcile above actually succeeded, and
+	// AFTER it: Reconcile returns on the first NetworkEnsure error without
+	// deploying anything, so migrating on a failed reconcile would move services
+	// into networks Traefik is not attached to — every exposed app unroutable
+	// until some later, luckier start.
+	//
+	// A failure never stops the boot: the operator needs the UI and the logs far
+	// more than a completed migration, and the pass is idempotent, so the next
+	// startup redoes whatever did not finish.
+	if !gatewayReady {
+		slog.Warn("skipping the organization network migration: the gateway is not attached to the organization networks")
+	} else {
+		runOrgNetworkMigration(ctx, q, engine, dep, dbSvc)
 	}
 
 	// Health watcher: polls service state for app down/recovered alerts.
@@ -406,6 +398,7 @@ func run() error {
 	app.SetNotify(notifySvc)
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
+	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme))
 
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
@@ -472,4 +465,109 @@ func orgNetworks(ctx context.Context, q *db.Queries) ([]string, error) {
 		nets = append(nets, orgnet.Name(o.ID))
 	}
 	return nets, nil
+}
+
+// Timeouts for the one-shot startup migration onto per-organization networks.
+const (
+	orgNetMigrationTimeout    = 30 * time.Minute
+	orgNetInstanceWaitTimeout = 3 * time.Minute
+	orgNetInstanceWaitPoll    = 2 * time.Second
+)
+
+// runOrgNetworkMigration wires the migrator to the deployer, the DB-instance
+// service and the engine, and runs one pass.
+func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.Engine, dep *deploy.Deployer, dbSvc *dbservice.Service) {
+	// Bound the whole pass: EnqueueSystem waits for room in the shared deploy
+	// queue, so without a deadline a jammed queue would hold startup forever.
+	mctx, cancel := context.WithTimeout(ctx, orgNetMigrationTimeout)
+	defer cancel()
+
+	migrator := &orgnet.Migrator{
+		Store: orgnet.NewDBStore(q),
+		EnsureNetwork: func(c context.Context, name string) error {
+			_, err := engine.NetworkEnsure(c, name)
+			return err
+		},
+		// Leave stopped and never-deployed applications alone: an app the
+		// operator scaled to zero must not come back up because the control
+		// plane was upgraded.
+		FilterApps: orgnet.RunningAppsFilter(engine),
+		RedeployInstance: func(_ context.Context, id int64) error {
+			dbSvc.DeployInstance(id) // asynchronous; WaitInstances below is what orders it
+			return nil
+		},
+		WaitInstances: func(c context.Context, ids []int64) error {
+			names := make([]string, 0, len(ids))
+			for _, id := range ids {
+				inst, err := q.GetDBInstance(c, id)
+				if err != nil {
+					return err
+				}
+				names = append(names, inst.AppName)
+			}
+			return orgnet.WaitServicesRunning(c, engine, names, orgNetInstanceWaitPoll, orgNetInstanceWaitTimeout)
+		},
+		RedeployApp: func(c context.Context, id int64) error {
+			// EnqueueSystem, not Enqueue: the per-app and per-organization caps
+			// would silently refuse most of a large organization's apps and leave
+			// them stranded on the shared network.
+			if dep.EnqueueSystem(c, id) == 0 {
+				return errors.New("deploy could not be queued")
+			}
+			return nil
+		},
+	}
+	if err := migrator.Run(mctx); err != nil {
+		slog.Error("organization network migration failed (continuing)", "err", err)
+	}
+}
+
+// gatewayReconcileDebounce collapses a burst of organization creations into one
+// Traefik deploy.
+const gatewayReconcileDebounce = 3 * time.Second
+
+// startGatewayReconciler runs Traefik reconciliation in the background and
+// returns the trigger the HTTP handlers call.
+//
+// Creating an organization needs no role — any authenticated user can POST
+// /orgs — and reconciling recreates the Traefik task, rebinding :80/:443. On
+// the request path that turns a loop of organization creations into a sustained
+// outage for every tenant, so the work moves here, where a burst collapses into
+// a single deploy after a quiet period.
+func startGatewayReconciler(ctx context.Context, engine docker.Engine, q *db.Queries, baseNetwork string, acme traefik.AcmeConfig) func() {
+	trigger := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-trigger:
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(gatewayReconcileDebounce):
+			}
+			// Drop any triggers that arrived during the quiet period: this pass
+			// reads the organization list fresh, so it already covers them.
+			select {
+			case <-trigger:
+			default:
+			}
+			nets, err := orgNetworks(ctx, q)
+			if err != nil {
+				slog.Warn("gateway reconcile: could not list organization networks", "err", err)
+				continue
+			}
+			if err := traefik.Reconcile(ctx, engine, baseNetwork, nets, acme); err != nil {
+				slog.Error("gateway reconcile failed", "err", err)
+			}
+		}
+	}()
+	return func() {
+		select {
+		case trigger <- struct{}{}:
+		default: // one pending reconcile is enough
+		}
+	}
 }

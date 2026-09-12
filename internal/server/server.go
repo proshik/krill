@@ -60,6 +60,12 @@ type Server struct {
 	// sessions a client already negotiated against the first.
 	mcpHandler http.Handler
 
+	// reconcileGateway asks the background reconciler to re-attach Traefik to
+	// every organization network. It is a request, not the work: reconciling
+	// recreates the Traefik task, and POST /orgs is open to any authenticated
+	// user. Nil in tests and when no reconciler is wired.
+	reconcileGateway func()
+
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
 	selfComponentFn func() string
@@ -213,6 +219,11 @@ func (s *Server) SetMetrics(st metrics.Store) { s.metrics = st }
 // SetSelfComponentFn wires the control-plane component provider (the metrics
 // sampler), so the monitoring handler need not scan docker itself.
 func (s *Server) SetSelfComponentFn(fn func() string) { s.selfComponentFn = fn }
+
+// SetGatewayReconcile wires the background Traefik reconciler's trigger. Left
+// unset (tests, or an install with no engine) organization creation simply
+// does not ask for a reconcile; the next startup attaches the gateway.
+func (s *Server) SetGatewayReconcile(trigger func()) { s.reconcileGateway = trigger }
 
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {

@@ -185,6 +185,7 @@ type Querier interface {
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
+	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error

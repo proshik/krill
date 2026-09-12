@@ -104,18 +104,27 @@ func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNe
 	nets := make([]string, 0, len(orgNetworks)+1)
 	nets = append(nets, baseNetwork)
 	nets = append(nets, orgNetworks...)
+	// A network that had to be created is a network whose id is new. Swarm
+	// stores network IDs in a service spec, not names, so the gateway's stored
+	// attachment still points at the old, deleted network even though the name
+	// set — and therefore the fingerprint — is unchanged. Redeploy regardless.
+	created := false
 	for _, n := range nets {
-		if err := eng.NetworkEnsure(ctx, n); err != nil {
+		c, err := eng.NetworkEnsure(ctx, n)
+		if err != nil {
 			return err
 		}
+		created = created || c
 	}
 	spec := TraefikSpec(nets, acme)
 	// A failed or empty read is not a reason to skip: it only means we cannot
 	// tell whether anything changed, and a redundant restart beats a gateway
 	// that never learns about a new network.
-	if cur, found, err := eng.ServiceLabels(ctx, ServiceName); err == nil && found {
-		if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
-			return nil
+	if !created {
+		if cur, found, err := eng.ServiceLabels(ctx, ServiceName); err == nil && found {
+			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
+				return nil
+			}
 		}
 	}
 	return eng.ServiceDeploy(ctx, spec)

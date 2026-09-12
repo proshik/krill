@@ -21,7 +21,7 @@ func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
 }
 
 const createOrganization = `-- name: CreateOrganization :one
-INSERT INTO organizations (name, slug, owner_id) VALUES ($1, $2, $3) RETURNING id, name, slug, owner_id, created_at, network_name
+INSERT INTO organizations (name, slug, owner_id) VALUES ($1, $2, $3) RETURNING id, name, slug, owner_id, created_at, network_name, network_migrated_at
 `
 
 type CreateOrganizationParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 		&i.OwnerID,
 		&i.CreatedAt,
 		&i.NetworkName,
+		&i.NetworkMigratedAt,
 	)
 	return i, err
 }
@@ -54,7 +55,7 @@ func (q *Queries) DeleteOrganization(ctx context.Context, id int64) error {
 }
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT id, name, slug, owner_id, created_at, network_name FROM organizations WHERE id = $1
+SELECT id, name, slug, owner_id, created_at, network_name, network_migrated_at FROM organizations WHERE id = $1
 `
 
 func (q *Queries) GetOrganization(ctx context.Context, id int64) (Organization, error) {
@@ -67,12 +68,13 @@ func (q *Queries) GetOrganization(ctx context.Context, id int64) (Organization, 
 		&i.OwnerID,
 		&i.CreatedAt,
 		&i.NetworkName,
+		&i.NetworkMigratedAt,
 	)
 	return i, err
 }
 
 const getOrganizationBySlug = `-- name: GetOrganizationBySlug :one
-SELECT id, name, slug, owner_id, created_at, network_name FROM organizations WHERE slug = $1
+SELECT id, name, slug, owner_id, created_at, network_name, network_migrated_at FROM organizations WHERE slug = $1
 `
 
 func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error) {
@@ -85,6 +87,7 @@ func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organ
 		&i.OwnerID,
 		&i.CreatedAt,
 		&i.NetworkName,
+		&i.NetworkMigratedAt,
 	)
 	return i, err
 }
@@ -106,7 +109,7 @@ func (q *Queries) GetOrganizationNetworkByApp(ctx context.Context, id int64) (st
 }
 
 const listOrganizations = `-- name: ListOrganizations :many
-SELECT id, name, slug, owner_id, created_at, network_name FROM organizations ORDER BY id
+SELECT id, name, slug, owner_id, created_at, network_name, network_migrated_at FROM organizations ORDER BY id
 `
 
 func (q *Queries) ListOrganizations(ctx context.Context) ([]Organization, error) {
@@ -125,6 +128,7 @@ func (q *Queries) ListOrganizations(ctx context.Context) ([]Organization, error)
 			&i.OwnerID,
 			&i.CreatedAt,
 			&i.NetworkName,
+			&i.NetworkMigratedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +141,7 @@ func (q *Queries) ListOrganizations(ctx context.Context) ([]Organization, error)
 }
 
 const listOrganizationsForUser = `-- name: ListOrganizationsForUser :many
-SELECT o.id, o.name, o.slug, o.owner_id, o.created_at, o.network_name FROM organizations o
+SELECT o.id, o.name, o.slug, o.owner_id, o.created_at, o.network_name, o.network_migrated_at FROM organizations o
 JOIN members m ON m.organization_id = o.id
 WHERE m.user_id = $1
 ORDER BY o.created_at
@@ -159,6 +163,7 @@ func (q *Queries) ListOrganizationsForUser(ctx context.Context, userID int64) ([
 			&i.OwnerID,
 			&i.CreatedAt,
 			&i.NetworkName,
+			&i.NetworkMigratedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -168,6 +173,15 @@ func (q *Queries) ListOrganizationsForUser(ctx context.Context, userID int64) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const markOrganizationNetworkMigrated = `-- name: MarkOrganizationNetworkMigrated :exec
+UPDATE organizations SET network_migrated_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markOrganizationNetworkMigrated, id)
+	return err
 }
 
 const setOrganizationNetwork = `-- name: SetOrganizationNetwork :exec

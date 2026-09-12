@@ -242,10 +242,30 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
 		})
 	}
-	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, s.cfg.Network)
+	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, s.appNetwork(r, appID))
 	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {
 		logFrom(r).Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
 	}
+}
+
+// appNetwork is the overlay network an application's Traefik router must resolve
+// it on: its organization's, exactly as the deployer resolves it. Writing the
+// configured network here instead would point the gateway at the shared network
+// the app no longer lives on, and every domain mutation would silently break
+// routing until the next full deploy put the right label back.
+//
+// The configured network stays the fallback for an organization that has not
+// been migrated yet (empty network_name), matching internal/deploy/store.go.
+func (s *Server) appNetwork(r *http.Request, appID int64) string {
+	net, err := s.q.GetOrganizationNetworkByApp(r.Context(), appID)
+	if err != nil {
+		logFrom(r).Error("appNetwork: could not resolve the organization network", "err", err, "app_id", appID)
+		return s.cfg.Network
+	}
+	if net == "" {
+		return s.cfg.Network
+	}
+	return net
 }
 
 // addDomainBasicAuthUser appends a basic-auth user (username + bcrypt hash) to a

@@ -27,7 +27,7 @@ import (
 // healthy task, so deploys converge instantly in handler tests.
 type noopEngine struct{}
 
-func (noopEngine) NetworkEnsure(context.Context, string) error             { return nil }
+func (noopEngine) NetworkEnsure(context.Context, string) (bool, error)     { return false, nil }
 func (noopEngine) NetworkRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceDeploy(context.Context, docker.ServiceSpec) error { return nil }
 func (noopEngine) ServiceRemove(context.Context, string) error             { return nil }

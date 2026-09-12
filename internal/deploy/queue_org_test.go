@@ -1,8 +1,10 @@
 package deploy
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // TestEnqueueRefusesWhenOrgIsAtItsLimit mirrors TestEnqueueRefusesWhenAppHasOneInFlight
@@ -65,7 +67,7 @@ func TestEnqueueSystemBypassesBothCaps(t *testing.T) {
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
 	d.SetMaxBuildsPerOrg(1)
 
-	if id := d.EnqueueSystem(1); id == 0 {
+	if id := d.EnqueueSystem(context.Background(), 1); id == 0 {
 		t.Fatal("a system deploy must not be refused by the per-org cap")
 	}
 	// The first one is now in flight, which is exactly what the per-app guard
@@ -73,7 +75,39 @@ func TestEnqueueSystemBypassesBothCaps(t *testing.T) {
 	if id := d.Enqueue(1, "manual"); id != 0 {
 		t.Fatalf("the per-app guard must still hold for ordinary callers, got %d", id)
 	}
-	if id := d.EnqueueSystem(1); id == 0 {
+	if id := d.EnqueueSystem(context.Background(), 1); id == 0 {
 		t.Fatal("a system deploy must not be refused by the per-app in-flight guard")
+	}
+}
+
+// An organization with more applications than the queue is deep must not lose
+// its tail: a dropped system deploy strands that service on the shared network
+// with nothing to retry it. EnqueueSystem waits for room instead, bounded by
+// its context — and while it waits it must not write failed deployment rows.
+func TestEnqueueSystemWaitsForQueueRoom(t *testing.T) {
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
+	// No worker is started, so nothing drains: fill the queue to capacity with
+	// one deploy per distinct app (the per-app guard allows one each).
+	for i := 1; i <= cap(d.queue); i++ {
+		if id := d.Enqueue(int64(i), "manual"); id == 0 {
+			t.Fatalf("filling the queue: app %d was refused", i)
+		}
+	}
+	rowsBefore := st.deploymentCount()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if id := d.EnqueueSystem(ctx, 9999); id != 0 {
+		t.Fatalf("a full queue must not accept the deploy, got %d", id)
+	}
+	if n := st.deploymentCount(); n != rowsBefore {
+		t.Fatalf("waiting for room must not create deployment rows: %d -> %d", rowsBefore, n)
+	}
+
+	// Room frees up: the same call succeeds.
+	<-d.queue
+	if id := d.EnqueueSystem(context.Background(), 9999); id == 0 {
+		t.Fatal("with room in the queue the system deploy must be accepted")
 	}
 }

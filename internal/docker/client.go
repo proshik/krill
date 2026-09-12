@@ -241,20 +241,20 @@ func NewEngine(host string) (Engine, error) {
 	return eng, nil
 }
 
-func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
+func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) (bool, error) {
 	list, err := e.cli.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, n := range list {
 		if n.Name == name { // the name filter is a substring match, so compare exactly
-			return nil
+			return false, nil
 		}
 	}
 	_, err = e.cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: "overlay", Attachable: true})
-	return err
+	return err == nil, err
 }
 
 // NetworkRemove deletes an organization's overlay network. Idempotent: a

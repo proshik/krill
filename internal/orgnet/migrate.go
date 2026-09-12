@@ -6,19 +6,28 @@ import (
 	"log/slog"
 )
 
-// Org is one organization as the migration sees it: its id, and the overlay
-// network already recorded for it. An empty NetworkName means the organization
-// predates per-organization networks — its services are still on the single
-// shared overlay.
+// defaultInstanceBatch bounds how many database instances of one organization
+// are redeployed at once. Each one is a Swarm service pulling an image and
+// restarting a container; letting a whole organization's databases go at once
+// would spike the host right when its apps are queued behind them.
+const defaultInstanceBatch = 3
+
+// Org is one organization as the migration sees it.
 type Org struct {
 	ID          int64
 	NetworkName string
+	// Migrated is true once network_migrated_at is set — every service of this
+	// organization was successfully submitted for a move. NetworkName alone does
+	// not say that: it is written BEFORE anything moves, because the deployer
+	// reads it to know where to deploy.
+	Migrated bool
 }
 
 // Store is what the migration needs from the database.
 type Store interface {
 	ListOrganizations(ctx context.Context) ([]Org, error)
 	SetOrganizationNetwork(ctx context.Context, orgID int64, network string) error
+	MarkOrganizationMigrated(ctx context.Context, orgID int64) error
 	ListAppIDsByOrg(ctx context.Context, orgID int64) ([]int64, error)
 	ListInstanceIDsByOrg(ctx context.Context, orgID int64) ([]int64, error)
 }
@@ -29,20 +38,39 @@ type Store interface {
 // resolve and reach any other by name; nothing but a redeploy moves a Swarm
 // service between networks.
 //
-// The redeploy functions are injected rather than taken as services so this
-// package stays a leaf: the deployer and the DB-instance service both already
-// read the organization network from the store, so redeploying is all it takes
-// to land a service in the right place.
+// The hooks are injected rather than taken as services so this package stays a
+// leaf: the deployer and the DB-instance service both already read the
+// organization network from the store, so redeploying is all it takes to land a
+// service in the right place.
 type Migrator struct {
-	Store            Store
-	EnsureNetwork    func(ctx context.Context, name string) error
+	Store         Store
+	EnsureNetwork func(ctx context.Context, name string) error
+
+	// FilterApps narrows an organization's applications to the ones worth
+	// moving. Nil means "move them all". See RunningAppsFilter.
+	FilterApps func(ctx context.Context, ids []int64) ([]int64, error)
+
+	// RedeployInstance submits one database instance for redeployment. The
+	// submission is asynchronous, which is why WaitInstances exists.
 	RedeployInstance func(ctx context.Context, id int64) error
-	RedeployApp      func(ctx context.Context, id int64) error
+
+	// WaitInstances blocks until the given database instances are running again.
+	// Nil skips the wait. A returned error is a warning, not a failed migration:
+	// the services were submitted either way.
+	WaitInstances func(ctx context.Context, ids []int64) error
+
+	RedeployApp func(ctx context.Context, id int64) error
+
+	// InstanceBatch bounds concurrent database redeployments; <= 0 uses
+	// defaultInstanceBatch.
+	InstanceBatch int
 }
 
-// Run creates the network of every organization and redeploys the services of
-// those not yet migrated. It is idempotent: an organization with a recorded
-// network is left alone, so a second run (the next startup) does nothing.
+// Run creates the network of every organization and moves the services of those
+// not yet migrated. It is idempotent: an organization whose previous pass
+// completed is skipped, and one whose pass failed halfway is retried in full on
+// the next start. A redundant redeploy costs a restart; a tenant silently left
+// on the shared overlay costs the isolation this whole change exists for.
 //
 // Only a failure to enumerate the organizations is returned. Everything else is
 // logged and stepped over: this runs during startup, and a control plane that
@@ -62,51 +90,96 @@ func (m *Migrator) Run(ctx context.Context) error {
 			slog.Error("organization network migration: could not create the network", "err", err, "org_id", o.ID, "network", name)
 			continue
 		}
-		if o.NetworkName != "" {
-			continue // already migrated
-		}
-		if err := m.Store.SetOrganizationNetwork(ctx, o.ID, name); err != nil {
-			// Without the stored name a redeploy would put the service straight
-			// back on the shared network, so skip the organization entirely and
-			// let the next startup retry it.
-			slog.Error("organization network migration: could not record the network", "err", err, "org_id", o.ID, "network", name)
+		if o.Migrated {
 			continue
 		}
+		if o.NetworkName != name {
+			if err := m.Store.SetOrganizationNetwork(ctx, o.ID, name); err != nil {
+				// Without the stored name a redeploy would put the service straight
+				// back on the shared network, so skip the organization entirely and
+				// let the next startup retry it.
+				slog.Error("organization network migration: could not record the network", "err", err, "org_id", o.ID, "network", name)
+				continue
+			}
+		}
 		slog.Info("migrating an organization onto its own network", "org_id", o.ID, "network", name)
-		m.moveServices(ctx, o.ID)
+		if !m.moveServices(ctx, o.ID) {
+			slog.Warn("organization network migration incomplete, it will be retried on the next start", "org_id", o.ID)
+			continue
+		}
+		if err := m.Store.MarkOrganizationMigrated(ctx, o.ID); err != nil {
+			// Harmless: the next pass redoes the (idempotent) redeploys.
+			slog.Error("organization network migration: could not record completion", "err", err, "org_id", o.ID)
+		}
 	}
 	return nil
 }
 
-// moveServices redeploys one organization's services into its network.
+// moveServices redeploys one organization's services into its network and
+// reports whether every one of them was submitted successfully.
 //
-// Databases move before apps. The networks are isolated from each other, so an
-// app that lands in the new network while its database is still on the old one
-// cannot resolve it by name and will crash-loop until the database follows.
-// Submitting the databases first — the app deploys queue up behind a single
-// worker — means an app only ever arrives in a network its databases are
-// already headed for. The reverse order would break every app in the
-// organization for the length of the migration.
-func (m *Migrator) moveServices(ctx context.Context, orgID int64) {
+// Databases move first, and the apps wait for them. The networks are isolated
+// from each other, so an app that lands in the new network while its database
+// is still on the old one cannot resolve it by name: it crash-loops, and
+// Swarm's rollback-on-failure then puts that app back on the OLD network and
+// marks the deploy failed. Submitting in order is not enough to prevent that —
+// database redeployments run in their own goroutines rather than queueing
+// behind the app worker — so each batch of databases is waited on before the
+// apps are enqueued.
+func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 	instances, err := m.Store.ListInstanceIDsByOrg(ctx, orgID)
 	if err != nil {
+		// Fail the whole organization. Moving the apps now would strand them in
+		// a network holding none of their databases, with nothing to retry it.
 		slog.Error("organization network migration: could not list database instances", "err", err, "org_id", orgID)
+		return false
 	}
-	for _, id := range instances {
-		if err := m.RedeployInstance(ctx, id); err != nil {
-			// One service that will not move must not cost the rest of the pass:
-			// the organization is already marked migrated, so nothing retries it.
-			slog.Error("organization network migration: could not redeploy a database instance", "err", err, "org_id", orgID, "instance_id", id)
+	complete := true
+	batch := m.InstanceBatch
+	if batch <= 0 {
+		batch = defaultInstanceBatch
+	}
+	for start := 0; start < len(instances); start += batch {
+		end := min(start+batch, len(instances))
+		submitted := make([]int64, 0, end-start)
+		for _, id := range instances[start:end] {
+			if err := m.RedeployInstance(ctx, id); err != nil {
+				// One service that will not move must not cost the rest of the
+				// pass; the organization simply stays un-migrated and is retried.
+				slog.Error("organization network migration: could not redeploy a database instance", "err", err, "org_id", orgID, "instance_id", id)
+				complete = false
+				continue
+			}
+			submitted = append(submitted, id)
+		}
+		if m.WaitInstances == nil || len(submitted) == 0 {
+			continue
+		}
+		if err := m.WaitInstances(ctx, submitted); err != nil {
+			// A slow database is not a failed submission: the instances were
+			// handed over, so the organization still counts as migrated. Warn and
+			// let the apps follow — holding them back forever is worse.
+			slog.Warn("organization network migration: databases did not come back in time, moving the apps anyway", "err", err, "org_id", orgID)
 		}
 	}
+
 	apps, err := m.Store.ListAppIDsByOrg(ctx, orgID)
 	if err != nil {
 		slog.Error("organization network migration: could not list applications", "err", err, "org_id", orgID)
-		return
+		return false
+	}
+	if m.FilterApps != nil {
+		apps, err = m.FilterApps(ctx, apps)
+		if err != nil {
+			slog.Error("organization network migration: could not check which applications are running", "err", err, "org_id", orgID)
+			return false
+		}
 	}
 	for _, id := range apps {
 		if err := m.RedeployApp(ctx, id); err != nil {
 			slog.Error("organization network migration: could not redeploy an application", "err", err, "org_id", orgID, "app_id", id)
+			complete = false
 		}
 	}
+	return complete
 }

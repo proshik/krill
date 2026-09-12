@@ -31,9 +31,9 @@ type mockEngine struct {
 	execFail  bool // first Exec fails, later ones succeed
 }
 
-func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
-func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
-func (m *mockEngine) NetworkRemove(context.Context, string) error { return nil }
+func newMockEngine() *mockEngine                                          { return &mockEngine{scaled: map[string]uint64{}} }
+func (m *mockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (m *mockEngine) NetworkRemove(context.Context, string) error         { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

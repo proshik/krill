@@ -20,9 +20,13 @@ func (s *DBStore) ListOrganizations(ctx context.Context) ([]Org, error) {
 	}
 	orgs := make([]Org, 0, len(rows))
 	for _, o := range rows {
-		orgs = append(orgs, Org{ID: o.ID, NetworkName: o.NetworkName})
+		orgs = append(orgs, Org{ID: o.ID, NetworkName: o.NetworkName, Migrated: o.NetworkMigratedAt.Valid})
 	}
 	return orgs, nil
+}
+
+func (s *DBStore) MarkOrganizationMigrated(ctx context.Context, orgID int64) error {
+	return s.q.MarkOrganizationNetworkMigrated(ctx, orgID)
 }
 
 func (s *DBStore) SetOrganizationNetwork(ctx context.Context, orgID int64, network string) error {

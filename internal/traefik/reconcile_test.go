@@ -19,11 +19,12 @@ type fakeEngine struct {
 	labels   map[string]string
 	found    bool
 	labelErr error
+	creates  map[string]bool // network name -> NetworkEnsure reports it was created
 }
 
-func (f *fakeEngine) NetworkEnsure(_ context.Context, name string) error {
+func (f *fakeEngine) NetworkEnsure(_ context.Context, name string) (bool, error) {
 	f.ensured = append(f.ensured, name)
-	return nil
+	return f.creates[name], nil
 }
 
 func (f *fakeEngine) ServiceDeploy(_ context.Context, spec docker.ServiceSpec) error {
@@ -120,5 +121,37 @@ func TestReconcileDeploysWhenLabelsUnreadable(t *testing.T) {
 	}
 	if len(f.deployed) != 1 {
 		t.Fatalf("want a deploy despite the read failure, got %d", len(f.deployed))
+	}
+}
+
+// A network that was deleted and recreated by NetworkEnsure has a NEW id, while
+// the gateway's stored spec still holds the old one. The name set — and so the
+// fingerprint — is unchanged, so the skip has to be overridden by the fact that
+// a network was created, or the gateway stays attached to a network that no
+// longer exists.
+func TestReconcileDeploysWhenANetworkWasRecreated(t *testing.T) {
+	f := &fakeEngine{}
+	acme := AcmeConfig{Email: "a@b.c"}
+	orgs := []string{"krill-org-1"}
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if len(f.deployed) != 1 {
+		t.Fatalf("want one deploy, got %d", len(f.deployed))
+	}
+	// Unchanged set, nothing created: still a no-op.
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if len(f.deployed) != 1 {
+		t.Fatalf("unchanged reconcile redeployed: %d deploys", len(f.deployed))
+	}
+	// Same set, but one network had to be recreated.
+	f.creates = map[string]bool{"krill-org-1": true}
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+		t.Fatalf("third reconcile: %v", err)
+	}
+	if len(f.deployed) != 2 {
+		t.Fatalf("a recreated network must redeploy: %d deploys", len(f.deployed))
 	}
 }
