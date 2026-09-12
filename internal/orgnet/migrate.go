@@ -66,6 +66,16 @@ type Migrator struct {
 	// moving. Nil means "move them all". See RunningAppsFilter.
 	FilterApps func(ctx context.Context, ids []int64) ([]int64, error)
 
+	// PlanInstances decides how each database instance of an organization moves:
+	// redeployed and waited on, or parked (moved without being started). Nil
+	// redeploys them all. See RunningInstancesFilter.
+	PlanInstances func(ctx context.Context, ids []int64) (InstancePlan, error)
+
+	// ParkInstance synchronously rewrites a stopped instance's service onto its
+	// organization network at the given replica count, without starting it.
+	// Required whenever PlanInstances can park anything.
+	ParkInstance func(ctx context.Context, id int64, replicas uint64) error
+
 	// RedeployInstance submits one database instance for redeployment. The
 	// submission is asynchronous, which is why WaitInstances exists.
 	RedeployInstance func(ctx context.Context, id int64) error
@@ -188,16 +198,39 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 			return false
 		}
 	}
+	plan := InstancePlan{Running: instances}
+	if m.PlanInstances != nil {
+		plan, err = m.PlanInstances(ctx, instances)
+		if err != nil {
+			slog.Error("organization network migration: could not check which database instances are running", "err", err, "org_id", orgID)
+			return false
+		}
+	}
 
 	complete := true
+	// Stopped instances first: parking is synchronous and starts nothing, so it
+	// costs the apps behind it no wait.
+	for _, p := range plan.Parked {
+		if m.ParkInstance == nil {
+			slog.Error("organization network migration: no way to move a stopped database instance", "org_id", orgID, "instance_id", p.ID)
+			complete = false
+			continue
+		}
+		if err := m.ParkInstance(ctx, p.ID, p.Replicas); err != nil {
+			slog.Error("organization network migration: could not move a stopped database instance", "err", err, "org_id", orgID, "instance_id", p.ID)
+			complete = false
+		}
+	}
+
 	batch := m.InstanceBatch
 	if batch <= 0 {
 		batch = defaultInstanceBatch
 	}
-	for start := 0; start < len(instances); start += batch {
-		end := min(start+batch, len(instances))
+	running := plan.Running
+	for start := 0; start < len(running); start += batch {
+		end := min(start+batch, len(running))
 		submitted := make([]int64, 0, end-start)
-		for _, id := range instances[start:end] {
+		for _, id := range running[start:end] {
 			if err := m.RedeployInstance(ctx, id); err != nil {
 				// One service that will not move must not cost the rest of the
 				// pass; the organization simply stays un-migrated and is retried.

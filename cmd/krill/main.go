@@ -500,6 +500,18 @@ func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.En
 		// operator scaled to zero must not come back up because the control
 		// plane was upgraded.
 		FilterApps: orgnet.RunningAppsFilter(engine),
+		// The same for database instances, except that a stopped one is moved
+		// without being started rather than skipped: Start only scales the
+		// existing service, so one left behind would come back up on the shared
+		// network.
+		PlanInstances: orgnet.RunningInstancesFilter(engine, func(c context.Context, id int64) (orgnet.InstanceRow, error) {
+			inst, err := q.GetDBInstance(c, id)
+			if err != nil {
+				return orgnet.InstanceRow{}, err
+			}
+			return orgnet.InstanceRow{AppName: inst.AppName, Status: inst.Status}, nil
+		}),
+		ParkInstance: dbSvc.ParkInstance,
 		RedeployInstance: func(_ context.Context, id int64) error {
 			dbSvc.DeployInstance(id) // asynchronous; WaitInstances below is what orders it
 			return nil

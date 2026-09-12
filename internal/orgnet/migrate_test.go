@@ -576,3 +576,90 @@ func TestMigratorTreatsADeletedDeploymentAsNothingToMove(t *testing.T) {
 		t.Fatal("a deleted app must not keep the organization unmigrated")
 	}
 }
+
+// Parked (stopped) instances are moved without being redeployed or waited on;
+// only the running ones are submitted and waited for.
+func TestMigratorParksStoppedInstances(t *testing.T) {
+	st := &fakeStore{
+		orgs:      []Org{{ID: 1}},
+		apps:      map[int64][]int64{1: {10}},
+		instances: map[int64][]int64{1: {20, 21}},
+	}
+	var redeployed []int64
+	var parked []ParkedInstance
+	var waited []int64
+	m := &Migrator{
+		Store:         st,
+		EnsureNetwork: func(context.Context, string) error { return nil },
+		PlanInstances: func(context.Context, []int64) (InstancePlan, error) {
+			return InstancePlan{Running: []int64{20}, Parked: []ParkedInstance{{ID: 21, Replicas: 0}}}, nil
+		},
+		ParkInstance: func(_ context.Context, id int64, replicas uint64) error {
+			parked = append(parked, ParkedInstance{ID: id, Replicas: replicas})
+			return nil
+		},
+		RedeployInstance: func(_ context.Context, id int64) error { redeployed = append(redeployed, id); return nil },
+		WaitInstances:    func(_ context.Context, ids []int64) error { waited = append(waited, ids...); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+		DeployPoll:       time.Millisecond,
+	}
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(redeployed) != 1 || redeployed[0] != 20 {
+		t.Fatalf("only the running instance may be redeployed, got %v", redeployed)
+	}
+	if len(parked) != 1 || parked[0] != (ParkedInstance{ID: 21, Replicas: 0}) {
+		t.Fatalf("the stopped instance must be parked at zero replicas, got %v", parked)
+	}
+	if len(waited) != 1 || waited[0] != 20 {
+		t.Fatalf("only the running instance may be waited on, got %v", waited)
+	}
+	if !st.marked[1] {
+		t.Fatal("a pass that moved everything must be recorded")
+	}
+}
+
+// A stopped instance that could not be moved leaves the organization to be
+// retried, and so does a plan that could not be made — before anything moves.
+func TestMigratorDoesNotMarkTheOrgWhenInstancesCannotBeMoved(t *testing.T) {
+	t.Run("parking fails", func(t *testing.T) {
+		st := &fakeStore{orgs: []Org{{ID: 1}}, apps: map[int64][]int64{1: {10}}, instances: map[int64][]int64{1: {21}}}
+		m := &Migrator{
+			Store:         st,
+			EnsureNetwork: func(context.Context, string) error { return nil },
+			PlanInstances: func(context.Context, []int64) (InstancePlan, error) {
+				return InstancePlan{Parked: []ParkedInstance{{ID: 21}}}, nil
+			},
+			ParkInstance:     func(context.Context, int64, uint64) error { return errors.New("boom") },
+			RedeployInstance: func(context.Context, int64) error { return nil },
+			RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+			DeployPoll:       time.Millisecond,
+		}
+		if err := m.Run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if st.marked[1] {
+			t.Fatal("a stopped instance left on the shared network must keep the organization unmigrated")
+		}
+	})
+	t.Run("planning fails", func(t *testing.T) {
+		st := &fakeStore{orgs: []Org{{ID: 1}}, apps: map[int64][]int64{1: {10}}, instances: map[int64][]int64{1: {20}}}
+		var moved int
+		m := &Migrator{
+			Store:         st,
+			EnsureNetwork: func(context.Context, string) error { return nil },
+			PlanInstances: func(context.Context, []int64) (InstancePlan, error) {
+				return InstancePlan{}, errors.New("boom")
+			},
+			RedeployInstance: func(context.Context, int64) error { moved++; return nil },
+			RedeployApp:      func(_ context.Context, id int64) (int64, error) { moved++; return id, nil },
+		}
+		if err := m.Run(context.Background()); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if moved != 0 || st.marked[1] {
+			t.Fatalf("nothing may move and the organization must stay unmigrated, moved=%d marked=%v", moved, st.marked[1])
+		}
+	})
+}
