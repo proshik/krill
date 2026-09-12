@@ -85,8 +85,9 @@ type Config struct {
 	// tenant, so without this an org with many apps could hold it indefinitely
 	// and stall every other tenant's deploys. <= 0 disables the cap.
 	MaxBuildsPerOrg int `env:"KRILL_MAX_BUILDS_PER_ORG" envDefault:"2"`
-	// BuildCacheLimit is the --keep-storage value passed to `docker builder
-	// prune` on each BuildPruneInterval tick. Nothing else ever trims the
+	// BuildCacheLimit is the --reserved-space value (--keep-storage on a Docker
+	// CLI older than 28) passed to `docker builder prune` on each
+	// BuildPruneInterval tick. Nothing else ever trims the
 	// BuildKit cache, so on a small VPS the disk fills silently until builds
 	// start failing. Empty disables pruning.
 	BuildCacheLimit string `env:"KRILL_BUILD_CACHE_LIMIT" envDefault:"5gb"`
