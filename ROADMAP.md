@@ -44,7 +44,9 @@ Verified in code and tests, but not yet exercised on a real environment:
    a node failing mid-transfer.
 5. The agent API with a real MCP client and a real CI job.
 6. `krill-cli` end to end against a real Krill and a real registry.
-7. `install.sh` downloading a published release (no release has been cut yet).
+7. A full `install.sh` run from a published release on a fresh VM. `v0.1.0` exists, and
+   downloading its binary the way the installer does was verified against `checksums.txt`,
+   but the whole install from it has not been run.
 8. The per-organization network migration on a real Swarm cluster — an upgrade
    of an install with existing apps and database instances, moving them all
    onto their organization's network without an outage.
