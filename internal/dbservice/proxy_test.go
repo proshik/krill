@@ -74,7 +74,7 @@ func init() {
 // named by the target's Suffix.
 func TestReconcileProxyDeploysOnePerTargetWithHostPort(t *testing.T) {
 	eng := newMockEngine()
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	inst := Instance{ID: 42, Engine: "test2target", AppName: "krill-t2t-x", ExternalPort: p32(9100), ConsoleExternalPort: p32(9101)}
 	if err := svc.reconcileProxy(context.Background(), inst); err != nil {
 		t.Fatalf("reconcileProxy: %v", err)
@@ -107,7 +107,7 @@ func TestReconcileProxyDeploysOnePerTargetWithHostPort(t *testing.T) {
 // service — the other target (with a HostPort) is deployed independently.
 func TestReconcileProxyNilTargetHostPortRemovesJustThatProxy(t *testing.T) {
 	eng := newMockEngine()
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	inst := Instance{ID: 43, Engine: "test2target", AppName: "krill-t2t-y", ExternalPort: p32(9200), ConsoleExternalPort: nil}
 	if err := svc.reconcileProxy(context.Background(), inst); err != nil {
 		t.Fatalf("reconcileProxy: %v", err)
@@ -126,7 +126,7 @@ func TestReconcileProxyNilTargetHostPortRemovesJustThatProxy(t *testing.T) {
 // service, unaffected by the N-target generalization.
 func TestReconcileProxySingleTargetUnchangedForPostgresAndRedis(t *testing.T) {
 	eng := newMockEngine()
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	pg := samplePGInstance()
 	pg.ExternalPort = p32(5433)
 	if err := svc.reconcileProxy(context.Background(), pg); err != nil {
@@ -137,7 +137,7 @@ func TestReconcileProxySingleTargetUnchangedForPostgresAndRedis(t *testing.T) {
 	}
 
 	eng2 := newMockEngine()
-	svc2 := newSvc(eng2, nil)
+	svc2 := newSvc(eng2, newFakeStore(Instance{}))
 	rd := sampleRedisInstance()
 	rd.ExternalPort = p32(6380)
 	if err := svc2.reconcileProxy(context.Background(), rd); err != nil {
@@ -154,7 +154,7 @@ func TestReconcileProxySingleTargetUnchangedForPostgresAndRedis(t *testing.T) {
 func TestReconcileProxyDisabledToleratesNotFoundOnServiceRemove(t *testing.T) {
 	eng := newMockEngine()
 	eng.removeErr = errors.New("Error: no such service: krill-dbproxy-1")
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	inst := samplePGInstance()
 	inst.ExternalPort = nil
 	if err := svc.reconcileProxy(context.Background(), inst); err != nil {
@@ -168,7 +168,7 @@ func TestReconcileProxyDisabledToleratesNotFoundOnServiceRemove(t *testing.T) {
 func TestReconcileProxyDisabledSurfacesRealServiceRemoveError(t *testing.T) {
 	eng := newMockEngine()
 	eng.removeErr = errors.New("cannot connect to the Docker daemon")
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	inst := samplePGInstance()
 	inst.ExternalPort = nil
 	err := svc.reconcileProxy(context.Background(), inst)
@@ -186,7 +186,7 @@ func TestReconcileProxyDisabledSurfacesRealServiceRemoveError(t *testing.T) {
 func TestReconcileProxySurfacesServiceDeployError(t *testing.T) {
 	eng := newMockEngine()
 	eng.deployErr = errors.New("cannot connect to the Docker daemon")
-	svc := newSvc(eng, nil)
+	svc := newSvc(eng, newFakeStore(Instance{}))
 	inst := samplePGInstance()
 	inst.ExternalPort = p32(5433)
 	err := svc.reconcileProxy(context.Background(), inst)

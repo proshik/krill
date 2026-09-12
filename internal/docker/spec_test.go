@@ -184,3 +184,24 @@ func TestBuildSwarmSpecRestartConditionNone(t *testing.T) {
 		t.Errorf("RestartMaxAttempts == 0 must leave MaxAttempts nil (unlimited), got %d", *rp.MaxAttempts)
 	}
 }
+
+// A service that has to live in several networks (the Traefik gateway, which
+// must reach every organization's otherwise isolated network) sets Networks;
+// every entry has to become a task attachment.
+func TestSpecAttachesEveryNetwork(t *testing.T) {
+	s := buildSwarmSpec(ServiceSpec{Name: "x", Image: "i", Networks: []string{"a", "b"}})
+	if len(s.TaskTemplate.Networks) != 2 {
+		t.Fatalf("want 2 networks, got %+v", s.TaskTemplate.Networks)
+	}
+	if s.TaskTemplate.Networks[0].Target != "a" || s.TaskTemplate.Networks[1].Target != "b" {
+		t.Fatalf("attachment order must follow Networks, got %+v", s.TaskTemplate.Networks)
+	}
+}
+
+// Networks is optional: a service with a single network keeps using Network.
+func TestSpecFallsBackToSingleNetwork(t *testing.T) {
+	s := buildSwarmSpec(ServiceSpec{Name: "x", Image: "i", Network: "krill-net"})
+	if len(s.TaskTemplate.Networks) != 1 || s.TaskTemplate.Networks[0].Target != "krill-net" {
+		t.Fatalf("want the single Network attached, got %+v", s.TaskTemplate.Networks)
+	}
+}

@@ -31,3 +31,17 @@ func TestParseBearerChallenge(t *testing.T) {
 		t.Fatalf("parsed = %+v", c)
 	}
 }
+
+func TestCanonicalRegistryHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"docker.io":            "docker.io",
+		"index.docker.io":      "docker.io",
+		"registry-1.docker.io": "docker.io",
+		"ghcr.io":              "ghcr.io",
+		"registry.example.com": "registry.example.com",
+	} {
+		if got := CanonicalRegistryHost(in); got != want {
+			t.Errorf("CanonicalRegistryHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

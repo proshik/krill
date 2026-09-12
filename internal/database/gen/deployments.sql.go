@@ -40,6 +40,31 @@ func (q *Queries) CountRunningDeploymentsByApplication(ctx context.Context, appl
 	return count, err
 }
 
+const countRunningDeploymentsByOrg = `-- name: CountRunningDeploymentsByOrg :one
+SELECT count(*)
+FROM deployments d
+JOIN applications a ON a.id = d.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE d.status = 'running'
+  AND p.organization_id = (
+    SELECT p2.organization_id
+    FROM applications a2
+    JOIN environments e2 ON e2.id = a2.environment_id
+    JOIN projects p2 ON p2.id = e2.project_id
+    WHERE a2.id = $1
+  )
+`
+
+// In-flight deployments across the whole organization that owns $1. One tenant
+// must not be able to fill the single build worker's queue for everyone else.
+func (q *Queries) CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunningDeploymentsByOrg, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at
 `
@@ -129,6 +154,38 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const listDeploymentStatuses = `-- name: ListDeploymentStatuses :many
+SELECT id, status FROM deployments WHERE id = ANY($1::bigint[])
+`
+
+type ListDeploymentStatusesRow struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+}
+
+// Status of each listed deployment, without the log column. The startup
+// network migration polls this until every app redeploy it submitted is
+// terminal: submitting a deploy proves nothing about whether it moved the app.
+func (q *Queries) ListDeploymentStatuses(ctx context.Context, ids []int64) ([]ListDeploymentStatusesRow, error) {
+	rows, err := q.db.Query(ctx, listDeploymentStatuses, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentStatusesRow
+	for rows.Next() {
+		var i ListDeploymentStatusesRow
+		if err := rows.Scan(&i.ID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDeploymentSummariesByApplication = `-- name: ListDeploymentSummariesByApplication :many

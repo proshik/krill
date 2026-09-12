@@ -27,7 +27,8 @@ import (
 // healthy task, so deploys converge instantly in handler tests.
 type noopEngine struct{}
 
-func (noopEngine) NetworkEnsure(context.Context, string) error             { return nil }
+func (noopEngine) NetworkEnsure(context.Context, string) (bool, error)     { return false, nil }
+func (noopEngine) NetworkRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceDeploy(context.Context, docker.ServiceSpec) error { return nil }
 func (noopEngine) ServiceRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
@@ -63,6 +64,9 @@ func (noopEngine) VolumeExistsOn(context.Context, string, string) (bool, error) 
 func (noopEngine) VolumeChown(context.Context, string, int, int, string) error      { return nil }
 func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
+}
+func (noopEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
 }
 func (noopEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
@@ -108,6 +112,20 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 // being valid. nil uses the real queries, i.e. exactly newDeployServer.
 func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
+	h, q, orgSvc, pool, _ := buildDeployServer(t, tokens)
+	return h, q, orgSvc, pool
+}
+
+// newDeployServerWithDeployer is newDeployServer that also hands back the
+// deployer, so a test can tune it (e.g. the per-organization in-flight cap).
+func newDeployServerWithDeployer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *deploy.Deployer) {
+	t.Helper()
+	h, q, orgSvc, _, dep := buildDeployServer(t, nil)
+	return h, q, orgSvc, dep
+}
+
+func buildDeployServer(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool, *deploy.Deployer) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
@@ -125,5 +143,5 @@ func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handle
 		tokenStore = tokens
 	}
 	srv.SetAPI(api.NewAuthenticator(tokenStore, orgSvc), api.NewService(q, eng, dep))
-	return srv.Router(), q, orgSvc, pool
+	return srv.Router(), q, orgSvc, pool, dep
 }

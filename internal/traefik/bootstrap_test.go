@@ -15,7 +15,7 @@ func hasArg(args []string, want string) bool {
 }
 
 func TestTraefikSpecTLS(t *testing.T) {
-	s := TraefikSpec("krill-net", AcmeConfig{Email: "a@b.c", Staging: false})
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: false})
 	if !hasArg(s.Args, "--entrypoints.websecure.address=:443") {
 		t.Error("missing websecure entrypoint")
 	}
@@ -50,7 +50,7 @@ func TestTraefikSpecTLS(t *testing.T) {
 }
 
 func TestTraefikSpecStaging(t *testing.T) {
-	s := TraefikSpec("krill-net", AcmeConfig{Email: "a@b.c", Staging: true})
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: true})
 	if !hasArg(s.Args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory") {
 		t.Error("staging caserver missing")
 	}

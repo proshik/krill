@@ -47,6 +47,9 @@ type Querier interface {
 	// by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
 	// leaked lock would block the app forever.
 	CountRunningDeploymentsByApplication(ctx context.Context, applicationID int64) (int64, error)
+	// In-flight deployments across the whole organization that owns $1. One tenant
+	// must not be able to fill the single build worker's queue for everyone else.
+	CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
@@ -59,6 +62,11 @@ type Querier interface {
 	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateGitCredential(ctx context.Context, arg CreateGitCredentialParams) (GitCredential, error)
+	// A user created by someone else's invitation, flagged to change the password
+	// the inviter chose in the same statement. A separate UPDATE could fail after
+	// the insert succeeded, leaving the invitee on a password the inviter still
+	// knows, with nothing to ever retry it.
+	CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error)
 	CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDatabaseParams) (LogicalDatabase, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
@@ -87,6 +95,9 @@ type Querier interface {
 	DeleteProject(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
+	// Changing a password logs out every other device; the current session is kept
+	// so the user is not bounced back to the login form mid-flow.
+	DeleteSessionsByUserExcept(ctx context.Context, arg DeleteSessionsByUserExceptParams) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
 	// Revoke the instance-operator flag from everyone except the seeded admin.
@@ -118,12 +129,14 @@ type Querier interface {
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
+	GetOrganizationNetworkByApp(ctx context.Context, id int64) (string, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserIsAdmin(ctx context.Context, id int64) (bool, error)
+	GetUserMustChangePassword(ctx context.Context, id int64) (bool, error)
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
@@ -132,15 +145,21 @@ type Querier interface {
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
+	ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListClusterNodes(ctx context.Context) ([]ClusterNode, error)
+	ListDBInstanceIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
 	// Batched form for the topology view (one query instead of one per app).
 	ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error)
+	// Status of each listed deployment, without the log column. The startup
+	// network migration polls this until every app redeploy it submitted is
+	// terminal: submitting a deploy proves nothing about whether it moved the app.
+	ListDeploymentStatuses(ctx context.Context, ids []int64) ([]ListDeploymentStatusesRow, error)
 	// Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
 	// column — for the deploy-history list, which is polled every 2s and never
 	// renders the log. Use GetDeployment for the single-deployment detail/log view.
@@ -162,6 +181,7 @@ type Querier interface {
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
+	ListOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
@@ -174,6 +194,7 @@ type Querier interface {
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
+	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
@@ -196,7 +217,10 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
+	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
+	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error

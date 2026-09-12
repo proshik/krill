@@ -7,11 +7,15 @@ What is done, what is waiting for live verification, and what is open.
 
 - **Apps:** deploy from an image or a Dockerfile (Git clone + local build), deployment
   history, zero-downtime rolling updates, advanced container settings (limits,
-  replicas, restart policy, healthcheck, command override), lifecycle controls
-  (deploy / reload / rebuild / stop), volumes with S3 backup and restore, raw TCP/UDP
-  ports, build args and secrets, private Git and private registries.
+  replicas, restart policy, healthcheck, command override) with instance-wide
+  default CPU/memory limits, lifecycle controls (deploy / reload / rebuild / stop),
+  volumes with S3 backup and restore, raw TCP/UDP ports, build args and secrets,
+  private Git and private registries (each credential bound to its own host), a
+  per-organization cap on in-flight deploys, and a periodic BuildKit cache prune.
 - **Projects and tenancy:** organization → project → environment → app, owner /
-  admin / member roles, and an instance-admin flag for cluster-wide resources.
+  admin / member roles, an instance-admin flag for cluster-wide resources, a
+  private overlay network per organization, and self-service password changes
+  (forced for anyone newly added to an organization).
 - **Managed databases:** org-level Postgres, Redis, DragonFly and MinIO instances;
   logical Postgres databases per environment; connection values injected into app
   env vars; external ports; Postgres backups to S3 with schedule presets, retention
@@ -26,7 +30,8 @@ What is done, what is waiting for live verification, and what is open.
 - **Automation:** GitHub push webhook and CI deploy hook, an agent API (REST +
   MCP) with org-scoped tokens, and `krill-cli` to build locally and deploy.
 - **Install:** one-line `install.sh` (host binary + systemd), optionally against an
-  external managed Postgres.
+  external managed Postgres, with the control-plane's own Postgres on its own
+  Docker network rather than the default bridge.
 
 ## Live-acceptance queue
 
@@ -40,6 +45,11 @@ Verified in code and tests, but not yet exercised on a real environment:
 5. The agent API with a real MCP client and a real CI job.
 6. `krill-cli` end to end against a real Krill and a real registry.
 7. `install.sh` downloading a published release (no release has been cut yet).
+8. The per-organization network migration on a real Swarm cluster — an upgrade
+   of an install with existing apps and database instances, moving them all
+   onto their organization's network without an outage.
+9. The installer's control-plane Postgres move (`krill-state` network) on a
+   real VPS upgrade, including the container-recreation path.
 
 ## Open
 
@@ -55,7 +65,19 @@ Verified in code and tests, but not yet exercised on a real environment:
   the job itself.
 - **Email and Slack** notification channels (Telegram ships today).
 - A Homebrew tap for `krill-cli`.
-- Recording API-triggered deploys as their own trigger type.
+- Recording API-triggered deploys, and the redeploys made by the network migration, as their own trigger types.
+- **Network migration: do not let one organization hold back the rest.** Organizations are
+  migrated one after another under a single deadline that includes deploy completion, so a
+  slow organization delays every organization after it until the next restart. Submit every
+  organization's redeploys first, then wait for all of them.
+- **Reload of a stopped app after the network migration** restarts it on its old service
+  spec, i.e. on the shared network and away from its databases. Reload of a stopped app
+  should go through a full deploy.
+- **The MinIO image moved off Docker Hub.** `minio/minio` no longer pulls, so creating a MinIO
+  instance fails and the MinIO-backed tests cannot run; the driver and the test helper need
+  to switch to `quay.io/minio/minio`.
+- A per-owner cap on organizations: each new organization changes the gateway's networks and
+  restarts the Traefik task (at most once a minute).
 
 ## Later
 

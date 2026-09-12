@@ -9,8 +9,9 @@
 #   3. Initialize a single-node Docker Swarm if not already a manager.
 #   4. Generate /etc/krill/krill.env (secrets created once, preserved on re-run;
 #      written BEFORE Postgres so the password can never desync from the volume).
-#   5. Run a loopback-only Postgres container for Krill's own state (and verify
-#      the configured password actually opens it).
+#   5. Run a loopback-only Postgres container for Krill's own state, on its own
+#      Docker network isolated from build/app containers (and verify the
+#      configured password actually opens it).
 #   6. Download the krill binary from the GitHub Release (checksum-verified).
 #   7. Install + start a systemd service.
 #   8. Print the admin URL and one-time credentials.
@@ -34,6 +35,7 @@ BIN_PATH="/usr/local/bin/krill"
 UNIT_PATH="/etc/systemd/system/krill.service"
 PG_CONTAINER="krill-postgres"
 PG_IMAGE="postgres:17-alpine"
+PG_NETWORK="krill-state"
 
 info() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m warn:\033[0m %s\n' "$*" >&2; }
@@ -73,6 +75,33 @@ preflight_external_db() {
 		die "cannot connect to the external database ($(mask_dsn "$1")): check host, credentials, and sslmode (managed providers usually need sslmode=require)"
 	fi
 	info "External database reachable."
+}
+
+# ensure_state_network — create the dedicated network for the control-plane
+# Postgres container (idempotent). The container must not share the default
+# bridge with build containers: anything on that bridge can reach it by IP,
+# and the loopback-only port publish does not stop that (it only blocks
+# connections from outside the host).
+ensure_state_network() {
+	docker network inspect "$PG_NETWORK" >/dev/null 2>&1 ||
+		docker network create "$PG_NETWORK" >/dev/null || die "failed to create the $PG_NETWORK network"
+}
+
+# pg_on_state_network — true if $PG_CONTAINER is currently attached to
+# $PG_NETWORK.
+pg_on_state_network() {
+	docker inspect -f '{{json .NetworkSettings.Networks}}' "$PG_CONTAINER" 2>/dev/null | grep -q "\"$PG_NETWORK\""
+}
+
+# start_pg_container — (re)create the control-plane Postgres container on
+# $PG_NETWORK, loopback-published. Assumes $PG_PW is set and the container
+# name is free (any previous container must already be removed by the caller).
+start_pg_container() {
+	docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
+		--network "$PG_NETWORK" \
+		-e POSTGRES_USER=krill -e POSTGRES_PASSWORD="$PG_PW" -e POSTGRES_DB=krill \
+		-v krill-pg-data:/var/lib/postgresql/data \
+		-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
 }
 
 # Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
@@ -178,16 +207,23 @@ fi
 
 # --- 5. State Postgres -------------------------------------------------------
 if [ "$MANAGE_PG" = "yes" ]; then
+	ensure_state_network
 	if [ "$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER" 2>/dev/null)" = "true" ]; then
-		info "Postgres container '$PG_CONTAINER' already running."
+		if pg_on_state_network; then
+			info "Postgres container '$PG_CONTAINER' already running on $PG_NETWORK."
+		else
+			# Existing installs had the container on the default bridge, which build
+			# containers also use. Recreate it on the isolated network; the data
+			# lives in the krill-pg-data volume, not the container.
+			info "Moving $PG_CONTAINER onto the $PG_NETWORK network (recreating the container; data is preserved) ..."
+			docker rm -f "$PG_CONTAINER" >/dev/null || die "failed to remove $PG_CONTAINER to migrate it onto $PG_NETWORK"
+			start_pg_container
+		fi
 	else
 		# Remove a stopped leftover so the run below doesn't clash on the name.
 		docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
 		info "Starting Postgres ($PG_IMAGE, loopback-only) ..."
-		docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
-			-e POSTGRES_USER=krill -e POSTGRES_PASSWORD="$PG_PW" -e POSTGRES_DB=krill \
-			-v krill-pg-data:/var/lib/postgresql/data \
-			-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
+		start_pg_container
 	fi
 
 	info "Waiting for Postgres to accept connections ..."

@@ -104,6 +104,9 @@ func (st *migStore) SetInstanceNode(_ context.Context, _ int64, h string) error 
 	return nil
 }
 func (st *migStore) DeleteInstanceRow(context.Context, int64) error { return nil }
+func (st *migStore) GetOrgNetwork(context.Context, int64) (string, error) {
+	return "", nil // not migrated: the migration job uses the Service's configured fallback
+}
 
 func migFixture(failAt string) (*Service, *migEngine, *migStore) {
 	eng := &migEngine{

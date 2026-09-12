@@ -34,14 +34,20 @@ type MountSpec struct {
 
 // ServiceSpec — our neutral description of a Swarm service.
 type ServiceSpec struct {
-	Name         string
-	Image        string // image:tag
-	Command      []string
-	Args         []string
-	Env          map[string]string
-	Labels       map[string]string // service-level (read by the Traefik swarm provider)
-	Replicas     uint64
-	Network      string
+	Name     string
+	Image    string // image:tag
+	Command  []string
+	Args     []string
+	Env      map[string]string
+	Labels   map[string]string // service-level (read by the Traefik swarm provider)
+	Replicas uint64
+	Network  string
+	// Networks lists every overlay network the service attaches to; when it is
+	// non-empty it supersedes Network. Only a service that has to live in more
+	// than one network sets it — today that is just the Traefik gateway, which
+	// must reach every organization's network while those stay isolated from
+	// each other.
+	Networks     []string
 	Ports        []PortSpec
 	Mounts       []MountSpec
 	Constraints  []string // e.g. node.role==manager
@@ -129,7 +135,12 @@ type NodeInfo struct {
 
 // Engine — a narrow, mockable interface to Docker/Swarm.
 type Engine interface {
-	NetworkEnsure(ctx context.Context, name string) error
+	// NetworkEnsure creates the overlay network if it is missing and reports
+	// whether it actually created it. A recreated network gets a NEW id, and a
+	// service's stored spec still refers to the old one — so a caller that
+	// skips redundant deploys has to treat "created" as a reason to deploy.
+	NetworkEnsure(ctx context.Context, name string) (created bool, err error)
+	NetworkRemove(ctx context.Context, name string) error      // idempotent: "network not found" is not an error
 	ServiceDeploy(ctx context.Context, spec ServiceSpec) error // create-or-rolling-update by name
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)
@@ -146,6 +157,11 @@ type Engine interface {
 	VolumeExistsOn(ctx context.Context, name, swarmNodeID string) (bool, error) // guards implicit volume creation
 	VolumeChown(ctx context.Context, volumeName string, uid, gid int, swarmNodeID string) error
 	ServiceUpdateLabels(ctx context.Context, name string, labels map[string]string) error
+	// ServiceLabels returns the service-level labels of a running service and
+	// whether that service exists. It lets a caller tell an unchanged service
+	// from one that needs redeploying: ServiceDeploy always bumps ForceUpdate,
+	// so it recreates the task even when the spec is identical.
+	ServiceLabels(ctx context.Context, name string) (map[string]string, bool, error)
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 	ExecInteractive(ctx context.Context, serviceName string, cmd []string) (ExecSession, error)
 	RegistryCheck(ctx context.Context, serverAddr, username, password string) error

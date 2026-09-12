@@ -243,11 +243,13 @@ type NotificationChannel struct {
 }
 
 type Organization struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	OwnerID   int64     `json:"owner_id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID                int64              `json:"id"`
+	Name              string             `json:"name"`
+	Slug              string             `json:"slug"`
+	OwnerID           int64              `json:"owner_id"`
+	CreatedAt         time.Time          `json:"created_at"`
+	NetworkName       string             `json:"network_name"`
+	NetworkMigratedAt pgtype.Timestamptz `json:"network_migrated_at"`
 }
 
 type Project struct {
@@ -277,11 +279,12 @@ type Session struct {
 }
 
 type User struct {
-	ID           int64     `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
-	IsAdmin      bool      `json:"is_admin"`
+	ID                 int64     `json:"id"`
+	Email              string    `json:"email"`
+	PasswordHash       string    `json:"password_hash"`
+	CreatedAt          time.Time `json:"created_at"`
+	IsAdmin            bool      `json:"is_admin"`
+	MustChangePassword bool      `json:"must_change_password"`
 }
 
 type VolumeBackup struct {

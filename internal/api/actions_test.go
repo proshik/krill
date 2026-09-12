@@ -21,7 +21,8 @@ import (
 // noopEngine (unexported there, so it can't be reused directly).
 type noopEngine struct{}
 
-func (noopEngine) NetworkEnsure(context.Context, string) error             { return nil }
+func (noopEngine) NetworkEnsure(context.Context, string) (bool, error)     { return false, nil }
+func (noopEngine) NetworkRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceDeploy(context.Context, docker.ServiceSpec) error { return nil }
 func (noopEngine) ServiceRemove(context.Context, string) error             { return nil }
 func (noopEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
@@ -57,6 +58,9 @@ func (noopEngine) VolumeExistsOn(context.Context, string, string) (bool, error) 
 func (noopEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
 func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
+}
+func (noopEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
 }
 func (noopEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil

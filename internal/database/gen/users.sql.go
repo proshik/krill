@@ -9,8 +9,35 @@ import (
 	"context"
 )
 
+const createInvitedUser = `-- name: CreateInvitedUser :one
+INSERT INTO users (email, password_hash, must_change_password) VALUES ($1, $2, true) RETURNING id, email, password_hash, created_at, is_admin, must_change_password
+`
+
+type CreateInvitedUserParams struct {
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+}
+
+// A user created by someone else's invitation, flagged to change the password
+// the inviter chose in the same statement. A separate UPDATE could fail after
+// the insert succeeded, leaving the invitee on a password the inviter still
+// knows, with nothing to ever retry it.
+func (q *Queries) CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createInvitedUser, arg.Email, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.IsAdmin,
+		&i.MustChangePassword,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at, is_admin
+INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at, is_admin, must_change_password
 `
 
 type CreateUserParams struct {
@@ -27,6 +54,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.IsAdmin,
+		&i.MustChangePassword,
 	)
 	return i, err
 }
@@ -47,7 +75,7 @@ func (q *Queries) DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, created_at, is_admin FROM users WHERE email = $1
+SELECT id, email, password_hash, created_at, is_admin, must_change_password FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -59,12 +87,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.IsAdmin,
+		&i.MustChangePassword,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, password_hash, created_at, is_admin FROM users WHERE id = $1
+SELECT id, email, password_hash, created_at, is_admin, must_change_password FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -76,6 +105,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.PasswordHash,
 		&i.CreatedAt,
 		&i.IsAdmin,
+		&i.MustChangePassword,
 	)
 	return i, err
 }
@@ -91,6 +121,17 @@ func (q *Queries) GetUserIsAdmin(ctx context.Context, id int64) (bool, error) {
 	return is_admin, err
 }
 
+const getUserMustChangePassword = `-- name: GetUserMustChangePassword :one
+SELECT must_change_password FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUserMustChangePassword(ctx context.Context, id int64) (bool, error) {
+	row := q.db.QueryRow(ctx, getUserMustChangePassword, id)
+	var must_change_password bool
+	err := row.Scan(&must_change_password)
+	return must_change_password, err
+}
+
 const setUserAdmin = `-- name: SetUserAdmin :exec
 UPDATE users SET is_admin = $2 WHERE id = $1
 `
@@ -102,5 +143,33 @@ type SetUserAdminParams struct {
 
 func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
 	_, err := q.db.Exec(ctx, setUserAdmin, arg.ID, arg.IsAdmin)
+	return err
+}
+
+const setUserMustChangePassword = `-- name: SetUserMustChangePassword :exec
+UPDATE users SET must_change_password = $2 WHERE id = $1
+`
+
+type SetUserMustChangePasswordParams struct {
+	ID                 int64 `json:"id"`
+	MustChangePassword bool  `json:"must_change_password"`
+}
+
+func (q *Queries) SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error {
+	_, err := q.db.Exec(ctx, setUserMustChangePassword, arg.ID, arg.MustChangePassword)
+	return err
+}
+
+const setUserPassword = `-- name: SetUserPassword :exec
+UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1
+`
+
+type SetUserPasswordParams struct {
+	ID           int64  `json:"id"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, setUserPassword, arg.ID, arg.PasswordHash)
 	return err
 }

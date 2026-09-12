@@ -42,3 +42,26 @@ WHERE status = 'running';
 -- by a crash is reconciled by FailOrphanedDeployments at startup, whereas a
 -- leaked lock would block the app forever.
 SELECT count(*) FROM deployments WHERE application_id = $1 AND status = 'running';
+
+-- name: CountRunningDeploymentsByOrg :one
+-- In-flight deployments across the whole organization that owns $1. One tenant
+-- must not be able to fill the single build worker's queue for everyone else.
+SELECT count(*)
+FROM deployments d
+JOIN applications a ON a.id = d.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE d.status = 'running'
+  AND p.organization_id = (
+    SELECT p2.organization_id
+    FROM applications a2
+    JOIN environments e2 ON e2.id = a2.environment_id
+    JOIN projects p2 ON p2.id = e2.project_id
+    WHERE a2.id = $1
+  );
+
+-- name: ListDeploymentStatuses :many
+-- Status of each listed deployment, without the log column. The startup
+-- network migration polls this until every app redeploy it submitted is
+-- terminal: submitting a deploy proves nothing about whether it moved the app.
+SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);

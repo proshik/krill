@@ -582,6 +582,90 @@ func TestGetApplicationFailsOnUndecryptableGitToken(t *testing.T) {
 	}
 }
 
+// A registry credential must never be handed to a host it wasn't registered
+// for: the app's image lives on a different host than the stored registry_url,
+// so GetApplication must fail with ErrCredentialHostMismatch instead of
+// returning a RegistryAuth blob that would leak the password to that host.
+func TestGetApplicationRejectsMismatchedRegistryHost(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "reghost@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-reghost", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-reghost", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	reg, err := q.CreateRegistry(ctx, db.CreateRegistryParams{
+		OrganizationID: o.ID, Name: "ghcr", RegistryUrl: "ghcr.io", Username: "me", Password: secret.Enc("registry-pw"),
+	})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	// Image points at a different host than the registry it's linked to.
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "evil.example/me/app", Tag: "latest",
+		Domain: "web.reghost", Port: 80, EnvText: "",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationRegistry(ctx, db.SetApplicationRegistryParams{ID: app.ID, RegistryID: &reg.ID}); err != nil {
+		t.Fatalf("set registry: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got RegistryAuth=%q", got.RegistryAuth)
+	}
+	if !errors.Is(err, ErrCredentialHostMismatch) {
+		t.Errorf("got err %v, want ErrCredentialHostMismatch", err)
+	}
+}
+
+// A git credential must never be handed to a host it wasn't registered for:
+// the app's git_url points at a different host than the stored credential, so
+// GetApplication must fail with ErrCredentialHostMismatch instead of returning
+// a GitAuth that would leak the PAT to that host via the askpass helper.
+func TestGetApplicationRejectsMismatchedGitCredentialHost(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "gchost@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-gchost", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-gchost", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	gc, err := q.CreateGitCredential(ctx, db.CreateGitCredentialParams{
+		OrganizationID: o.ID, Name: "gh", Host: "github.com", Username: "x-access-token", Token: secret.Enc("ghp_secret"),
+	})
+	if err != nil {
+		t.Fatalf("create git credential: %v", err)
+	}
+	// git_url points at a different host than the credential it's linked to.
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.gchost", Port: 80, EnvText: "",
+		SourceType: "dockerfile", GitUrl: "https://evil.example/me/p.git", GitBranch: "main", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationGitCredential(ctx, db.SetApplicationGitCredentialParams{ID: app.ID, GitCredentialID: &gc.ID}); err != nil {
+		t.Fatalf("set git cred: %v", err)
+	}
+
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got GitAuth=%+v", got.GitAuth)
+	}
+	if !errors.Is(err, ErrCredentialHostMismatch) {
+		t.Errorf("got err %v, want ErrCredentialHostMismatch", err)
+	}
+}
+
 // Build secrets that cannot be decrypted must fail the deploy: building without
 // them produces an image that is silently missing whatever they fed.
 func TestGetApplicationFailsOnUndecryptableBuildSecrets(t *testing.T) {

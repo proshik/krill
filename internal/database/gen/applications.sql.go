@@ -178,6 +178,35 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 	return i, err
 }
 
+const listApplicationIDsByOrg = `-- name: ListApplicationIDsByOrg :many
+SELECT a.id
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+ORDER BY a.id
+`
+
+func (q *Queries) ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listApplicationIDsByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
 SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `

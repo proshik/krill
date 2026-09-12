@@ -2,6 +2,7 @@ package dbservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,9 +35,19 @@ type LogicalDB struct {
 func InstanceFeedID(id int64) int64 { return -id }
 
 // instanceSpec dispatches to the instance's engine driver — the per-engine
-// env/args/mounts knowledge now lives in internal/dbservice/drivers.
-func instanceSpec(inst Instance, network string) docker.ServiceSpec {
-	return drivers.Registry.MustGet(inst.Engine).BuildSpec(inst, network)
+// env/args/mounts knowledge lives in internal/dbservice/drivers, which must
+// not import dbservice, so the instance-wide resource defaults (config-driven,
+// not known to a driver) are applied here instead when the driver's spec
+// leaves them unset. A method (not a package function) so it can read them.
+func (s *Service) instanceSpec(inst Instance, network string) docker.ServiceSpec {
+	spec := drivers.Registry.MustGet(inst.Engine).BuildSpec(inst, network)
+	if spec.MemoryLimitBytes == 0 {
+		spec.MemoryLimitBytes = s.defaultMemBytes
+	}
+	if spec.NanoCPUs == 0 {
+		spec.NanoCPUs = s.defaultNanoCPUs
+	}
+	return spec
 }
 
 // PostgresURL — connection string for a logical DB over the overlay network.
@@ -127,8 +138,15 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")
 		return err
 	}
+	netName, err := s.networkFor(ctx, inst)
+	if err != nil {
+		fmt.Fprintf(out, "❌ resolve organization network failed: %v\n", err)
+		slog.Error("db instance deploy: resolve organization network failed", "err", err, "instance_id", id)
+		_ = s.store.SetInstanceStatus(stCtx, id, "error")
+		return err
+	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
-	if err := s.engine.ServiceDeploy(ctx, instanceSpec(inst, s.network)); err != nil {
+	if err := s.engine.ServiceDeploy(ctx, s.instanceSpec(inst, netName)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")
@@ -139,6 +157,41 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 	if err := s.reconcileProxy(ctx, inst); err != nil {
 		fmt.Fprintf(out, "⚠ external-access proxy: %v\n", err)
 		slog.Warn("db instance: reconcile proxy failed", "err", err, "instance_id", id)
+	}
+	return nil
+}
+
+// ParkInstance rewrites a database instance's Swarm service from its stored
+// configuration onto its organization network at the given replica count, and
+// moves its external-access proxy along with it. Unlike DeployInstance it runs
+// synchronously, pulls nothing and leaves the recorded status alone.
+//
+// It exists for the startup network migration, which must move a stopped
+// instance WITHOUT starting it: StartInstance only scales the existing service,
+// so a stopped instance simply skipped by the migration would come back up on
+// the old shared network the next time someone pressed Start.
+func (s *Service) ParkInstance(ctx context.Context, id int64, replicas uint64) error {
+	lock := oplock.DBInstanceDeploy(id)
+	if !oplock.TryAcquire(lock) {
+		return errors.New("a deploy of this instance is already in progress")
+	}
+	defer oplock.Release(lock)
+
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+	netName, err := s.networkFor(ctx, inst)
+	if err != nil {
+		return fmt.Errorf("resolve organization network: %w", err)
+	}
+	spec := s.instanceSpec(inst, netName)
+	spec.Replicas = replicas
+	if err := s.engine.ServiceDeploy(ctx, spec); err != nil {
+		return fmt.Errorf("deploy service: %w", err)
+	}
+	if err := s.reconcileProxy(ctx, inst); err != nil {
+		return fmt.Errorf("external-access proxy: %w", err)
 	}
 	return nil
 }

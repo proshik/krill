@@ -54,9 +54,20 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		rp.MaxAttempts = &ma
 	}
 
+	// Networks wins when set; Network is the single-network shorthand every
+	// service but the gateway uses.
+	nets := s.Networks
+	if len(nets) == 0 {
+		nets = []string{s.Network}
+	}
+	attachments := make([]swarm.NetworkAttachmentConfig, 0, len(nets))
+	for _, n := range nets {
+		attachments = append(attachments, swarm.NetworkAttachmentConfig{Target: n})
+	}
+
 	task := swarm.TaskSpec{
 		ContainerSpec: cs,
-		Networks:      []swarm.NetworkAttachmentConfig{{Target: s.Network}},
+		Networks:      attachments,
 		RestartPolicy: rp,
 	}
 	if s.MemoryLimitBytes > 0 || s.NanoCPUs > 0 {

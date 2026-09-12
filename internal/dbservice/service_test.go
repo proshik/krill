@@ -31,8 +31,9 @@ type mockEngine struct {
 	execFail  bool // first Exec fails, later ones succeed
 }
 
-func newMockEngine() *mockEngine                                  { return &mockEngine{scaled: map[string]uint64{}} }
-func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
+func newMockEngine() *mockEngine                                          { return &mockEngine{scaled: map[string]uint64{}} }
+func (m *mockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (m *mockEngine) NetworkRemove(context.Context, string) error         { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -115,6 +116,11 @@ func (m *mockEngine) ImagePull(_ context.Context, ref string, out io.Writer) err
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
+
+func (m *mockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
+}
+
 // Exec records each invocation and honours the context the way the real engine
 // does (a dead context cannot reach the daemon). execFail, when set, fails the
 // FIRST call only — the shape of "provisioning failed halfway".
@@ -169,6 +175,7 @@ type fakeStore struct {
 	instance   Instance
 	status     map[int64]string
 	rowDeleted bool
+	orgNetwork string // GetOrgNetwork's answer; "" (default) means "not migrated"
 }
 
 func newFakeStore(inst Instance) *fakeStore {
@@ -203,6 +210,12 @@ func (f *fakeStore) SetInstanceNode(_ context.Context, id int64, hostname string
 	defer f.mu.Unlock()
 	f.instance.NodeHostname = hostname
 	return nil
+}
+
+// GetOrgNetwork always answers "" (not migrated), so existing tests keep
+// seeing the Service's configured fallback network unless orgNetwork is set.
+func (f *fakeStore) GetOrgNetwork(_ context.Context, orgID int64) (string, error) {
+	return f.orgNetwork, nil
 }
 func (f *fakeStore) st(id int64) string {
 	f.mu.Lock()

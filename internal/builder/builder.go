@@ -53,6 +53,14 @@ type Builder interface {
 	Build(ctx context.Context, req BuildRequest, out io.Writer) error
 }
 
+// New creates a Builder. dockerHost is passed into docker build (for the
+// Colima socket). allowPrivateEgress mirrors KRILL_ALLOW_PRIVATE_EGRESS: when
+// false, git_url is checked against netguard before cloning, refusing
+// internal/loopback/link-local destinations (SSRF egress guard).
+func New(dockerHost string, allowPrivateEgress bool) Builder {
+	return &gitBuilder{dockerHost: dockerHost, allowPrivate: allowPrivateEgress}
+}
+
 // ValidateBuildRequest validates user input before running git/docker.
 func ValidateBuildRequest(req BuildRequest) error {
 	u, err := url.Parse(req.GitURL)

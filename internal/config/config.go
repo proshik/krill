@@ -53,6 +53,15 @@ type Config struct {
 	MetricsRetention time.Duration `env:"KRILL_METRICS_RETENTION" envDefault:"48h"`
 	// MetricsNodeTimeout caps how long the sampler waits per worker node.
 	MetricsNodeTimeout time.Duration `env:"KRILL_METRICS_NODE_TIMEOUT" envDefault:"10s"`
+	// DefaultMemoryLimit / DefaultCPULimit are the instance-wide resource limits
+	// applied to any app or DB instance that has no explicit value of its own —
+	// an unlimited container can take the whole host and starve every other
+	// tenant, so "no limit" is not a safe default. Human units, parsed by
+	// docker.ParseMemoryBytes / docker.ParseNanoCPUs ("512m", "1.0"). Empty
+	// means "no default" for that resource; the Advanced tab still overrides
+	// these per app.
+	DefaultMemoryLimit string `env:"KRILL_DEFAULT_MEMORY_LIMIT" envDefault:"512m"`
+	DefaultCPULimit    string `env:"KRILL_DEFAULT_CPU_LIMIT" envDefault:"1.0"`
 	// AllowPrivateEgress disables the SSRF egress guard (internal/netguard) for
 	// S3 destination/backup traffic and registry HTTP calls, allowing outbound
 	// connections to private/loopback/link-local addresses. Default false.
@@ -71,6 +80,20 @@ type Config struct {
 	// timeout (sessions then live until an explicit DELETE), matching
 	// KRILL_TERMINAL_IDLE_TIMEOUT's convention.
 	MCPSessionTimeout time.Duration `env:"KRILL_MCP_SESSION_TIMEOUT" envDefault:"30m"`
+	// MaxBuildsPerOrg caps how many deploys one organization may have in flight
+	// on the shared build queue at once. The queue is one worker shared by every
+	// tenant, so without this an org with many apps could hold it indefinitely
+	// and stall every other tenant's deploys. <= 0 disables the cap.
+	MaxBuildsPerOrg int `env:"KRILL_MAX_BUILDS_PER_ORG" envDefault:"2"`
+	// BuildCacheLimit is the --reserved-space value (--keep-storage on a Docker
+	// CLI older than 28) passed to `docker builder prune` on each
+	// BuildPruneInterval tick. Nothing else ever trims the
+	// BuildKit cache, so on a small VPS the disk fills silently until builds
+	// start failing. Empty disables pruning.
+	BuildCacheLimit string `env:"KRILL_BUILD_CACHE_LIMIT" envDefault:"5gb"`
+	// BuildPruneInterval is how often the BuildKit cache is pruned. <= 0
+	// disables pruning.
+	BuildPruneInterval time.Duration `env:"KRILL_BUILD_PRUNE_INTERVAL" envDefault:"24h"`
 }
 
 // Load reads the configuration from the environment.
@@ -94,4 +117,16 @@ func (c Config) BaseURL() string {
 		scheme = "https"
 	}
 	return scheme + "://" + c.Host
+}
+
+// AcmeContact is the Let's Encrypt contact address: the explicit
+// KRILL_ACME_EMAIL, falling back to the admin's address. Traefik's spec is
+// fingerprinted for reconciliation, so every caller has to derive the contact
+// the same way — a second, slightly different fallback would make the gateway
+// flap between two specs.
+func (c Config) AcmeContact() string {
+	if c.AcmeEmail != "" {
+		return c.AcmeEmail
+	}
+	return c.AdminEmail
 }

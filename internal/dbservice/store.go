@@ -41,3 +41,11 @@ func (s *DBStore) DeleteInstanceRow(ctx context.Context, id int64) error {
 func (s *DBStore) SetInstanceNode(ctx context.Context, id int64, hostname string) error {
 	return s.q.SetDBInstanceNode(ctx, db.SetDBInstanceNodeParams{ID: id, NodeHostname: hostname})
 }
+
+func (s *DBStore) GetOrgNetwork(ctx context.Context, orgID int64) (string, error) {
+	o, err := s.q.GetOrganization(ctx, orgID)
+	if err != nil {
+		return "", err
+	}
+	return o.NetworkName, nil
+}

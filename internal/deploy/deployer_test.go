@@ -39,8 +39,9 @@ func (f *digestMockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec
 func (f *digestMockEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t1"}}, nil
 }
-func (f *digestMockEngine) NetworkEnsure(context.Context, string) error { return nil }
-func (f *digestMockEngine) ServiceRemove(context.Context, string) error { return nil }
+func (f *digestMockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (f *digestMockEngine) NetworkRemove(context.Context, string) error         { return nil }
+func (f *digestMockEngine) ServiceRemove(context.Context, string) error         { return nil }
 func (f *digestMockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
@@ -71,6 +72,9 @@ func (f *digestMockEngine) VolumeChown(context.Context, string, int, int, string
 func (f *digestMockEngine) ImagePull(context.Context, string, io.Writer) error          { return nil }
 func (f *digestMockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
+}
+func (f *digestMockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
 }
 func (f *digestMockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
@@ -119,7 +123,8 @@ type chownCall struct {
 	node     string
 }
 
-func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
+func (m *mockEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (m *mockEngine) NetworkRemove(context.Context, string) error         { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -213,6 +218,9 @@ func (m *mockEngine) ImagePull(_ context.Context, _ string, _ io.Writer) error {
 func (m *mockEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
+func (m *mockEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
+	return nil, false, nil
+}
 func (m *mockEngine) Exec(context.Context, string, []string, []string, io.Reader, io.Writer) error {
 	return nil
 }
@@ -265,6 +273,9 @@ type fakeStore struct {
 	deploys map[int64]string // deployID -> final status
 	nextID  int64
 	depApp  map[int64]int64 // deployID -> appID
+
+	runningByOrg int64 // stubbed CountRunningDeploymentsByOrg result
+	orgCountErr  error // stubbed CountRunningDeploymentsByOrg error
 }
 
 func newFakeStore(a App) *fakeStore {
@@ -307,11 +318,29 @@ func (f *fakeStore) CountRunningDeployments(_ context.Context, appID int64) (int
 	return n, nil
 }
 
+// CountRunningDeploymentsByOrg is a plain stub (unlike CountRunningDeployments,
+// which derives its answer from depApp/deploys): the per-org cap test wants to
+// set the in-flight count directly, independent of what per-app bookkeeping
+// happens to hold.
+func (f *fakeStore) CountRunningDeploymentsByOrg(_ context.Context, appID int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.orgCountErr != nil {
+		return 0, f.orgCountErr
+	}
+	return f.runningByOrg, nil
+}
+
 func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, imageTag, errMsg, log string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deploys[deployID] = status
 	return nil
+}
+func (f *fakeStore) deploymentCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.depApp)
 }
 func (f *fakeStore) appStatus(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.status[id] }
 func (f *fakeStore) depStatus(id int64) string {

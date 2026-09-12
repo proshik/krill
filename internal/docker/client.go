@@ -241,20 +241,32 @@ func NewEngine(host string) (Engine, error) {
 	return eng, nil
 }
 
-func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
+func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) (bool, error) {
 	list, err := e.cli.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, n := range list {
 		if n.Name == name { // the name filter is a substring match, so compare exactly
-			return nil
+			return false, nil
 		}
 	}
 	_, err = e.cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: "overlay", Attachable: true})
-	return err
+	return err == nil, err
+}
+
+// NetworkRemove deletes an organization's overlay network. Idempotent: a
+// "network not found" error (already removed, or never created — e.g. an
+// organization whose network creation itself failed) is swallowed rather than
+// surfaced, so a caller can call it unconditionally during cleanup.
+func (e *dockerEngine) NetworkRemove(ctx context.Context, name string) error {
+	err := e.cli.NetworkRemove(ctx, name)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // findService finds a service by its exact name.
@@ -749,6 +761,16 @@ func (e *dockerEngine) ServiceUpdateLabels(ctx context.Context, name string, lab
 	spec.Annotations.Labels = labels
 	_, err = e.cli.ServiceUpdate(ctx, cur.ID, cur.Version, spec, swarm.ServiceUpdateOptions{})
 	return err
+}
+
+// ServiceLabels returns the service-level labels of the named service and
+// whether it exists at all.
+func (e *dockerEngine) ServiceLabels(ctx context.Context, name string) (map[string]string, bool, error) {
+	cur, found, err := e.findService(ctx, name)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	return cur.Spec.Annotations.Labels, true, nil
 }
 
 // runningContainerID returns the container ID of a running task of serviceName,

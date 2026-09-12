@@ -2,7 +2,7 @@
 
 A minimal self-hosted PaaS written in Go: deploy containerized apps and managed databases onto a single-node Docker Swarm, routed by Traefik, managed from a dark web control plane.
 
-> **Status:** Active development. Krill runs in production for the author's own small apps, but it is not yet hardened for anyone else's production: a single control plane with no high availability, no automatic backup of Krill's own state database, and several features verified in code and tests but not yet on a live cluster. See [ROADMAP.md](ROADMAP.md).
+> **Status:** Active development. Krill runs on the author's own test projects; it has not been run in production. It is not yet hardened for anyone else's production either: a single control plane with no high availability, no automatic backup of Krill's own state database, and several features verified in code and tests but not yet on a live cluster. See [ROADMAP.md](ROADMAP.md).
 
 ## Why Krill
 
@@ -27,6 +27,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Single-worker build queue (one deployment at a time) to avoid Docker API contention.
 - Live build logs over WebSocket; a bounded log buffer (head + tail) with a truncation marker for very long output.
 - A `deployments` history (image- and Dockerfile-based), with logs auto-cleaned after one hour (metadata retained).
+- A per-organization cap on in-flight deploys (`KRILL_MAX_BUILDS_PER_ORG`) so one tenant with many apps can't hold the shared build queue and stall everyone else, and a periodic BuildKit cache prune (`KRILL_BUILD_CACHE_LIMIT`, `KRILL_BUILD_PRUNE_INTERVAL`) so the build cache doesn't fill the disk on a small VPS.
 
 ### Projects, organizations, environments, and RBAC (Phase 1)
 - Tenancy hierarchy: **Organization → Project → Environment → App / Database**.
@@ -34,6 +35,8 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Path-scoped routes with strict cross-tenant isolation (ownership chain-checks return 404 on mismatch).
 - Per-app environment variables with in-UI editing.
 - A default organization is bootstrapped on first run (the seed admin becomes its owner).
+- Each organization gets its own Docker overlay network (`krill-org-<id>`); apps and databases in different organizations can no longer resolve or reach each other by name. Traefik attaches to every organization's network, so routing keeps working across all of them.
+- Users can change their own password from the "Change password" link in the sidebar; an invited user must set a new password before doing anything else, and changing a password revokes that account's other sessions.
 
 ### Managed databases: DB instances + logical databases (Phase 3)
 - Org-level **DB instances** — one Swarm service per Postgres or Redis server, backed by a named volume, optionally pinned to a cluster node.
@@ -44,15 +47,15 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Opt-in "destroy data" on delete (the named volume is only removed when explicitly requested).
 
 ### Deploy-parity: container settings, lifecycle, route exposure
-- **Advanced container settings** — per-app memory/CPU limits (`256m` / `0.5`), replica count, restart policy, and a healthcheck (command/interval/timeout/retries/start period), edited on the app's **Advanced** tab and applied to the Swarm service spec.
+- **Advanced container settings** — per-app memory/CPU limits (`256m` / `0.5`), replica count, restart policy, and a healthcheck (command/interval/timeout/retries/start period), edited on the app's **Advanced** tab and applied to the Swarm service spec. An app or DB instance with no explicit limit of its own falls back to an instance-wide default (`KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT`), so an unlimited container can't take the whole host.
 - **App lifecycle controls** — Deploy / Reload / Rebuild / Stop buttons on the General tab. Reload restarts the service without rebuilding, Rebuild does a no-cache `docker build`, Stop scales to zero.
 - **Per-domain route exposure (internal by default)** — new apps are not publicly routed; each domain has an **Exposed** toggle and an optional list of public path prefixes. Unexposed services stay on the overlay network only (no Traefik route); exposed domains can be narrowed to specific paths.
-- **Private registries** — org-scoped registry credentials, selectable per app, for pulling private images (see [Private images](#private-images-registries)).
+- **Private registries** — org-scoped registry credentials, selectable per app, for pulling private images (see [Private images](#private-images-registries)). Each credential is bound to its own host — Krill refuses to use it against any other registry.
 - **Environment editor** — per-app env vars edited in either a Key-Value grid or a Raw `KEY=value` text mode.
 - **App volumes + backup/restore** — named-volume mounts per app (Volumes tab); volumes back up to S3 (a pinned busybox sidecar tars the volume → gzip → S3, with count retention) and restore (quiescing the app first).
 - **DB→app linking** — link an app to a managed DB in the same environment; Krill injects the live internal connection string into a chosen env var on every deploy (the password is pulled live, never stored in plain env text).
 - **Raw TCP/UDP published ports** — publish host ports straight into a container (host publish mode) for non-HTTP services (Gitea SSH, mail, game/DNS/VPN), independent of Traefik and the overlay HTTP port.
-- **Build secrets/args + private Git** — org-scoped Git credentials (PAT) for private-repo clones, plus non-secret `--build-arg`s and BuildKit `--secret`s for Dockerfile builds (secrets encrypted at rest, never in the build context).
+- **Build secrets/args + private Git** — org-scoped Git credentials (PAT) for private-repo clones, plus non-secret `--build-arg`s and BuildKit `--secret`s for Dockerfile builds (secrets encrypted at rest, never in the build context). A Git credential is likewise bound to its own host, and the repository URL goes through the same egress guard as S3/registry traffic.
 - **Per-domain route protection** — basic-auth (htpasswd) and/or IP-allowlist (CIDR) middleware on exposed domains — the "who" axis, orthogonal to the path-exposure "what" axis.
 - **Container command override** — an optional CMD args override on the Advanced tab (e.g. `start-dev` for Keycloak), keeping the image ENTRYPOINT.
 
@@ -60,6 +63,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Per-app, opt-in auto-deploy via **webhook + PAT** (no OAuth / GitHub App needed).
 - **Dockerfile/git apps:** a GitHub push webhook (HMAC-verified `X-Hub-Signature-256`, branch-matched) — push to the configured branch and Krill builds + deploys on the host.
 - **Image apps:** a generic deploy-hook your CI calls *after* `docker push` (Bearer token, optional `?tag=`) — Krill resolves the image digest, re-pulls, and redeploys (so a same-tag push is actually picked up).
+- **When a deploy cannot be queued** — a deploy of that app is already running, or the organization is at its in-flight limit (`KRILL_MAX_BUILDS_PER_ORG`) — both endpoints answer `503` with `Retry-After` rather than accepting and dropping it. CI can retry; GitHub does **not** retry a failed delivery, so it shows up under the webhook's *Recent Deliveries* and can be redelivered from there.
 - Enable/disable, masked secret reveal/copy, and regenerate on the app's General tab; webhook-triggered deploys show `trigger=webhook` in the history.
 
 ### Realtime & operations (Phase 7)
@@ -106,10 +110,54 @@ curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh | su
 ```
 
 The installer is idempotent — **re-run it to upgrade** (it pulls the latest
-release binary and restarts the service; your Postgres and secrets are kept). It:
+release binary and restarts the service; your Postgres and secrets are kept).
+
+**Upgrading from an older install, read this first — the first start after
+upgrading does the following, and the second point has a consequence worth
+planning for:**
+
+- The installer removes and recreates the `krill-postgres` container to move
+  it onto its own `krill-state` Docker network — same volume, same data, just
+  a brief restart (a running container can't be moved to a different network
+  in place; a fresh install simply creates it there directly).
+- Krill itself then migrates every existing organization onto its own
+  overlay network, in the background, once the server is already listening.
+  Moving a service onto its new network means redeploying it, so for a
+  Dockerfile app this is a rebuild (from the build cache, not `--no-cache`).
+  **On an install with several such apps, expect the first while after the
+  upgrade to be slower than usual** while services move over and become
+  routable again; nothing is down for the whole duration. If the process
+  restarts before an organization's pass finishes, that organization's
+  **whole** pass is retried from scratch on the next start rather than
+  resumed — services it had already moved get redeployed again too. The same
+  goes for an app whose redeploy **fails**: its organization is only recorded
+  as moved once every app deploy of the pass succeeds, so it is retried — and
+  its Dockerfile apps rebuilt — on every start until the failing app is fixed.
+  Stopped apps and stopped database instances stay stopped. A fresh install
+  has nothing to move, so this is instant.
+- A Dockerfile app whose `git_url` points at a private address (a self-hosted
+  Git server on your LAN or on the host itself) now goes through the SSRF
+  egress guard, so this forced rebuild is where it stops building — set
+  `KRILL_ALLOW_PRIVATE_EGRESS=true` before upgrading if you build from one.
+- **This same forced redeploy is also the first time
+  `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` apply** to any app
+  or database instance that has no explicit limit of its own — every deploy
+  applies the current defaults, and this migration redeploys everything. An
+  app or database currently running above the default (`512m` / `1.0` CPU)
+  can be OOM-killed or throttled by this background pass, even though nobody
+  explicitly redeployed it. **Before upgrading**, either set an explicit
+  memory/CPU limit for anything that needs more (the app's Advanced tab, or
+  the database instance's own settings), or raise — or empty, to disable —
+  `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` first.
+
+It:
 
 1. installs Docker (via `get.docker.com`) if missing and initializes a single-node Swarm;
-2. runs a loopback-only `postgres:17-alpine` container for Krill's own state;
+2. runs a loopback-only `postgres:17-alpine` container for Krill's own state, on
+   its own `krill-state` Docker network rather than the default bridge — build
+   containers also sit on that default bridge and can reach any container on
+   it by IP, which the loopback-only port publish does nothing to stop; a
+   separate network closes that off;
 3. downloads the `krill` binary from the latest GitHub Release (SHA-256 verified);
 4. writes `/etc/krill/krill.env` (generated admin password + encryption key, created once);
 5. installs and starts a `krill` systemd service;
@@ -159,6 +207,7 @@ systemctl disable --now krill
 rm -f /etc/systemd/system/krill.service /usr/local/bin/krill
 rm -rf /etc/krill
 docker rm -f krill-postgres && docker volume rm krill-pg-data   # destroys Krill's state
+docker network rm krill-state    # only after the container above is gone
 ```
 
 Prefer a container instead of the host binary? The multi-arch image is published
@@ -181,7 +230,8 @@ The control plane creates and updates Swarm services with label metadata. Traefi
                                     ▼
                 ┌──────────────────────────────────────────────┐
                 │  Docker Swarm (single node)                    │
-                │   - overlay network "krill-net"                │
+                │   - one overlay network per organization       │
+                │     ("krill-org-<id>"); Traefik joins all      │
                 │   - Traefik (v3.6.1) reverse proxy, host :80   │
                 │   - app services   krill-<appID>      (VIP)    │
                 │   - db services    <app_name>         (DNSRR)  │
@@ -193,6 +243,8 @@ The control plane creates and updates Swarm services with label metadata. Traefi
 ```
 
 State lives in PostgreSQL, and all control-plane operations are serialized through a single deploy worker. The control plane itself is a single node (no HA); the Swarm starts single-node but can be **scaled out** — additional worker nodes are joined over SSH from the **Nodes** page, and apps spread across them via placement (any / pinned / global). Stateful services (managed DBs, app volumes) stay node-local.
+
+Each organization's apps and databases live on their own overlay network (`krill-org-<id>`); one organization can no longer resolve or reach another's services by name. `KRILL_NETWORK` (`krill-net` by default) is still Traefik's default provider network and the fallback used until an organization has been migrated onto its own.
 
 ## Tech stack
 
@@ -266,7 +318,7 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_ADMIN_PASSWORD` | — | **Yes** | Seed admin password. |
 | `KRILL_DOCKER_HOST` | — | No | Docker daemon socket/host (e.g. a Colima socket path). |
 | `KRILL_BASE_DOMAIN` | `127-0-0-1.sslip.io` | No | Domain suffix for deployed apps (via sslip.io). |
-| `KRILL_NETWORK` | `krill-net` | No | Swarm overlay network name. |
+| `KRILL_NETWORK` | `krill-net` | No | Traefik's default provider network, and the fallback network for any organization not yet migrated onto its own (`krill-org-<id>`) — not the network apps and databases run on once migrated. |
 | `KRILL_HOST` | `localhost` | No | Public hostname used in generated external DB connection strings. |
 | `KRILL_COOKIE_SECURE` | `false` | No | Set the `Secure` flag on session cookies. |
 | `KRILL_TRUST_PROXY` | `false` | No | Trust `X-Forwarded-For` when identifying the client IP (login rate limiting). Enable **only** behind a reverse proxy that sets the header — otherwise a client can forge it and get its own rate-limit bucket. Without it, every request behind a proxy shares one bucket. |
@@ -286,6 +338,11 @@ Configuration is read from `KRILL_*` environment variables (see `.env.example`).
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | No | Per-worker timeout when SSH-tunnelling to a worker's Docker socket for cluster-wide stats. |
 | `KRILL_AGENT_API_ENABLED` | `true` | No | Enables the agent-facing API — **both** the REST surface (`/api/v1`) and the MCP server (`/mcp`). `false` unmounts both. (Called `KRILL_MCP_ENABLED` before 2026-08-13.) |
 | `KRILL_MCP_SESSION_TIMEOUT` | `30m` | No | Closes an idle MCP session (a client that never sent `DELETE /mcp` — a crashed agent, a finished CI job) and frees its goroutine. `0` disables the idle timeout. |
+| `KRILL_DEFAULT_MEMORY_LIMIT` | `512m` | No | Default memory limit applied to any app or DB instance that has no explicit value of its own (human units, e.g. `256m`, `1g`). Empty disables the default. Per-app, the Advanced tab overrides it. |
+| `KRILL_DEFAULT_CPU_LIMIT` | `1.0` | No | Default CPU limit (in cores, e.g. `0.5`, `2`) applied to any app or DB instance that has no explicit value of its own. Empty disables the default. Per-app, the Advanced tab overrides it. |
+| `KRILL_MAX_BUILDS_PER_ORG` | `2` | No | Caps how many deploys one organization may have in flight on the shared build queue at once, so one tenant with many apps can't hold it and stall every other tenant's deploys. `<= 0` disables the cap. |
+| `KRILL_BUILD_CACHE_LIMIT` | `5gb` | No | `--reserved-space` value (`--keep-storage` on a Docker CLI older than 28) passed to `docker builder prune` on each `KRILL_BUILD_PRUNE_INTERVAL` tick. Nothing else ever trims the BuildKit cache, so on a small VPS the disk fills silently until builds start failing. Empty disables pruning. |
+| `KRILL_BUILD_PRUNE_INTERVAL` | `24h` | No | How often the BuildKit cache is pruned. `<= 0` disables pruning. |
 
 A sample `.env` for standard ports (mirrors `.env.example`):
 

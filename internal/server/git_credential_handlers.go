@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
@@ -38,6 +39,15 @@ func (s *Server) createGitCredential(w http.ResponseWriter, r *http.Request) {
 	token := r.FormValue("token")
 	if name == "" || host == "" || username == "" || token == "" {
 		s.flashErrT(w, r, "flash.err.gitcred_fields_required")
+		return
+	}
+	// Normalize the stored host the same way the deployer normalizes a git_url's
+	// host before comparing them (internal/builder.NormalizeHost) — otherwise a
+	// scheme/case/trailing-slash mismatch would make a correctly-scoped
+	// credential fail the host check on every deploy.
+	host = builder.NormalizeHost(host)
+	if host == "" {
+		s.flashErrT(w, r, "flash.err.git_credential_host")
 		return
 	}
 	n, err := s.q.CountGitCredentialsByName(r.Context(), db.CountGitCredentialsByNameParams{OrganizationID: o.ID, Name: name})

@@ -32,6 +32,11 @@ type App struct {
 	RegistryAuth   string
 	Args           []string // container command override (CMD), e.g. ["start-dev"]
 
+	// Network is the app's organization's overlay network. Empty means the
+	// organization has not been migrated yet — the deployer falls back to its
+	// configured network.
+	Network string
+
 	Replicas           uint64
 	MemoryLimitBytes   int64
 	NanoCPUs           int64
@@ -56,6 +61,7 @@ type Store interface {
 	SetStatus(ctx context.Context, id int64, status string) error
 	CreateDeployment(ctx context.Context, appID int64, trigger string) (int64, error)
 	CountRunningDeployments(ctx context.Context, appID int64) (int64, error)
+	CountRunningDeploymentsByOrg(ctx context.Context, appID int64) (int64, error)
 	FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error
 }
 
@@ -100,6 +106,39 @@ type Deployer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	runCancel context.CancelFunc // cancels the in-flight job's context on Stop
+
+	defaultMemBytes int64 // instance-wide default memory limit, 0 = none
+	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
+
+	maxBuildsPerOrg int // cap on in-flight deploys per organization, 0 = no cap
+}
+
+// SetMaxBuildsPerOrg wires the per-organization in-flight-deploy cap (wired
+// from config at startup). <= 0 means no cap: the per-org check in enqueue is
+// skipped entirely rather than merely being satisfied by a large number.
+func (d *Deployer) SetMaxBuildsPerOrg(n int) {
+	d.maxBuildsPerOrg = n
+}
+
+// SetResourceDefaults wires the instance-wide memory/CPU limits applied to any
+// app that has no explicit value of its own (wired from config at startup).
+// 0 means no default for that resource.
+func (d *Deployer) SetResourceDefaults(memBytes, nanoCPUs int64) {
+	d.defaultMemBytes = memBytes
+	d.defaultNanoCPUs = nanoCPUs
+}
+
+// withResourceDefaults fills in the instance-wide limits for an app that has
+// none. An unlimited container can starve every other tenant on the host, so
+// "no limit" is not a safe default; an explicit per-app value always wins.
+func (d *Deployer) withResourceDefaults(a App) App {
+	if a.MemoryLimitBytes == 0 {
+		a.MemoryLimitBytes = d.defaultMemBytes
+	}
+	if a.NanoCPUs == 0 {
+		a.NanoCPUs = d.defaultNanoCPUs
+	}
+	return a
 }
 
 func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub, network string) *Deployer {
@@ -182,6 +221,57 @@ func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
 	return d.enqueue(appID, trigger, true)
 }
 
+// systemQueueRetry is how long EnqueueSystem waits between attempts while the
+// shared queue is full. One worker drains it, so retrying sooner only burns CPU.
+const systemQueueRetry = 2 * time.Second
+
+// EnqueueSystem queues a deploy the control plane submits for itself, skipping
+// both the per-app in-flight guard and the per-organization cap. Those caps
+// exist to stop one tenant from monopolising the single shared build worker;
+// the startup migration onto per-organization networks is not a tenant, and has
+// to move every service of an organization in one pass — the per-org cap would
+// silently refuse it from the third app onward and leave the rest of the
+// organization stranded on the old network. Nothing but that migration may use
+// this.
+//
+// It also waits for room rather than failing when the queue is full: an
+// organization with more applications than the queue is deep would otherwise
+// lose its tail, and a dropped system deploy strands that service on the shared
+// network with nothing to retry it. ctx bounds the wait.
+func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
+	for {
+		select {
+		case <-d.done:
+			return 0
+		case <-ctx.Done():
+			slog.Warn("system deploy gave up waiting for a queue slot", "app", appID)
+			return 0
+		default:
+		}
+		if !d.queueFull() {
+			if id := d.submit(appID, "manual", false); id != 0 {
+				return id
+			}
+			// submit only fails for a full queue (lost the race for the slot we
+			// just saw free) or a store error. A store error will not fix itself.
+			if !d.queueFull() {
+				return 0
+			}
+		}
+		select {
+		case <-d.done:
+			return 0
+		case <-ctx.Done():
+			slog.Warn("system deploy gave up waiting for a queue slot", "app", appID)
+			return 0
+		case <-time.After(systemQueueRetry):
+		}
+	}
+}
+
+// queueFull reports whether the shared job queue has no room left.
+func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
+
 func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 	select {
 	case <-d.done:
@@ -201,6 +291,27 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 		slog.Info("deploy rejected, one is already in flight", "app", appID, "in_flight", n)
 		return 0
 	}
+	// Cap in-flight deploys per organization. Without this, one tenant with many
+	// apps can hold the single shared build worker indefinitely and stall every
+	// other organization's deploys. 0 (the default when unset) means no cap, and
+	// skips the query entirely rather than relying on a huge threshold.
+	if d.maxBuildsPerOrg > 0 {
+		n, err := d.store.CountRunningDeploymentsByOrg(context.Background(), appID)
+		if err != nil {
+			slog.Error("per-org in-flight check failed", "app", appID, "err", err)
+			return 0
+		}
+		if n >= int64(d.maxBuildsPerOrg) {
+			slog.Info("deploy rejected, the organization is at its in-flight limit", "app", appID, "in_flight", n)
+			return 0
+		}
+	}
+	return d.submit(appID, trigger, noCache)
+}
+
+// submit creates the deployment row and hands the job to the worker. It is the
+// part of enqueue that both the capped (tenant) path and EnqueueSystem share.
+func (d *Deployer) submit(appID int64, trigger string, noCache bool) int64 {
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
 		slog.Error("create deployment failed", "app", appID, "err", err)
@@ -430,6 +541,7 @@ func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, im
 }
 
 func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
+	app = d.withResourceDefaults(app)
 	name := docker.ServiceName(app.ID)
 	domains := app.Domains
 	if len(domains) == 0 {
@@ -439,14 +551,20 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	if replicas == 0 {
 		replicas = 1
 	}
+	// An app deploys into its organization's network; the configured network is
+	// only the fallback for an installation that has not been migrated yet.
+	net := app.Network
+	if net == "" {
+		net = d.network
+	}
 	spec := docker.ServiceSpec{
 		Name:               name,
 		Image:              imageTag,
 		Args:               app.Args,
 		Env:                app.Env,
-		Labels:             traefik.AppLabels(name, domains, app.Port, d.network),
+		Labels:             traefik.AppLabels(name, domains, app.Port, net),
 		Replicas:           replicas,
-		Network:            d.network,
+		Network:            net,
 		RegistryAuth:       app.RegistryAuth,
 		MemoryLimitBytes:   app.MemoryLimitBytes,
 		NanoCPUs:           app.NanoCPUs,

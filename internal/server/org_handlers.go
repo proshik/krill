@@ -6,6 +6,7 @@ import (
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -60,6 +61,51 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("organization created", "org_id", o.ID, "name", o.Name)
+
+	// Every organization gets its own overlay network, so its apps and DB
+	// instances never resolve or reach another tenant's services by name.
+	// A half-made organization (a row with no working network) must not
+	// survive: an org that can never deploy anything is worse than none.
+	netName := orgnet.Name(o.ID)
+	if _, err := s.engine.NetworkEnsure(r.Context(), netName); err != nil {
+		logFrom(r).Error("could not create the organization network", "err", err, "org_id", o.ID)
+		if derr := s.q.DeleteOrganization(r.Context(), o.ID); derr != nil {
+			logFrom(r).Error("could not roll back an organization left without a network", "err", derr, "org_id", o.ID)
+		}
+		s.flashErrT(w, r, "flash.err.org_network")
+		http.Redirect(w, r, "/orgs", http.StatusSeeOther)
+		return
+	}
+	if err := s.q.SetOrganizationNetwork(r.Context(), db.SetOrganizationNetworkParams{ID: o.ID, NetworkName: netName}); err != nil {
+		logFrom(r).Error("could not store the organization network", "err", err, "org_id", o.ID)
+	} else {
+		// Nothing of this organization was ever on the shared network, so the
+		// startup migration has nothing to do for it. Without this the next
+		// restart would redeploy every service it acquires in the meantime —
+		// rebuilding Dockerfile apps and waiting on databases — purely to move
+		// them where they already are.
+		//
+		// Only when the name was actually recorded, though. Marking an
+		// organization migrated without a network_name is unrepairable: the
+		// migration skips anything already flagged, so it would never write the
+		// missing name, and every app of that organization would fall back to
+		// the shared network forever. Leaving it unflagged costs one redundant
+		// pass on the next boot, which also repairs the name.
+		if err := s.q.MarkOrganizationNetworkMigrated(r.Context(), o.ID); err != nil {
+			// Harmless: the next startup does one redundant (idempotent) pass.
+			logFrom(r).Error("could not mark the organization as already on its own network", "err", err, "org_id", o.ID)
+		}
+	}
+
+	// The gateway lives in every organization network; until it joins this one,
+	// nothing deployed here is reachable from outside. The reconcile is
+	// requested, not performed: it recreates the Traefik task and rebinds
+	// :80/:443, and creating an organization needs no role — doing it inline
+	// would let a loop of POST /orgs hold ingress down for every tenant.
+	if s.reconcileGateway != nil {
+		s.reconcileGateway()
+	}
+
 	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
@@ -130,7 +176,13 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 			s.flashErr(w, r, herr.Error())
 			return
 		}
-		u, err = s.q.CreateUser(r.Context(), db.CreateUserParams{Email: email, PasswordHash: hash})
+		// The inviter chose this temporary password and keeps a working
+		// credential for the account until the invitee changes it — hold them
+		// on the change-password form until they do. The flag is written by the
+		// same INSERT that creates the account: as a separate write it could
+		// fail after the user already existed, and an invite that succeeds
+		// without it defeats the whole point of the flag.
+		u, err = s.q.CreateInvitedUser(r.Context(), db.CreateInvitedUserParams{Email: email, PasswordHash: hash})
 		if err != nil {
 			logFrom(r).Error("createMember: failed to create user", "err", err, "org_id", o.ID)
 			s.flashErrErr(w, r, "flash.err.create_user", err)

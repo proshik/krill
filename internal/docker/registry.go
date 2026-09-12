@@ -55,6 +55,43 @@ func RegistryRepo(registryURL, image string) string {
 	return strings.TrimPrefix(image, registryHost(registryURL)+"/")
 }
 
+// RegistryHost is the host part of a stored registry URL (exported for the
+// deployer's credential-host check).
+func RegistryHost(registryURL string) string { return registryHost(registryURL) }
+
+// ImageHost returns the registry host an image reference points at. A
+// reference without a host belongs to Docker Hub, which is what Docker itself
+// assumes; the first segment counts as a host only when it looks like one.
+func ImageHost(image string) string {
+	first, rest, ok := strings.Cut(image, "/")
+	if !ok {
+		return dockerHubHost
+	}
+	_ = rest
+	if strings.ContainsAny(first, ".:") || first == "localhost" {
+		return strings.ToLower(first)
+	}
+	return dockerHubHost
+}
+
+// dockerHubHost is the canonical name of Docker Hub's registry: the host a
+// hostless image reference resolves to (see ImageHost).
+const dockerHubHost = "docker.io"
+
+// CanonicalRegistryHost maps Docker Hub's aliases onto one name so two spellings
+// of the same registry compare equal. "index.docker.io" and
+// "registry-1.docker.io" are both what Docker itself advertises for Hub, and
+// either is a valid stored registry URL for a hostless image reference like
+// "nginx" or "acme/api". Any other host is returned unchanged; host must
+// already be normalized (lowercase, no scheme or path).
+func CanonicalRegistryHost(host string) string {
+	switch host {
+	case "index.docker.io", "registry-1.docker.io":
+		return dockerHubHost
+	}
+	return host
+}
+
 // RegistryListTags lists the tags for repo in a registry, following the v2
 // token (WWW-Authenticate: Bearer) flow. Anonymous if username is empty.
 // allowPrivate mirrors KRILL_ALLOW_PRIVATE_EGRESS: when false, both the tags

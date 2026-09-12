@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -59,6 +60,12 @@ type Server struct {
 	// sessions a client already negotiated against the first.
 	mcpHandler http.Handler
 
+	// reconcileGateway asks the background reconciler to re-attach Traefik to
+	// every organization network. It is a request, not the work: reconciling
+	// recreates the Traefik task, and POST /orgs is open to any authenticated
+	// user. Nil in tests and when no reconciler is wired.
+	reconcileGateway func()
+
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
 	selfComponentFn func() string
@@ -79,6 +86,12 @@ type Server struct {
 	// so each user also gets a bounded share of it.
 	logSeatMu sync.Mutex
 	logSeats  map[int64]int
+
+	// mustChangePasswordLookup reads the must_change_password flag for a user.
+	// Defaults to q.GetUserMustChangePassword in New(); tests substitute it to
+	// force a lookup error and exercise requirePasswordChange's fail-closed path
+	// without a real DB failure.
+	mustChangePasswordLookup func(ctx context.Context, userID int64) (bool, error)
 }
 
 // maxLiveLogStreams bounds concurrent docker log-follow WebSockets host-wide.
@@ -96,7 +109,8 @@ type monCacheEntry struct {
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
 	return &Server{
 		cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc,
-		logSem: make(chan struct{}, maxLiveLogStreams),
+		logSem:                   make(chan struct{}, maxLiveLogStreams),
+		mustChangePasswordLookup: q.GetUserMustChangePassword,
 	}
 }
 
@@ -206,6 +220,11 @@ func (s *Server) SetMetrics(st metrics.Store) { s.metrics = st }
 // sampler), so the monitoring handler need not scan docker itself.
 func (s *Server) SetSelfComponentFn(fn func() string) { s.selfComponentFn = fn }
 
+// SetGatewayReconcile wires the background Traefik reconciler's trigger. Left
+// unset (tests, or an install with no engine) organization creation simply
+// does not ask for a reconcile; the next startup attaches the gateway.
+func (s *Server) SetGatewayReconcile(trigger func()) { s.reconcileGateway = trigger }
+
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
@@ -281,8 +300,12 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
+		r.Use(s.requirePasswordChange)
 		r.Use(auth.WithInstanceAdmin(s.auth))
 		r.Use(s.flashMiddleware)
+
+		r.Get("/account/password", s.accountPasswordPage)
+		r.Post("/account/password", s.accountPasswordSubmit)
 
 		r.Get("/", s.home)
 		r.Get("/orgs", s.listOrgs)
@@ -294,6 +317,10 @@ func (s *Server) Router() http.Handler {
 			r.Use(auth.RequireOrgMember(s.org))
 
 			r.Get("/", s.orgDashboard)
+			// Every member may change their own password; the page lives under
+			// the organization only so it renders inside the normal layout.
+			r.Get("/account/password", s.orgAccountPasswordPage)
+			r.Post("/account/password", s.orgAccountPasswordSubmit)
 			r.Get("/members", s.listMembers)
 			r.Get("/destinations", s.listDestinations)
 			r.Get("/registries", s.listRegistries)
