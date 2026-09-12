@@ -18,6 +18,16 @@ and what an attacker gains. Krill has a single maintainer, so responses are
 best-effort — expect an acknowledgement within a week. Once a fix is released the
 advisory is published, with credit to the reporter unless you prefer otherwise.
 
+## Trust model
+
+Krill assumes a **single trust boundary**: everyone who can sign in is trusted with
+the whole instance. Organizations, projects and environments organise work — they
+are not an isolation boundary between parties who do not trust each other. Every
+app and database of every organization shares one Docker overlay network; any
+signed-in user can create an organization, become its owner, deploy arbitrary
+containers into it and open a shell inside them. Run separate Krill instances for
+workloads that must not be able to reach each other.
+
 ## Operating Krill safely
 
 Things worth knowing before you expose an instance — and before you file a report
