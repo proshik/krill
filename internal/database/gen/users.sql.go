@@ -9,6 +9,33 @@ import (
 	"context"
 )
 
+const createInvitedUser = `-- name: CreateInvitedUser :one
+INSERT INTO users (email, password_hash, must_change_password) VALUES ($1, $2, true) RETURNING id, email, password_hash, created_at, is_admin, must_change_password
+`
+
+type CreateInvitedUserParams struct {
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+}
+
+// A user created by someone else's invitation, flagged to change the password
+// the inviter chose in the same statement. A separate UPDATE could fail after
+// the insert succeeded, leaving the invitee on a password the inviter still
+// knows, with nothing to ever retry it.
+func (q *Queries) CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createInvitedUser, arg.Email, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.CreatedAt,
+		&i.IsAdmin,
+		&i.MustChangePassword,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, password_hash, created_at, is_admin, must_change_password
 `

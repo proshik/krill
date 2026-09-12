@@ -62,6 +62,11 @@ type Querier interface {
 	CreateDomain(ctx context.Context, arg CreateDomainParams) (Domain, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateGitCredential(ctx context.Context, arg CreateGitCredentialParams) (GitCredential, error)
+	// A user created by someone else's invitation, flagged to change the password
+	// the inviter chose in the same statement. A separate UPDATE could fail after
+	// the insert succeeded, leaving the invitee on a password the inviter still
+	// knows, with nothing to ever retry it.
+	CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error)
 	CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDatabaseParams) (LogicalDatabase, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)

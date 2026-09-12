@@ -1,6 +1,13 @@
 -- name: CreateUser :one
 INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING *;
 
+-- name: CreateInvitedUser :one
+-- A user created by someone else's invitation, flagged to change the password
+-- the inviter chose in the same statement. A separate UPDATE could fail after
+-- the insert succeeded, leaving the invitee on a password the inviter still
+-- knows, with nothing to ever retry it.
+INSERT INTO users (email, password_hash, must_change_password) VALUES ($1, $2, true) RETURNING *;
+
 -- name: GetUserByEmail :one
 SELECT * FROM users WHERE email = $1;
 

@@ -155,3 +155,53 @@ func TestChangePasswordIsReachableFromTheLayout(t *testing.T) {
 	}
 	loginWithPassword(t, h, "member-pw@k.local", "a-new-password-1")
 }
+
+// An invited user must be flagged to change the password the inviter chose, and
+// an invite must never succeed without that flag. Flagging used to be a second
+// write whose failure was only logged; this test makes exactly such a second
+// write fail (a trigger refuses any UPDATE of the flag) and requires the
+// invitee to be flagged anyway — which only holds when the account is created
+// flagged in the same statement.
+func TestInvitedUserIsFlaggedEvenIfAFollowUpWriteWouldFail(t *testing.T) {
+	h, q, orgSvc, pool := newDeployServer(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION krill_test_block_must_change() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.must_change_password IS DISTINCT FROM OLD.must_change_password THEN
+				RAISE EXCEPTION 'simulated failure writing must_change_password';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER krill_test_block_must_change
+		BEFORE UPDATE ON users
+		FOR EACH ROW EXECUTE FUNCTION krill_test_block_must_change();
+	`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	ownerID := mkUser(t, q, "inviter@k.local")
+	o, err := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	cookie := loginAs(t, q, "inviter@k.local")
+	rec := postForm(t, h, "/orgs/"+i64(o.ID)+"/members", cookie, url.Values{"email": {"invitee2@k.local"}, "role": {"member"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("createMember: want 303, got %d", rec.Code)
+	}
+
+	u, err := q.GetUserByEmail(ctx, "invitee2@k.local")
+	if err != nil {
+		t.Fatalf("the invite must have created the user: %v", err)
+	}
+	must, err := q.GetUserMustChangePassword(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("read flag: %v", err)
+	}
+	if !must {
+		t.Fatal("an invited user must be flagged to change the inviter's password")
+	}
+}

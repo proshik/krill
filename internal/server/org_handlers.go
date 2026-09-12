@@ -176,17 +176,17 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 			s.flashErr(w, r, herr.Error())
 			return
 		}
-		u, err = s.q.CreateUser(r.Context(), db.CreateUserParams{Email: email, PasswordHash: hash})
+		// The inviter chose this temporary password and keeps a working
+		// credential for the account until the invitee changes it — hold them
+		// on the change-password form until they do. The flag is written by the
+		// same INSERT that creates the account: as a separate write it could
+		// fail after the user already existed, and an invite that succeeds
+		// without it defeats the whole point of the flag.
+		u, err = s.q.CreateInvitedUser(r.Context(), db.CreateInvitedUserParams{Email: email, PasswordHash: hash})
 		if err != nil {
 			logFrom(r).Error("createMember: failed to create user", "err", err, "org_id", o.ID)
 			s.flashErrErr(w, r, "flash.err.create_user", err)
 			return
-		}
-		// The inviter chose this temporary password and keeps a working
-		// credential for the account until the invitee changes it — hold them
-		// on the change-password form until they do.
-		if err := s.q.SetUserMustChangePassword(r.Context(), db.SetUserMustChangePasswordParams{ID: u.ID, MustChangePassword: true}); err != nil {
-			logFrom(r).Error("could not flag the invited user for a password change", "err", err, "user_id", u.ID)
 		}
 	} else {
 		tempPw = "" // existing user — don't show the password
