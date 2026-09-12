@@ -316,7 +316,7 @@ func TestMinioDriverSpec(t *testing.T) {
 	if d.Label() != "MinIO" {
 		t.Fatalf("label = %q", d.Label())
 	}
-	if d.DefaultImage() != "minio/minio:latest" {
+	if d.DefaultImage() != "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z" {
 		t.Fatalf("default image = %q", d.DefaultImage())
 	}
 	if d.SuperuserName() != "" {

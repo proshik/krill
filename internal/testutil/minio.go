@@ -8,6 +8,8 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/proshik/krill/internal/dbservice/drivers"
 )
 
 // MinioInfo holds connection details for a disposable MinIO container.
@@ -25,7 +27,7 @@ func NewMinio(t *testing.T) MinioInfo {
 	ctx := context.Background()
 
 	c, err := testcontainers.Run(ctx,
-		"minio/minio:latest",
+		drivers.MinIOImage, // the same image a managed MinIO instance runs
 		testcontainers.WithCmd("server", "/data"),
 		testcontainers.WithEnv(map[string]string{
 			"MINIO_ROOT_USER":     "minioadmin",

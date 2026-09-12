@@ -447,7 +447,7 @@ func TestResolveDBLinkValueDispatchesByEngine(t *testing.T) {
 	}
 	minioInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
 		OrganizationID: o.ID, Engine: "minio", Name: "objs", AppName: "krill-minio-disp",
-		Image: "minio/minio:latest", Superuser: "root-user", SuperuserPassword: "s3secret",
+		Image: "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", Superuser: "root-user", SuperuserPassword: "s3secret",
 	})
 	if err != nil {
 		t.Fatalf("create minio instance: %v", err)
