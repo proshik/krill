@@ -44,10 +44,13 @@ func (s *Server) accountPasswordSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 // mustChangePassword reports whether the signed-in user still owes a password
-// change. A read failure is treated as "no" for rendering only — the middleware
-// is what actually gates access.
+// change, for RENDERING only (e.g. whether accountPasswordPage shows the
+// forced-change banner). A lookup failure is treated as "no" here — showing
+// the wrong banner is harmless. This is NOT the access gate: requirePasswordChange
+// below does its own lookup and fails CLOSED on the same kind of error, because
+// silently letting a flagged user through defeats the whole feature.
 func (s *Server) mustChangePassword(r *http.Request) bool {
-	must, err := s.q.GetUserMustChangePassword(r.Context(), auth.UserID(r.Context()))
+	must, err := s.mustChangePasswordLookup(r.Context(), auth.UserID(r.Context()))
 	if err != nil {
 		logFrom(r).Error("must_change_password lookup failed", "err", err)
 		return false
@@ -58,13 +61,23 @@ func (s *Server) mustChangePassword(r *http.Request) bool {
 // requirePasswordChange keeps a user who was handed a password by someone else
 // on the change-password form until they pick their own. The inviter knows the
 // temporary password, so until it is changed the invitee's account is shared.
+// It fails CLOSED: a lookup error holds the user on the form exactly like a
+// genuine "must change" result, rather than letting a transient DB blip open
+// the same hole this middleware exists to close. /account/password itself
+// stays exempt, so a fail-closed redirect can never loop.
 func (s *Server) requirePasswordChange(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/account/password" || r.URL.Path == "/logout" {
+		if r.URL.Path == "/account/password" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.mustChangePassword(r) {
+		must, err := s.mustChangePasswordLookup(r.Context(), auth.UserID(r.Context()))
+		if err != nil {
+			logFrom(r).Error("must_change_password lookup failed; holding the user on the change-password form", "err", err)
+			http.Redirect(w, r, "/account/password", http.StatusSeeOther)
+			return
+		}
+		if must {
 			http.Redirect(w, r, "/account/password", http.StatusSeeOther)
 			return
 		}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -79,6 +80,12 @@ type Server struct {
 	// so each user also gets a bounded share of it.
 	logSeatMu sync.Mutex
 	logSeats  map[int64]int
+
+	// mustChangePasswordLookup reads the must_change_password flag for a user.
+	// Defaults to q.GetUserMustChangePassword in New(); tests substitute it to
+	// force a lookup error and exercise requirePasswordChange's fail-closed path
+	// without a real DB failure.
+	mustChangePasswordLookup func(ctx context.Context, userID int64) (bool, error)
 }
 
 // maxLiveLogStreams bounds concurrent docker log-follow WebSockets host-wide.
@@ -96,7 +103,8 @@ type monCacheEntry struct {
 func New(cfg config.Config, authSvc *auth.Service, orgSvc *org.Service, q *db.Queries, d *deploy.Deployer, e docker.Engine, hub *deploy.DeployLogHub, dbSvc *dbservice.Service) *Server {
 	return &Server{
 		cfg: cfg, auth: authSvc, org: orgSvc, q: q, deployer: d, engine: e, logHub: hub, dbsvc: dbSvc,
-		logSem: make(chan struct{}, maxLiveLogStreams),
+		logSem:                   make(chan struct{}, maxLiveLogStreams),
+		mustChangePasswordLookup: q.GetUserMustChangePassword,
 	}
 }
 
