@@ -65,7 +65,19 @@ Verified in code and tests, but not yet exercised on a real environment:
   the job itself.
 - **Email and Slack** notification channels (Telegram ships today).
 - A Homebrew tap for `krill-cli`.
-- Recording API-triggered deploys as their own trigger type.
+- Recording API-triggered deploys, and the redeploys made by the network migration, as their own trigger types.
+- **Network migration: do not let one organization hold back the rest.** Organizations are
+  migrated one after another under a single deadline that includes deploy completion, so a
+  slow organization delays every organization after it until the next restart. Submit every
+  organization's redeploys first, then wait for all of them.
+- **Reload of a stopped app after the network migration** restarts it on its old service
+  spec, i.e. on the shared network and away from its databases. Reload of a stopped app
+  should go through a full deploy.
+- **The MinIO image moved off Docker Hub.** `minio/minio` no longer pulls, so creating a MinIO
+  instance fails and the MinIO-backed tests cannot run; the driver and the test helper need
+  to switch to `quay.io/minio/minio`.
+- A per-owner cap on organizations: each new organization changes the gateway's networks and
+  restarts the Traefik task (at most once a minute).
 
 ## Later
 

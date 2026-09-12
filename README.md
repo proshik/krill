@@ -63,6 +63,7 @@ Features below are grouped by capability and tied to the phase that delivered th
 - Per-app, opt-in auto-deploy via **webhook + PAT** (no OAuth / GitHub App needed).
 - **Dockerfile/git apps:** a GitHub push webhook (HMAC-verified `X-Hub-Signature-256`, branch-matched) — push to the configured branch and Krill builds + deploys on the host.
 - **Image apps:** a generic deploy-hook your CI calls *after* `docker push` (Bearer token, optional `?tag=`) — Krill resolves the image digest, re-pulls, and redeploys (so a same-tag push is actually picked up).
+- **When a deploy cannot be queued** — a deploy of that app is already running, or the organization is at its in-flight limit (`KRILL_MAX_BUILDS_PER_ORG`) — both endpoints answer `503` with `Retry-After` rather than accepting and dropping it. CI can retry; GitHub does **not** retry a failed delivery, so it shows up under the webhook's *Recent Deliveries* and can be redelivered from there.
 - Enable/disable, masked secret reveal/copy, and regenerate on the app's General tab; webhook-triggered deploys show `trigger=webhook` in the history.
 
 ### Realtime & operations (Phase 7)
