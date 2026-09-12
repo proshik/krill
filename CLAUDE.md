@@ -188,7 +188,9 @@ Key facts:
 
 Brainstorm → spec (`docs/superpowers/specs/`, date-prefixed) → plan (`docs/superpowers/plans/`, date-prefixed) → subagent-driven execution.
 
-Both directories are git-ignored and local-only: never `git add -f` them — they must not reach the public repository. Anything a contributor needs to know belongs in this file, `README.md` or `ROADMAP.md`.
+Both directories are git-ignored and local-only: never `git add -f` them — they must not reach the public repository. Anything a contributor needs to know belongs in this file, `README.md`, `ROADMAP.md`, `CONTRIBUTING.md` or the tracked docs under `docs/` (`install.md`, `configuration.md`, `architecture.md`, `development.md`, `guides/`).
+
+**Public docs layout (2026-09-13):** `README.md` is a short landing page (badges, screenshots from `docs/images/`, features, quick start, status, a docs index) — keep it short and put detail in `docs/`. User and operator documentation lives in `docs/install.md` (install, upgrade, external Postgres, uninstall), `docs/configuration.md` (every `KRILL_*` variable — add a new one here, it is the only full list), `docs/guides/` (domains, backups, registries, agent-api, krill-cli) and `docs/architecture.md`; contributor docs in `docs/development.md` and `CONTRIBUTING.md`. Only `docs/superpowers/` is git-ignored.
 
 - Subagents run STRICTLY SEQUENTIALLY (parallel execution reordered/duplicated tool calls — see Gotchas).
 - Subagents do NOT commit on master; the harness blocks it. Only the controller commits.

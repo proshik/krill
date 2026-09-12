@@ -49,7 +49,7 @@ func TestToolListMatchesRegistry(t *testing.T) {
 // TestToolDescriptionsStateTheirCaveats reads the descriptions exactly as a
 // raw MCP client does — over tools/list, off the wire — because that listing
 // is the ONLY documentation such a client (or an agent that never loaded the
-// krill-deploy skill) ever sees. The README and the skill both note that
+// krill-deploy skill) ever sees. The API guide and the skill both note that
 // krill_set_env does not apply to the running container; the tool description
 // omitted it, so an agent would set a variable and report "environment
 // updated" while the container kept running the old value.

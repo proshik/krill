@@ -1,7 +1,8 @@
 # Krill roadmap
 
 What is done, what is waiting for live verification, and what is open.
-[README.md](README.md) describes the features in detail.
+[README.md](README.md) gives an overview of the features, and [docs/](docs/)
+describes them in detail.
 
 ## Done
 
