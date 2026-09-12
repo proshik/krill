@@ -49,8 +49,11 @@ func checkGitCredentialHost(gitURL, credHost string) error {
 }
 
 func checkRegistryHost(image, registryURL string) error {
-	h := docker.ImageHost(image)
-	want := builder.NormalizeHost(docker.RegistryHost(registryURL))
+	// Canonicalize both sides: Docker Hub answers to several names, and a
+	// hostless image (which ImageHost maps to docker.io) paired with a stored
+	// "index.docker.io" or "registry-1.docker.io" is the same registry.
+	h := docker.CanonicalRegistryHost(docker.ImageHost(image))
+	want := docker.CanonicalRegistryHost(builder.NormalizeHost(docker.RegistryHost(registryURL)))
 	if want == "" {
 		// Same fail-closed rule as checkGitCredentialHost: an unusable stored
 		// registry host must reject, not silently skip the check.

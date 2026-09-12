@@ -65,13 +65,31 @@ func RegistryHost(registryURL string) string { return registryHost(registryURL) 
 func ImageHost(image string) string {
 	first, rest, ok := strings.Cut(image, "/")
 	if !ok {
-		return "docker.io"
+		return dockerHubHost
 	}
 	_ = rest
 	if strings.ContainsAny(first, ".:") || first == "localhost" {
 		return strings.ToLower(first)
 	}
-	return "docker.io"
+	return dockerHubHost
+}
+
+// dockerHubHost is the canonical name of Docker Hub's registry: the host a
+// hostless image reference resolves to (see ImageHost).
+const dockerHubHost = "docker.io"
+
+// CanonicalRegistryHost maps Docker Hub's aliases onto one name so two spellings
+// of the same registry compare equal. "index.docker.io" and
+// "registry-1.docker.io" are both what Docker itself advertises for Hub, and
+// either is a valid stored registry URL for a hostless image reference like
+// "nginx" or "acme/api". Any other host is returned unchanged; host must
+// already be normalized (lowercase, no scheme or path).
+func CanonicalRegistryHost(host string) string {
+	switch host {
+	case "index.docker.io", "registry-1.docker.io":
+		return dockerHubHost
+	}
+	return host
 }
 
 // RegistryListTags lists the tags for repo in a registry, following the v2
