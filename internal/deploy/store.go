@@ -25,6 +25,30 @@ type DBStore struct {
 
 func NewDBStore(q *db.Queries) *DBStore { return &DBStore{q: q} }
 
+// ErrCredentialHostMismatch guards against a credential being handed to a host
+// it was not registered for: git answers an askpass prompt for ANY host, so an
+// app pointed at attacker.example would otherwise hand over another admin's PAT.
+var ErrCredentialHostMismatch = errors.New("credential host does not match the target host")
+
+func checkGitCredentialHost(gitURL, credHost string) error {
+	h, err := builder.HostOf(gitURL)
+	if err != nil {
+		return err
+	}
+	if want := builder.NormalizeHost(credHost); want != "" && want != h {
+		return fmt.Errorf("%w: credential is registered for %q, repository is on %q", ErrCredentialHostMismatch, want, h)
+	}
+	return nil
+}
+
+func checkRegistryHost(image, registryURL string) error {
+	h := docker.ImageHost(image)
+	if want := builder.NormalizeHost(docker.RegistryHost(registryURL)); want != "" && want != h {
+		return fmt.Errorf("%w: registry is %q, image is on %q", ErrCredentialHostMismatch, want, h)
+	}
+	return nil
+}
+
 func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	a, err := s.q.GetApplication(ctx, id)
 	if err != nil {
@@ -72,6 +96,9 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	out.Healthcheck = buildHealthcheck(a)
 	if a.RegistryID != nil {
 		if reg, rerr := s.q.GetRegistry(ctx, *a.RegistryID); rerr == nil {
+			if herr := checkRegistryHost(a.Image, reg.RegistryUrl); herr != nil {
+				return App{}, herr
+			}
 			pw, derr := secret.Dec(reg.Password)
 			if derr != nil {
 				return App{}, fmt.Errorf("registry %d password: %w", reg.ID, derr)
@@ -85,6 +112,9 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	if a.SourceType == "dockerfile" {
 		if a.GitCredentialID != nil {
 			if gc, gerr := s.q.GetGitCredential(ctx, *a.GitCredentialID); gerr == nil {
+				if herr := checkGitCredentialHost(a.GitUrl, gc.Host); herr != nil {
+					return App{}, herr
+				}
 				tok, derr := secret.Dec(gc.Token)
 				if derr != nil {
 					return App{}, fmt.Errorf("git credential %d token: %w", gc.ID, derr)

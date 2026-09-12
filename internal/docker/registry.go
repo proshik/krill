@@ -55,6 +55,25 @@ func RegistryRepo(registryURL, image string) string {
 	return strings.TrimPrefix(image, registryHost(registryURL)+"/")
 }
 
+// RegistryHost is the host part of a stored registry URL (exported for the
+// deployer's credential-host check).
+func RegistryHost(registryURL string) string { return registryHost(registryURL) }
+
+// ImageHost returns the registry host an image reference points at. A
+// reference without a host belongs to Docker Hub, which is what Docker itself
+// assumes; the first segment counts as a host only when it looks like one.
+func ImageHost(image string) string {
+	first, rest, ok := strings.Cut(image, "/")
+	if !ok {
+		return "docker.io"
+	}
+	_ = rest
+	if strings.ContainsAny(first, ".:") || first == "localhost" {
+		return strings.ToLower(first)
+	}
+	return "docker.io"
+}
+
 // RegistryListTags lists the tags for repo in a registry, following the v2
 // token (WWW-Authenticate: Bearer) flow. Anonymous if username is empty.
 // allowPrivate mirrors KRILL_ALLOW_PRIVATE_EGRESS: when false, both the tags

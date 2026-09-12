@@ -27,7 +27,7 @@ func TestGitBuilderBuildsImage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := builder.New("").Build(ctx, builder.BuildRequest{
+	err := builder.New("", false).Build(ctx, builder.BuildRequest{
 		AppID: 1, DeployID: 1,
 		GitURL: testRepo, GitBranch: "main", DockerfilePath: "Dockerfile",
 		ImageTag: tag,

@@ -102,7 +102,7 @@ func run() error {
 	orgSvc := org.NewService(q)
 
 	hub := deploy.NewLogHub()
-	b := builder.New(cfg.DockerHost)
+	b := builder.New(cfg.DockerHost, cfg.AllowPrivateEgress)
 	if err := builder.Available(); err != nil {
 		slog.Warn("build dependencies missing (dockerfile builds disabled)", "err", err)
 	}

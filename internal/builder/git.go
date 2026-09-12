@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/proshik/krill/internal/netguard"
 )
 
 // sanitizeGitURL strips any embedded credentials (https://user:token@host/...)
@@ -76,17 +78,27 @@ func gitAuthSetup(gitURL string, auth *GitAuth) (env []string, cleanup func(), e
 
 // gitBuilder builds the image: git clone → docker build, via the CLI.
 type gitBuilder struct {
-	dockerHost string // value for the child docker's DOCKER_HOST; "" = inherit
+	dockerHost   string // value for the child docker's DOCKER_HOST; "" = inherit
+	allowPrivate bool   // mirrors KRILL_ALLOW_PRIVATE_EGRESS for the git_url netguard check
 }
-
-// New creates a Builder. dockerHost is passed into docker build (for the Colima socket).
-func New(dockerHost string) Builder { return &gitBuilder{dockerHost: dockerHost} }
 
 func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer) error {
 	if err := ValidateBuildRequest(req); err != nil {
 		fmt.Fprintf(out, "❌ invalid build request: %v\n", err)
 		return err
 	}
+
+	// git_url goes through the same SSRF egress guard as S3 and registry URLs:
+	// without it, a tenant could point an app at an internal/loopback address
+	// and use the build worker to probe the private network.
+	host, err := HostOf(req.GitURL)
+	if err != nil {
+		return err
+	}
+	if err := netguard.CheckHost(ctx, host, b.allowPrivate); err != nil {
+		return fmt.Errorf("git_url host %q is not allowed: %w", host, err)
+	}
+
 	dir, err := os.MkdirTemp("", fmt.Sprintf("krill-build-%d-%d-", req.AppID, req.DeployID))
 	if err != nil {
 		return err
