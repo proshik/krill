@@ -28,6 +28,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
@@ -378,6 +379,7 @@ func run() error {
 	app.SetNotify(notifySvc)
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
+	app.SetControlPlaneFirewall(firewall.LocalRunner{Timeout: 20 * time.Second})
 	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme))
 
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve

@@ -67,3 +67,69 @@ func TestBuildWorkerRulesetIPv6Only(t *testing.T) {
 		t.Errorf("empty address set emitted:\n%s", rs)
 	}
 }
+
+// With no service ports the manager ruleset must be the worker ruleset byte for
+// byte — the refactor into buildRuleset must not shift anything.
+func TestBuildManagerRulesetNoPortsEqualsWorker(t *testing.T) {
+	ips := []string{"10.0.0.1", "2001:db8::1"}
+	w, err := BuildWorkerRuleset(ips)
+	if err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	for _, ports := range [][]int{nil, {}, {22}} {
+		m, err := BuildManagerRuleset(ips, ports)
+		if err != nil {
+			t.Fatalf("manager %v: %v", ports, err)
+		}
+		if m != w {
+			t.Fatalf("manager ruleset with ports %v differs from worker:\n--- worker\n%s--- manager\n%s", ports, w, m)
+		}
+	}
+}
+
+func TestBuildManagerRulesetServicePorts(t *testing.T) {
+	rs, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 443, 22, 80, 443})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(rs, "tcp dport { 80, 443, 8080 } accept") {
+		t.Fatalf("service ports missing, unsorted or not deduplicated:\n%s", rs)
+	}
+	if n := strings.Count(rs, "22"); n != 1 {
+		t.Fatalf("port 22 must appear exactly once (the anti-lockout rule), got %d:\n%s", n, rs)
+	}
+	// Service ports are accepted from anywhere, but must still sit after SSH and
+	// inside the drop-policy chain.
+	sshIdx := strings.Index(rs, "tcp dport 22 accept")
+	svcIdx := strings.Index(rs, "tcp dport { 80, 443, 8080 }")
+	if sshIdx < 0 || svcIdx < sshIdx {
+		t.Fatalf("service ports must follow the SSH rule; ssh=%d svc=%d\n%s", sshIdx, svcIdx, rs)
+	}
+	for _, want := range []string{"tcp dport { 2377, 7946 } accept", "udp dport { 4789, 7946 } accept", "policy drop"} {
+		if !strings.Contains(rs, want) {
+			t.Fatalf("manager ruleset lost %q\n%s", want, rs)
+		}
+	}
+}
+
+func TestBuildManagerRulesetDeterministic(t *testing.T) {
+	a, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 80, 443})
+	if err != nil {
+		t.Fatalf("build a: %v", err)
+	}
+	b, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{443, 8080, 80})
+	if err != nil {
+		t.Fatalf("build b: %v", err)
+	}
+	if a != b {
+		t.Fatalf("port order leaked into the ruleset:\n%s\n%s", a, b)
+	}
+}
+
+func TestBuildManagerRulesetRejectsOutOfRangePort(t *testing.T) {
+	for _, p := range []int{0, -1, 65536} {
+		if _, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{80, p}); err == nil {
+			t.Fatalf("port %d must be rejected", p)
+		}
+	}
+}
