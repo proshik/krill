@@ -90,12 +90,15 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 
 	// git_url goes through the same SSRF egress guard as S3 and registry URLs:
 	// without it, a tenant could point an app at an internal/loopback address
-	// and use the build worker to probe the private network.
+	// and use the build worker to probe the private network. HostOf keeps a
+	// non-standard port (needed elsewhere to compare against a stored
+	// credential host), but net.LookupIPAddr — which CheckHost calls — errors
+	// on a "host:port" string, so the port is stripped just for this call.
 	host, err := HostOf(req.GitURL)
 	if err != nil {
 		return err
 	}
-	if err := netguard.CheckHost(ctx, host, b.allowPrivate); err != nil {
+	if err := netguard.CheckHost(ctx, bareHost(host), b.allowPrivate); err != nil {
 		return fmt.Errorf("git_url host %q is not allowed: %w", host, err)
 	}
 

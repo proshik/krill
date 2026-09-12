@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/netguard"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
@@ -58,6 +60,17 @@ func (s *Server) createRegistry(w http.ResponseWriter, r *http.Request) {
 
 	if name == "" || registryURL == "" || username == "" || password == "" {
 		s.flashErrT(w, r, "flash.err.registry_fields_required")
+		return
+	}
+	// Reject a registry_url that normalizes to an empty host (e.g. "https://"
+	// or "/") the same way createGitCredential rejects an empty git-credential
+	// host: an un-checkable stored host must never be persisted, because
+	// internal/deploy's checkRegistryHost fails closed on it (the deploy would
+	// simply error, but the credential could still be probed/edited in a
+	// confusing state) and because it's the shape that used to bypass the
+	// deployer's host check entirely before that fix.
+	if builder.NormalizeHost(docker.RegistryHost(registryURL)) == "" {
+		s.flashErrT(w, r, "flash.err.registry_host")
 		return
 	}
 

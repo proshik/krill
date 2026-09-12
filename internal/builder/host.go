@@ -2,6 +2,7 @@ package builder
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -29,4 +30,17 @@ func HostOf(rawURL string) (string, error) {
 		return "", errors.New("git_url has no host")
 	}
 	return NormalizeHost(u.Host), nil
+}
+
+// bareHost strips a ":port" suffix so the result can be handed to
+// net.LookupIPAddr (via netguard.CheckHost), which errors on a "host:port"
+// string — HostOf/NormalizeHost deliberately keep the port for credential-host
+// comparison, so callers that need to resolve the host must strip it first.
+// Returns s unchanged when it carries no port (including a bare IPv6 literal,
+// which SplitHostPort also rejects without brackets).
+func bareHost(s string) string {
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		return h
+	}
+	return s
 }

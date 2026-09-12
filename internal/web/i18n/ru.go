@@ -375,6 +375,7 @@ var ru = map[string]string{
 	"flash.err.owner_grant_owner":          "только владелец может выдать роль владельца",
 	"flash.err.owner_change_owner":         "только владелец может менять роль владельца",
 	"flash.err.registry_fields_required":   "нужны name, registry_url, username и password",
+	"flash.err.registry_host":              "неверный хост реестра",
 	"flash.err.gitcred_fields_required":    "нужны name, host, username и token",
 	"flash.err.git_credential_host":        "неверный хост git-креда",
 	"flash.err.dest_fields_required":       "нужны name и bucket",

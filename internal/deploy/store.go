@@ -35,7 +35,14 @@ func checkGitCredentialHost(gitURL, credHost string) error {
 	if err != nil {
 		return err
 	}
-	if want := builder.NormalizeHost(credHost); want != "" && want != h {
+	want := builder.NormalizeHost(credHost)
+	if want == "" {
+		// Fail CLOSED: an empty/unusable stored host is not "nothing to
+		// check against" — it must never be treated as a pass, or a
+		// credential with a broken stored host would be handed to any host.
+		return fmt.Errorf("%w: stored credential host %q is empty or unusable", ErrCredentialHostMismatch, credHost)
+	}
+	if want != h {
 		return fmt.Errorf("%w: credential is registered for %q, repository is on %q", ErrCredentialHostMismatch, want, h)
 	}
 	return nil
@@ -43,7 +50,13 @@ func checkGitCredentialHost(gitURL, credHost string) error {
 
 func checkRegistryHost(image, registryURL string) error {
 	h := docker.ImageHost(image)
-	if want := builder.NormalizeHost(docker.RegistryHost(registryURL)); want != "" && want != h {
+	want := builder.NormalizeHost(docker.RegistryHost(registryURL))
+	if want == "" {
+		// Same fail-closed rule as checkGitCredentialHost: an unusable stored
+		// registry host must reject, not silently skip the check.
+		return fmt.Errorf("%w: stored registry host %q is empty or unusable", ErrCredentialHostMismatch, registryURL)
+	}
+	if want != h {
 		return fmt.Errorf("%w: registry is %q, image is on %q", ErrCredentialHostMismatch, want, h)
 	}
 	return nil

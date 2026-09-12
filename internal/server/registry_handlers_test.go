@@ -79,6 +79,37 @@ func TestCreateRegistryPrivateHostBlocked(t *testing.T) {
 	}
 }
 
+// TestCreateRegistryEmptyHostRejected verifies createRegistry rejects a
+// registry_url that normalizes to an empty host (e.g. "https://" with nothing
+// after the scheme): unlike a merely-missing field, this used to pass the
+// non-empty-string check and reach storage, after which the deployer's
+// host-mismatch guard had no host to compare against — the exploitable gap
+// fixed by checkRegistryHost's fail-closed behavior.
+func TestCreateRegistryEmptyHostRejected(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "owner@k.local")
+
+	form := url.Values{
+		"name":         {"primary"},
+		"registry_url": {"https://"},
+		"username":     {"robot"},
+		"password":     {"secret"},
+	}
+	rec := createRegistryForm(t, h, cookie, o.ID, form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("empty host want 303, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !hasErrFlash(rec) {
+		t.Fatalf("empty host want err flash, got %q", flashCookieValue(rec))
+	}
+	if regs, _ := q.ListRegistriesByOrg(ctx, o.ID); len(regs) != 0 {
+		t.Fatalf("expected no registry created, got %d", len(regs))
+	}
+}
+
 // TestCreateRegistryMissingFieldsFlash drives the converted createRegistry error
 // path (missing required fields) and asserts the PRG response: a 303 redirect
 // with an "err:"-prefixed krill_flash cookie, and no registry row created.

@@ -375,6 +375,7 @@ var en = map[string]string{
 	"flash.err.owner_grant_owner":          "only an owner can grant the owner role",
 	"flash.err.owner_change_owner":         "only an owner can change an owner's role",
 	"flash.err.registry_fields_required":   "name, registry_url, username and password are required",
+	"flash.err.registry_host":              "invalid registry host",
 	"flash.err.gitcred_fields_required":    "name, host, username and token are required",
 	"flash.err.git_credential_host":        "invalid git credential host",
 	"flash.err.dest_fields_required":       "name and bucket are required",
