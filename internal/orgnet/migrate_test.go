@@ -299,10 +299,12 @@ func TestMigratorWaitsForEachDatabaseBatch(t *testing.T) {
 	}
 }
 
-// A wait that times out is a warning, not a failed submission: the instances
-// were handed over, so the organization still counts as migrated and the apps
-// still follow.
-func TestMigratorTreatsAWaitTimeoutAsAWarning(t *testing.T) {
+// The database redeploy is fire-and-forget — RedeployInstance cannot report a
+// refused submission — so the wait is the only evidence the databases actually
+// arrived. A wait that fails therefore leaves the organization un-migrated and
+// retried next boot. The apps still follow: the databases are on their way to
+// the same network, and holding the apps back forever is worse.
+func TestMigratorDoesNotMarkTheOrgWhenTheDatabaseWaitFails(t *testing.T) {
 	st := &fakeStore{
 		orgs:      []Org{{ID: 1}},
 		apps:      map[int64][]int64{1: {10}},
@@ -320,10 +322,69 @@ func TestMigratorTreatsAWaitTimeoutAsAWarning(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	if len(moved) != 1 {
-		t.Fatalf("the apps must still move after a wait timeout, moved=%v", moved)
+		t.Fatalf("the apps must still move after a wait failure, moved=%v", moved)
 	}
-	if !st.marked[1] {
-		t.Fatal("a wait timeout must not hold the organization back forever")
+	if st.marked[1] {
+		t.Fatal("a failed database wait must leave the organization to be retried")
+	}
+}
+
+// Listing and filtering the applications can both fail. Doing either after the
+// databases have already left the shared network would strand every app of the
+// organization without its database until the next restart, so the app set is
+// resolved first and a failure costs nothing.
+func TestMigratorResolvesAppsBeforeMovingDatabases(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		store func() *fakeStore
+		filt  func(context.Context, []int64) ([]int64, error)
+	}{
+		{
+			name: "listing fails",
+			store: func() *fakeStore {
+				return &fakeStore{
+					orgs:      []Org{{ID: 1}},
+					apps:      map[int64][]int64{1: {10}},
+					instances: map[int64][]int64{1: {20, 21}},
+					appErr:    errors.New("boom"),
+				}
+			},
+		},
+		{
+			name: "filtering fails",
+			store: func() *fakeStore {
+				return &fakeStore{
+					orgs:      []Org{{ID: 1}},
+					apps:      map[int64][]int64{1: {10}},
+					instances: map[int64][]int64{1: {20, 21}},
+				}
+			},
+			filt: func(context.Context, []int64) ([]int64, error) { return nil, errors.New("boom") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := tc.store()
+			var dbs, apps []int64
+			m := &Migrator{
+				Store:            st,
+				EnsureNetwork:    func(context.Context, string) error { return nil },
+				FilterApps:       tc.filt,
+				RedeployInstance: func(_ context.Context, id int64) error { dbs = append(dbs, id); return nil },
+				RedeployApp:      func(_ context.Context, id int64) error { apps = append(apps, id); return nil },
+			}
+			if err := m.Run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if len(dbs) != 0 {
+				t.Fatalf("no database may move before the app set is known, moved=%v", dbs)
+			}
+			if len(apps) != 0 {
+				t.Fatalf("no app may move either, moved=%v", apps)
+			}
+			if st.marked[1] {
+				t.Fatal("the organization must stay un-migrated so the next start retries it")
+			}
+		})
 	}
 }
 

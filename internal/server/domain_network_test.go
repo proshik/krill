@@ -139,3 +139,36 @@ func TestDomainMutationFallsBackToTheConfiguredNetwork(t *testing.T) {
 		t.Fatalf("traefik.docker.network = %q, want the configured fallback %q", got, "krill-net")
 	}
 }
+
+// An organization created through the UI was never on the shared network, so
+// the startup migration has nothing to move for it. It must therefore be
+// recorded as already migrated at creation time — otherwise the next restart
+// redeploys every service it has acquired since (rebuilding Dockerfile apps,
+// waiting on databases) purely to move them where they already are.
+func TestCreateOrgMarksItAlreadyOnItsOwnNetwork(t *testing.T) {
+	eng := &labelEngine{}
+	h, q, _ := newServerWithLabelEngine(t, eng)
+	ctx := context.Background()
+
+	mkUser(t, q, "founder@k.local")
+	cookie := loginAs(t, q, "founder@k.local")
+
+	rec := postForm(t, h, "/orgs", cookie, url.Values{"name": {"Fresh Org"}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create org: status %d", rec.Code)
+	}
+
+	orgs, err := q.ListOrganizations(ctx)
+	if err != nil {
+		t.Fatalf("list organizations: %v", err)
+	}
+	if len(orgs) != 1 {
+		t.Fatalf("want one organization, got %d", len(orgs))
+	}
+	if orgs[0].NetworkName != "krill-org-"+i64(orgs[0].ID) {
+		t.Fatalf("network_name = %q", orgs[0].NetworkName)
+	}
+	if !orgs[0].NetworkMigratedAt.Valid {
+		t.Fatal("a newly created organization must be recorded as already migrated")
+	}
+}

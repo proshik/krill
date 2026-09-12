@@ -242,7 +242,11 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
 		})
 	}
-	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, s.appNetwork(r, appID))
+	net, ok := s.appNetwork(r, appID)
+	if !ok {
+		return // the network is unknown; a wrong label is worse than a stale one
+	}
+	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net)
 	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {
 		logFrom(r).Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
 	}
@@ -254,18 +258,21 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 // the app no longer lives on, and every domain mutation would silently break
 // routing until the next full deploy put the right label back.
 //
-// The configured network stays the fallback for an organization that has not
-// been migrated yet (empty network_name), matching internal/deploy/store.go.
-func (s *Server) appNetwork(r *http.Request, appID int64) string {
+// The configured network is the fallback ONLY for an organization that has not
+// been migrated yet (empty network_name), matching internal/deploy/store.go. A
+// failed query is not that case: guessing there would write the exact wrong
+// label on a transient database blip. Label sync is optional — it re-runs on
+// the next domain edit and on the next deploy — so ok=false aborts it instead.
+func (s *Server) appNetwork(r *http.Request, appID int64) (string, bool) {
 	net, err := s.q.GetOrganizationNetworkByApp(r.Context(), appID)
 	if err != nil {
 		logFrom(r).Error("appNetwork: could not resolve the organization network", "err", err, "app_id", appID)
-		return s.cfg.Network
+		return "", false
 	}
 	if net == "" {
-		return s.cfg.Network
+		return s.cfg.Network, true
 	}
-	return net
+	return net, true
 }
 
 // addDomainBasicAuthUser appends a basic-auth user (username + bcrypt hash) to a

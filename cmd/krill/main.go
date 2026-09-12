@@ -218,26 +218,6 @@ func run() error {
 	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
 	dbSvc.SetNotifier(notifySvc)
 
-	// An install that predates per-organization networks has every service —
-	// every tenant's — on the single shared overlay, where any container can
-	// resolve and reach any other by name. Nothing but a redeploy moves a Swarm
-	// service between networks, so move them here, at startup, once.
-	//
-	// It runs only when the gateway reconcile above actually succeeded, and
-	// AFTER it: Reconcile returns on the first NetworkEnsure error without
-	// deploying anything, so migrating on a failed reconcile would move services
-	// into networks Traefik is not attached to — every exposed app unroutable
-	// until some later, luckier start.
-	//
-	// A failure never stops the boot: the operator needs the UI and the logs far
-	// more than a completed migration, and the pass is idempotent, so the next
-	// startup redoes whatever did not finish.
-	if !gatewayReady {
-		slog.Warn("skipping the organization network migration: the gateway is not attached to the organization networks")
-	} else {
-		runOrgNetworkMigration(ctx, q, engine, dep, dbSvc)
-	}
-
 	// Health watcher: polls service state for app down/recovered alerts.
 	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
 	go watcher.Run(ctx)
@@ -437,6 +417,30 @@ func run() error {
 		}
 	}()
 
+	// An install that predates per-organization networks has every service —
+	// every tenant's — on the single shared overlay, where any container can
+	// resolve and reach any other by name. Nothing but a redeploy moves a Swarm
+	// service between networks, so move them, once, in the background.
+	//
+	// In the background and AFTER the listener on purpose. The pass waits: on
+	// each batch of databases to come back up, and on room in the shared deploy
+	// queue. On a large install that is minutes, and blocking the boot on it
+	// would leave the operator with no UI, no logs and no signal handler —
+	// nothing to look at while it ran, and nothing but a kill to get out of it.
+	// The pass is idempotent and already tolerates dying mid-way, so the worst a
+	// shutdown here costs is redoing it next boot.
+	//
+	// It runs only when the gateway reconcile above actually succeeded:
+	// Reconcile returns on the first NetworkEnsure error without deploying
+	// anything, so migrating after a failed one would move services into
+	// networks Traefik is not attached to — every exposed app unroutable until
+	// some later, luckier start.
+	if !gatewayReady {
+		slog.Warn("skipping the organization network migration: the gateway is not attached to the organization networks")
+	} else {
+		go runOrgNetworkMigration(ctx, q, engine, dep, dbSvc)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	select {
@@ -523,8 +527,15 @@ func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.En
 }
 
 // gatewayReconcileDebounce collapses a burst of organization creations into one
-// Traefik deploy.
-const gatewayReconcileDebounce = 3 * time.Second
+// Traefik deploy; gatewayReconcileCooldown is the minimum time between two
+// deploys. Together they bound the gateway to at most one task recreation per
+// cooldown, however fast organizations are created — a debounce alone only
+// rate-limits the abuse, because every new organization genuinely changes the
+// network set and so cannot be absorbed by the spec fingerprint.
+const (
+	gatewayReconcileDebounce = 3 * time.Second
+	gatewayReconcileCooldown = time.Minute
+)
 
 // startGatewayReconciler runs Traefik reconciliation in the background and
 // returns the trigger the HTTP handlers call.
@@ -561,6 +572,14 @@ func startGatewayReconciler(ctx context.Context, engine docker.Engine, q *db.Que
 			}
 			if err := traefik.Reconcile(ctx, engine, baseNetwork, nets, acme); err != nil {
 				slog.Error("gateway reconcile failed", "err", err)
+			}
+			// Hold the floor for the cooldown. Triggers that arrive meanwhile
+			// stay buffered and are served by the next pass, which reads the
+			// organization list fresh — so nothing is lost, it is only delayed.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(gatewayReconcileCooldown):
 			}
 		}
 	}()

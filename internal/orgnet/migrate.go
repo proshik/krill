@@ -134,6 +134,23 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 		slog.Error("organization network migration: could not list database instances", "err", err, "org_id", orgID)
 		return false
 	}
+	// Resolve the app set BEFORE anything moves. Both of these can fail, and
+	// failing after the databases have left the shared network would strand
+	// every app of the organization without its database until the next restart.
+	// Asked first, the window does not exist.
+	apps, err := m.Store.ListAppIDsByOrg(ctx, orgID)
+	if err != nil {
+		slog.Error("organization network migration: could not list applications", "err", err, "org_id", orgID)
+		return false
+	}
+	if m.FilterApps != nil {
+		apps, err = m.FilterApps(ctx, apps)
+		if err != nil {
+			slog.Error("organization network migration: could not check which applications are running", "err", err, "org_id", orgID)
+			return false
+		}
+	}
+
 	complete := true
 	batch := m.InstanceBatch
 	if batch <= 0 {
@@ -156,25 +173,19 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 			continue
 		}
 		if err := m.WaitInstances(ctx, submitted); err != nil {
-			// A slow database is not a failed submission: the instances were
-			// handed over, so the organization still counts as migrated. Warn and
-			// let the apps follow — holding them back forever is worse.
-			slog.Warn("organization network migration: databases did not come back in time, moving the apps anyway", "err", err, "org_id", orgID)
+			// The apps still follow — holding them back forever is worse, and
+			// the databases are on their way to the same network. But the
+			// organization does NOT count as migrated: RedeployInstance cannot
+			// report a refused submission (the DB-instance deploy is
+			// fire-and-forget), so this wait is the only evidence the databases
+			// actually arrived. Recording completion here would bless exactly
+			// the silent partial state the flag exists to prevent; one
+			// idempotent retry on the next boot is the whole cost.
+			slog.Warn("organization network migration: databases did not come back in time, it will be retried on the next start", "err", err, "org_id", orgID)
+			complete = false
 		}
 	}
 
-	apps, err := m.Store.ListAppIDsByOrg(ctx, orgID)
-	if err != nil {
-		slog.Error("organization network migration: could not list applications", "err", err, "org_id", orgID)
-		return false
-	}
-	if m.FilterApps != nil {
-		apps, err = m.FilterApps(ctx, apps)
-		if err != nil {
-			slog.Error("organization network migration: could not check which applications are running", "err", err, "org_id", orgID)
-			return false
-		}
-	}
 	for _, id := range apps {
 		if err := m.RedeployApp(ctx, id); err != nil {
 			slog.Error("organization network migration: could not redeploy an application", "err", err, "org_id", orgID, "app_id", id)
