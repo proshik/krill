@@ -128,8 +128,16 @@ planning for:**
   routable again; nothing is down for the whole duration. If the process
   restarts before an organization's pass finishes, that organization's
   **whole** pass is retried from scratch on the next start rather than
-  resumed — services it had already moved get redeployed again too. A fresh
-  install has nothing to move, so this is instant.
+  resumed — services it had already moved get redeployed again too. The same
+  goes for an app whose redeploy **fails**: its organization is only recorded
+  as moved once every app deploy of the pass succeeds, so it is retried — and
+  its Dockerfile apps rebuilt — on every start until the failing app is fixed.
+  Stopped apps and stopped database instances stay stopped. A fresh install
+  has nothing to move, so this is instant.
+- A Dockerfile app whose `git_url` points at a private address (a self-hosted
+  Git server on your LAN or on the host itself) now goes through the SSRF
+  egress guard, so this forced rebuild is where it stops building — set
+  `KRILL_ALLOW_PRIVATE_EGRESS=true` before upgrading if you build from one.
 - **This same forced redeploy is also the first time
   `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` apply** to any app
   or database instance that has no explicit limit of its own — every deploy
