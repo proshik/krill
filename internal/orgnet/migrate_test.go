@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 type fakeStore struct {
@@ -15,6 +16,15 @@ type fakeStore struct {
 	listErr   error
 	instErr   error
 	appErr    error
+	// deployStatus is the status reported for a deployment id; an id not in the
+	// map reads as "done". A value of "" makes the row disappear (app deleted).
+	deployStatus map[int64]string
+	// deployReadErrs fails that many DeploymentStatuses calls before answering.
+	deployReadErrs int
+	deployReads    int
+	// onDeployRead runs before every DeploymentStatuses answer, so a test can
+	// move a deployment along between polls.
+	onDeployRead func(f *fakeStore)
 }
 
 func (f *fakeStore) ListOrganizations(context.Context) ([]Org, error) { return f.orgs, f.listErr }
@@ -38,6 +48,26 @@ func (f *fakeStore) ListAppIDsByOrg(_ context.Context, orgID int64) ([]int64, er
 func (f *fakeStore) ListInstanceIDsByOrg(_ context.Context, orgID int64) ([]int64, error) {
 	return f.instances[orgID], f.instErr
 }
+func (f *fakeStore) DeploymentStatuses(_ context.Context, ids []int64) (map[int64]string, error) {
+	f.deployReads++
+	if f.onDeployRead != nil {
+		f.onDeployRead(f)
+	}
+	if f.deployReads <= f.deployReadErrs {
+		return nil, errors.New("transient")
+	}
+	out := map[int64]string{}
+	for _, id := range ids {
+		st, ok := f.deployStatus[id]
+		switch {
+		case !ok:
+			out[id] = "done"
+		case st != "":
+			out[id] = st
+		}
+	}
+	return out, nil
+}
 
 func TestMigratorMovesOnlyUnmigratedOrgs(t *testing.T) {
 	st := &fakeStore{
@@ -51,7 +81,7 @@ func TestMigratorMovesOnlyUnmigratedOrgs(t *testing.T) {
 		Store:            st,
 		EnsureNetwork:    func(_ context.Context, n string) error { ensured = append(ensured, n); return nil },
 		RedeployInstance: func(_ context.Context, id int64) error { order = append(order, "db"); return nil },
-		RedeployApp:      func(_ context.Context, id int64) error { order = append(order, "app"); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { order = append(order, "app"); return id, nil },
 	}
 
 	if err := m.Run(context.Background()); err != nil {
@@ -98,12 +128,12 @@ func TestMigratorRetriesAnIncompletePass(t *testing.T) {
 		Store:            st,
 		EnsureNetwork:    func(context.Context, string) error { return nil },
 		RedeployInstance: func(context.Context, int64) error { return nil },
-		RedeployApp: func(_ context.Context, id int64) error {
+		RedeployApp: func(_ context.Context, id int64) (int64, error) {
 			moved = append(moved, id)
 			if fail && id == 11 {
-				return errors.New("boom")
+				return 0, errors.New("boom")
 			}
-			return nil
+			return id, nil
 		},
 	}
 	if err := m.Run(context.Background()); err != nil {
@@ -147,12 +177,12 @@ func TestMigratorContinuesPastAFailedService(t *testing.T) {
 			}
 			return nil
 		},
-		RedeployApp: func(_ context.Context, id int64) error {
+		RedeployApp: func(_ context.Context, id int64) (int64, error) {
 			apps = append(apps, id)
 			if id == 10 {
-				return errors.New("boom")
+				return 0, errors.New("boom")
 			}
-			return nil
+			return id, nil
 		},
 	}
 	if err := m.Run(context.Background()); err != nil {
@@ -181,7 +211,7 @@ func TestMigratorSkipsAppsWhenInstancesCannotBeListed(t *testing.T) {
 		Store:            st,
 		EnsureNetwork:    func(context.Context, string) error { return nil },
 		RedeployInstance: func(context.Context, int64) error { return nil },
-		RedeployApp:      func(_ context.Context, id int64) error { moved = append(moved, id); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { moved = append(moved, id); return id, nil },
 	}
 	if err := m.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -213,7 +243,7 @@ func TestMigratorSkipsOrgWhoseNetworkFails(t *testing.T) {
 			return nil
 		},
 		RedeployInstance: func(context.Context, int64) error { return nil },
-		RedeployApp:      func(_ context.Context, id int64) error { moved = append(moved, id); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { moved = append(moved, id); return id, nil },
 	}
 	if err := m.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -250,7 +280,7 @@ func TestMigratorHonoursTheAppFilter(t *testing.T) {
 			return keep, nil
 		},
 		RedeployInstance: func(context.Context, int64) error { return nil },
-		RedeployApp:      func(_ context.Context, id int64) error { moved = append(moved, id); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { moved = append(moved, id); return id, nil },
 	}
 	if err := m.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -280,7 +310,7 @@ func TestMigratorWaitsForEachDatabaseBatch(t *testing.T) {
 			waited = append(waited, append([]int64(nil), ids...))
 			return nil
 		},
-		RedeployApp: func(context.Context, int64) error { order = append(order, "app"); return nil },
+		RedeployApp: func(_ context.Context, id int64) (int64, error) { order = append(order, "app"); return id, nil },
 	}
 	if err := m.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -316,7 +346,7 @@ func TestMigratorDoesNotMarkTheOrgWhenTheDatabaseWaitFails(t *testing.T) {
 		EnsureNetwork:    func(context.Context, string) error { return nil },
 		RedeployInstance: func(context.Context, int64) error { return nil },
 		WaitInstances:    func(context.Context, []int64) error { return ErrWaitTimeout },
-		RedeployApp:      func(_ context.Context, id int64) error { moved = append(moved, id); return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { moved = append(moved, id); return id, nil },
 	}
 	if err := m.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
@@ -370,7 +400,7 @@ func TestMigratorResolvesAppsBeforeMovingDatabases(t *testing.T) {
 				EnsureNetwork:    func(context.Context, string) error { return nil },
 				FilterApps:       tc.filt,
 				RedeployInstance: func(_ context.Context, id int64) error { dbs = append(dbs, id); return nil },
-				RedeployApp:      func(_ context.Context, id int64) error { apps = append(apps, id); return nil },
+				RedeployApp:      func(_ context.Context, id int64) (int64, error) { apps = append(apps, id); return id, nil },
 			}
 			if err := m.Run(context.Background()); err != nil {
 				t.Fatalf("run: %v", err)
@@ -392,5 +422,157 @@ func TestMigratorReportsAListingFailure(t *testing.T) {
 	m := &Migrator{Store: &fakeStore{listErr: errors.New("boom")}}
 	if err := m.Run(context.Background()); err == nil {
 		t.Fatal("a failed organization listing must be reported")
+	}
+}
+
+// Submitting a deploy proves nothing: the deploy runs later on the worker, and
+// one that fails never reaches ServiceDeploy (or is rolled back by Swarm), so
+// that app keeps running on the OLD shared network. Flagging the organization
+// migrated anyway would bless exactly that state and no later start would ever
+// retry it. The next start, where the deploy succeeds, records the pass.
+func TestMigratorDoesNotMarkTheOrgWhenAnAppDeploymentFails(t *testing.T) {
+	st := &fakeStore{
+		orgs:         []Org{{ID: 1}},
+		apps:         map[int64][]int64{1: {10, 11}},
+		instances:    map[int64][]int64{},
+		deployStatus: map[int64]string{101: "error"},
+	}
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(context.Context, string) error { return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		// The deployment id differs from the app id, so the test proves the
+		// migrator polls what RedeployApp returned rather than the app ids.
+		RedeployApp: func(_ context.Context, id int64) (int64, error) { return id + 90, nil },
+		DeployPoll:  time.Millisecond,
+	}
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if st.marked[1] {
+		t.Fatal("an organization whose app deployment failed must not be recorded as migrated")
+	}
+
+	st.orgs[0].NetworkName = "krill-org-1"
+	st.deployStatus = nil
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if !st.marked[1] {
+		t.Fatal("a retry whose deployments succeed must be recorded")
+	}
+}
+
+// The organization is recorded only once every submitted deployment is
+// terminal, not while any of them is still running.
+func TestMigratorWaitsForAppDeploymentsToFinish(t *testing.T) {
+	st := &fakeStore{
+		orgs:         []Org{{ID: 1}},
+		apps:         map[int64][]int64{1: {10}},
+		instances:    map[int64][]int64{},
+		deployStatus: map[int64]string{10: "running"},
+	}
+	st.onDeployRead = func(f *fakeStore) {
+		if f.marked[1] {
+			t.Error("the organization was recorded while its deployment was still running")
+		}
+		if f.deployReads == 3 {
+			f.deployStatus[10] = "done"
+		}
+	}
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(context.Context, string) error { return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+		DeployPoll:       time.Millisecond,
+	}
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if st.deployReads < 3 {
+		t.Fatalf("the migrator must poll until the deployment is terminal, got %d reads", st.deployReads)
+	}
+	if !st.marked[1] {
+		t.Fatal("a pass whose deployments all finished must be recorded")
+	}
+}
+
+// The pass deadline bounds the wait, and running out of time leaves the
+// organization UNMARKED: a deploy that has not finished has not provably moved
+// the app. The organizations after it are not attempted at all, and do not
+// each fail on the expired context.
+func TestMigratorLeavesTheOrgUnmarkedWhenTheDeadlineExpires(t *testing.T) {
+	st := &fakeStore{
+		orgs:         []Org{{ID: 1}, {ID: 2}},
+		apps:         map[int64][]int64{1: {10}, 2: {20}},
+		instances:    map[int64][]int64{},
+		deployStatus: map[int64]string{10: "running"},
+	}
+	var ensured []string
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(_ context.Context, n string) error { ensured = append(ensured, n); return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+		DeployPoll:       time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := m.Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if st.marked[1] {
+		t.Fatal("a timed-out wait must leave the organization unmarked")
+	}
+	if len(ensured) != 1 {
+		t.Fatalf("no organization may be attempted after the deadline, ensured=%v", ensured)
+	}
+}
+
+// One failed read of the deployments table is not a failed deployment.
+func TestMigratorToleratesATransientDeploymentReadError(t *testing.T) {
+	st := &fakeStore{
+		orgs:           []Org{{ID: 1}},
+		apps:           map[int64][]int64{1: {10}},
+		instances:      map[int64][]int64{},
+		deployReadErrs: 2,
+	}
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(context.Context, string) error { return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+		DeployPoll:       time.Millisecond,
+	}
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !st.marked[1] {
+		t.Fatal("a transient read error must not cost the organization its pass")
+	}
+}
+
+// A deployment row that vanished belongs to an app deleted mid-pass: there is
+// nothing left to move, so it neither fails the pass nor holds it open.
+func TestMigratorTreatsADeletedDeploymentAsNothingToMove(t *testing.T) {
+	st := &fakeStore{
+		orgs:         []Org{{ID: 1}},
+		apps:         map[int64][]int64{1: {10}},
+		instances:    map[int64][]int64{},
+		deployStatus: map[int64]string{10: ""},
+	}
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(context.Context, string) error { return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
+		DeployPoll:       time.Millisecond,
+	}
+	if err := m.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !st.marked[1] {
+		t.Fatal("a deleted app must not keep the organization unmigrated")
 	}
 }

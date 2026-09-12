@@ -476,13 +476,17 @@ const (
 	orgNetMigrationTimeout    = 30 * time.Minute
 	orgNetInstanceWaitTimeout = 3 * time.Minute
 	orgNetInstanceWaitPoll    = 2 * time.Second
+	orgNetDeployPoll          = 2 * time.Second
 )
 
 // runOrgNetworkMigration wires the migrator to the deployer, the DB-instance
 // service and the engine, and runs one pass.
 func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.Engine, dep *deploy.Deployer, dbSvc *dbservice.Service) {
 	// Bound the whole pass: EnqueueSystem waits for room in the shared deploy
-	// queue, so without a deadline a jammed queue would hold startup forever.
+	// queue and the migrator waits for every app deployment it submitted to
+	// finish, so without a deadline a jammed queue or a stuck build would hold
+	// the pass forever. Running out of time leaves the organization in progress
+	// unmarked, and the next start retries it.
 	mctx, cancel := context.WithTimeout(ctx, orgNetMigrationTimeout)
 	defer cancel()
 
@@ -511,15 +515,17 @@ func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.En
 			}
 			return orgnet.WaitServicesRunning(c, engine, names, orgNetInstanceWaitPoll, orgNetInstanceWaitTimeout)
 		},
-		RedeployApp: func(c context.Context, id int64) error {
+		RedeployApp: func(c context.Context, id int64) (int64, error) {
 			// EnqueueSystem, not Enqueue: the per-app and per-organization caps
 			// would silently refuse most of a large organization's apps and leave
 			// them stranded on the shared network.
-			if dep.EnqueueSystem(c, id) == 0 {
-				return errors.New("deploy could not be queued")
+			depID := dep.EnqueueSystem(c, id)
+			if depID == 0 {
+				return 0, errors.New("deploy could not be queued")
 			}
-			return nil
+			return depID, nil
 		},
+		DeployPoll: orgNetDeployPoll,
 	}
 	if err := migrator.Run(mctx); err != nil {
 		slog.Error("organization network migration failed (continuing)", "err", err)

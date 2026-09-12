@@ -156,6 +156,38 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 	return i, err
 }
 
+const listDeploymentStatuses = `-- name: ListDeploymentStatuses :many
+SELECT id, status FROM deployments WHERE id = ANY($1::bigint[])
+`
+
+type ListDeploymentStatusesRow struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+}
+
+// Status of each listed deployment, without the log column. The startup
+// network migration polls this until every app redeploy it submitted is
+// terminal: submitting a deploy proves nothing about whether it moved the app.
+func (q *Queries) ListDeploymentStatuses(ctx context.Context, ids []int64) ([]ListDeploymentStatusesRow, error) {
+	rows, err := q.db.Query(ctx, listDeploymentStatuses, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDeploymentStatusesRow
+	for rows.Next() {
+		var i ListDeploymentStatusesRow
+		if err := rows.Scan(&i.ID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentSummariesByApplication = `-- name: ListDeploymentSummariesByApplication :many
 SELECT id, application_id, status, trigger, image_tag, error_message, started_at, finished_at
 FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50

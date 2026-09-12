@@ -151,6 +151,10 @@ type Querier interface {
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
 	// Batched form for the topology view (one query instead of one per app).
 	ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error)
+	// Status of each listed deployment, without the log column. The startup
+	// network migration polls this until every app redeploy it submitted is
+	// terminal: submitting a deploy proves nothing about whether it moved the app.
+	ListDeploymentStatuses(ctx context.Context, ids []int64) ([]ListDeploymentStatusesRow, error)
 	// Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
 	// column — for the deploy-history list, which is polled every 2s and never
 	// renders the log. Use GetDeployment for the single-deployment detail/log view.

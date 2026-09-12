@@ -40,3 +40,15 @@ func (s *DBStore) ListAppIDsByOrg(ctx context.Context, orgID int64) ([]int64, er
 func (s *DBStore) ListInstanceIDsByOrg(ctx context.Context, orgID int64) ([]int64, error) {
 	return s.q.ListDBInstanceIDsByOrg(ctx, orgID)
 }
+
+func (s *DBStore) DeploymentStatuses(ctx context.Context, ids []int64) (map[int64]string, error) {
+	rows, err := s.q.ListDeploymentStatuses(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Status
+	}
+	return out, nil
+}

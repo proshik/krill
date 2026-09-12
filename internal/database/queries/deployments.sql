@@ -59,3 +59,9 @@ WHERE d.status = 'running'
     JOIN projects p2 ON p2.id = e2.project_id
     WHERE a2.id = $1
   );
+
+-- name: ListDeploymentStatuses :many
+-- Status of each listed deployment, without the log column. The startup
+-- network migration polls this until every app redeploy it submitted is
+-- terminal: submitting a deploy proves nothing about whether it moved the app.
+SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);
