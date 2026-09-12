@@ -43,6 +43,22 @@ func (q *Queries) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
+const deleteSessionsByUserExcept = `-- name: DeleteSessionsByUserExcept :exec
+DELETE FROM sessions WHERE user_id = $1 AND token <> $2
+`
+
+type DeleteSessionsByUserExceptParams struct {
+	UserID int64  `json:"user_id"`
+	Token  string `json:"token"`
+}
+
+// Changing a password logs out every other device; the current session is kept
+// so the user is not bounced back to the login form mid-flow.
+func (q *Queries) DeleteSessionsByUserExcept(ctx context.Context, arg DeleteSessionsByUserExceptParams) error {
+	_, err := q.db.Exec(ctx, deleteSessionsByUserExcept, arg.UserID, arg.Token)
+	return err
+}
+
 const getSession = `-- name: GetSession :one
 SELECT token, user_id, expires_at, created_at FROM sessions WHERE token = $1
 `

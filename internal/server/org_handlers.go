@@ -136,6 +136,12 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 			s.flashErrErr(w, r, "flash.err.create_user", err)
 			return
 		}
+		// The inviter chose this temporary password and keeps a working
+		// credential for the account until the invitee changes it — hold them
+		// on the change-password form until they do.
+		if err := s.q.SetUserMustChangePassword(r.Context(), db.SetUserMustChangePasswordParams{ID: u.ID, MustChangePassword: true}); err != nil {
+			logFrom(r).Error("could not flag the invited user for a password change", "err", err, "user_id", u.ID)
+		}
 	} else {
 		tempPw = "" // existing user — don't show the password
 	}

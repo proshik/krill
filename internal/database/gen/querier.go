@@ -87,6 +87,9 @@ type Querier interface {
 	DeleteProject(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
+	// Changing a password logs out every other device; the current session is kept
+	// so the user is not bounced back to the login form mid-flow.
+	DeleteSessionsByUserExcept(ctx context.Context, arg DeleteSessionsByUserExceptParams) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
 	// Revoke the instance-operator flag from everyone except the seeded admin.
@@ -124,6 +127,7 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserIsAdmin(ctx context.Context, id int64) (bool, error)
+	GetUserMustChangePassword(ctx context.Context, id int64) (bool, error)
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
@@ -197,6 +201,8 @@ type Querier interface {
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
+	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
+	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error
 	SetVolumeBackupEnabled(ctx context.Context, arg SetVolumeBackupEnabledParams) error
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error

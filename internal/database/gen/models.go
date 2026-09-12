@@ -277,11 +277,12 @@ type Session struct {
 }
 
 type User struct {
-	ID           int64     `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	CreatedAt    time.Time `json:"created_at"`
-	IsAdmin      bool      `json:"is_admin"`
+	ID                 int64     `json:"id"`
+	Email              string    `json:"email"`
+	PasswordHash       string    `json:"password_hash"`
+	CreatedAt          time.Time `json:"created_at"`
+	IsAdmin            bool      `json:"is_admin"`
+	MustChangePassword bool      `json:"must_change_password"`
 }
 
 type VolumeBackup struct {

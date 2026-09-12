@@ -61,6 +61,42 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (str
 	return token, nil
 }
 
+var (
+	// ErrWrongPassword is returned when the caller's current password does not
+	// match the stored hash.
+	ErrWrongPassword = errors.New("current password does not match")
+	// ErrWeakPassword is returned when the chosen new password is shorter than
+	// MinPasswordLen.
+	ErrWeakPassword = errors.New("password is too short")
+)
+
+// MinPasswordLen is the floor for a user-chosen password.
+const MinPasswordLen = 10
+
+// ChangePassword verifies the current password, stores the new one and revokes
+// every other session of that user; keepToken (the caller's own session) stays
+// valid so the user is not logged out of the page they are standing on.
+func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepToken string) error {
+	u, err := s.q.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !CheckPassword(u.PasswordHash, current) {
+		return ErrWrongPassword
+	}
+	if len([]rune(next)) < MinPasswordLen {
+		return ErrWeakPassword
+	}
+	hash, err := HashPassword(next)
+	if err != nil {
+		return err
+	}
+	if err := s.q.SetUserPassword(ctx, db.SetUserPasswordParams{ID: userID, PasswordHash: hash}); err != nil {
+		return err
+	}
+	return s.q.DeleteSessionsByUserExcept(ctx, db.DeleteSessionsByUserExceptParams{UserID: userID, Token: keepToken})
+}
+
 // IsInstanceAdmin reports whether the user is an instance-level operator.
 func (s *Service) IsInstanceAdmin(ctx context.Context, userID int64) (bool, error) {
 	return s.q.GetUserIsAdmin(ctx, userID)

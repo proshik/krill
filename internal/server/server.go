@@ -281,8 +281,12 @@ func (s *Server) Router() http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAuth(s.auth))
+		r.Use(s.requirePasswordChange)
 		r.Use(auth.WithInstanceAdmin(s.auth))
 		r.Use(s.flashMiddleware)
+
+		r.Get("/account/password", s.accountPasswordPage)
+		r.Post("/account/password", s.accountPasswordSubmit)
 
 		r.Get("/", s.home)
 		r.Get("/orgs", s.listOrgs)
