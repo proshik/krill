@@ -20,13 +20,28 @@ advisory is published, with credit to the reporter unless you prefer otherwise.
 
 ## Trust model
 
-Krill assumes a **single trust boundary**: everyone who can sign in is trusted with
-the whole instance. Organizations, projects and environments organise work — they
-are not an isolation boundary between parties who do not trust each other. Every
-app and database of every organization shares one Docker overlay network; any
-signed-in user can create an organization, become its owner, deploy arbitrary
-containers into it and open a shell inside them. Run separate Krill instances for
-workloads that must not be able to reach each other.
+Organizations are isolated from each other at the network level: each one gets
+its own Docker overlay network (`krill-org-<id>`), and a container in one
+organization can no longer resolve or reach a container in another by name.
+Traefik is attached to every organization's network, so routing still works
+across all of them.
+
+That is a real boundary against one tenant's apps stumbling onto another's by
+name, but it is **not** a trust boundary between parties who do not trust each
+other. The **instance administrator** (the seeded admin, and anyone else
+promoted to `users.is_admin`) and anyone with access to the **Docker socket**
+Krill drives still control the whole host: every organization's containers and
+volumes run on one Docker daemon, and all of Krill's own state — including
+every organization's — lives in one Postgres database. A container that
+escapes its own sandbox (a kernel exploit, a mounted host path, a mis-scoped
+capability) is not stopped by the network boundary between organizations.
+Organization roles are also still self-service: any signed-in user can create
+an organization, become its owner, deploy arbitrary containers into it, and
+open a shell inside them — network isolation limits what that buys them
+against *other* organizations, not what it buys them against the host itself.
+Run separate Krill instances (separate hosts, separate Docker daemons) for
+workloads that must not be able to reach each other even if one of them is
+fully compromised.
 
 ## Operating Krill safely
 
