@@ -104,6 +104,23 @@ start_pg_container() {
 		-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
 }
 
+# persist_advertise_addr FILE ADDR — append KRILL_ADVERTISE_ADDR=ADDR to FILE
+# unless FILE already sets it (a value the operator put there by hand wins) or
+# ADDR is empty. Idempotent: a second run is a no-op. An upgrade keeps the env
+# file verbatim, so without this an install made before the address was
+# persisted would stay unable to add a worker however often it is upgraded.
+persist_advertise_addr() {
+	[ -n "$2" ] || return 0
+	grep -q '^KRILL_ADVERTISE_ADDR=' "$1" 2>/dev/null && return 0
+	# A file whose last line has no trailing newline would glue the new
+	# assignment onto it and corrupt both.
+	if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then
+		echo >>"$1"
+	fi
+	echo "KRILL_ADVERTISE_ADDR=$2" >>"$1"
+	info "Recorded KRILL_ADVERTISE_ADDR=$2 in $1."
+}
+
 # Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
 # after defining functions — do not run the installer's side effects.
 if [ "${KRILL_LIB_ONLY:-}" = "1" ]; then
@@ -138,9 +155,16 @@ fi
 docker info >/dev/null 2>&1 || die "Docker daemon is not running"
 
 # --- 3. Swarm ----------------------------------------------------------------
+# ADVERTISE is resolved in BOTH branches because it is persisted to krill.env
+# below: the app reads it to build the `docker swarm join <addr>:2377` command
+# for workers and to keep the manager in the firewall allowlist. Installing onto
+# a host whose swarm someone else initialized (another PaaS, a manual
+# `docker swarm init`) takes the first branch, so the address has to be read
+# back from Docker there rather than left unset.
 if [ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" = "active" ] &&
 	[ "$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)" = "true" ]; then
-	info "Swarm already active (this node is a manager)."
+	ADVERTISE="${KRILL_ADVERTISE_ADDR:-$(docker info --format '{{.Swarm.NodeAddr}}' 2>/dev/null)}"
+	info "Swarm already active (this node is a manager, advertise-addr ${ADVERTISE:-unknown})."
 else
 	ADVERTISE="${KRILL_ADVERTISE_ADDR:-}"
 	if [ -z "$ADVERTISE" ]; then
@@ -150,6 +174,11 @@ else
 	[ -n "$ADVERTISE" ] || die "could not detect an advertise address; set KRILL_ADVERTISE_ADDR"
 	info "Initializing Swarm (advertise-addr $ADVERTISE) ..."
 	docker swarm init --advertise-addr "$ADVERTISE" >/dev/null || die "swarm init failed"
+	# `--advertise-addr` also accepts an interface name (e.g. wg0), which is
+	# useless to a worker dialing `<addr>:2377`. Persist the IP swarm actually
+	# resolved it to; fall back to the input only if Docker does not report one.
+	NODE_ADDR="$(docker info --format '{{.Swarm.NodeAddr}}' 2>/dev/null)"
+	[ -n "$NODE_ADDR" ] && ADVERTISE="$NODE_ADDR"
 fi
 
 # --- 4. Config ---------------------------------------------------------------
@@ -197,6 +226,10 @@ else
 		echo "KRILL_SECRET_KEY=${SECRET_KEY}"
 		[ -n "${KRILL_DOMAIN:-}" ] && echo "KRILL_BASE_DOMAIN=${KRILL_DOMAIN}"
 		[ -n "${KRILL_ACME_EMAIL:-}" ] && echo "KRILL_ACME_EMAIL=${KRILL_ACME_EMAIL}"
+		# Without this the Nodes page cannot add a worker at all: the app has no
+		# address to put in `docker swarm join`, and the firewall allowlist loses
+		# the manager. Detected above even when nobody passed it.
+		[ -n "${ADVERTISE:-}" ] && echo "KRILL_ADVERTISE_ADDR=${ADVERTISE}"
 		echo "KRILL_LISTEN_ADDR=:8080"
 		# First boot is over plain http://<ip>:8080; secure cookies would not be
 		# sent over HTTP and would break login. Flip to true once behind HTTPS.
@@ -204,6 +237,10 @@ else
 	} >"$ENV_FILE"
 	chmod 0600 "$ENV_FILE"
 fi
+
+# Backfill for installs made before KRILL_ADVERTISE_ADDR was persisted (a fresh
+# install already wrote it above, so this is a no-op there).
+persist_advertise_addr "$ENV_FILE" "${ADVERTISE:-}"
 
 # --- 5. State Postgres -------------------------------------------------------
 if [ "$MANAGE_PG" = "yes" ]; then

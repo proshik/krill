@@ -17,6 +17,24 @@ check "mask password" "postgres://u:***@h:5432/db?sslmode=require" "$(mask_dsn '
 check "no password unchanged" "postgres://u@h:5432/db" "$(mask_dsn 'postgres://u@h:5432/db')"
 check "hostless unchanged" "postgres://h/db" "$(mask_dsn 'postgres://h/db')"
 
+# --- persist_advertise_addr (KRILL_ADVERTISE_ADDR backfill on upgrade) ---
+ENVTMP="$(mktemp)"
+printf 'KRILL_DATABASE_URL=postgres://h/db\nKRILL_LISTEN_ADDR=:8080\n' >"$ENVTMP"
+persist_advertise_addr "$ENVTMP" "10.0.0.5" >/dev/null
+check "advertise backfilled" "KRILL_ADVERTISE_ADDR=10.0.0.5" "$(grep '^KRILL_ADVERTISE_ADDR=' "$ENVTMP")"
+persist_advertise_addr "$ENVTMP" "10.0.0.5" >/dev/null
+check "advertise backfill idempotent" "1" "$(grep -c '^KRILL_ADVERTISE_ADDR=' "$ENVTMP")"
+persist_advertise_addr "$ENVTMP" "10.9.9.9" >/dev/null
+check "operator value not overwritten" "KRILL_ADVERTISE_ADDR=10.0.0.5" "$(grep '^KRILL_ADVERTISE_ADDR=' "$ENVTMP")"
+check "existing lines preserved" "KRILL_LISTEN_ADDR=:8080" "$(grep '^KRILL_LISTEN_ADDR=' "$ENVTMP")"
+printf 'KRILL_LISTEN_ADDR=:8080' >"$ENVTMP" # no trailing newline
+persist_advertise_addr "$ENVTMP" "10.0.0.5" >/dev/null
+check "no trailing newline: lines not glued" "KRILL_LISTEN_ADDR=:8080|KRILL_ADVERTISE_ADDR=10.0.0.5" "$(paste -sd'|' "$ENVTMP")"
+: >"$ENVTMP"
+persist_advertise_addr "$ENVTMP" "" >/dev/null
+check "empty address writes nothing" "0" "$(wc -c <"$ENVTMP" | tr -d ' ')"
+rm -f "$ENVTMP"
+
 # --- preflight_external_db integration (needs Docker) ---
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 	# Failure path (most important — the fail-closed gate): unreachable DSN must die (non-zero).
