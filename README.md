@@ -109,7 +109,11 @@ The installer is idempotent — **re-run it to upgrade** (it pulls the latest
 release binary and restarts the service; your Postgres and secrets are kept). It:
 
 1. installs Docker (via `get.docker.com`) if missing and initializes a single-node Swarm;
-2. runs a loopback-only `postgres:17-alpine` container for Krill's own state;
+2. runs a loopback-only `postgres:17-alpine` container for Krill's own state, on
+   its own `krill-state` Docker network rather than the default bridge — build
+   containers and app containers also sit on that default bridge and can reach
+   any container on it by IP, which the loopback-only port publish does
+   nothing to stop; a separate network closes that off;
 3. downloads the `krill` binary from the latest GitHub Release (SHA-256 verified);
 4. writes `/etc/krill/krill.env` (generated admin password + encryption key, created once);
 5. installs and starts a `krill` systemd service;
@@ -159,6 +163,7 @@ systemctl disable --now krill
 rm -f /etc/systemd/system/krill.service /usr/local/bin/krill
 rm -rf /etc/krill
 docker rm -f krill-postgres && docker volume rm krill-pg-data   # destroys Krill's state
+docker network rm krill-state    # only after the container above is gone
 ```
 
 Prefer a container instead of the host binary? The multi-arch image is published
