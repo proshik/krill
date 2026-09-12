@@ -163,7 +163,7 @@ func TestAddDBLinkPerField(t *testing.T) {
 	})
 	minio, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
 		OrganizationID: o.ID, Engine: "minio", Name: "s3", AppName: "krill-minio-x",
-		Image: "minio/minio:latest", Superuser: "root-user", SuperuserPassword: "pw",
+		Image: "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", Superuser: "root-user", SuperuserPassword: "pw",
 	})
 	cookie := loginAs(t, q, "dblf@k.local")
 	base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)

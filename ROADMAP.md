@@ -73,9 +73,9 @@ Verified in code and tests, but not yet exercised on a real environment:
 - **Reload of a stopped app after the network migration** restarts it on its old service
   spec, i.e. on the shared network and away from its databases. Reload of a stopped app
   should go through a full deploy.
-- **The MinIO image moved off Docker Hub.** `minio/minio` no longer pulls, so creating a MinIO
-  instance fails and the MinIO-backed tests cannot run; the driver and the test helper need
-  to switch to `quay.io/minio/minio`.
+- **MinIO no longer publishes community builds.** Managed MinIO instances run a pinned
+  `quay.io/minio/minio` release that will not receive updates, security fixes included.
+  Decide between an actively maintained S3-compatible engine and building MinIO from source.
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
 

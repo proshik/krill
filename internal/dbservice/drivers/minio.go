@@ -19,7 +19,15 @@ type minioDriver struct{}
 
 func (minioDriver) Engine() string       { return "minio" }
 func (minioDriver) Label() string        { return "MinIO" }
-func (minioDriver) DefaultImage() string { return "minio/minio:latest" }
+func (minioDriver) DefaultImage() string { return MinIOImage }
+
+// MinIOImage is the image a new MinIO instance runs. Docker Hub removed the
+// minio/minio repository, so the image comes from quay.io, where MinIO still
+// publishes it. The tag is pinned rather than "latest": MinIO has stopped
+// publishing new community builds, so "latest" is frozen at this release anyway,
+// and naming it keeps what an instance runs visible in the UI and reproducible.
+// Migration 000044 moves instances created earlier off the Docker Hub reference.
+const MinIOImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
 
 // SuperuserName — unlike postgres ("postgres") and redis ("default"), MinIO's
 // root user is USER-CHOSEN at create time (MINIO_ROOT_USER); the driver has
