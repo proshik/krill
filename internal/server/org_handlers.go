@@ -6,6 +6,7 @@ import (
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -60,6 +61,25 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("organization created", "org_id", o.ID, "name", o.Name)
+
+	// Every organization gets its own overlay network, so its apps and DB
+	// instances never resolve or reach another tenant's services by name.
+	// A half-made organization (a row with no working network) must not
+	// survive: an org that can never deploy anything is worse than none.
+	netName := orgnet.Name(o.ID)
+	if err := s.engine.NetworkEnsure(r.Context(), netName); err != nil {
+		logFrom(r).Error("could not create the organization network", "err", err, "org_id", o.ID)
+		if derr := s.q.DeleteOrganization(r.Context(), o.ID); derr != nil {
+			logFrom(r).Error("could not roll back an organization left without a network", "err", derr, "org_id", o.ID)
+		}
+		s.flashErrT(w, r, "flash.err.org_network")
+		http.Redirect(w, r, "/orgs", http.StatusSeeOther)
+		return
+	}
+	if err := s.q.SetOrganizationNetwork(r.Context(), db.SetOrganizationNetworkParams{ID: o.ID, NetworkName: netName}); err != nil {
+		logFrom(r).Error("could not store the organization network", "err", err, "org_id", o.ID)
+	}
+
 	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }

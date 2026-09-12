@@ -40,6 +40,7 @@ func (f *digestMockEngine) ServiceProgress(context.Context, string, []string) (d
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, TaskIDs: []string{"t1"}}, nil
 }
 func (f *digestMockEngine) NetworkEnsure(context.Context, string) error { return nil }
+func (f *digestMockEngine) NetworkRemove(context.Context, string) error { return nil }
 func (f *digestMockEngine) ServiceRemove(context.Context, string) error { return nil }
 func (f *digestMockEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
@@ -120,6 +121,7 @@ type chownCall struct {
 }
 
 func (m *mockEngine) NetworkEnsure(context.Context, string) error { return nil }
+func (m *mockEngine) NetworkRemove(context.Context, string) error { return nil }
 func (m *mockEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

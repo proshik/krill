@@ -130,6 +130,7 @@ type NodeInfo struct {
 // Engine — a narrow, mockable interface to Docker/Swarm.
 type Engine interface {
 	NetworkEnsure(ctx context.Context, name string) error
+	NetworkRemove(ctx context.Context, name string) error      // idempotent: "network not found" is not an error
 	ServiceDeploy(ctx context.Context, spec ServiceSpec) error // create-or-rolling-update by name
 	ServiceRemove(ctx context.Context, name string) error
 	ServiceState(ctx context.Context, name string) (ServiceState, error)

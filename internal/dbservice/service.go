@@ -15,6 +15,9 @@ type Store interface {
 	SetInstanceStatus(ctx context.Context, id int64, status string) error
 	DeleteInstanceRow(ctx context.Context, id int64) error
 	SetInstanceNode(ctx context.Context, id int64, hostname string) error
+	// GetOrgNetwork returns the organization's overlay network name (empty if
+	// the organization has not been migrated onto its own network yet).
+	GetOrgNetwork(ctx context.Context, orgID int64) (string, error)
 }
 
 // Notifier — consumer-side migration alerts (implemented by notify.Service).
@@ -57,6 +60,24 @@ func (s *Service) SetResourceDefaults(memBytes, nanoCPUs int64) {
 // dbDeployTimeout bounds a detached DB deploy so a stalled ImagePull (registry
 // blackhole) can't leak the goroutine and keep the log feed open forever.
 const dbDeployTimeout = 10 * time.Minute
+
+// networkFor returns the overlay network a DB instance's service (and its
+// external-access proxy) must deploy into: its organization's own network, or
+// the configured fallback network for an organization that has not been
+// migrated onto its own network yet (network_name == ""). A genuine lookup
+// failure is returned rather than swallowed into the fallback, so a deploy
+// fails loudly instead of silently landing an org's DB back on the shared
+// network.
+func (s *Service) networkFor(ctx context.Context, inst Instance) (string, error) {
+	net, err := s.store.GetOrgNetwork(ctx, inst.OrganizationID)
+	if err != nil {
+		return "", err
+	}
+	if net == "" {
+		return s.network, nil
+	}
+	return net, nil
+}
 
 // removeVolume deletes the named volume, retrying briefly. Right after
 // ServiceRemove the volume is usually still "in use" while Swarm tears down the

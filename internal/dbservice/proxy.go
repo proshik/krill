@@ -45,6 +45,10 @@ func (s *Service) reconcileProxy(ctx context.Context, inst Instance) error {
 	if s.engine == nil {
 		return nil
 	}
+	netName, err := s.networkFor(ctx, inst)
+	if err != nil {
+		return fmt.Errorf("resolve organization network: %w", err)
+	}
 	for _, t := range drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst) {
 		name := proxyName(inst.ID) + t.Suffix
 		if t.HostPort == nil {
@@ -56,7 +60,7 @@ func (s *Service) reconcileProxy(ctx context.Context, inst Instance) error {
 		if err := s.engine.ImagePull(ctx, socatImage, io.Discard); err != nil {
 			return fmt.Errorf("pull socat: %w", err)
 		}
-		if err := s.engine.ServiceDeploy(ctx, proxySpecTarget(name, *t.HostPort, inst.AppName, t.ContainerPort, s.network)); err != nil {
+		if err := s.engine.ServiceDeploy(ctx, proxySpecTarget(name, *t.HostPort, inst.AppName, t.ContainerPort, netName)); err != nil {
 			return fmt.Errorf("deploy proxy %s: %w", name, err)
 		}
 	}

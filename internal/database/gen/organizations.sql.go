@@ -21,7 +21,7 @@ func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
 }
 
 const createOrganization = `-- name: CreateOrganization :one
-INSERT INTO organizations (name, slug, owner_id) VALUES ($1, $2, $3) RETURNING id, name, slug, owner_id, created_at
+INSERT INTO organizations (name, slug, owner_id) VALUES ($1, $2, $3) RETURNING id, name, slug, owner_id, created_at, network_name
 `
 
 type CreateOrganizationParams struct {
@@ -39,6 +39,7 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 		&i.Slug,
 		&i.OwnerID,
 		&i.CreatedAt,
+		&i.NetworkName,
 	)
 	return i, err
 }
@@ -53,7 +54,7 @@ func (q *Queries) DeleteOrganization(ctx context.Context, id int64) error {
 }
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT id, name, slug, owner_id, created_at FROM organizations WHERE id = $1
+SELECT id, name, slug, owner_id, created_at, network_name FROM organizations WHERE id = $1
 `
 
 func (q *Queries) GetOrganization(ctx context.Context, id int64) (Organization, error) {
@@ -65,12 +66,13 @@ func (q *Queries) GetOrganization(ctx context.Context, id int64) (Organization, 
 		&i.Slug,
 		&i.OwnerID,
 		&i.CreatedAt,
+		&i.NetworkName,
 	)
 	return i, err
 }
 
 const getOrganizationBySlug = `-- name: GetOrganizationBySlug :one
-SELECT id, name, slug, owner_id, created_at FROM organizations WHERE slug = $1
+SELECT id, name, slug, owner_id, created_at, network_name FROM organizations WHERE slug = $1
 `
 
 func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error) {
@@ -82,12 +84,60 @@ func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organ
 		&i.Slug,
 		&i.OwnerID,
 		&i.CreatedAt,
+		&i.NetworkName,
 	)
 	return i, err
 }
 
+const getOrganizationNetworkByApp = `-- name: GetOrganizationNetworkByApp :one
+SELECT o.network_name
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN organizations o ON o.id = p.organization_id
+WHERE a.id = $1
+`
+
+func (q *Queries) GetOrganizationNetworkByApp(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRow(ctx, getOrganizationNetworkByApp, id)
+	var network_name string
+	err := row.Scan(&network_name)
+	return network_name, err
+}
+
+const listOrganizations = `-- name: ListOrganizations :many
+SELECT id, name, slug, owner_id, created_at, network_name FROM organizations ORDER BY id
+`
+
+func (q *Queries) ListOrganizations(ctx context.Context) ([]Organization, error) {
+	rows, err := q.db.Query(ctx, listOrganizations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Organization
+	for rows.Next() {
+		var i Organization
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.OwnerID,
+			&i.CreatedAt,
+			&i.NetworkName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrganizationsForUser = `-- name: ListOrganizationsForUser :many
-SELECT o.id, o.name, o.slug, o.owner_id, o.created_at FROM organizations o
+SELECT o.id, o.name, o.slug, o.owner_id, o.created_at, o.network_name FROM organizations o
 JOIN members m ON m.organization_id = o.id
 WHERE m.user_id = $1
 ORDER BY o.created_at
@@ -108,6 +158,7 @@ func (q *Queries) ListOrganizationsForUser(ctx context.Context, userID int64) ([
 			&i.Slug,
 			&i.OwnerID,
 			&i.CreatedAt,
+			&i.NetworkName,
 		); err != nil {
 			return nil, err
 		}
@@ -117,4 +168,18 @@ func (q *Queries) ListOrganizationsForUser(ctx context.Context, userID int64) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const setOrganizationNetwork = `-- name: SetOrganizationNetwork :exec
+UPDATE organizations SET network_name = $2 WHERE id = $1
+`
+
+type SetOrganizationNetworkParams struct {
+	ID          int64  `json:"id"`
+	NetworkName string `json:"network_name"`
+}
+
+func (q *Queries) SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error {
+	_, err := q.db.Exec(ctx, setOrganizationNetwork, arg.ID, arg.NetworkName)
+	return err
 }

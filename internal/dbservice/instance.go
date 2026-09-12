@@ -137,8 +137,15 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")
 		return err
 	}
+	netName, err := s.networkFor(ctx, inst)
+	if err != nil {
+		fmt.Fprintf(out, "❌ resolve organization network failed: %v\n", err)
+		slog.Error("db instance deploy: resolve organization network failed", "err", err, "instance_id", id)
+		_ = s.store.SetInstanceStatus(stCtx, id, "error")
+		return err
+	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
-	if err := s.engine.ServiceDeploy(ctx, s.instanceSpec(inst, s.network)); err != nil {
+	if err := s.engine.ServiceDeploy(ctx, s.instanceSpec(inst, netName)); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")

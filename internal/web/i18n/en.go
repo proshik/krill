@@ -459,6 +459,7 @@ var en = map[string]string{
 	"flash.err.create_destination":         "failed to create destination",
 	"flash.err.create_gitcred":             "failed to create git credential",
 	"flash.err.create_org":                 "failed to create organization",
+	"flash.err.org_network":                "could not create the organization's network",
 	"flash.err.create_user":                "failed to create user",
 	"flash.err.create_project":             "failed to create project",
 	"flash.err.create_environment":         "failed to create environment",

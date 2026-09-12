@@ -91,6 +91,11 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
 		})
 	}
+	netName, err := s.q.GetOrganizationNetworkByApp(ctx, a.ID)
+	if err != nil {
+		return App{}, err
+	}
+	out.Network = netName
 	out.Replicas = uint64(a.Replicas)
 	out.RestartCondition = a.RestartCondition
 	out.RestartMaxAttempts = uint64(a.RestartMaxAttempts)

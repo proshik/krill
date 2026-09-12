@@ -124,6 +124,7 @@ type Querier interface {
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
+	GetOrganizationNetworkByApp(ctx context.Context, id int64) (string, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetSession(ctx context.Context, token string) (Session, error)
@@ -169,6 +170,7 @@ type Querier interface {
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
+	ListOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error)
 	ListProjects(ctx context.Context, organizationID int64) ([]Project, error)
@@ -203,6 +205,7 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
 	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error

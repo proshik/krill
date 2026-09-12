@@ -459,6 +459,7 @@ var ru = map[string]string{
 	"flash.err.create_destination":         "не удалось создать хранилище",
 	"flash.err.create_gitcred":             "не удалось создать git-кред",
 	"flash.err.create_org":                 "не удалось создать организацию",
+	"flash.err.org_network":                "не удалось создать сеть организации",
 	"flash.err.create_user":                "не удалось создать пользователя",
 	"flash.err.create_project":             "не удалось создать проект",
 	"flash.err.create_environment":         "не удалось создать окружение",

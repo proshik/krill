@@ -41,7 +41,7 @@ func TestInstanceSpecNoHostPublish(t *testing.T) {
 
 func TestReconcileProxyDeployAndRemove(t *testing.T) {
 	e := &recEngine{}
-	s := &Service{engine: e, network: "krill-net"}
+	s := &Service{engine: e, store: newFakeStore(Instance{}), network: "krill-net"}
 	if err := s.reconcileProxy(context.Background(), Instance{ID: 7, Engine: "postgres", AppName: "a", ExternalPort: p32(5433)}); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}

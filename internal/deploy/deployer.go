@@ -32,6 +32,11 @@ type App struct {
 	RegistryAuth   string
 	Args           []string // container command override (CMD), e.g. ["start-dev"]
 
+	// Network is the app's organization's overlay network. Empty means the
+	// organization has not been migrated yet — the deployer falls back to its
+	// configured network.
+	Network string
+
 	Replicas           uint64
 	MemoryLimitBytes   int64
 	NanoCPUs           int64
@@ -489,14 +494,20 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	if replicas == 0 {
 		replicas = 1
 	}
+	// An app deploys into its organization's network; the configured network is
+	// only the fallback for an installation that has not been migrated yet.
+	net := app.Network
+	if net == "" {
+		net = d.network
+	}
 	spec := docker.ServiceSpec{
 		Name:               name,
 		Image:              imageTag,
 		Args:               app.Args,
 		Env:                app.Env,
-		Labels:             traefik.AppLabels(name, domains, app.Port, d.network),
+		Labels:             traefik.AppLabels(name, domains, app.Port, net),
 		Replicas:           replicas,
-		Network:            d.network,
+		Network:            net,
 		RegistryAuth:       app.RegistryAuth,
 		MemoryLimitBytes:   app.MemoryLimitBytes,
 		NanoCPUs:           app.NanoCPUs,

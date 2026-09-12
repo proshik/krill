@@ -257,6 +257,18 @@ func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) error {
 	return err
 }
 
+// NetworkRemove deletes an organization's overlay network. Idempotent: a
+// "network not found" error (already removed, or never created — e.g. an
+// organization whose network creation itself failed) is swallowed rather than
+// surfaced, so a caller can call it unconditionally during cleanup.
+func (e *dockerEngine) NetworkRemove(ctx context.Context, name string) error {
+	err := e.cli.NetworkRemove(ctx, name)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 // findService finds a service by its exact name.
 func (e *dockerEngine) findService(ctx context.Context, name string) (swarm.Service, bool, error) {
 	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{
