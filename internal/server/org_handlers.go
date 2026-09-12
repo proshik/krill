@@ -78,15 +78,23 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.q.SetOrganizationNetwork(r.Context(), db.SetOrganizationNetworkParams{ID: o.ID, NetworkName: netName}); err != nil {
 		logFrom(r).Error("could not store the organization network", "err", err, "org_id", o.ID)
-	}
-	// Nothing of this organization was ever on the shared network, so the
-	// startup migration has nothing to do for it. Without this the next restart
-	// would redeploy every service it acquires in the meantime — rebuilding
-	// Dockerfile apps and waiting on databases — purely to move them where they
-	// already are.
-	if err := s.q.MarkOrganizationNetworkMigrated(r.Context(), o.ID); err != nil {
-		// Harmless: the next startup does one redundant (idempotent) pass.
-		logFrom(r).Error("could not mark the organization as already on its own network", "err", err, "org_id", o.ID)
+	} else {
+		// Nothing of this organization was ever on the shared network, so the
+		// startup migration has nothing to do for it. Without this the next
+		// restart would redeploy every service it acquires in the meantime —
+		// rebuilding Dockerfile apps and waiting on databases — purely to move
+		// them where they already are.
+		//
+		// Only when the name was actually recorded, though. Marking an
+		// organization migrated without a network_name is unrepairable: the
+		// migration skips anything already flagged, so it would never write the
+		// missing name, and every app of that organization would fall back to
+		// the shared network forever. Leaving it unflagged costs one redundant
+		// pass on the next boot, which also repairs the name.
+		if err := s.q.MarkOrganizationNetworkMigrated(r.Context(), o.ID); err != nil {
+			// Harmless: the next startup does one redundant (idempotent) pass.
+			logFrom(r).Error("could not mark the organization as already on its own network", "err", err, "org_id", o.ID)
+		}
 	}
 
 	// The gateway lives in every organization network; until it joins this one,

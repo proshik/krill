@@ -16,6 +16,8 @@ import (
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // labelEngine is a noopEngine that records the labels written by
@@ -40,6 +42,13 @@ func (e *labelEngine) lastLabels() map[string]string {
 }
 
 func newServerWithLabelEngine(t *testing.T, eng *labelEngine) (http.Handler, *db.Queries, *org.Service) {
+	h, q, orgSvc, _ := newServerWithLabelEnginePool(t, eng)
+	return h, q, orgSvc
+}
+
+// newServerWithLabelEnginePool also hands back the pool, for tests that have to
+// reach past sqlc (e.g. to make one specific write fail).
+func newServerWithLabelEnginePool(t *testing.T, eng *labelEngine) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -49,7 +58,7 @@ func newServerWithLabelEngine(t *testing.T, eng *labelEngine) (http.Handler, *db
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
-	return srv.Router(), q, orgSvc
+	return srv.Router(), q, orgSvc, pool
 }
 
 // A domain mutation re-applies the app's Traefik labels on the live service.
@@ -170,5 +179,55 @@ func TestCreateOrgMarksItAlreadyOnItsOwnNetwork(t *testing.T) {
 	}
 	if !orgs[0].NetworkMigratedAt.Valid {
 		t.Fatal("a newly created organization must be recorded as already migrated")
+	}
+}
+
+// Marking an organization migrated without a recorded network_name would be
+// unrepairable: the startup pass skips anything already flagged, so it would
+// never write the missing name and every app of that organization would fall
+// back to the shared network forever. A failed name write must therefore leave
+// the organization unflagged, so the next boot repairs it.
+func TestCreateOrgDoesNotMarkMigratedWhenTheNetworkNameIsNotRecorded(t *testing.T) {
+	eng := &labelEngine{}
+	h, q, _, pool := newServerWithLabelEnginePool(t, eng)
+	ctx := context.Background()
+
+	// Fail exactly the network_name write, and nothing else: an UPDATE that only
+	// touches network_migrated_at still goes through, so the test cannot pass by
+	// accident just because every write was blocked.
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION krill_test_block_network_name() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.network_name IS DISTINCT FROM OLD.network_name THEN
+				RAISE EXCEPTION 'simulated failure writing network_name';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER krill_test_block_network_name
+		BEFORE UPDATE ON organizations
+		FOR EACH ROW EXECUTE FUNCTION krill_test_block_network_name();
+	`); err != nil {
+		t.Fatalf("install trigger: %v", err)
+	}
+
+	mkUser(t, q, "unlucky@k.local")
+	cookie := loginAs(t, q, "unlucky@k.local")
+	if rec := postForm(t, h, "/orgs", cookie, url.Values{"name": {"Unlucky Org"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("create org: status %d", rec.Code)
+	}
+
+	orgs, err := q.ListOrganizations(ctx)
+	if err != nil {
+		t.Fatalf("list organizations: %v", err)
+	}
+	if len(orgs) != 1 {
+		t.Fatalf("want one organization, got %d", len(orgs))
+	}
+	if orgs[0].NetworkName != "" {
+		t.Fatalf("the trigger should have blocked the write, network_name = %q", orgs[0].NetworkName)
+	}
+	if orgs[0].NetworkMigratedAt.Valid {
+		t.Fatal("an organization with no recorded network must not be marked migrated; the startup pass would never repair it")
 	}
 }
