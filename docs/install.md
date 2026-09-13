@@ -45,7 +45,7 @@ Prefix the command with any of these:
 
 | Variable | Effect |
 |----------|--------|
-| `KRILL_VERSION=v0.1.0` | Install a specific release instead of the latest. |
+| `KRILL_VERSION=v0.1.1` | Install a specific release instead of the latest. |
 | `KRILL_DOMAIN=apps.example.com` | Base domain for apps (`KRILL_BASE_DOMAIN`). |
 | `KRILL_ACME_EMAIL=you@example.com` | Let's Encrypt contact. |
 | `KRILL_ADVERTISE_ADDR=203.0.113.10` | Swarm advertise address. Auto-detected by default, and written to `krill.env` either way — worker nodes join at it. |
@@ -151,8 +151,9 @@ and databases from the UI before uninstalling, or remove the rest with `docker s
 
 ## Run the container image instead
 
-The control plane is also published as a multi-arch image, `ghcr.io/proshik/krill` (tags
-`0.1.0`, `0.1`, `latest`). It is a static binary on a distroless base, about 25 MB, and needs
+The control plane is also published as a multi-arch image, `ghcr.io/proshik/krill`, tagged
+with the release version without the leading `v` (`0.1.1`), the minor version (`0.1`) and
+`latest`. It is a static binary on a distroless base, about 25 MB, and needs
 only a reachable Postgres and a Swarm-enabled Docker daemon:
 
 ```sh

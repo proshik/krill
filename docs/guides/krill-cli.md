@@ -8,10 +8,12 @@ It deploys apps that already exist; projects, environments and apps are created 
 
 ## Install
 
-Download a release tarball for Linux or macOS (amd64 / arm64):
+Download the latest release tarball for your platform — `linux` or `darwin`, `amd64` or
+`arm64`:
 
 ```sh
-curl -sSL https://github.com/proshik/krill/releases/download/v0.1.0/krill-cli_v0.1.0_darwin_arm64.tar.gz \
+VERSION=$(curl -sSLo /dev/null -w '%{url_effective}' https://github.com/proshik/krill/releases/latest | sed 's#.*/##')
+curl -sSL "https://github.com/proshik/krill/releases/download/$VERSION/krill-cli_${VERSION}_darwin_arm64.tar.gz" \
   | tar -xz && sudo mv krill-cli /usr/local/bin/
 ```
 
