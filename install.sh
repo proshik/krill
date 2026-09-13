@@ -124,6 +124,9 @@ persist_advertise_addr() {
 # Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
 # after defining functions — do not run the installer's side effects.
 if [ "${KRILL_LIB_ONLY:-}" = "1" ]; then
+	# `return` works when sourced; `exit` is the fallback when executed. The
+	# linter cannot tell the two apart and reports the fallback as unreachable.
+	# shellcheck disable=SC2317
 	return 0 2>/dev/null || exit 0
 fi
 
