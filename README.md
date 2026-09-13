@@ -46,7 +46,7 @@ and Traefik for routing, and stores its state in Postgres.
 - **Operations.** Structured live logs, a web terminal, CPU and memory charts per node,
   Telegram alerts, and a map of which app runs where and talks to which database.
 - **Multiple servers.** Join worker nodes over SSH, pin apps to nodes or run them everywhere,
-  move a database to another node with its data, lock workers down with a firewall.
+  move a database to another node with its data, lock every node down with a firewall.
 - **Automation.** GitHub push-to-deploy, a CI deploy hook, a REST API and an MCP server for
   AI agents, and `krill-cli` to build locally and deploy. →
   [API](docs/guides/agent-api.md) · [CLI](docs/guides/krill-cli.md)

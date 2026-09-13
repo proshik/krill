@@ -24,7 +24,7 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | `KRILL_BASE_DOMAIN` | `127-0-0-1.sslip.io` | Suffix of each app's auto-generated domain. |
 | `KRILL_DOCKER_HOST` | — | Docker daemon address, e.g. a Colima socket. Empty uses the Docker default. |
 | `KRILL_NETWORK` | `krill-net` | Traefik's default provider network, and the fallback for an organization not yet moved onto its own `krill-org-<id>` network. |
-| `KRILL_ADVERTISE_ADDR` | — | Swarm advertise address used when joining worker nodes. |
+| `KRILL_ADVERTISE_ADDR` | — | The manager's Swarm address, an IP or a hostname. Workers join the cluster at it, and the cluster firewall keeps it allowed. Adding a worker and locking down the firewall both refuse to run without it. The installer detects and writes it. |
 | `KRILL_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `KRILL_LOG_FORMAT` | `text` | `text` or `json`. |
 

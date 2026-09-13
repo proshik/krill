@@ -48,7 +48,7 @@ Prefix the command with any of these:
 | `KRILL_VERSION=v0.1.0` | Install a specific release instead of the latest. |
 | `KRILL_DOMAIN=apps.example.com` | Base domain for apps (`KRILL_BASE_DOMAIN`). |
 | `KRILL_ACME_EMAIL=you@example.com` | Let's Encrypt contact. |
-| `KRILL_ADVERTISE_ADDR=203.0.113.10` | Swarm advertise address (auto-detected by default). |
+| `KRILL_ADVERTISE_ADDR=203.0.113.10` | Swarm advertise address. Auto-detected by default, and written to `krill.env` either way — worker nodes join at it. |
 | `KRILL_DATABASE_URL=postgres://…` | Keep Krill's state in an external Postgres — see below. |
 | `KRILL_BINARY=/path/to/krill` | Install a binary already on the host and skip the download — for an air-gapped host or a custom build (`scp` it up first). |
 | `KRILL_SKIP_VERIFY=1` | Install a downloaded binary even when the release has no `checksums.txt`. By default the installer fails closed. |

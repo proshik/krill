@@ -67,7 +67,7 @@ good.
 - Every request loads the whole ownership chain and answers **404** for anything outside the
   caller's organization, never 403, so IDs from other tenants are not disclosed.
 - Roles are `owner` > `admin` > `member`. Members can view; admins change things; only an
-  owner can grant the owner role. Cluster-wide resources — nodes, the worker firewall, host
+  owner can grant the owner role. Cluster-wide resources — nodes, the cluster firewall, host
   monitoring — are limited to the **instance administrator**, a separate flag, because anyone
   can create an organization and become its owner.
 - Each organization has its own overlay network, `krill-org-<id>`; services in different
@@ -87,8 +87,13 @@ with its volume, and moving it copies the volume to the new node.
 
 Krill reaches a worker's Docker daemon through an SSH tunnel with the stored key — for
 `docker exec` (backups, database provisioning, the web terminal) and for per-node metrics. No
-agent runs on the workers and no extra port is opened. The optional worker firewall closes
-everything inbound except SSH, ICMP and Swarm traffic from other cluster nodes.
+agent runs on the workers and no extra port is opened.
+
+The optional cluster firewall (**Settings → Firewall**) closes inbound traffic on every node
+except SSH, ICMP and Swarm traffic from other cluster nodes; the control plane also keeps HTTP,
+HTTPS and the Krill UI port open. A node that becomes unreachable after the change reverts it
+on its own, and the control plane's lockdown is reverted unless you confirm it from the page
+within two minutes.
 
 ## Data model
 
@@ -128,7 +133,7 @@ databases.
 | `internal/backup` | S3 storage, scheduled `pg_dump` backups and restore. |
 | `internal/volume` | App volume validation and backup/restore. |
 | `internal/cluster` | Joining worker nodes over SSH. |
-| `internal/firewall` | nftables allowlist for worker nodes. |
+| `internal/firewall` | nftables allowlist for cluster nodes. |
 | `internal/orgnet` | Per-organization networks and the migration onto them. |
 | `internal/metrics` | CPU/memory sampling across nodes. |
 | `internal/notify` | Telegram notifications and the health watcher. |
