@@ -70,6 +70,36 @@ func TestBuildSwarmSpecHostPortAndMounts(t *testing.T) {
 	}
 }
 
+// A host-mode port binds on the node itself, so the replacement task of a
+// start-first update cannot be placed while the task it replaces still holds
+// the port: it stays Pending ("host-mode port conflict") and the old task is
+// never stopped. Such a service has to stop its old task first.
+func TestBuildSwarmSpecHostPortUpdatesStopFirst(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{
+		Name:    "krill-traefik",
+		Image:   "traefik:v3.6.1",
+		Network: "krill-net",
+		Ports:   []PortSpec{{Target: 80, Published: 80, Mode: "host"}},
+	})
+	if sw.UpdateConfig == nil || sw.UpdateConfig.Order != swarm.UpdateOrderStopFirst {
+		t.Fatalf("update order = %+v, want stop-first for a host-mode port", sw.UpdateConfig)
+	}
+}
+
+// Ingress-mode ports are published by the routing mesh, not bound by the task,
+// so they keep the zero-downtime start-first order.
+func TestBuildSwarmSpecIngressPortKeepsStartFirst(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{
+		Name:    "krill-7",
+		Image:   "nginx:alpine",
+		Network: "krill-net",
+		Ports:   []PortSpec{{Target: 80, Published: 8080}},
+	})
+	if sw.UpdateConfig == nil || sw.UpdateConfig.Order != swarm.UpdateOrderStartFirst {
+		t.Fatalf("update order = %+v, want start-first for an ingress port", sw.UpdateConfig)
+	}
+}
+
 func TestBuildSwarmSpecVolumeAndDNSRR(t *testing.T) {
 	spec := ServiceSpec{
 		Name:    "krill-pg-x",
