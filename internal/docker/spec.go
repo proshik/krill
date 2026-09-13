@@ -96,7 +96,7 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		Mode:         svcMode,
 		UpdateConfig: &swarm.UpdateConfig{
 			Parallelism:   1,
-			Order:         swarm.UpdateOrderStartFirst, // zero-downtime
+			Order:         updateOrder(s.Ports),
 			FailureAction: swarm.UpdateFailureActionRollback,
 		},
 		RollbackConfig: &swarm.UpdateConfig{
@@ -127,6 +127,23 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		spec.EndpointSpec = ep
 	}
 	return spec
+}
+
+// updateOrder is start-first (zero downtime) unless the service publishes a
+// host-mode port. A host-mode port is bound by the task on its node, so a
+// start-first replacement cannot be placed while the task it replaces still
+// holds the port: it stays Pending with "host-mode port conflict", and because
+// start-first stops the old task only once the new one runs, the update never
+// finishes and never fails — the old spec just keeps running. Traefik (:80/:443
+// on the manager), raw TCP/UDP app ports and database proxies all publish in
+// host mode, so they stop the old task first and accept a brief gap.
+func updateOrder(ports []PortSpec) string {
+	for _, p := range ports {
+		if p.Mode == "host" {
+			return swarm.UpdateOrderStopFirst
+		}
+	}
+	return swarm.UpdateOrderStartFirst
 }
 
 // restartCondition maps a human restart condition to the Swarm enum.

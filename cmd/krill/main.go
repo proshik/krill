@@ -123,6 +123,9 @@ func run() error {
 	// A failed listing must not reconcile: an empty list is indistinguishable
 	// from "this install has no organizations", and applying it would detach the
 	// running gateway from every organization network over a transient DB error.
+	// When the spec changed, Reconcile waits for the new Traefik task to run
+	// (seconds normally, up to a few minutes if the image has to be pulled), so
+	// the HTTP listener starts after it.
 	gatewayReady := false
 	if orgNets, nerr := orgNetworks(ctx, q); nerr != nil {
 		slog.Warn("could not list organization networks; leaving the gateway as it is", "err", nerr)
@@ -432,11 +435,11 @@ func run() error {
 	// The pass is idempotent and already tolerates dying mid-way, so the worst a
 	// shutdown here costs is redoing it next boot.
 	//
-	// It runs only when the gateway reconcile above actually succeeded:
-	// Reconcile returns on the first NetworkEnsure error without deploying
-	// anything, so migrating after a failed one would move services into
-	// networks Traefik is not attached to — every exposed app unroutable until
-	// some later, luckier start.
+	// It runs only when the gateway reconcile above actually succeeded, which
+	// means Traefik's new task is running on the new network set — not merely
+	// that Swarm accepted the spec. Migrating after a failed one would move
+	// services into networks Traefik is not attached to — every exposed app
+	// unroutable until some later, luckier start.
 	if !gatewayReady {
 		slog.Warn("skipping the organization network migration: the gateway is not attached to the organization networks")
 	} else {
