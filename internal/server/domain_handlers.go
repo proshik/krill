@@ -123,6 +123,11 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_host")
 		return
 	}
+	if reserved, err := s.hostReservedByPanel(r.Context(), host); err != nil || reserved {
+		logFrom(r).Info("addDomain: host reserved by the panel", "app_id", c.App.ID, "host", host, "err", err)
+		s.flashErrT(w, r, "flash.err.host_in_use")
+		return
+	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), host); n > 0 {
 		logFrom(r).Info("addDomain: host already in use", "app_id", c.App.ID, "host", host)
 		s.flashErrT(w, r, "flash.err.host_in_use")

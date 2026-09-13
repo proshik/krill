@@ -1,0 +1,127 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// PanelDomainView is the state of the Krill UI's own domain.
+type PanelDomainView struct {
+	Available        bool   // the gateway can reach Krill; the domain can be set
+	UnavailableKey   string // i18n key explaining why it cannot
+	Host             string
+	State            string // off | pending | active
+	AllowedIPs       string // newline-separated
+	OnDomain         bool   // this page was loaded through the domain over HTTPS
+	DomainURL        string // this page on the domain
+	DirectURL        string // this page's origin on the UI port, e.g. http://203.0.113.10:8080
+	DirectPortClosed bool
+	ClosePending     bool // a close is applied and awaits confirmation
+	CloseReverted    bool // a close was not confirmed in time and reverted
+	FirewallWired    bool
+	FirewallLocked   bool
+	ClientIP         string
+}
+
+// PanelDomain renders the panel domain settings: the domain and its
+// confirmation, the IP allowlist, and closing the direct UI port.
+templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
+	@Layout(i18n.T(ctx, "panel.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "panel.desc") }</p>
+		if !v.Available {
+			<div class="k-card mb-4">
+				<p style="max-width:720px">{ i18n.T(ctx, v.UnavailableKey) }</p>
+			</div>
+		} else {
+			<div class="k-card mb-4">
+				<div class="flex items-center gap-2 mb-3">
+					<span class="k-label" style="margin:0">{ i18n.T(ctx, "panel.status") }</span>
+					switch v.State {
+						case "pending":
+							<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "panel.state.pending") }</span>
+						case "active":
+							<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "panel.state.active") }</span>
+						default:
+							<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "panel.state.off") }</span>
+					}
+					if v.Host != "" {
+						<span class="k-mono">{ v.Host }</span>
+					}
+				</div>
+				if v.State == "pending" {
+					if v.OnDomain {
+						<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "panel.pending_on_domain") }</p>
+						<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/confirm") } class="mb-3">
+							<button class="k-btn k-btn-primary">{ i18n.T(ctx, "panel.confirm") }</button>
+						</form>
+					} else {
+						<p class="mb-2" style="max-width:720px">{ i18n.T(ctx, "panel.pending_off_domain") }</p>
+						<p class="mb-3"><a class="k-mono" href={ templ.SafeURL(v.DomainURL) } target="_blank" rel="noopener">{ v.DomainURL }</a></p>
+					}
+				}
+				if v.State == "active" && !v.OnDomain {
+					<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "panel.active_off_domain") }</p>
+					<p class="mb-3"><a class="k-mono" href={ templ.SafeURL(v.DomainURL) }>{ v.DomainURL }</a></p>
+				}
+				<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain") } class="flex items-end gap-2">
+					<div style="flex:1;max-width:420px">
+						<label class="k-label">{ i18n.T(ctx, "panel.host") }</label>
+						<input class="k-input" name="host" value={ v.Host } placeholder="krill.example.com" required/>
+					</div>
+					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "panel.save") }</button>
+				</form>
+				<p class="mt-2" style="color:var(--color-muted);max-width:720px;font-size:13px">{ i18n.T(ctx, "panel.host_hint") }</p>
+				if v.State != "off" && !v.DirectPortClosed && !v.ClosePending {
+					<form method="post" hx-boost="false" class="mt-3" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/disable") } data-confirm={ i18n.T(ctx, "panel.confirm.disable") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "panel.disable") }</button>
+					</form>
+				}
+			</div>
+			if v.State != "off" {
+				<div class="k-card mb-4">
+					<h3 class="text-lg mb-2">{ i18n.T(ctx, "panel.allowlist") }</h3>
+					<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "panel.allowlist_desc", v.ClientIP) }</p>
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/allowed-ips") }>
+						<textarea class="k-input k-mono" name="allowed_ips" rows="4" style="max-width:420px" placeholder="203.0.113.4&#10;10.0.0.0/8">{ v.AllowedIPs }</textarea>
+						<div class="mt-2">
+							<button class="k-btn k-btn-primary">{ i18n.T(ctx, "panel.save") }</button>
+						</div>
+					</form>
+				</div>
+			}
+			if v.State == "active" && v.FirewallWired {
+				<div class="k-card mb-4">
+					<h3 class="text-lg mb-2">{ i18n.T(ctx, "panel.direct") }</h3>
+					if v.CloseReverted {
+						<div class="k-toast k-toast-err mb-3">{ i18n.T(ctx, "panel.direct_reverted") }</div>
+					}
+					if v.ClosePending {
+						<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "panel.direct_pending") }</p>
+						if v.OnDomain {
+							<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/direct-port/confirm") }>
+								<button class="k-btn k-btn-primary">{ i18n.T(ctx, "panel.direct_confirm") }</button>
+							</form>
+						}
+					} else if v.DirectPortClosed {
+						<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "panel.direct_closed") }</p>
+						<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/direct-port/open") }>
+							<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "panel.direct_open") }</button>
+						</form>
+					} else {
+						<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "panel.direct_open_desc", v.DirectURL) }</p>
+						if !v.FirewallLocked {
+							<p style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "panel.direct_needs_lockdown") }</p>
+						} else if !v.OnDomain {
+							<p style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "panel.direct_needs_domain") }</p>
+						} else {
+							<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/direct-port/close") } data-confirm={ i18n.T(ctx, "panel.confirm.close") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+								<button class="k-btn k-btn-danger">{ i18n.T(ctx, "panel.direct_close") }</button>
+							</form>
+						}
+					}
+				</div>
+			}
+		}
+	}
+}

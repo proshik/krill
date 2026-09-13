@@ -117,7 +117,7 @@ func (f *fakeEngine) ServiceLabels(_ context.Context, _ string) (map[string]stri
 func TestReconcileAttachesBaseAndOrgNetworks(t *testing.T) {
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme, PanelProvider{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	want := []string{"krill-net", "krill-org-1", "krill-org-2"}
@@ -156,10 +156,10 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
 	orgs := []string{"krill-org-1"}
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if len(f.deployed) != 1 {
@@ -167,7 +167,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	}
 
 	// A new organization changes the network set, so the gateway has to move.
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme, PanelProvider{}); err != nil {
 		t.Fatalf("third reconcile: %v", err)
 	}
 	if len(f.deployed) != 2 {
@@ -176,7 +176,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 
 	// So does a changed Let's Encrypt configuration: the fingerprint covers the
 	// whole spec, not only the networks.
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, AcmeConfig{Email: "a@b.c", Staging: true}); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, AcmeConfig{Email: "a@b.c", Staging: true}, PanelProvider{}); err != nil {
 		t.Fatalf("fourth reconcile: %v", err)
 	}
 	if len(f.deployed) != 3 {
@@ -189,7 +189,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 // learns about a new network).
 func TestReconcileDeploysWhenLabelsUnreadable(t *testing.T) {
 	f := &fakeEngine{labelErr: errors.New("boom")}
-	if err := Reconcile(context.Background(), f, "krill-net", nil, AcmeConfig{}); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", nil, AcmeConfig{}, PanelProvider{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if len(f.deployed) != 1 {
@@ -206,14 +206,14 @@ func TestReconcileDeploysWhenANetworkWasRecreated(t *testing.T) {
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
 	orgs := []string{"krill-org-1"}
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	if len(f.deployed) != 1 {
 		t.Fatalf("want one deploy, got %d", len(f.deployed))
 	}
 	// Unchanged set, nothing created: still a no-op.
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if len(f.deployed) != 1 {
@@ -221,7 +221,7 @@ func TestReconcileDeploysWhenANetworkWasRecreated(t *testing.T) {
 	}
 	// Same set, but one network had to be recreated.
 	f.creates = map[string]bool{"krill-org-1": true}
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("third reconcile: %v", err)
 	}
 	if len(f.deployed) != 2 {
@@ -236,11 +236,11 @@ func TestReconcileWaitsForTheNewTask(t *testing.T) {
 	fastConvergence(t, time.Second)
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	f.pollsToRun = 3
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme, PanelProvider{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if f.running != "task-2" {
@@ -259,11 +259,11 @@ func TestReconcileFailsWhenTheNewTaskNeverRuns(t *testing.T) {
 	fastConvergence(t, 50*time.Millisecond)
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	f.stuck = true
-	err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme)
+	err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1", "krill-org-2"}, acme, PanelProvider{})
 	if err == nil || !strings.Contains(err.Error(), "did not start") {
 		t.Fatalf("err = %v, want a gateway that did not start", err)
 	}
@@ -273,11 +273,11 @@ func TestReconcileFailsWhenSwarmRollsBack(t *testing.T) {
 	fastConvergence(t, time.Second)
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
-	if err := Reconcile(context.Background(), f, "krill-net", nil, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", nil, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	f.rollback = true
-	err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme)
+	err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, acme, PanelProvider{})
 	if err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("err = %v, want a rolled-back update", err)
 	}
@@ -292,15 +292,15 @@ func TestReconcileRedeploysAnUpdateThatNeverFinished(t *testing.T) {
 	f := &fakeEngine{}
 	acme := AcmeConfig{Email: "a@b.c"}
 	orgs := []string{"krill-org-1"}
-	if err := Reconcile(context.Background(), f, "krill-net", nil, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", nil, acme, PanelProvider{}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 	f.stuck = true
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err == nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err == nil {
 		t.Fatal("a stuck update must fail the reconcile")
 	}
 	f.stuck = false
-	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", orgs, acme, PanelProvider{}); err != nil {
 		t.Fatalf("reconcile after the stuck update: %v", err)
 	}
 	if len(f.deployed) != 3 {
@@ -316,7 +316,7 @@ func TestReconcileRedeploysAnUpdateThatNeverFinished(t *testing.T) {
 func TestReconcileFailsWhenProgressIsUnreadable(t *testing.T) {
 	fastConvergence(t, time.Second)
 	f := &fakeEngine{progressErr: errors.New("boom")}
-	if err := Reconcile(context.Background(), f, "krill-net", nil, AcmeConfig{}); err == nil {
+	if err := Reconcile(context.Background(), f, "krill-net", nil, AcmeConfig{}, PanelProvider{}); err == nil {
 		t.Fatal("want an error when the gateway's tasks cannot be read")
 	}
 	if len(f.deployed) != 0 {
@@ -331,13 +331,13 @@ func TestReconcileFailsWhenProgressIsUnreadable(t *testing.T) {
 func TestReconcileWaitsForSwarmToCompleteTheUpdate(t *testing.T) {
 	fastConvergence(t, time.Second)
 	f := &fakeEngine{pollsToComplete: 3}
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, AcmeConfig{}); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, AcmeConfig{}, PanelProvider{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if f.updateState != "completed" {
 		t.Fatalf("reconcile returned while the update was %q", f.updateState)
 	}
-	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, AcmeConfig{}); err != nil {
+	if err := Reconcile(context.Background(), f, "krill-net", []string{"krill-org-1"}, AcmeConfig{}, PanelProvider{}); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if len(f.deployed) != 1 {

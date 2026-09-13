@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/panel"
 )
 
 // requestLogger emits one structured slog line per HTTP request (method, path,
@@ -35,6 +36,10 @@ func requestLogger(next http.Handler) http.Handler {
 				attrs = append(attrs, "user_id", uid)
 			}
 			level := slog.LevelInfo
+			if r.URL.Path == panel.ProviderPath && status < 400 {
+				// The gateway polls this every few seconds, forever.
+				level = slog.LevelDebug
+			}
 			if status >= 500 {
 				level = slog.LevelError
 			}

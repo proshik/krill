@@ -22,6 +22,7 @@ import (
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
+	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/volume"
 	"github.com/proshik/krill/internal/web"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -70,6 +71,11 @@ type Server struct {
 	// cpFirewall applies the nftables lockdown on the control-plane host itself
 	// (see SetControlPlaneFirewall). Nil leaves the control plane out of it.
 	cpFirewall firewall.Runner
+
+	// panel routes the Krill UI itself through the gateway on a domain (see
+	// SetPanelGateway and panel_handlers.go). Zero until wired: the panel page
+	// then reports the feature unavailable and no request counts as proxied.
+	panel panelGateway
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -259,10 +265,14 @@ func (s *Server) Router() http.Handler {
 	r.Get("/login", s.loginPage)
 	// Rate-limit login attempts per source IP to bound online password guessing.
 	loginLimiter := newLoginRateLimiter(10, time.Minute)
-	r.With(loginLimiter.middleware(s.cfg.TrustProxy)).Post("/login", s.loginSubmit)
+	r.With(loginLimiter.middleware(s.trustForwardedFor)).Post("/login", s.loginSubmit)
 	// POST so csrfGuard + SameSite cover it: a GET /logout is vulnerable to a
 	// cross-site top-level navigation terminating the victim's session.
 	r.Post("/logout", s.logout)
+
+	// The gateway's poll for the panel's routes, authenticated by the provider
+	// token rather than a session.
+	r.Get(panel.ProviderPath, s.gatewayConfig)
 
 	// Public, unauthenticated auto-deploy webhooks (verified by a per-app secret).
 	r.Route("/webhooks", func(r chi.Router) {
@@ -361,6 +371,14 @@ func (s *Server) Router() http.Handler {
 				r.Post("/firewall/lockdown", s.lockdownWorkers)
 				r.Post("/firewall/open", s.openWorkers)
 				r.Post("/firewall/confirm", s.confirmControlPlaneFirewall)
+				r.Get("/panel-domain", s.panelDomainPage)
+				r.Post("/panel-domain", s.setPanelDomain)
+				r.Post("/panel-domain/confirm", s.confirmPanelDomain)
+				r.Post("/panel-domain/disable", s.disablePanelDomain)
+				r.Post("/panel-domain/allowed-ips", s.setPanelAllowedIPs)
+				r.Post("/panel-domain/direct-port/close", s.closePanelDirectPort)
+				r.Post("/panel-domain/direct-port/confirm", s.confirmPanelDirectPort)
+				r.Post("/panel-domain/direct-port/open", s.openPanelDirectPort)
 			})
 
 			r.Group(func(r chi.Router) {

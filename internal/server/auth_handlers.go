@@ -10,7 +10,15 @@ import (
 )
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	render(w, r, http.StatusOK, templates.Login(""))
+	render(w, r, http.StatusOK, templates.Login("", s.loginCookieWarning(r)))
+}
+
+// loginCookieWarning reports whether signing in from r cannot work: the session
+// cookie would be Secure, yet r arrived over plain HTTP — straight at the UI
+// port with KRILL_COOKIE_SECURE=true set before HTTPS was in place.
+func (s *Server) loginCookieWarning(r *http.Request) bool {
+	return s.cookieSecure(r) && r.TLS == nil && !s.secureViaGateway(r) &&
+		!(s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https")
 }
 
 func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
@@ -22,11 +30,11 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		// sends them off resetting credentials that were never the problem.
 		if !errors.Is(err, auth.ErrInvalidCredentials) {
 			logFrom(r).Error("login: authentication backend failed", "err", err, "email", email)
-			render(w, r, http.StatusInternalServerError, templates.Login(i18n.T(r.Context(), "login.backend_error")))
+			render(w, r, http.StatusInternalServerError, templates.Login(i18n.T(r.Context(), "login.backend_error"), s.loginCookieWarning(r)))
 			return
 		}
 		logFrom(r).Warn("login failed", "email", email, "remote", r.RemoteAddr)
-		render(w, r, http.StatusUnauthorized, templates.Login("Invalid email or password"))
+		render(w, r, http.StatusUnauthorized, templates.Login("Invalid email or password", s.loginCookieWarning(r)))
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -34,7 +42,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
+		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(auth.SessionTTL.Seconds()),
 	})

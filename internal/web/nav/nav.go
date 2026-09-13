@@ -30,10 +30,10 @@ func IsActive(ctx context.Context, section string) bool {
 
 // IsSettings reports whether the current path is one of the Settings pages
 // (Destinations, Registries, Notifications, Git credentials, Nodes,
-// Firewall, or API tokens), which share a single sidebar entry.
+// Firewall, Panel domain, or API tokens), which share a single sidebar entry.
 func IsSettings(ctx context.Context) bool {
 	s := sectionOf(Path(ctx))
-	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes" || s == "firewall" || s == "api-tokens"
+	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes" || s == "firewall" || s == "panel-domain" || s == "api-tokens"
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages

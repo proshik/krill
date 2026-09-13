@@ -33,6 +33,7 @@ import (
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/orgnet"
+	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
@@ -114,6 +115,28 @@ func run() error {
 		return err
 	}
 	acme := traefik.AcmeConfig{Email: cfg.AcmeContact(), Staging: cfg.AcmeStaging}
+
+	// The panel domain: the gateway polls Krill for the UI's own routes, so it
+	// needs an address it can reach Krill at. Without one the provider is left
+	// out of the gateway spec and the Panel domain page explains why. The
+	// provider's arguments come from configuration and a stored secret only, so
+	// they are the same on every start and never make the gateway redeploy.
+	gatewaySecret, err := panel.EnsureSecret(ctx, q)
+	if err != nil {
+		return err
+	}
+	gatewayTokens := panel.DeriveTokens(gatewaySecret)
+	panelUpstream, panelUpstreamErr := panel.Upstream(cfg.AdvertiseAddr, cfg.ListenAddr)
+	var panelProvider traefik.PanelProvider
+	if panelUpstreamErr != nil {
+		slog.Info("panel domain unavailable: the gateway cannot reach Krill", "reason", panelUpstreamErr)
+	} else {
+		panelProvider = traefik.PanelProvider{
+			Endpoint: panelUpstream + panel.ProviderPath,
+			Header:   panel.ProviderHeader,
+			Token:    gatewayTokens.Provider,
+		}
+	}
 	// The gateway has to sit in every organization's network, not just the base
 	// one, or it cannot route to services that live behind the per-organization
 	// isolation. Names come from orgnet.Name, not from the stored network_name:
@@ -129,7 +152,7 @@ func run() error {
 	gatewayReady := false
 	if orgNets, nerr := orgNetworks(ctx, q); nerr != nil {
 		slog.Warn("could not list organization networks; leaving the gateway as it is", "err", nerr)
-	} else if rerr := traefik.Reconcile(ctx, engine, cfg.Network, orgNets, acme); rerr != nil {
+	} else if rerr := traefik.Reconcile(ctx, engine, cfg.Network, orgNets, acme, panelProvider); rerr != nil {
 		slog.Warn("traefik reconcile failed (continuing)", "err", rerr)
 	} else {
 		gatewayReady = true
@@ -383,7 +406,8 @@ func run() error {
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
 	app.SetControlPlaneFirewall(firewall.LocalRunner{Timeout: 20 * time.Second})
-	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme))
+	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme, panelProvider))
+	app.SetPanelGateway(gatewayTokens, panelUpstream, panelUpstreamErr)
 
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
@@ -413,6 +437,12 @@ func run() error {
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	// A firewall change is confirmed by a request that the new ruleset had to
+	// admit; an idle keep-alive connection from before it would not prove that.
+	app.SetIdleConnCloser(func() {
+		srv.SetKeepAlivesEnabled(false) // closes idle connections
+		srv.SetKeepAlivesEnabled(true)
+	})
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -568,7 +598,7 @@ const (
 // the request path that turns a loop of organization creations into a sustained
 // outage for every tenant, so the work moves here, where a burst collapses into
 // a single deploy after a quiet period.
-func startGatewayReconciler(ctx context.Context, engine docker.Engine, q *db.Queries, baseNetwork string, acme traefik.AcmeConfig) func() {
+func startGatewayReconciler(ctx context.Context, engine docker.Engine, q *db.Queries, baseNetwork string, acme traefik.AcmeConfig, panelProvider traefik.PanelProvider) func() {
 	trigger := make(chan struct{}, 1)
 	go func() {
 		for {
@@ -593,7 +623,7 @@ func startGatewayReconciler(ctx context.Context, engine docker.Engine, q *db.Que
 				slog.Warn("gateway reconcile: could not list organization networks", "err", err)
 				continue
 			}
-			if err := traefik.Reconcile(ctx, engine, baseNetwork, nets, acme); err != nil {
+			if err := traefik.Reconcile(ctx, engine, baseNetwork, nets, acme, panelProvider); err != nil {
 				slog.Error("gateway reconcile failed", "err", err)
 			}
 			// Hold the floor for the cooldown. Triggers that arrive meanwhile

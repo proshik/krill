@@ -21,13 +21,13 @@ import (
 // never land in the same flash slot and collide.
 const flashTokenCookie = "krill_flash_token"
 
-func (s *Server) setFlashToken(w http.ResponseWriter, plain string) {
+func (s *Server) setFlashToken(w http.ResponseWriter, r *http.Request, plain string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     flashTokenCookie,
 		Value:    plain,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
+		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   120,
 	})
@@ -136,7 +136,7 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.setFlashToken(w, plain)
+	s.setFlashToken(w, r, plain)
 	logFrom(r).Info("api token created", "org_id", o.ID, "user_id", uid, "token_id", tok.ID, "prefix", tok.Prefix, "level", tok.Level)
 	s.flashOK(w, r, "flash.api_token_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/api-tokens", http.StatusSeeOther)

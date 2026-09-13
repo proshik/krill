@@ -15,7 +15,7 @@ func hasArg(args []string, want string) bool {
 }
 
 func TestTraefikSpecTLS(t *testing.T) {
-	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: false})
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: false}, PanelProvider{})
 	if !hasArg(s.Args, "--entrypoints.websecure.address=:443") {
 		t.Error("missing websecure entrypoint")
 	}
@@ -50,8 +50,35 @@ func TestTraefikSpecTLS(t *testing.T) {
 }
 
 func TestTraefikSpecStaging(t *testing.T) {
-	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: true})
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c", Staging: true}, PanelProvider{})
 	if !hasArg(s.Args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory") {
 		t.Error("staging caserver missing")
+	}
+}
+
+func TestTraefikSpecPanelProvider(t *testing.T) {
+	plain := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, PanelProvider{})
+	for _, a := range plain.Args {
+		if strings.HasPrefix(a, "--providers.http.") {
+			t.Fatalf("no endpoint must leave the HTTP provider out, got %q", a)
+		}
+	}
+	p := PanelProvider{Endpoint: "http://195.2.75.130:8080/_krill/gateway/config", Header: "X-Krill-Gateway-Provider", Token: "tok"}
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, p)
+	for _, want := range []string{
+		"--providers.http.endpoint=http://195.2.75.130:8080/_krill/gateway/config",
+		"--providers.http.pollInterval=5s",
+		"--providers.http.headers.X-Krill-Gateway-Provider=tok",
+		"--providers.swarm.endpoint=unix:///var/run/docker.sock",
+	} {
+		if !hasArg(s.Args, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if s.Labels[specHashLabel] == plain.Labels[specHashLabel] {
+		t.Error("enabling the provider must change the fingerprint so the gateway is redeployed once")
+	}
+	if again := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, p); again.Labels[specHashLabel] != s.Labels[specHashLabel] {
+		t.Error("the same provider must fingerprint identically, or every start would redeploy the gateway")
 	}
 }

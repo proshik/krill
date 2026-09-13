@@ -63,7 +63,7 @@ func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("notifications saved", "org_id", o.ID)
-	s.setFlash(w, "ok", i18n.T(r.Context(), "notif.saved"))
+	s.setFlash(w, r, "ok", i18n.T(r.Context(), "notif.saved"))
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/notifications", http.StatusSeeOther)
 }
 
@@ -93,6 +93,6 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, i18n.T(r.Context(), "notif.test_fail"))
 		return
 	}
-	s.setFlash(w, "ok", i18n.T(r.Context(), "notif.test_ok"))
+	s.setFlash(w, r, "ok", i18n.T(r.Context(), "notif.test_ok"))
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/notifications", http.StatusSeeOther)
 }

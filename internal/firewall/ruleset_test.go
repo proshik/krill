@@ -77,7 +77,7 @@ func TestBuildManagerRulesetNoPortsEqualsWorker(t *testing.T) {
 		t.Fatalf("worker: %v", err)
 	}
 	for _, ports := range [][]int{nil, {}, {22}} {
-		m, err := BuildManagerRuleset(ips, ports)
+		m, err := BuildManagerRuleset(ips, ports, nil)
 		if err != nil {
 			t.Fatalf("manager %v: %v", ports, err)
 		}
@@ -88,7 +88,7 @@ func TestBuildManagerRulesetNoPortsEqualsWorker(t *testing.T) {
 }
 
 func TestBuildManagerRulesetServicePorts(t *testing.T) {
-	rs, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 443, 22, 80, 443})
+	rs, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 443, 22, 80, 443}, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -113,11 +113,11 @@ func TestBuildManagerRulesetServicePorts(t *testing.T) {
 }
 
 func TestBuildManagerRulesetDeterministic(t *testing.T) {
-	a, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 80, 443})
+	a, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{8080, 80, 443}, nil)
 	if err != nil {
 		t.Fatalf("build a: %v", err)
 	}
-	b, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{443, 8080, 80})
+	b, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{443, 8080, 80}, nil)
 	if err != nil {
 		t.Fatalf("build b: %v", err)
 	}
@@ -128,8 +128,27 @@ func TestBuildManagerRulesetDeterministic(t *testing.T) {
 
 func TestBuildManagerRulesetRejectsOutOfRangePort(t *testing.T) {
 	for _, p := range []int{0, -1, 65536} {
-		if _, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{80, p}); err == nil {
+		if _, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{80, p}, nil); err == nil {
 			t.Fatalf("port %d must be rejected", p)
 		}
+	}
+}
+
+func TestBuildManagerRulesetGatewayPorts(t *testing.T) {
+	rs, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{80, 443}, []int{8080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rs, "tcp dport { 80, 443 } accept") {
+		t.Fatalf("public ports missing:\n%s", rs)
+	}
+	if !strings.Contains(rs, `iifname "docker_gwbridge" tcp dport { 8080 } accept`) {
+		t.Fatalf("the UI port must stay reachable from the gateway:\n%s", rs)
+	}
+	if strings.Contains(rs, "tcp dport { 80, 443, 8080 }") {
+		t.Fatalf("the UI port must not be public:\n%s", rs)
+	}
+	if _, err := BuildManagerRuleset([]string{"10.0.0.1"}, []int{80}, []int{0}); err == nil {
+		t.Fatal("an out-of-range gateway port must be rejected")
 	}
 }

@@ -43,13 +43,27 @@ type AcmeConfig struct {
 	Staging bool
 }
 
+// PanelProvider points the gateway's HTTP provider at Krill, which serves the
+// routes of its own UI there (see internal/panel). The zero value leaves the
+// provider out: Krill has no address the gateway could reach it at.
+type PanelProvider struct {
+	Endpoint string // full URL of the dynamic-configuration endpoint
+	Header   string // request header carrying Token
+	Token    string
+}
+
 // TraefikSpec builds the spec for the Traefik Swarm service.
 // Configured via CLI arguments; only the docker socket is mounted (no traefik.yml).
 //
 // networks is the full set the gateway attaches to, the base network first.
 // That first entry is also the swarm provider's default network — the one a
 // router carrying no explicit network label is resolved on.
-func TraefikSpec(networks []string, acme AcmeConfig) docker.ServiceSpec {
+//
+// The panel provider's arguments are derived from configuration and a stored
+// secret, never from the panel's own settings, so they are identical on every
+// start and do not disturb the spec fingerprint; the routes themselves change
+// through the provider's poll without touching the service.
+func TraefikSpec(networks []string, acme AcmeConfig, panel PanelProvider) docker.ServiceSpec {
 	defaultNet := ""
 	if len(networks) > 0 {
 		defaultNet = networks[0]
@@ -67,6 +81,13 @@ func TraefikSpec(networks []string, acme AcmeConfig) docker.ServiceSpec {
 	}
 	if acme.Staging {
 		args = append(args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory")
+	}
+	if panel.Endpoint != "" {
+		args = append(args,
+			"--providers.http.endpoint="+panel.Endpoint,
+			"--providers.http.pollInterval=5s",
+			"--providers.http.headers."+panel.Header+"="+panel.Token,
+		)
 	}
 	spec := docker.ServiceSpec{
 		Name:     ServiceName,
@@ -119,7 +140,7 @@ func specFingerprint(s docker.ServiceSpec) string {
 // rolls it back. Until then the old task keeps serving the old networks, and a
 // caller that took the deploy for done would move services into networks the
 // gateway never joined.
-func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNetworks []string, acme AcmeConfig) error {
+func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNetworks []string, acme AcmeConfig, panel PanelProvider) error {
 	nets := make([]string, 0, len(orgNetworks)+1)
 	nets = append(nets, baseNetwork)
 	nets = append(nets, orgNetworks...)
@@ -135,7 +156,7 @@ func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNe
 		}
 		created = created || c
 	}
-	spec := TraefikSpec(nets, acme)
+	spec := TraefikSpec(nets, acme, panel)
 	// The tasks running now are the baseline the new task is told apart from.
 	// Without it the old task would pass for the new one, so a failed read is
 	// an error rather than an unverified deploy.
