@@ -6,7 +6,7 @@ import (
 )
 
 // Environment variables. KRILL_TOKEN and KRILL_SERVER match the names the
-// README's CI examples already use. Anything this CLI invents is prefixed
+// API guide's CI examples already use. Anything this CLI invents is prefixed
 // KRILL_CLI_ so it can never collide with the server's own KRILL_* settings
 // on a machine that runs both.
 const (

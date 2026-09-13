@@ -39,7 +39,7 @@ func TestYamlScalarSurvivesFreeTextNames(t *testing.T) {
 }
 
 // TestClassifyGivesEveryErrorTheDocumentedCode: the exit-code contract is
-// printed in `deploy --help`, in the README and in the agent skill, but it
+// printed in `deploy --help`, in the krill-cli guide and in the agent skill, but it
 // used to hold only inside the deploy flow — every other command answered a
 // revoked token or a mistyped id with 1, which the same contract defines as
 // "the deployment failed".
