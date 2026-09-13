@@ -32,7 +32,9 @@ describes them in detail.
   MCP) with org-scoped tokens, and `krill-cli` to build locally and deploy.
 - **Install:** one-line `install.sh` (host binary + systemd), optionally against an
   external managed Postgres, with the control-plane's own Postgres on its own
-  Docker network rather than the default bridge.
+  Docker network rather than the default bridge. The Krill UI gets its own domain and
+  HTTPS from its settings page, with a confirmation through the domain and an optional
+  firewall close of the direct UI port.
 
 ## Live-acceptance queue
 
@@ -53,6 +55,9 @@ Verified in code and tests, but not yet exercised on a real environment:
    onto their organization's network without an outage.
 9. The installer's control-plane Postgres move (`krill-state` network) on a
    real VPS upgrade, including the container-recreation path.
+10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
+    advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
+    direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
 
 ## Open
 

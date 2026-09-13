@@ -75,10 +75,13 @@ about behaviour that is by design:
 - **Set `KRILL_SECRET_KEY`.** Without it, stored credentials (database passwords,
   registry, S3, Git and SSH secrets, bot tokens) are kept in plaintext; the
   installer generates one for you.
-- **Serve it over HTTPS** and set `KRILL_COOKIE_SECURE=true`. Set
-  `KRILL_TRUST_PROXY=true` only behind a reverse proxy that sets
-  `X-Forwarded-For` — otherwise clients can forge their IP for the login rate
-  limiter.
+- **Serve the UI over HTTPS** on its own domain: **Settings → Panel domain**
+  (see [Domains](docs/guides/domains.md#serve-the-krill-ui-on-a-domain)). Then
+  close direct access to the UI port, and consider an IP allowlist for the
+  domain. Cookies on the domain are marked `Secure` without
+  `KRILL_COOKIE_SECURE`; set that, and `KRILL_TRUST_PROXY=true`, only behind a
+  TLS reverse proxy of your own that sets `X-Forwarded-For`, since otherwise
+  clients can forge their IP for the login rate limiter.
 - **The agent API (`/api/v1`, `/mcp`) is enabled by default.** Turn it off with
   `KRILL_AGENT_API_ENABLED=false` if you do not use it. API tokens and deploy-hook
   secrets are accepted only in the `Authorization` header, never in the URL.
