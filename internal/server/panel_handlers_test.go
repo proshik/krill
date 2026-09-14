@@ -265,35 +265,108 @@ func TestPanelDomainAppCollision(t *testing.T) {
 }
 
 // Cookies are Secure exactly for requests that reached the gateway over HTTPS.
+// This per-request decision replaced a global KRILL_COOKIE_SECURE flip; if it
+// broke, nothing would fail visibly — sessions would just travel unprotected.
 func TestPanelCookiesSecureOnlyViaGateway(t *testing.T) {
 	e := newPanelServer(t, "195.2.75.130")
 	mkUser(t, e.q, "panel-cookie@k.local")
-	login := func(onDomain bool, forward string) *http.Cookie {
-		form := url.Values{"email": {"panel-cookie@k.local"}, "password": {"pw"}}
-		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if onDomain {
-			e.viaDomain(req, "203.0.113.9")
-			req.Header.Set(panel.ForwardedHeader, forward)
+	type path struct {
+		name    string
+		forward string // forwarded token; "" = a direct request
+		proto   string
+		secure  bool
+	}
+	paths := []path{
+		{"direct to the UI port", "", "", false},
+		{"direct, claiming https", "", "https", false},
+		{"through the gateway over HTTPS", e.tokens.Forwarded, "https", true},
+		{"through the gateway over plain HTTP", e.tokens.Forwarded, "http", false},
+		{"forged gateway token", "forged", "https", false},
+	}
+	dress := func(req *http.Request, p path) {
+		req.Host = panelHost
+		if p.forward != "" {
+			req.Header.Set(panel.ForwardedHeader, p.forward)
 		}
-		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		if p.proto != "" {
+			req.Header.Set("X-Forwarded-Proto", p.proto)
+		}
+	}
+	find := func(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 		for _, c := range rec.Result().Cookies() {
-			if c.Name == auth.CookieName {
+			if c.Name == name {
 				return c
 			}
 		}
-		t.Fatalf("no session cookie: %d", rec.Code)
 		return nil
 	}
-	if c := login(false, ""); c.Secure {
-		t.Fatal("a direct request must not get a Secure cookie, or plain-HTTP sign-in breaks")
+	for _, p := range paths {
+		// The session cookie, set by a successful sign-in.
+		form := url.Values{"email": {"panel-cookie@k.local"}, "password": {"pw"}}
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		dress(req, p)
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		session := find(rec, auth.CookieName)
+		if session == nil {
+			t.Fatalf("%s: no session cookie (status %d)", p.name, rec.Code)
+		}
+		if session.Secure != p.secure {
+			t.Errorf("%s: session cookie Secure = %v, want %v", p.name, session.Secure, p.secure)
+		}
+		if !session.HttpOnly {
+			t.Errorf("%s: session cookie must stay HttpOnly", p.name)
+		}
+
+		// A flash cookie, set by any form post with the signed-in session.
+		base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-cookie-"+strings.ReplaceAll(p.name, " ", "-")+"@k.local", "OrgCookie "+p.name)
+		freq := httptest.NewRequest(http.MethodPost, base+"/panel-domain", strings.NewReader(url.Values{"host": {"not a host"}}.Encode()))
+		freq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		freq.AddCookie(cookie)
+		dress(freq, p)
+		frec := httptest.NewRecorder()
+		e.h.ServeHTTP(frec, freq)
+		flash := find(frec, "krill_flash")
+		if flash == nil {
+			t.Fatalf("%s: no flash cookie (status %d)", p.name, frec.Code)
+		}
+		if flash.Secure != p.secure {
+			t.Errorf("%s: flash cookie Secure = %v, want %v", p.name, flash.Secure, p.secure)
+		}
 	}
-	if c := login(true, e.tokens.Forwarded); !c.Secure {
-		t.Fatal("a request through the gateway over HTTPS must get a Secure cookie")
+}
+
+// KRILL_COOKIE_SECURE=true still forces Secure on a direct request — the
+// setting for a TLS proxy of the operator's own — and the sign-in page warns
+// that it cannot work over plain HTTP.
+func TestCookieSecureConfigForcesSecure(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", ListenAddr: ":8080", CookieSecure: true}
+	hub := deploy.NewLogHub()
+	h := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")).Router()
+	mkUser(t, q, "forced-secure@k.local")
+
+	form := url.Values{"email": {"forced-secure@k.local"}, "password": {"pw"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var secure bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			secure = c.Secure
+		}
 	}
-	if c := login(true, "forged"); c.Secure {
-		t.Fatal("a forged gateway header must not change cookie handling")
+	if !secure {
+		t.Fatal("KRILL_COOKIE_SECURE=true must force Secure")
+	}
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/login", nil))
+	if !strings.Contains(page.Body.String(), "KRILL_COOKIE_SECURE") {
+		t.Fatal("the sign-in page must warn that secure cookies cannot work over plain HTTP")
 	}
 }
 
