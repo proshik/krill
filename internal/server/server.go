@@ -243,6 +243,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(csrfGuard)
+	r.Use(s.panelHSTS)
 
 	// locale middleware: the krill_lang cookie (set via the Settings language
 	// selector) is authoritative; with no valid cookie, fall back to the browser's
@@ -376,6 +377,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/panel-domain/confirm", s.confirmPanelDomain)
 				r.Post("/panel-domain/disable", s.disablePanelDomain)
 				r.Post("/panel-domain/allowed-ips", s.setPanelAllowedIPs)
+				r.Post("/panel-domain/hsts", s.setPanelHSTS)
 				r.Post("/panel-domain/direct-port/close", s.closePanelDirectPort)
 				r.Post("/panel-domain/direct-port/confirm", s.confirmPanelDirectPort)
 				r.Post("/panel-domain/direct-port/open", s.openPanelDirectPort)

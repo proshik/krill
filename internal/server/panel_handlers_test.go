@@ -297,6 +297,88 @@ func TestPanelCookiesSecureOnlyViaGateway(t *testing.T) {
 	}
 }
 
+// HSTS is sent only on the active panel domain over HTTPS, only for its host,
+// is off (max-age=0) until set, cannot be set before the domain is confirmed,
+// never reaches subdomains, and is reset whenever the domain changes.
+func TestPanelHSTS(t *testing.T) {
+	e := newPanelServer(t, "195.2.75.130")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-hsts@k.local", "OrgPanelHSTS")
+	hsts := func(host, forward, proto string) (string, bool) {
+		req := httptest.NewRequest(http.MethodGet, "/login", nil)
+		req.Host = host
+		if forward != "" {
+			req.Header.Set(panel.ForwardedHeader, forward)
+		}
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		v, ok := rec.Header()[panel.HSTSHeader]
+		if !ok {
+			return "", false
+		}
+		return v[0], true
+	}
+	onDomain := func() (string, bool) { return hsts(panelHost, e.tokens.Forwarded, "https") }
+
+	if _, ok := onDomain(); ok {
+		t.Fatal("no domain: no header")
+	}
+	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {panelHost}}, false)
+	if _, ok := onDomain(); ok {
+		t.Fatal("a pending domain is unproven and must not get HSTS")
+	}
+	if rec := e.post(t, base+"/panel-domain/hsts", cookie, url.Values{"max_age": {"300"}}, true); !hasErrFlash(rec) {
+		t.Fatalf("HSTS before confirmation must be refused, got %q", flashCookieValue(rec))
+	}
+	if e.row(t).HstsMaxAge != 0 {
+		t.Fatal("a refused HSTS change must not be stored")
+	}
+	e.post(t, base+"/panel-domain/confirm", cookie, url.Values{}, true)
+
+	if v, ok := onDomain(); !ok || v != "max-age=0" {
+		t.Fatalf("active with HSTS off must send max-age=0, got %q %v", v, ok)
+	}
+	for _, bad := range []string{"123", "-1", "63072000", "abc", ""} {
+		if rec := e.post(t, base+"/panel-domain/hsts", cookie, url.Values{"max_age": {bad}}, true); !hasErrFlash(rec) {
+			t.Fatalf("max_age %q must be rejected", bad)
+		}
+	}
+	if rec := e.post(t, base+"/panel-domain/hsts", cookie, url.Values{"max_age": {"86400"}}, false); hasErrFlash(rec) {
+		t.Fatalf("set HSTS: %q", flashCookieValue(rec))
+	}
+	if v, _ := onDomain(); v != "max-age=86400" {
+		t.Fatalf("want max-age=86400, got %q", v)
+	}
+	if v, _ := onDomain(); strings.Contains(v, "includeSubDomains") || strings.Contains(v, "preload") {
+		t.Fatalf("HSTS must not reach beyond the panel host: %q", v)
+	}
+	// Never on the direct address, over plain HTTP, with a forged token, or for
+	// another host the gateway might hand over.
+	for name, got := range map[string]func() (string, bool){
+		"direct":        func() (string, bool) { return hsts("195.2.75.130:8080", "", "") },
+		"direct claims": func() (string, bool) { return hsts(panelHost, "", "https") },
+		"gateway http":  func() (string, bool) { return hsts(panelHost, e.tokens.Forwarded, "http") },
+		"forged":        func() (string, bool) { return hsts(panelHost, "forged", "https") },
+		"other host":    func() (string, bool) { return hsts("pacer.example.com", e.tokens.Forwarded, "https") },
+	} {
+		if v, ok := got(); ok {
+			t.Errorf("%s: must not get HSTS, got %q", name, v)
+		}
+	}
+
+	// Moving the domain puts it back to pending with HSTS off.
+	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {"panel.example.com"}}, false)
+	if row := e.row(t); row.State != panel.StatePending || row.HstsMaxAge != 0 {
+		t.Fatalf("a new domain must start without HSTS, got %+v", row)
+	}
+	e.post(t, base+"/panel-domain/disable", cookie, url.Values{}, false)
+	if e.row(t).HstsMaxAge != 0 {
+		t.Fatal("a removed domain must not keep HSTS")
+	}
+}
+
 // Through the gateway every request shares Traefik's source address; the login
 // limiter has to key on the client address Traefik appended instead. Straight
 // at the UI port, the same header is ignored.

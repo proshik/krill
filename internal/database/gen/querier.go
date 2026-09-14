@@ -226,6 +226,7 @@ type Querier interface {
 	SetPanelDirectPort(ctx context.Context, arg SetPanelDirectPortParams) error
 	SetPanelDomainPending(ctx context.Context, host string) error
 	SetPanelGatewaySecret(ctx context.Context, secret string) error
+	SetPanelHSTS(ctx context.Context, hstsMaxAge int32) (int64, error)
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
 	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error

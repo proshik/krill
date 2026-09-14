@@ -68,7 +68,8 @@ installer writes it). The domain can't also belong to an app.
 
 From then on:
 
-- Plain `http://<domain>` redirects to HTTPS, and cookies set on the domain carry `Secure`.
+- Plain `http://<domain>` redirects to HTTPS, and cookies set on the domain carry `Secure`
+  (cookies set on `:8080` don't; both are covered by a regression test).
   **Leave `KRILL_COOKIE_SECURE` off** — requests on `:8080` still get ordinary cookies, so
   signing in there keeps working as a way back.
 - Behind the gateway every request comes from Traefik's address. The login rate limiter takes
@@ -84,6 +85,24 @@ secrets. Krill refuses to save a list that leaves out the address you are workin
 is no basic-auth option for the panel. It would take over the `Authorization` header, which
 the API and MCP need for their bearer tokens, and the panel already has its own sign-in with a
 rate limit.
+
+### HSTS
+
+Without HSTS, a browser that has never seen the panel sends its first request to
+`http://<domain>` in clear text and only then gets redirected. **HSTS** (on the same page, once
+the domain is confirmed) tells browsers to go straight to HTTPS for that domain. They remember
+this for the period you pick, from 5 minutes to 1 year.
+
+- **Off by default.** While off, responses carry `Strict-Transport-Security: max-age=0`, which
+  makes a browser forget a policy an earlier setting taught it on its next visit.
+- **Start short.** A browser that learned the policy refuses plain HTTP on the domain until it
+  expires, and you can't reach a browser that has stopped visiting. Raise the period once the
+  domain has proven stable.
+- **Only this domain.** The header never carries `includeSubDomains` or `preload`, so hosts
+  next to the panel, such as other apps under the same parent domain, are unaffected.
+- It is sent only on responses that went through the gateway over HTTPS for the panel's own
+  host, never on `http://<server-ip>:8080`. It can't be turned on before the domain is
+  confirmed, and changing or removing the domain resets it to off.
 
 ### Close direct access
 

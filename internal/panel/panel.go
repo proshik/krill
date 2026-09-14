@@ -284,3 +284,34 @@ func CheckCertificate(ctx context.Context, addr, host string) error {
 	}
 	return conn.Close()
 }
+
+// HSTSHeader is the Strict-Transport-Security response header.
+const HSTSHeader = "Strict-Transport-Security"
+
+// HSTSPresets are the max-age values an operator can pick, in seconds, from off
+// to a year. Presets rather than free input keep the first step small and
+// visible: a browser remembers the policy for the whole max-age, and there is
+// no way to reach a browser that stopped visiting.
+var HSTSPresets = []int32{0, 300, 86400, 604800, 2592000, 31536000}
+
+// ValidHSTSMaxAge reports whether v is one of HSTSPresets.
+func ValidHSTSMaxAge(v int32) bool {
+	for _, p := range HSTSPresets {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// HSTSValue is the header value for maxAge. It never carries includeSubDomains:
+// the panel's domain usually sits next to unrelated hosts under the same parent
+// domain, and the flag would force HTTPS on every one of them. Nor preload,
+// which cannot be taken back at all. maxAge 0 still yields a header —
+// "max-age=0" is how a browser is told to drop a policy it learned earlier.
+func HSTSValue(maxAge int32) string {
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	return "max-age=" + strconv.Itoa(int(maxAge))
+}

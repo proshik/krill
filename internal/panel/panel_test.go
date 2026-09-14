@@ -225,3 +225,25 @@ func TestRequestHost(t *testing.T) {
 		t.Fatalf("RequestHost = %q", got)
 	}
 }
+
+func TestHSTS(t *testing.T) {
+	if HSTSValue(0) != "max-age=0" || HSTSValue(-5) != "max-age=0" {
+		t.Fatal("off must still clear an earlier policy")
+	}
+	if got := HSTSValue(86400); got != "max-age=86400" {
+		t.Fatalf("HSTSValue(86400) = %q", got)
+	}
+	for _, p := range HSTSPresets {
+		if !ValidHSTSMaxAge(p) {
+			t.Errorf("preset %d rejected", p)
+		}
+		if v := HSTSValue(p); strings.Contains(v, "includeSubDomains") || strings.Contains(v, "preload") {
+			t.Errorf("HSTSValue(%d) = %q must not reach beyond the panel host", p, v)
+		}
+	}
+	for _, bad := range []int32{-1, 1, 123, 63072000} {
+		if ValidHSTSMaxAge(bad) {
+			t.Errorf("%d must be rejected", bad)
+		}
+	}
+}

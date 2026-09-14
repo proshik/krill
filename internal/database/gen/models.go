@@ -261,6 +261,7 @@ type PanelGateway struct {
 	DirectPortClosed       bool      `json:"direct_port_closed"`
 	DirectPortClosePending bool      `json:"direct_port_close_pending"`
 	UpdatedAt              time.Time `json:"updated_at"`
+	HstsMaxAge             int32     `json:"hsts_max_age"`
 }
 
 type Project struct {

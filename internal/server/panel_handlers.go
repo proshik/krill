@@ -113,6 +113,55 @@ func (s *Server) hostReservedByPanel(ctx context.Context, host string) (bool, er
 	return row.State != panel.StateOff && strings.EqualFold(row.Host, host), nil
 }
 
+// panelHSTS adds Strict-Transport-Security to responses on the active panel
+// domain. Only a request that reached the gateway over HTTPS gets it — a browser
+// ignores the header over plain HTTP anyway, and the direct address must never
+// carry it — and only for the panel's own host, so the policy cannot land on
+// any other name the gateway serves. With HSTS off the header says max-age=0,
+// which makes browsers drop a policy an earlier setting taught them.
+func (s *Server) panelHSTS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.secureViaGateway(r) {
+			row, err := s.panelRow(r.Context())
+			switch {
+			case err != nil:
+				logFrom(r).Warn("panelHSTS: read panel settings failed; response sent without HSTS", "err", err)
+			case row.State == panel.StateActive && panel.RequestHost(r) == row.Host:
+				w.Header().Set(panel.HSTSHeader, panel.HSTSValue(row.HstsMaxAge))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// setPanelHSTS sets the HSTS max-age of the panel domain. Refused until the
+// domain is confirmed: a browser that learns the policy for a domain that does
+// not yet work over HTTPS refuses plain HTTP there until it expires.
+func (s *Server) setPanelHSTS(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("max_age")), 10, 32)
+	if err != nil || !panel.ValidHSTSMaxAge(int32(v)) {
+		s.flashErrT(w, r, "flash.err.panel_hsts_invalid")
+		return
+	}
+	n, err := s.q.SetPanelHSTS(r.Context(), int32(v))
+	if err != nil {
+		logFrom(r).Error("setPanelHSTS: save failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	if n == 0 {
+		s.flashErrT(w, r, "flash.err.panel_hsts_not_active")
+		return
+	}
+	logFrom(r).Info("panel HSTS updated", "max_age", v)
+	s.flashOK(w, r, "flash.ok.panel_hsts")
+	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
+}
+
 // gatewayConfig serves the panel's dynamic configuration to the gateway's HTTP
 // provider. Anything but a poll carrying the provider token gets a 404, and so
 // does a request the gateway itself proxied: the forwarded token is on every
@@ -168,6 +217,8 @@ func (s *Server) panelDomainPage(w http.ResponseWriter, r *http.Request) {
 		Host:             row.Host,
 		State:            row.State,
 		AllowedIPs:       row.AllowedIps,
+		HSTSMaxAge:       row.HstsMaxAge,
+		HSTSPresets:      panel.HSTSPresets,
 		OnDomain:         s.onPanelDomain(r, row),
 		DirectPortClosed: row.DirectPortClosed,
 		ClosePending:     row.DirectPortClosePending,

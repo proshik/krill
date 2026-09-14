@@ -12,6 +12,8 @@ type PanelDomainView struct {
 	Host             string
 	State            string // off | pending | active
 	AllowedIPs       string // newline-separated
+	HSTSMaxAge       int32
+	HSTSPresets      []int32
 	OnDomain         bool   // this page was loaded through the domain over HTTPS
 	DomainURL        string // this page on the domain
 	DirectURL        string // this page's origin on the UI port, e.g. http://203.0.113.10:8080
@@ -24,7 +26,7 @@ type PanelDomainView struct {
 }
 
 // PanelDomain renders the panel domain settings: the domain and its
-// confirmation, the IP allowlist, and closing the direct UI port.
+// confirmation, the IP allowlist, HSTS, and closing the direct UI port.
 templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 	@Layout(i18n.T(ctx, "panel.title"), org, role) {
 		@settingsNav(org.ID)
@@ -90,6 +92,23 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 					</form>
 				</div>
 			}
+			if v.State == "active" {
+				<div class="k-card mb-4">
+					<h3 class="text-lg mb-2">{ i18n.T(ctx, "panel.hsts") }</h3>
+					<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "panel.hsts_desc") }</p>
+					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/hsts") } class="flex items-end gap-2">
+						<div style="max-width:260px">
+							<label class="k-label">{ i18n.T(ctx, "panel.hsts_max_age") }</label>
+							<select class="k-select" name="max_age">
+								for _, p := range v.HSTSPresets {
+									<option value={ itoa(int64(p)) } selected?={ p == v.HSTSMaxAge }>{ i18n.T(ctx, hstsPresetKey(p)) }</option>
+								}
+							</select>
+						</div>
+						<button class="k-btn k-btn-primary">{ i18n.T(ctx, "panel.save") }</button>
+					</form>
+				</div>
+			}
 			if v.State == "active" && v.FirewallWired {
 				<div class="k-card mb-4">
 					<h3 class="text-lg mb-2">{ i18n.T(ctx, "panel.direct") }</h3>
@@ -124,4 +143,9 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 			}
 		}
 	}
+}
+
+// hstsPresetKey is the i18n key labelling an HSTS max-age preset.
+func hstsPresetKey(seconds int32) string {
+	return "panel.hsts_preset." + itoa(int64(seconds))
 }

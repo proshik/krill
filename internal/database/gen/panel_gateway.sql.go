@@ -24,7 +24,7 @@ func (q *Queries) ActivatePanelDomain(ctx context.Context, host string) (int64, 
 
 const disablePanelDomain = `-- name: DisablePanelDomain :exec
 UPDATE panel_gateway
-SET host = '', state = 'off', direct_port_closed = false, direct_port_close_pending = false, updated_at = now()
+SET host = '', state = 'off', direct_port_closed = false, direct_port_close_pending = false, hsts_max_age = 0, updated_at = now()
 WHERE id = 1
 `
 
@@ -34,7 +34,7 @@ func (q *Queries) DisablePanelDomain(ctx context.Context) error {
 }
 
 const getPanelGateway = `-- name: GetPanelGateway :one
-SELECT id, secret, host, state, allowed_ips, direct_port_closed, direct_port_close_pending, updated_at FROM panel_gateway WHERE id = 1
+SELECT id, secret, host, state, allowed_ips, direct_port_closed, direct_port_close_pending, updated_at, hsts_max_age FROM panel_gateway WHERE id = 1
 `
 
 func (q *Queries) GetPanelGateway(ctx context.Context) (PanelGateway, error) {
@@ -49,6 +49,7 @@ func (q *Queries) GetPanelGateway(ctx context.Context) (PanelGateway, error) {
 		&i.DirectPortClosed,
 		&i.DirectPortClosePending,
 		&i.UpdatedAt,
+		&i.HstsMaxAge,
 	)
 	return i, err
 }
@@ -89,7 +90,7 @@ func (q *Queries) SetPanelDirectPort(ctx context.Context, arg SetPanelDirectPort
 }
 
 const setPanelDomainPending = `-- name: SetPanelDomainPending :exec
-UPDATE panel_gateway SET host = $1, state = 'pending', updated_at = now() WHERE id = 1
+UPDATE panel_gateway SET host = $1, state = 'pending', hsts_max_age = 0, updated_at = now() WHERE id = 1
 `
 
 func (q *Queries) SetPanelDomainPending(ctx context.Context, host string) error {
@@ -104,4 +105,17 @@ UPDATE panel_gateway SET secret = $1, updated_at = now() WHERE id = 1
 func (q *Queries) SetPanelGatewaySecret(ctx context.Context, secret string) error {
 	_, err := q.db.Exec(ctx, setPanelGatewaySecret, secret)
 	return err
+}
+
+const setPanelHSTS = `-- name: SetPanelHSTS :execrows
+UPDATE panel_gateway SET hsts_max_age = $1, updated_at = now()
+WHERE id = 1 AND state = 'active'
+`
+
+func (q *Queries) SetPanelHSTS(ctx context.Context, hstsMaxAge int32) (int64, error) {
+	result, err := q.db.Exec(ctx, setPanelHSTS, hstsMaxAge)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
