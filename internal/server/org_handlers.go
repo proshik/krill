@@ -199,7 +199,7 @@ func (s *Server) createMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tempPw != "" {
-		s.setFlashPw(w, tempPw)
+		s.setFlashPw(w, r, tempPw)
 	}
 	logFrom(r).Info("member added", "org_id", o.ID, "user_id", u.ID, "role", role)
 	s.flashOK(w, r, "flash.ok.member_added")

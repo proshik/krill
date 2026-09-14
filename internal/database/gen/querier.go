@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	ActivatePanelDomain(ctx context.Context, host string) (int64, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
@@ -104,6 +105,7 @@ type Querier interface {
 	// Keeps KRILL_ADMIN_EMAIL authoritative: rotating it must hand the role over,
 	// not hand out a second one.
 	DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int64, error)
+	DisablePanelDomain(ctx context.Context) error
 	// Reconcile deploys that were in flight when the process died: nothing will
 	// ever finish them, so they read as permanently running in the history. Safe to
 	// run at startup only — a just-booted control plane has no deploy in flight.
@@ -130,6 +132,7 @@ type Querier interface {
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
 	GetOrganizationNetworkByApp(ctx context.Context, id int64) (string, error)
+	GetPanelGateway(ctx context.Context) (PanelGateway, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetSession(ctx context.Context, token string) (Session, error)
@@ -140,6 +143,7 @@ type Querier interface {
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
+	InitPanelGateway(ctx context.Context, secret string) error
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
@@ -218,6 +222,11 @@ type Querier interface {
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
+	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error
+	SetPanelDirectPort(ctx context.Context, arg SetPanelDirectPortParams) error
+	SetPanelDomainPending(ctx context.Context, host string) error
+	SetPanelGatewaySecret(ctx context.Context, secret string) error
+	SetPanelHSTS(ctx context.Context, hstsMaxAge int32) (int64, error)
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
 	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error

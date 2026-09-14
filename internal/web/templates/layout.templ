@@ -88,6 +88,7 @@ templ settingsNav(orgID int64) {
 		if auth.IsInstanceAdmin(ctx) {
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/firewall") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "firewall")) }>{ i18n.T(ctx, "firewall.link") }</a>
+			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/panel-domain") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "panel-domain")) }>{ i18n.T(ctx, "panel.link") }</a>
 		}
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/notifications") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "notifications")) }>{ i18n.T(ctx, "notif.link") }</a>

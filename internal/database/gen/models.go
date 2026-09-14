@@ -252,6 +252,18 @@ type Organization struct {
 	NetworkMigratedAt pgtype.Timestamptz `json:"network_migrated_at"`
 }
 
+type PanelGateway struct {
+	ID                     int16     `json:"id"`
+	Secret                 string    `json:"secret"`
+	Host                   string    `json:"host"`
+	State                  string    `json:"state"`
+	AllowedIps             string    `json:"allowed_ips"`
+	DirectPortClosed       bool      `json:"direct_port_closed"`
+	DirectPortClosePending bool      `json:"direct_port_close_pending"`
+	UpdatedAt              time.Time `json:"updated_at"`
+	HstsMaxAge             int32     `json:"hsts_max_age"`
+}
+
 type Project struct {
 	ID             int64     `json:"id"`
 	OrganizationID int64     `json:"organization_id"`

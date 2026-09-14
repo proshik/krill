@@ -124,6 +124,9 @@ persist_advertise_addr() {
 # Library mode: when sourced by the test harness (KRILL_LIB_ONLY=1), stop here
 # after defining functions — do not run the installer's side effects.
 if [ "${KRILL_LIB_ONLY:-}" = "1" ]; then
+	# `return` works when sourced; `exit` is the fallback when executed. The
+	# linter cannot tell the two apart and reports the fallback as unreachable.
+	# shellcheck disable=SC2317
 	return 0 2>/dev/null || exit 0
 fi
 
@@ -231,8 +234,11 @@ else
 		# the manager. Detected above even when nobody passed it.
 		[ -n "${ADVERTISE:-}" ] && echo "KRILL_ADVERTISE_ADDR=${ADVERTISE}"
 		echo "KRILL_LISTEN_ADDR=:8080"
-		# First boot is over plain http://<ip>:8080; secure cookies would not be
-		# sent over HTTP and would break login. Flip to true once behind HTTPS.
+		# First boot is over plain http://<ip>:8080, where secure cookies would
+		# be dropped and break login. Leave it false: once the UI is served on
+		# its own domain (Settings -> Panel domain), Krill marks cookies Secure by
+		# itself for every request that arrives there over HTTPS. Set it to true
+		# only behind a TLS proxy of your own.
 		echo "KRILL_COOKIE_SECURE=false"
 	} >"$ENV_FILE"
 	chmod 0600 "$ENV_FILE"
@@ -378,9 +384,13 @@ else
 fi
 echo
 echo "Next steps:"
-echo "  1. Point an A record at this server (${IP:-<server-ip>})."
-echo "  2. Set the base domain and enable HTTPS, then set KRILL_COOKIE_SECURE=true"
-echo "     in ${ENV_FILE} and run: systemctl restart krill"
+echo "  1. Point an A record for the UI's domain (e.g. krill.example.com) at this"
+echo "     server (${IP:-<server-ip>}); ports 80 and 443 must be reachable."
+echo "  2. In Krill open Settings -> Panel domain, enter the domain, then open it"
+echo "     over HTTPS, sign in there and confirm. http://${IP:-<server-ip>}:8080"
+echo "     keeps working until you do, and afterwards until you close it."
+echo "  Do not set KRILL_COOKIE_SECURE=true for this: it breaks sign-in over"
+echo "  http://<ip>:8080, and the panel domain does not need it."
 echo
 echo "Logs:    journalctl -u krill -f"
 echo "Upgrade: re-run this installer."

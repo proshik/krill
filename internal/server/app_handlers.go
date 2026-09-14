@@ -69,6 +69,11 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_domain")
 		return
 	}
+	if reserved, err := s.hostReservedByPanel(r.Context(), domain); err != nil || reserved {
+		logFrom(r).Info("createApp: domain reserved by the panel", "environment_id", e.ID, "domain", domain, "err", err)
+		s.flashErrT(w, r, "flash.err.domain_in_use")
+		return
+	}
 	if n, _ := s.q.CountDomainsByHost(r.Context(), domain); n > 0 {
 		logFrom(r).Info("createApp: domain already in use", "environment_id", e.ID, "name", name, "domain", domain)
 		s.flashErrT(w, r, "flash.err.domain_in_use")
@@ -406,7 +411,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	if c.App.SourceType == "image" {
 		endpoint = "/webhooks/deploy/"
 	}
-	c.WebhookURL = s.cfg.BaseURL() + endpoint + strconv.FormatInt(c.App.ID, 10)
+	c.WebhookURL = s.baseURL(r.Context()) + endpoint + strconv.FormatInt(c.App.ID, 10)
 	if c.Role == "owner" || c.Role == "admin" {
 		if ws, derr := secret.Dec(c.App.WebhookSecret); derr != nil {
 			logFrom(r).Error("appDetail: webhook secret undecryptable", "err", derr, "app_id", c.App.ID)

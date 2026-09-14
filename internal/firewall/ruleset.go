@@ -23,8 +23,14 @@ const sshPort = 22
 // would drop swarm traffic and strand the worker. INPUT-only by design: container
 // published ports (FORWARD path) are out of scope (see the design doc).
 func BuildWorkerRuleset(clusterIPs []string) (string, error) {
-	return buildRuleset(clusterIPs, nil)
+	return buildRuleset(clusterIPs, nil, nil)
 }
+
+// GatewayInterface is the host-side bridge Swarm tasks leave through to reach
+// anything outside their overlay networks, the host's own addresses included.
+// A request the Traefik gateway proxies to a listener on the host arrives on
+// it.
+const GatewayInterface = "docker_gwbridge"
 
 // BuildManagerRuleset returns the same allowlist for the control-plane host,
 // plus servicePorts — the host-bound TCP ports the manager must keep answering
@@ -38,13 +44,17 @@ func BuildWorkerRuleset(clusterIPs []string) (string, error) {
 // INPUT, so they are unaffected either way; servicePorts is about listeners
 // bound on the host itself, and about stating the intent explicitly rather than
 // relying on that distinction holding.
-func BuildManagerRuleset(clusterIPs []string, servicePorts []int) (string, error) {
-	return buildRuleset(clusterIPs, servicePorts)
+//
+// gatewayPorts are accepted only when they arrive on GatewayInterface, i.e.
+// from a Swarm task on this host: the Krill UI port once the panel is served
+// through the gateway on its domain and closed to the outside world.
+func BuildManagerRuleset(clusterIPs []string, servicePorts, gatewayPorts []int) (string, error) {
+	return buildRuleset(clusterIPs, servicePorts, gatewayPorts)
 }
 
 // buildRuleset is the shared body: identical for both roles except for the
 // extra accepted service ports the manager needs.
-func buildRuleset(clusterIPs []string, servicePorts []int) (string, error) {
+func buildRuleset(clusterIPs []string, servicePorts, gatewayPorts []int) (string, error) {
 	if len(clusterIPs) == 0 {
 		return "", errors.New("firewall: empty cluster IP set")
 	}
@@ -68,6 +78,10 @@ func buildRuleset(clusterIPs []string, servicePorts []int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	gwPorts, err := normalizeServicePorts(gatewayPorts)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	b.WriteString("#!/usr/sbin/nft -f\n")
 	b.WriteString("table inet krill { }\n")    // ensure exists so delete never errors
@@ -80,6 +94,9 @@ func buildRuleset(clusterIPs []string, servicePorts []int) (string, error) {
 	b.WriteString("    tcp dport 22 accept\n") // SSH first — anti-lockout
 	if len(ports) > 0 {
 		b.WriteString(fmt.Sprintf("    tcp dport { %s } accept\n", joinPorts(ports)))
+	}
+	if len(gwPorts) > 0 {
+		b.WriteString(fmt.Sprintf("    iifname %q tcp dport { %s } accept\n", GatewayInterface, joinPorts(gwPorts)))
 	}
 	b.WriteString("    meta l4proto icmp accept\n")
 	b.WriteString("    meta l4proto ipv6-icmp accept\n")

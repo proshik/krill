@@ -136,21 +136,64 @@ func firewallRunner(n db.ClusterNode) (firewall.RealRunner, error) {
 	}, nil
 }
 
-// controlPlaneServicePorts returns the host-bound TCP ports the control plane
-// must keep serving under lockdown: HTTP/HTTPS ingress and the Krill UI port
-// from listenAddr (":8080", "0.0.0.0:8080", "[::]:8080"). An unparsable listen
+// controlPlanePorts are the host-bound TCP ports the control plane keeps
+// serving under lockdown.
+type controlPlanePorts struct {
+	Public  []int // accepted from anywhere
+	Gateway []int // accepted only from the gateway (firewall.GatewayInterface)
+}
+
+// controlPlaneServicePorts returns the ports the control plane must keep
+// serving under lockdown: HTTP/HTTPS ingress, and the Krill UI port from
+// listenAddr (":8080", "0.0.0.0:8080", "[::]:8080"). An unparsable listen
 // address is an error rather than a silent omission — a ruleset without the UI
 // port locks the operator out of the page the lockdown was started from.
-func controlPlaneServicePorts(listenAddr string) ([]int, error) {
+//
+// closeDirect moves the UI port from public to gateway-only: the operator has
+// confirmed the panel domain and chosen to stop serving the UI in plain HTTP
+// to the world. The gateway itself still needs the port — it proxies the panel
+// and polls the panel's routes there — so the port is narrowed, not dropped.
+func controlPlaneServicePorts(listenAddr string, closeDirect bool) (controlPlanePorts, error) {
 	_, portStr, err := net.SplitHostPort(listenAddr)
 	if err != nil {
-		return nil, fmt.Errorf("parse listen address %q: %w", listenAddr, err)
+		return controlPlanePorts{}, fmt.Errorf("parse listen address %q: %w", listenAddr, err)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
-		return nil, fmt.Errorf("listen address %q: invalid port %q", listenAddr, portStr)
+		return controlPlanePorts{}, fmt.Errorf("listen address %q: invalid port %q", listenAddr, portStr)
 	}
-	return []int{80, 443, port}, nil
+	if closeDirect {
+		return controlPlanePorts{Public: []int{80, 443}, Gateway: []int{port}}, nil
+	}
+	return controlPlanePorts{Public: []int{80, 443, port}}, nil
+}
+
+// controlPlaneRuleset builds the control plane's lockdown ruleset, returning an
+// i18n error key on failure.
+func (s *Server) controlPlaneRuleset(r *http.Request, closeDirect bool) (string, string) {
+	ips, err := s.clusterIPs(r)
+	if err != nil {
+		logFrom(r).Error("control-plane ruleset: list cluster IPs failed", "err", err)
+		switch {
+		case errors.Is(err, errAdvertiseAddrUnset):
+			return "", "flash.err.firewall_advertise_unset"
+		case errors.Is(err, errAdvertiseAddrUnresolvable):
+			return "", "flash.err.firewall_advertise_not_ip"
+		default:
+			return "", "flash.err.internal"
+		}
+	}
+	ports, err := controlPlaneServicePorts(s.cfg.ListenAddr, closeDirect)
+	if err != nil {
+		logFrom(r).Error("control-plane ruleset: listen address unusable", "err", err)
+		return "", "flash.err.internal"
+	}
+	ruleset, err := firewall.BuildManagerRuleset(ips, ports.Public, ports.Gateway)
+	if err != nil {
+		logFrom(r).Error("control-plane ruleset: build failed", "err", err)
+		return "", "flash.err.internal"
+	}
+	return ruleset, ""
 }
 
 // SetControlPlaneFirewall wires the runner that applies the firewall on the
@@ -243,14 +286,24 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	// Build the control-plane ruleset before touching any node, so a config
 	// problem refuses the whole lockdown instead of leaving it half-applied.
 	var cpRuleset string
+	var panelRow db.PanelGateway
 	if s.cpFirewall != nil {
-		ports, err := controlPlaneServicePorts(s.cfg.ListenAddr)
-		if err == nil {
-			cpRuleset, err = firewall.BuildManagerRuleset(ips, ports)
-		}
+		panelRow, err = s.panelRow(r.Context())
 		if err != nil {
-			logFrom(r).Error("lockdownWorkers: build control-plane ruleset failed", "err", err)
+			logFrom(r).Error("lockdownWorkers: read panel settings failed", "err", err)
 			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		// With the UI port closed to the world, this lockdown closes it again —
+		// and its confirmation can only come back through the panel domain. Run
+		// from anywhere else, the operator would watch it revert.
+		if panelRow.DirectPortClosed && !s.onPanelDomain(r, panelRow) {
+			s.flashErrT(w, r, "flash.err.firewall_use_panel_domain")
+			return
+		}
+		var key string
+		if cpRuleset, key = s.controlPlaneRuleset(r, panelRow.DirectPortClosed); key != "" {
+			s.flashErrT(w, r, key)
 			return
 		}
 	}
@@ -292,8 +345,15 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
+	if panelRow.DirectPortClosePending {
+		// A panel close still awaiting its confirmation is superseded by this
+		// ruleset, which was built from the confirmed state.
+		if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{DirectPortClosed: panelRow.DirectPortClosed}); err != nil {
+			logFrom(r).Error("lockdownWorkers: clear superseded panel close failed", "err", err)
+		}
+	}
 	if key := s.lockdownControlPlane(r, cpRuleset); key != "" {
-		s.setFlash(w, "err", i18n.T(r.Context(), key))
+		s.setFlash(w, r, "err", i18n.T(r.Context(), key))
 	} else {
 		s.flashOK(w, r, "flash.ok.firewall_cp_pending")
 	}
@@ -318,6 +378,12 @@ func (s *Server) lockdownControlPlane(r *http.Request, ruleset string) string {
 	if err := firewall.Apply(r.Context(), s.cpFirewall, ruleset); err != nil {
 		logFrom(r).Warn("control-plane firewall apply failed", "err", err)
 		return "flash.err.firewall_cp_apply"
+	}
+	// Established connections pass any ruleset, so a keep-alive connection
+	// opened before the apply could carry the confirmation past a rule that
+	// admits nothing new. Drop the idle ones; the caller closes its own.
+	if s.panel.closeIdleConns != nil {
+		s.panel.closeIdleConns()
 	}
 	if !s.nodesSwarmReady(r.Context(), healthy) {
 		logFrom(r).Warn("control-plane firewall: swarm nodes dropped after apply; leaving the auto-revert armed")
@@ -363,6 +429,15 @@ func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Requ
 		logFrom(r).Error("confirm control-plane firewall failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return
+	}
+	// The switch is shared: confirming here also keeps a panel close the
+	// operator applied from the panel page.
+	if row, err := s.panelRow(r.Context()); err != nil {
+		logFrom(r).Error("confirm control-plane firewall: read panel settings failed", "err", err)
+	} else if row.DirectPortClosePending {
+		if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{DirectPortClosed: true}); err != nil {
+			logFrom(r).Error("confirm control-plane firewall: save panel close failed", "err", err)
+		}
 	}
 	logFrom(r).Info("control-plane firewall confirmed")
 	s.flashOK(w, r, "flash.ok.firewall_cp_confirmed")
@@ -454,6 +529,10 @@ func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 	if s.cpFirewall != nil {
 		if err := firewall.Open(r.Context(), s.cpFirewall); err != nil {
 			logFrom(r).Warn("control-plane firewall open failed", "err", err)
+		} else if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{}); err != nil {
+			// With the table gone the UI port is open again; record it, so a
+			// later lockdown does not close it behind the operator's back.
+			logFrom(r).Error("openWorkers: reset panel direct port failed", "err", err)
 		}
 	}
 	s.flashOK(w, r, "flash.ok.firewall_opened")

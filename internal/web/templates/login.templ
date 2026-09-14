@@ -2,10 +2,16 @@ package templates
 
 import "github.com/proshik/krill/internal/web/i18n"
 
-templ Login(errMsg string) {
+// Login renders the sign-in form. insecureCookies warns that the session cookie
+// will be marked Secure while this page was served over plain HTTP, so the
+// browser would drop it and the sign-in would silently loop.
+templ Login(errMsg string, insecureCookies bool) {
 	@Bare(i18n.T(ctx, "login.page_title")) {
 		<div class="k-card w-[360px] max-w-full">
 			<div class="k-side-brand mb-4" style="font-size:20px">🦐 Krill</div>
+			if insecureCookies {
+				<div class="k-toast k-toast-err mb-3">{ i18n.T(ctx, "login.cookie_secure_http") }</div>
+			}
 			if errMsg != "" {
 				<div class="k-toast k-toast-err mb-3">{ errMsg }</div>
 			}

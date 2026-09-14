@@ -12,13 +12,13 @@ import (
 
 const flashPwCookie = "krill_flash_pw"
 
-func (s *Server) setFlashPw(w http.ResponseWriter, pw string) {
+func (s *Server) setFlashPw(w http.ResponseWriter, r *http.Request, pw string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     flashPwCookie,
 		Value:    pw,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
+		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   120,
 	})
@@ -37,13 +37,13 @@ const flashCookie = "krill_flash"
 
 // setFlash stores a one-shot notification in a short-lived cookie.
 // kind is "ok" or "err". msg is plain text (URL-encoded in transit).
-func (s *Server) setFlash(w http.ResponseWriter, kind, msg string) {
+func (s *Server) setFlash(w http.ResponseWriter, r *http.Request, kind, msg string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     flashCookie,
 		Value:    kind + ":" + url.QueryEscape(msg),
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.CookieSecure,
+		Secure:   s.cookieSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   30,
 	})
@@ -93,7 +93,7 @@ func (s *Server) backURL(r *http.Request) string {
 // flashErr sets an error flash and redirects back to the form (PRG), so the
 // user stays in context and sees the message instead of a bare error page.
 func (s *Server) flashErr(w http.ResponseWriter, r *http.Request, msg string) {
-	s.setFlash(w, "err", msg)
+	s.setFlash(w, r, "err", msg)
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
@@ -110,7 +110,7 @@ func (s *Server) flashErrErr(w http.ResponseWriter, r *http.Request, key string,
 
 // flashOK stores a translated success flash; the caller issues its own redirect.
 func (s *Server) flashOK(w http.ResponseWriter, r *http.Request, key string) {
-	s.setFlash(w, "ok", i18n.T(r.Context(), key))
+	s.setFlash(w, r, "ok", i18n.T(r.Context(), key))
 }
 
 // flashMiddleware records the request path (for sidebar highlighting) and

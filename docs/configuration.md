@@ -20,11 +20,11 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 |----------|---------|---------|
 | `KRILL_LISTEN_ADDR` | `:8080` | HTTP bind address of the Krill UI and API. |
 | `KRILL_HOST` | `localhost` | Public hostname used in external database connection strings. |
-| `KRILL_PUBLIC_URL` | derived | Externally reachable base URL, shown in webhook URLs. Defaults to `scheme://KRILL_HOST`, with the scheme taken from `KRILL_COOKIE_SECURE`. |
+| `KRILL_PUBLIC_URL` | derived | Externally reachable base URL, shown in webhook URLs. Defaults to `https://<panel domain>` once one is confirmed, otherwise to `scheme://KRILL_HOST`, with the scheme taken from `KRILL_COOKIE_SECURE`. |
 | `KRILL_BASE_DOMAIN` | `127-0-0-1.sslip.io` | Suffix of each app's auto-generated domain. |
 | `KRILL_DOCKER_HOST` | — | Docker daemon address, e.g. a Colima socket. Empty uses the Docker default. |
 | `KRILL_NETWORK` | `krill-net` | Traefik's default provider network, and the fallback for an organization not yet moved onto its own `krill-org-<id>` network. |
-| `KRILL_ADVERTISE_ADDR` | — | The manager's Swarm address, an IP or a hostname. Workers join the cluster at it, and the cluster firewall keeps it allowed. Adding a worker and locking down the firewall both refuse to run without it. The installer detects and writes it. |
+| `KRILL_ADVERTISE_ADDR` | — | The manager's Swarm address, an IP or a hostname. Workers join the cluster at it, the cluster firewall keeps it allowed, and the gateway reaches the Krill UI at it when the UI has a [domain](guides/domains.md#serve-the-krill-ui-on-a-domain). Adding a worker, locking down the firewall and the panel domain all need it. The installer detects and writes it. |
 | `KRILL_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `KRILL_LOG_FORMAT` | `text` | `text` or `json`. |
 
@@ -40,8 +40,8 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `KRILL_SECRET_KEY` | — | Encrypts stored secrets at rest with AES-256-GCM: database passwords, registry, Git and storage credentials, webhook secrets, notification tokens, node SSH keys. The installer generates one. Empty stores them in plaintext and logs a warning at startup. **Changing the key makes existing secrets unreadable.** |
-| `KRILL_COOKIE_SECURE` | `false` | Set the `Secure` flag on session cookies. Turn it on once the UI is served over HTTPS. |
-| `KRILL_TRUST_PROXY` | `false` | Take the client IP from `X-Forwarded-For` for login rate limiting. Enable **only** behind a reverse proxy that sets the header — otherwise clients can forge it. |
+| `KRILL_COOKIE_SECURE` | `false` | Force the `Secure` flag on every cookie. **Not needed for the [panel domain](guides/domains.md#serve-the-krill-ui-on-a-domain)**: requests that arrive through it over HTTPS get secure cookies anyway. Turn it on only when a TLS proxy of your own fronts Krill; it breaks sign-in over plain `http://<ip>:8080`, and the sign-in page says so. HSTS for the panel domain is not an environment variable: it is set on the Panel domain page. |
+| `KRILL_TRUST_PROXY` | `false` | Take the client IP from `X-Forwarded-For` for login rate limiting on every request. Enable **only** behind a reverse proxy of your own that sets the header — otherwise clients can forge it. Requests through Krill's own gateway are recognized without it. |
 | `KRILL_ALLOW_PRIVATE_EGRESS` | `false` | Allow outbound connections to private, loopback and link-local addresses for S3 storage, registries and Git clones. Off by default as SSRF protection; enable it for a MinIO, registry or Git server on your own network. |
 
 ## Deploys and builds

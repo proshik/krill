@@ -16,7 +16,8 @@ import (
 // handful of clients. Behind a reverse proxy the connection address is the
 // proxy's, which would collapse every client into one bucket, so the limiter
 // keys on clientIP: it honours X-Forwarded-For when (and only when) the
-// operator has declared a proxy via KRILL_TRUST_PROXY.
+// request came through Krill's own gateway, or the operator has declared an
+// external proxy via KRILL_TRUST_PROXY.
 type loginRateLimiter struct {
 	mu     sync.Mutex
 	limit  int
@@ -65,10 +66,13 @@ func (l *loginRateLimiter) pruneLocked(now time.Time) {
 	}
 }
 
-func (l *loginRateLimiter) middleware(trustProxy bool) func(http.Handler) http.Handler {
+// middleware keys each attempt by clientIP. trust decides per request whether
+// X-Forwarded-For may be believed: a request proxied by Krill's own gateway can
+// be, one sent straight to the UI port cannot.
+func (l *loginRateLimiter) middleware(trust func(*http.Request) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !l.allow(clientIP(r, trustProxy), time.Now()) {
+			if !l.allow(clientIP(r, trust(r)), time.Now()) {
 				w.Header().Set("Retry-After", strconv.Itoa(int(l.window.Seconds())))
 				http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
 				return

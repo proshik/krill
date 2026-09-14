@@ -16,7 +16,8 @@ own Postgres and a Docker Swarm. One command does all of it.
 
 - A Linux server, **amd64 or arm64**, with root access. Krill is built to fit a box as
   small as 2 vCPU / 2 GB RAM.
-- Ports **80** and **443** free for app traffic (Traefik), and **8080** for the Krill UI.
+- Ports **80** and **443** free for app traffic and the UI's domain (Traefik), and **8080**
+  for the Krill UI until it has a domain.
 - Docker is installed for you if it is missing.
 
 ## Install
@@ -86,10 +87,17 @@ curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh \
 ## After the install
 
 1. Open `http://<server-ip>:8080` and log in with the credentials the installer printed.
-2. Point an `A` record at the server and set the base domain (`KRILL_BASE_DOMAIN` in
-   `/etc/krill/krill.env`).
-3. Put the Krill UI behind HTTPS, then set `KRILL_COOKIE_SECURE=true` in
-   `/etc/krill/krill.env` and run `systemctl restart krill`.
+2. Point an `A` record at the server and set the base domain for apps (`KRILL_BASE_DOMAIN`
+   in `/etc/krill/krill.env`).
+3. Serve the Krill UI on its own domain over HTTPS: **Settings → Panel domain**. Until you
+   do, the admin password crosses the network in clear text on every sign-in. The steps, the
+   confirmation and how to back out are in
+   [Serve the Krill UI on a domain](guides/domains.md#serve-the-krill-ui-on-a-domain).
+
+Leave `KRILL_COOKIE_SECURE=false`. Requests that reach the UI through its domain over HTTPS
+get secure cookies without it, and setting it to `true` breaks sign-in at
+`http://<server-ip>:8080` — your way back in if the domain ever fails. It is only for a TLS
+proxy of your own in front of Krill.
 
 Every setting is listed in [Configuration](configuration.md). Logs:
 `journalctl -u krill -f`.

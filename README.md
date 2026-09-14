@@ -40,7 +40,9 @@ and Traefik for routing, and stores its state in Postgres.
   UI. → [Backups](docs/guides/backups.md)
 - **Domains and HTTPS.** Custom domains with per-domain Let's Encrypt certificates. Apps are
   internal until you expose them, and a domain can publish only some paths or sit behind basic
-  auth and an IP allowlist. → [Domains](docs/guides/domains.md)
+  auth and an IP allowlist. The Krill UI itself gets a domain and HTTPS from its settings
+  page, with a confirmation step so a broken domain can't lock you out.
+  → [Domains](docs/guides/domains.md)
 - **Container settings.** CPU and memory limits, replicas, healthchecks, volumes, command
   override, raw TCP/UDP ports, build arguments and secrets.
 - **Operations.** Structured live logs, a web terminal, CPU and memory charts per node,
@@ -66,8 +68,8 @@ The installer sets up Docker and Swarm, Postgres for Krill's state and a systemd
 verifies the downloaded binary against the release checksums, and prints the URL and a
 one-time admin password. Re-run it to upgrade.
 
-Options, external Postgres, HTTPS for the UI and uninstalling are covered in
-[Installing Krill](docs/install.md).
+Then give the UI a domain and HTTPS under **Settings → Panel domain**. Options, external
+Postgres and uninstalling are covered in [Installing Krill](docs/install.md).
 
 ## Screenshots
 

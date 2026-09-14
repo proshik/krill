@@ -12,7 +12,7 @@ import (
 func TestSetTakeFlashRoundTrip(t *testing.T) {
 	s := &Server{cfg: config.Config{CookieSecure: false}}
 	rec := httptest.NewRecorder()
-	s.setFlash(rec, "err", "boom")
+	s.setFlash(rec, httptest.NewRequest(http.MethodPost, "/", nil), "err", "boom")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	for _, c := range rec.Result().Cookies() {
@@ -37,7 +37,7 @@ func TestSetTakeFlashRoundTrip(t *testing.T) {
 func TestFlashMiddlewareInjectsContext(t *testing.T) {
 	s := &Server{cfg: config.Config{CookieSecure: false}}
 	rec := httptest.NewRecorder()
-	s.setFlash(rec, "ok", "saved")
+	s.setFlash(rec, httptest.NewRequest(http.MethodPost, "/", nil), "ok", "saved")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	for _, c := range rec.Result().Cookies() {
 		req.AddCookie(c)

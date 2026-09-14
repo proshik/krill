@@ -39,6 +39,16 @@ labels Krill puts on each Swarm service.
 The control plane is a single process on the manager node; it has no high availability. If
 the manager goes down, the UI and the ingress go with it.
 
+The UI can also be served through Traefik on a domain of its own. Krill is a host process,
+not a Swarm service, so there are no labels for Traefik to read. Instead Traefik's HTTP
+provider polls Krill (`/_krill/gateway/config`, authenticated by a token in the provider's
+arguments) for the UI's routes, which point back at `KRILL_ADVERTISE_ADDR:<listen port>`.
+The routes live in the database, so they survive restarts and gateway reconciliation and
+change without redeploying Traefik. Every request the gateway proxies to the UI carries a
+second token, which is how Krill tells a request that came through Traefik over HTTPS (and
+whose `X-Forwarded-*` headers Traefik set itself) from one sent straight to the UI port. See
+[Serve the Krill UI on a domain](guides/domains.md#serve-the-krill-ui-on-a-domain).
+
 ## How a deploy works
 
 1. A deploy is queued — from the UI, a GitHub push webhook, a CI deploy hook, the REST/MCP
@@ -91,7 +101,8 @@ agent runs on the workers and no extra port is opened.
 
 The optional cluster firewall (**Settings → Firewall**) closes inbound traffic on every node
 except SSH, ICMP and Swarm traffic from other cluster nodes; the control plane also keeps HTTP,
-HTTPS and the Krill UI port open. A node that becomes unreachable after the change reverts it
+HTTPS and the Krill UI port open — or, once the UI's domain is confirmed and direct access
+closed, the UI port open only to the gateway (`docker_gwbridge`). A node that becomes unreachable after the change reverts it
 on its own, and the control plane's lockdown is reverted unless you confirm it from the page
 within two minutes.
 
@@ -129,6 +140,7 @@ databases.
 | `internal/builder` | Git clone and `docker build`, with input validation. |
 | `internal/docker` | Wrapper over the Docker and Swarm APIs. |
 | `internal/traefik` | Traefik service spec and routing labels. |
+| `internal/panel` | The Krill UI's own route through the gateway: dynamic configuration, tokens, domain validation. |
 | `internal/dbservice` | Database instance lifecycle; per-engine drivers in `drivers/`. |
 | `internal/backup` | S3 storage, scheduled `pg_dump` backups and restore. |
 | `internal/volume` | App volume validation and backup/restore. |
