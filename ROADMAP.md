@@ -60,11 +60,12 @@ Verified in code and tests, but not yet exercised on a real environment:
 10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
     advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
-11. Self-update on a real VPS from a published release to a newer one — including the
-    automatic rollback (a release whose binary fails to start), the manual rollback button,
-    the restart through the transient unit, the `%`-free revert marker on real systemd, a
-    release whose migration fails, the Roll back button refused after an install.sh upgrade,
-    and a volume restore started during the download being refused or aborting the update.
+11. Self-update on a real VPS from a real `proshik/krill` release. Everything else in the flow was accepted on
+    2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
+    (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
+    during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
+    the documented recovery from a failed migration. Still open: the starting page through the panel domain
+    (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
 
 ## Open
 
