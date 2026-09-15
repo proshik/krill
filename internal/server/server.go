@@ -236,6 +236,21 @@ func (s *Server) SetSelfComponentFn(fn func() string) { s.selfComponentFn = fn }
 // does not ask for a reconcile; the next startup attaches the gateway.
 func (s *Server) SetGatewayReconcile(trigger func()) { s.reconcileGateway = trigger }
 
+// requestLocale picks the UI language for a request: the krill_lang cookie (set
+// via the Settings language selector) is authoritative; with no valid cookie,
+// fall back to the browser's Accept-Language header, then to the default. The
+// router's locale middleware and the StartupGate both use it, so the starting
+// page speaks the same language as the pages it stands in for.
+func requestLocale(r *http.Request) string {
+	if c, err := r.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
+		return c.Value
+	}
+	if m := i18n.MatchAcceptLanguage(r.Header.Get("Accept-Language")); m != "" {
+		return m
+	}
+	return i18n.DefaultLocale
+}
+
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
@@ -245,18 +260,10 @@ func (s *Server) Router() http.Handler {
 	r.Use(csrfGuard)
 	r.Use(s.panelHSTS)
 
-	// locale middleware: the krill_lang cookie (set via the Settings language
-	// selector) is authoritative; with no valid cookie, fall back to the browser's
-	// Accept-Language header, then to the default.
+	// locale middleware (see requestLocale).
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			loc := i18n.DefaultLocale
-			if c, err := req.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
-				loc = c.Value
-			} else if m := i18n.MatchAcceptLanguage(req.Header.Get("Accept-Language")); m != "" {
-				loc = m
-			}
-			ctx := i18n.WithLocale(req.Context(), loc)
+			ctx := i18n.WithLocale(req.Context(), requestLocale(req))
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})

@@ -777,4 +777,9 @@ var ru = map[string]string{
 	"account.password_back":                "← Назад",
 	"nav.change_password":                  "Сменить пароль",
 	"flash.ok.password_changed":            "Пароль изменён",
+	"startup.title":                        "Krill запускается",
+	"startup.migrating":                    "Применяются миграции базы данных…",
+	"startup.starting":                     "Запускаются сервисы…",
+	"startup.gateway":                      "Готовится шлюз…",
+	"startup.hint":                         "Страница обновится сама.",
 }
