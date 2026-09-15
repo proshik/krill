@@ -115,6 +115,12 @@ and exits non-zero on any failed check.
 | `make db-up` / `make db-down` | Start / stop the development Postgres. |
 | `make tidy` | `go mod tidy`. |
 
+`make build` stamps the output of `git describe --tags --always --dirty` into
+`internal/buildinfo.Version`, so a binary built from a checkout — anything short of the
+release workflow's own build — reports a development version, and **Settings → Updates**
+never offers it an update. To exercise that page itself, point `KRILL_UPDATE_REPO` at a fork
+and publish a real tagged release there.
+
 ## CI and releases
 
 - [`ci.yml`](../.github/workflows/ci.yml) runs on every push and pull request: `go build`,

@@ -55,6 +55,8 @@ and Traefik for routing, and stores its state in Postgres.
 - **Teams.** Organizations, projects and environments with owner, admin and member roles.
   Every organization runs on its own network; stored credentials are encrypted at rest. The UI
   is in English and Russian.
+- **Self-update.** Install a new release from Settings → Updates with one click; a stuck
+  restart rolls back to the previous binary automatically.
 
 ## Quick start
 
@@ -66,7 +68,8 @@ curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh | su
 
 The installer sets up Docker and Swarm, Postgres for Krill's state and a systemd service,
 verifies the downloaded binary against the release checksums, and prints the URL and a
-one-time admin password. Re-run it to upgrade.
+one-time admin password. Install later updates from **Settings → Updates** in the UI, or by
+re-running this command.
 
 Then give the UI a domain and HTTPS under **Settings → Panel domain**. Options, external
 Postgres and uninstalling are covered in [Installing Krill](docs/install.md).
