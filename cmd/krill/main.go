@@ -21,6 +21,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
+	"github.com/proshik/krill/internal/buildinfo"
 	"github.com/proshik/krill/internal/cluster"
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
@@ -41,6 +42,13 @@ import (
 )
 
 func main() {
+	// Handled before run()/config.Load() so it works with no environment at
+	// all — the self-updater uses this as a smoke test right after replacing
+	// the binary, before it knows the new binary's configuration is sane.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v" || os.Args[1] == "version") {
+		fmt.Println("krill", buildinfo.String())
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
