@@ -60,6 +60,11 @@ WHERE d.status = 'running'
     WHERE a2.id = $1
   );
 
+-- name: CountRunningDeployments :one
+-- In-flight deployments across the whole instance. The self-updater refuses to
+-- restart Krill while any of them runs, since the restart fails them.
+SELECT count(*) FROM deployments WHERE status = 'running';
+
 -- name: ListDeploymentStatuses :many
 -- Status of each listed deployment, without the log column. The startup
 -- network migration polls this until every app redeploy it submitted is

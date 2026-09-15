@@ -1,10 +1,16 @@
 package config
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
 )
+
+// updateRepoPattern matches a GitHub "owner/name" repository slug.
+var updateRepoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // Config holds the Krill configuration from environment variables.
 type Config struct {
@@ -94,6 +100,12 @@ type Config struct {
 	// BuildPruneInterval is how often the BuildKit cache is pruned. <= 0
 	// disables pruning.
 	BuildPruneInterval time.Duration `env:"KRILL_BUILD_PRUNE_INTERVAL" envDefault:"24h"`
+	// UpdateCheckInterval is how often Krill checks GitHub for a newer release.
+	// <= 0 disables the background check; the manual "Check now" still works.
+	UpdateCheckInterval time.Duration `env:"KRILL_UPDATE_CHECK_INTERVAL" envDefault:"24h"`
+	// UpdateRepo is the GitHub repository ("owner/name") releases are read from.
+	// A fork is useful for acceptance tests of the self-update.
+	UpdateRepo string `env:"KRILL_UPDATE_REPO" envDefault:"proshik/krill"`
 }
 
 // Load reads the configuration from the environment.
@@ -101,6 +113,13 @@ func Load() (Config, error) {
 	var c Config
 	if err := env.Parse(&c); err != nil {
 		return Config{}, err
+	}
+	if !updateRepoPattern.MatchString(c.UpdateRepo) {
+		return Config{}, fmt.Errorf("KRILL_UPDATE_REPO %q: want owner/name", c.UpdateRepo)
+	}
+	owner, name, _ := strings.Cut(c.UpdateRepo, "/")
+	if owner == "." || owner == ".." || name == "." || name == ".." {
+		return Config{}, fmt.Errorf("KRILL_UPDATE_REPO %q: want owner/name", c.UpdateRepo)
 	}
 	return c, nil
 }

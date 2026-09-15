@@ -66,6 +66,13 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | `KRILL_METRICS_RETENTION` | `48h` | How long metric history is kept. |
 | `KRILL_METRICS_NODE_TIMEOUT` | `10s` | Per-worker timeout when collecting stats over SSH. |
 
+## Updates
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `KRILL_UPDATE_CHECK_INTERVAL` | `24h` | How often Krill checks GitHub for a newer release, shown to instance admins on **Settings → Updates**. `0` disables the background check; **Check now** still works. |
+| `KRILL_UPDATE_REPO` | `proshik/krill` | GitHub repository (`owner/name`) releases are read and downloaded from. |
+
 ## Agent API
 
 | Variable | Default | Purpose |

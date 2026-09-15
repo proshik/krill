@@ -52,6 +52,14 @@ func New(eng Execer, store Store, allowPrivate bool) *Service {
 // SetNotifier wires backup-failure notifications (no-op if never set).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
+// InFlight reports how many backups or restores are running right now. The
+// self-updater refuses to restart Krill while any are.
+func (s *Service) InFlight() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.inFlight)
+}
+
 func objectsToDelete(objs []Object, keep int) []Object {
 	if keep < 1 {
 		keep = 1

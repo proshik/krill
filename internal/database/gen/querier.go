@@ -34,12 +34,18 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	// Database instances whose volume is being moved to another node. Restarting
+	// Krill mid-move would abort it.
+	CountMigratingDBInstances(ctx context.Context) (int64, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	// Same both-columns check as CountDBInstancesByExternalPort, excluding the
 	// instance's own row (an edit must not conflict with itself).
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
+	// In-flight deployments across the whole instance. The self-updater refuses to
+	// restart Krill while any of them runs, since the restart fails them.
+	CountRunningDeployments(ctx context.Context) (int64, error)
 	// How many deploys for this app are still in flight. Used to refuse a second
 	// one: the queue is 64 deep, single-worker and shared by every tenant, so a
 	// caller retrying the same app in a loop could otherwise fill it and make

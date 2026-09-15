@@ -333,12 +333,19 @@ else
 fi
 
 # --- 7. systemd unit ---------------------------------------------------------
+# StartLimitIntervalSec=0 disables systemd's default start-rate limit (5 starts
+# in 10s). A Krill that fails fast right after boot — Postgres still starting,
+# or a broken upgrade — would otherwise land in "failed" after a handful of
+# quick restarts, and Restart=always stops applying; with no limit it just
+# keeps retrying every RestartSec until the dependency comes up or the operator
+# intervenes.
 cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=Krill control plane
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

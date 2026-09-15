@@ -34,6 +34,19 @@ func (q *Queries) CountLogicalDatabasesByInstance(ctx context.Context, instanceI
 	return count, err
 }
 
+const countMigratingDBInstances = `-- name: CountMigratingDBInstances :one
+SELECT count(*) FROM db_instances WHERE status = 'migrating'
+`
+
+// Database instances whose volume is being moved to another node. Restarting
+// Krill mid-move would abort it.
+func (q *Queries) CountMigratingDBInstances(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countMigratingDBInstances)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOtherDBInstancesByExternalPort = `-- name: CountOtherDBInstancesByExternalPort :one
 SELECT count(*) FROM db_instances WHERE (external_port = $1 OR console_external_port = $1) AND id <> $2
 `

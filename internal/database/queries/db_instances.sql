@@ -49,5 +49,10 @@ SELECT count(*) FROM db_instances WHERE (external_port = $1 OR console_external_
 -- honest: the job died mid-copy and the service was left scaled to 0.
 UPDATE db_instances SET status = 'error', updated_at = now() WHERE status = 'migrating';
 
+-- name: CountMigratingDBInstances :one
+-- Database instances whose volume is being moved to another node. Restarting
+-- Krill mid-move would abort it.
+SELECT count(*) FROM db_instances WHERE status = 'migrating';
+
 -- name: ListDBInstanceIDsByOrg :many
 SELECT id FROM db_instances WHERE organization_id = $1 ORDER BY id;

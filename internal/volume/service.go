@@ -51,6 +51,14 @@ func New(eng VolEngine, store VolumeStore, allowPrivate bool) *VolumeService {
 
 func (s *VolumeService) SetNotifier(n Notifier) { s.notifier = n }
 
+// InFlight reports how many backups or restores are running right now. The
+// self-updater refuses to restart Krill while any are.
+func (s *VolumeService) InFlight() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.inFlight)
+}
+
 func volKey(appID int64, volumeName string) string {
 	return strconv.FormatInt(appID, 10) + "-" + volumeName
 }

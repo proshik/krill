@@ -765,3 +765,48 @@ func TestGetApplicationInjectsBuildCredentials(t *testing.T) {
 		t.Errorf("image app should ignore build fields: auth=%v args=%v secrets=%v", gotImg.GitAuth, gotImg.BuildArgs, gotImg.BuildSecrets)
 	}
 }
+
+// CountRunningDeployments is the global, instance-wide analogue of
+// CountRunningDeploymentsByOrg: the self-updater refuses to restart Krill
+// while ANY deploy anywhere is running, not just those in one organization.
+func TestCountRunningDeployments(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "run-count@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-run-count", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "P", Slug: "p-run-count", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.run-count", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"}); err != nil {
+		t.Fatalf("create running deployment 1: %v", err)
+	}
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"}); err != nil {
+		t.Fatalf("create running deployment 2: %v", err)
+	}
+	done, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"})
+	if err != nil {
+		t.Fatalf("create done deployment: %v", err)
+	}
+	if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{
+		ID: done.ID, Status: "done", ImageTag: "nginx:alpine", ErrorMessage: "", Log: "ok",
+	}); err != nil {
+		t.Fatalf("finish deployment: %v", err)
+	}
+
+	got, err := q.CountRunningDeployments(ctx)
+	if err != nil {
+		t.Fatalf("CountRunningDeployments: %v", err)
+	}
+	if got != 2 {
+		t.Errorf("CountRunningDeployments = %d, want 2", got)
+	}
+}
