@@ -4,6 +4,11 @@
 # Pinned to the exact Go version declared in go.mod (go 1.26.1).
 FROM golang:1.26.1-alpine AS builder
 
+# The release version, stamped into internal/buildinfo.Version so the running
+# server can report it (e.g. via `krill --version`). Passed by CI as
+# --build-arg VERSION=<tag>; a local `docker build .` with no arg gets "dev".
+ARG VERSION=dev
+
 WORKDIR /src
 
 # Download dependencies first to leverage layer caching.
@@ -26,7 +31,7 @@ COPY . .
 # build runs natively for its target arch via QEMU).
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
-        -ldflags="-s -w" \
+        -ldflags="-s -w -X github.com/proshik/krill/internal/buildinfo.Version=${VERSION}" \
         -o /out/krill \
         ./cmd/krill
 

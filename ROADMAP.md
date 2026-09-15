@@ -34,7 +34,9 @@ describes them in detail.
   external managed Postgres, with the control-plane's own Postgres on its own
   Docker network rather than the default bridge. The Krill UI gets its own domain and
   HTTPS from its settings page, with a confirmation through the domain and an optional
-  firewall close of the direct UI port.
+  firewall close of the direct UI port. Self-update from the UI (Settings → Updates)
+  installs a newer release with a dead-man rollback to the previous binary, offered to
+  release builds on `install.sh` installs.
 
 ## Live-acceptance queue
 
@@ -58,18 +60,15 @@ Verified in code and tests, but not yet exercised on a real environment:
 10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
     advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
+11. Self-update on a real VPS from a real `proshik/krill` release. Everything else in the flow was accepted on
+    2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
+    (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
+    during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
+    the documented recovery from a failed migration. Still open: the starting page through the panel domain
+    (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
 
 ## Open
 
-- **Self-update from the UI.** Today the only way to upgrade is to re-run `install.sh` on the
-  host. An instance admin should be able to see that a newer release exists and install it
-  from the UI. Not designed yet; what is already known to stand in the way: the server
-  binary does not know its own version (the release build sets `main.version` only for
-  `krill-cli`); `install.sh` does more on an upgrade than swap the binary, e.g. moving
-  `krill-postgres` onto `krill-state`; Krill runs as root, so the action must be gated by
-  `RequireInstanceAdmin`, and its only integrity check would be `checksums.txt` from the same
-  release, as in the installer; and after the restart the UI has to show the database
-  migrations and the background network migration in progress.
 - **Resilience on top of Swarm:** a resilient ingress (Traefik is a single replica
   pinned to the manager) and a decision on high availability vs. a documented
   fast-recovery runbook for the control plane.
@@ -104,6 +103,12 @@ Verified in code and tests, but not yet exercised on a real environment:
   MinIO console; backups for MinIO and DragonFly.
 - Encrypted node-to-node traffic (WireGuard); database replication.
 - GitHub OAuth / GitHub App instead of webhook + token; SSH deploy keys.
+- **Landing page:** a public site for Krill (what it is, screenshots, quick start, links
+  to the docs).
+- **Signed releases:** sign `checksums.txt` (ed25519) and verify it in the installer and
+  the self-updater.
+- **Installer-required marker:** a machine-readable release asset so the Updates page can
+  refuse a release that needs `install.sh`.
 
 ## Not planned for now
 

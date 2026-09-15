@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"runtime/debug"
 	"strings"
 
 	"github.com/proshik/krill/internal/krillcli/cliconfig"
@@ -23,9 +22,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is set by the linker for a release build; the fallback below covers
-// `go install` and a plain `go build` from a checkout.
-var version = "dev"
+// version is the value Execute was given, which userAgent and the `version`
+// command report. Resolving it (linker value, module build info, or the
+// "dev" fallback) is internal/buildinfo's job, done once by the caller
+// (cmd/krill-cli/main.go) before Execute ever runs.
+var version string
 
 type globals struct {
 	contextName string
@@ -37,9 +38,7 @@ var g globals
 
 // Execute runs the command tree and returns the process exit code.
 func Execute(v string) int {
-	if v != "" {
-		version = v
-	}
+	version = v
 	root := newRoot()
 	if err := root.Execute(); err != nil {
 		// Cobra has already printed usage errors; everything else is ours.
@@ -158,42 +157,7 @@ this tool only deploys ones that already exist.`,
 // userAgent identifies this client to the server, which gives an operator a
 // free view of which CLI versions are in use.
 func userAgent() string {
-	return fmt.Sprintf("krill-cli/%s (%s/%s)", buildVersion(), runtime.GOOS, runtime.GOARCH)
-}
-
-// buildVersion falls back to the module's build info, so `go install
-// ...@v0.1.0` reports its version with no linker flags at all, and a local
-// build reports its commit.
-func buildVersion() string {
-	if version != "dev" {
-		return version
-	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return version
-	}
-	if info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
-	}
-	rev, dirty := "", ""
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			if len(s.Value) > 12 {
-				rev = s.Value[:12]
-			} else {
-				rev = s.Value
-			}
-		case "vcs.modified":
-			if s.Value == "true" {
-				dirty = "-dirty"
-			}
-		}
-	}
-	if rev != "" {
-		return "dev+" + rev + dirty
-	}
-	return version
+	return fmt.Sprintf("krill-cli/%s (%s/%s)", version, runtime.GOOS, runtime.GOARCH)
 }
 
 // usageErr marks an error as a configuration or argument problem, which

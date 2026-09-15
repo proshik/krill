@@ -77,6 +77,11 @@ type Server struct {
 	// then reports the feature unavailable and no request counts as proxied.
 	panel panelGateway
 
+	// updates installs newer Krill releases from the UI (see SetSelfUpdate and
+	// update_handlers.go). Zero until wired: the Updates page says so and
+	// every action is refused.
+	updates selfUpdate
+
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
 	selfComponentFn func() string
@@ -236,6 +241,21 @@ func (s *Server) SetSelfComponentFn(fn func() string) { s.selfComponentFn = fn }
 // does not ask for a reconcile; the next startup attaches the gateway.
 func (s *Server) SetGatewayReconcile(trigger func()) { s.reconcileGateway = trigger }
 
+// requestLocale picks the UI language for a request: the krill_lang cookie (set
+// via the Settings language selector) is authoritative; with no valid cookie,
+// fall back to the browser's Accept-Language header, then to the default. The
+// router's locale middleware and the StartupGate both use it, so the starting
+// page speaks the same language as the pages it stands in for.
+func requestLocale(r *http.Request) string {
+	if c, err := r.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
+		return c.Value
+	}
+	if m := i18n.MatchAcceptLanguage(r.Header.Get("Accept-Language")); m != "" {
+		return m
+	}
+	return i18n.DefaultLocale
+}
+
 // Router assembles the chi router.
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
@@ -245,18 +265,10 @@ func (s *Server) Router() http.Handler {
 	r.Use(csrfGuard)
 	r.Use(s.panelHSTS)
 
-	// locale middleware: the krill_lang cookie (set via the Settings language
-	// selector) is authoritative; with no valid cookie, fall back to the browser's
-	// Accept-Language header, then to the default.
+	// locale middleware (see requestLocale).
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			loc := i18n.DefaultLocale
-			if c, err := req.Cookie("krill_lang"); err == nil && i18n.Supported(c.Value) {
-				loc = c.Value
-			} else if m := i18n.MatchAcceptLanguage(req.Header.Get("Accept-Language")); m != "" {
-				loc = m
-			}
-			ctx := i18n.WithLocale(req.Context(), loc)
+			ctx := i18n.WithLocale(req.Context(), requestLocale(req))
 			next.ServeHTTP(w, req.WithContext(ctx))
 		})
 	})
@@ -318,6 +330,7 @@ func (s *Server) Router() http.Handler {
 		r.Use(auth.RequireAuth(s.auth))
 		r.Use(s.requirePasswordChange)
 		r.Use(auth.WithInstanceAdmin(s.auth))
+		r.Use(s.withUpdateBadge)
 		r.Use(s.flashMiddleware)
 
 		r.Get("/account/password", s.accountPasswordPage)
@@ -355,10 +368,11 @@ func (s *Server) Router() http.Handler {
 			r.Get("/db-servers/{instID}/logs", s.dbInstanceLogs)
 			r.Get("/db-servers/{instID}/deploy-logs", s.dbInstanceDeployLogs)
 
-			// Global infrastructure: cluster nodes and the host-wide monitoring
-			// view span every tenant, so they are gated on the instance-operator
-			// flag, NOT org-scoped RoleAdmin (which any user can self-grant by
-			// creating an org via POST /orgs).
+			// Global infrastructure: cluster nodes, the host-wide monitoring
+			// view, the firewall, the panel domain and Krill's own updates span
+			// every tenant, so they are gated on the instance-operator flag, NOT
+			// org-scoped RoleAdmin (which any user can self-grant by creating an
+			// org via POST /orgs).
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireInstanceAdmin())
 				r.Get("/nodes", s.listNodes)
@@ -381,6 +395,11 @@ func (s *Server) Router() http.Handler {
 				r.Post("/panel-domain/direct-port/close", s.closePanelDirectPort)
 				r.Post("/panel-domain/direct-port/confirm", s.confirmPanelDirectPort)
 				r.Post("/panel-domain/direct-port/open", s.openPanelDirectPort)
+				r.Get("/updates", s.updatesPage)
+				r.Post("/updates/check", s.checkUpdates)
+				r.Post("/updates/install", s.installUpdate)
+				r.Post("/updates/rollback", s.rollbackUpdate)
+				r.Get("/updates/status", s.updateStatus)
 			})
 
 			r.Group(func(r chi.Router) {

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -69,5 +70,44 @@ func TestKeyForPerDatabase(t *testing.T) {
 	}
 	if got := prefixDir("", "pg-inst", "shop"); got != "pg-inst/shop/" {
 		t.Fatalf("prefixDir: %s", got)
+	}
+}
+
+// InFlight lets the self-updater see whether a backup or restore is running
+// anywhere right now, so it can refuse to restart Krill mid-run.
+func TestInFlight(t *testing.T) {
+	svc := New(failExecer{}, leakStore{}, false)
+	if got := svc.InFlight(); got != 0 {
+		t.Fatalf("InFlight on a fresh service = %d, want 0", got)
+	}
+
+	gs := &gateStore{entered: make(chan struct{}, 1), gate: make(chan struct{})}
+	blocked := New(failExecer{}, gs, false)
+
+	errCh := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		errCh <- blocked.RunBackup(ctx, 7, time.Unix(0, 0))
+	}()
+	select {
+	case <-gs.entered: // run is in flight, parked on the gate
+	case <-time.After(2 * time.Second):
+		t.Fatal("backup never started")
+	}
+
+	if got := blocked.InFlight(); got != 1 {
+		t.Fatalf("InFlight while a backup runs = %d, want 1", got)
+	}
+
+	close(gs.gate) // let it proceed (fails on the dead endpoint)
+	select {
+	case <-errCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("backup did not finish")
+	}
+
+	if got := blocked.InFlight(); got != 0 {
+		t.Fatalf("InFlight after the backup finished = %d, want 0", got)
 	}
 }

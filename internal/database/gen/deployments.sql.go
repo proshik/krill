@@ -22,6 +22,19 @@ func (q *Queries) ClearOldDeploymentLogs(ctx context.Context) error {
 	return err
 }
 
+const countRunningDeployments = `-- name: CountRunningDeployments :one
+SELECT count(*) FROM deployments WHERE status = 'running'
+`
+
+// In-flight deployments across the whole instance. The self-updater refuses to
+// restart Krill while any of them runs, since the restart fails them.
+func (q *Queries) CountRunningDeployments(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countRunningDeployments)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countRunningDeploymentsByApplication = `-- name: CountRunningDeploymentsByApplication :one
 SELECT count(*) FROM deployments WHERE application_id = $1 AND status = 'running'
 `

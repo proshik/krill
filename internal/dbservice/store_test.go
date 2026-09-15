@@ -85,3 +85,51 @@ func TestGetInstanceDecryptsPassword(t *testing.T) {
 		t.Errorf("password not decrypted: %q", got.SuperuserPassword)
 	}
 }
+
+// CountMigratingDBInstances counts only instances whose volume is currently
+// being moved to another node — the self-updater refuses to restart Krill
+// mid-move, since that would abort it and leave the service scaled to 0.
+func TestCountMigratingDBInstances(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, err := q.CreateUser(ctx, db.CreateUserParams{Email: "migrating@k.local", PasswordHash: "h"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	o, err := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-migrating", OwnerID: u.ID})
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+
+	migrating, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db-migrating", AppName: "krill-postgres-migrating",
+		Image: "postgres:16-alpine", Superuser: "postgres", SuperuserPassword: "hunter2",
+	})
+	if err != nil {
+		t.Fatalf("create migrating db instance: %v", err)
+	}
+	if err := q.UpdateDBInstanceStatus(ctx, db.UpdateDBInstanceStatusParams{ID: migrating.ID, Status: "migrating"}); err != nil {
+		t.Fatalf("set status migrating: %v", err)
+	}
+
+	running, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "postgres", Name: "db-running", AppName: "krill-postgres-running",
+		Image: "postgres:16-alpine", Superuser: "postgres", SuperuserPassword: "hunter2",
+	})
+	if err != nil {
+		t.Fatalf("create running db instance: %v", err)
+	}
+	if err := q.UpdateDBInstanceStatus(ctx, db.UpdateDBInstanceStatusParams{ID: running.ID, Status: "running"}); err != nil {
+		t.Fatalf("set status running: %v", err)
+	}
+
+	got, err := q.CountMigratingDBInstances(ctx)
+	if err != nil {
+		t.Fatalf("CountMigratingDBInstances: %v", err)
+	}
+	if got != 1 {
+		t.Errorf("CountMigratingDBInstances = %d, want 1", got)
+	}
+}

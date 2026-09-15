@@ -44,7 +44,12 @@ templ Layout(title string, org db.Organization, role string) {
 				</nav>
 				<div class="k-side-foot">
 					if role == "owner" || role == "admin" {
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsSettings(ctx)) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>{ i18n.T(ctx, "nav.settings") }</a>
+						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsSettings(ctx)) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>
+							{ i18n.T(ctx, "nav.settings") }
+							if tag := nav.UpdateAvailable(ctx); tag != "" && auth.IsInstanceAdmin(ctx) {
+								<span class="k-nav-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", tag) }>{ i18n.T(ctx, "nav.update_badge") }</span>
+							}
+						</a>
 					}
 					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "account")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/account/password") }>{ i18n.T(ctx, "nav.change_password") }</a>
 					<form method="post" action="/logout" hx-boost="false">
@@ -89,6 +94,7 @@ templ settingsNav(orgID int64) {
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/firewall") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "firewall")) }>{ i18n.T(ctx, "firewall.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/panel-domain") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "panel-domain")) }>{ i18n.T(ctx, "panel.link") }</a>
+			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/updates") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "updates")) }>{ i18n.T(ctx, "update.link") }</a>
 		}
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/notifications") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "notifications")) }>{ i18n.T(ctx, "notif.link") }</a>

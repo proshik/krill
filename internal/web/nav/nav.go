@@ -23,21 +23,24 @@ func Path(ctx context.Context) string {
 // IsActive reports whether the current path belongs to the given sidebar
 // section ("projects" | "members" | "db-servers" | "monitoring" | "account" | one of the
 // Settings sections: "destinations" | "registries" | "notifications" |
-// "git-credentials" | "nodes" | "firewall" | "api-tokens").
+// "git-credentials" | "nodes" | "firewall" | "panel-domain" | "updates" |
+// "api-tokens").
 func IsActive(ctx context.Context, section string) bool {
 	return sectionOf(Path(ctx)) == section
 }
 
 // IsSettings reports whether the current path is one of the Settings pages
 // (Destinations, Registries, Notifications, Git credentials, Nodes,
-// Firewall, Panel domain, or API tokens), which share a single sidebar entry.
+// Firewall, Panel domain, Updates, or API tokens), which share a single
+// sidebar entry.
 func IsSettings(ctx context.Context) bool {
 	s := sectionOf(Path(ctx))
-	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes" || s == "firewall" || s == "panel-domain" || s == "api-tokens"
+	return s == "destinations" || s == "registries" || s == "notifications" || s == "git-credentials" || s == "nodes" || s == "firewall" || s == "panel-domain" || s == "updates" || s == "api-tokens"
 }
 
 // sectionOf maps a request path to its sidebar section. The org-level pages
-// (members/destinations/registries/notifications/monitoring) are leaf routes,
+// (members/destinations/registries/notifications/monitoring/panel-domain/
+// updates) are leaf routes or carry only their own sub-actions,
 // so a substring match is unambiguous; everything else under an org is the
 // projects/dashboard section.
 func sectionOf(path string) string {
@@ -56,6 +59,10 @@ func sectionOf(path string) string {
 		return "nodes"
 	case strings.Contains(path, "/firewall"):
 		return "firewall"
+	case strings.Contains(path, "/panel-domain"):
+		return "panel-domain"
+	case strings.Contains(path, "/updates"):
+		return "updates"
 	case strings.Contains(path, "/registries"):
 		return "registries"
 	case strings.Contains(path, "/notifications"):

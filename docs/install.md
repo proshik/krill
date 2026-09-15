@@ -104,14 +104,90 @@ Every setting is listed in [Configuration](configuration.md). Logs:
 
 ## Upgrade
 
-Re-run the installer. It downloads the latest release binary and restarts the service;
-Postgres, its data and the generated secrets are kept.
+### From the UI
+
+**Settings → Updates**, instance admins only. Krill checks GitHub for a newer release once a
+day (`KRILL_UPDATE_CHECK_INTERVAL`; `0` disables the background check, **Check now** always
+works) and puts an "update" badge on the Settings link in the sidebar when one is found.
+
+Clicking **Update** downloads that release's binary and `checksums.txt`, verifies the SHA-256
+— the same trust model as `install.sh`: TLS to GitHub plus the checksum file from the same
+release, no separate signature — smoke-tests the download with `--version`, keeps the current
+binary as `krill.prev`, replaces it, and restarts Krill. While it restarts, the UI answers a
+"Krill is starting" page for a few seconds; the Updates page reloads itself and then shows
+"Updated from X to Y".
+
+The button is disabled, with the reason shown, unless Krill is running the way `install.sh`
+installs it — Linux, systemd, root, with the binary's directory, `/etc/systemd/system` and
+`/run` all writable — and it is offered only to a release build (a binary built from source
+reports a development version and is never offered an update). It also refuses while a deploy,
+a database or volume backup/restore, or a database instance's node move is running. That check
+runs when you click and again once the download is verified, just before anything is replaced
+and Krill restarts; work started in the last seconds before the restart can still be
+interrupted. The container image never self-updates — pull a new tag instead (see
+[Run the container image instead](#run-the-container-image-instead)).
+
+If the new binary does not come up within 10 minutes, it is rolled back automatically — see
+[Rollback](#rollback) below.
+
+### With the installer
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh | sudo sh
 ```
 
-Database migrations run automatically when the new binary starts.
+It downloads the latest release binary and restarts the service; Postgres, its data and the
+generated secrets are kept. Database migrations run automatically when the new binary starts.
+
+Needed when a release changes something the running binary can't change about itself — the
+systemd unit, the bundled Postgres container, `krill.env` — its release notes then say
+"requires re-running install.sh". Otherwise it is just another valid way to upgrade. It keeps
+the update drop-in from a prior UI update but removes `krill.prev`: that binary may be several
+releases old by then, so the **Roll back** button disappears until the next update from the UI.
+
+### Rollback
+
+**Automatic:** a UI update arms a 10-minute timer before it restarts. If the new binary has
+not taken over serving the UI by the time the timer fires, the timer puts `krill.prev` back
+and restarts Krill; the Updates page then reports the update as rolled back. Rebooting inside
+that window clears the timer — the new binary then starts unguarded, and `krill.prev` stays in
+place either way. Stopping Krill inside the window does not cancel the timer: when it fires, it
+puts the previous binary back and starts Krill again. To keep Krill stopped, first run
+`systemctl stop krill-update-revert.timer`. A unit hardened with `ProtectSystem=strict`
+(`install.sh` does not set this) needs `ReadWritePaths=/usr/local/bin /etc/systemd/system /run`
+added, or the Updates page reports the binary's directory as read-only and never offers an
+update.
+
+**Manual:** the Updates page offers **Roll back to vP** when `krill.prev` is a release older
+than the running one, no timer involved. By SSH, the same swap:
+
+```sh
+mv /usr/local/bin/krill.prev /usr/local/bin/krill && systemctl reset-failed krill && systemctl restart krill
+```
+
+`krill --version` prints the version of whichever binary is installed and needs no
+environment at all, so it is safe to run first.
+
+Neither kind of rollback undoes database changes made by the newer release — only the binary
+goes back.
+
+**A failed migration is not rolled back.** Migrations run when the new binary starts. If one
+fails, or Krill is killed in the middle of one, the database is left marked "dirty" and no
+binary starts against it — the previous one the timer puts back included. `journalctl -u krill`
+then shows `database schema is dirty at version N`. (`systemctl stop` and the timer's restart
+let a running migration finish, as long as it does within systemd's stop timeout — 90 seconds
+by default; a `kill -9` or a crash does not.) Recovery is manual and careful:
+
+1. Back up Krill's database first — for the bundled Postgres,
+   `docker exec krill-postgres pg_dump -U krill krill > krill-backup.sql`.
+2. Read in `journalctl -u krill` which migration failed and why; its SQL is
+   `internal/database/migrations/<N>_*.up.sql` in that release's source.
+3. Fix the data or the schema by hand until it matches version N either fully applied or not
+   applied at all.
+4. Mark the version clean (`docker exec -it krill-postgres psql -U krill krill`): after
+   verifying the schema matches version N, `UPDATE schema_migrations SET dirty = false;` — or,
+   to have migration N run again, `UPDATE schema_migrations SET version = <N-1>, dirty = false;`.
+5. `systemctl restart krill`.
 
 ### Upgrading an install from before v0.1.0
 
@@ -145,8 +221,12 @@ one:
 ## Uninstall
 
 ```sh
+systemctl stop krill-update-revert.timer krill-update-restart.timer 2>/dev/null   # first: a timer could restart krill
 systemctl disable --now krill
-rm -f /etc/systemd/system/krill.service /usr/local/bin/krill
+rm -f /etc/systemd/system/krill.service /usr/local/bin/krill /usr/local/bin/krill.prev
+rm -f /etc/systemd/system/krill.service.d/10-krill-update.conf
+rmdir /etc/systemd/system/krill.service.d 2>/dev/null
+systemctl daemon-reload
 rm -rf /etc/krill
 docker rm -f krill-postgres && docker volume rm krill-pg-data   # destroys Krill's state
 docker network rm krill-state                                   # after the container is gone

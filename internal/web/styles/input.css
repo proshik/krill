@@ -147,6 +147,7 @@
   .k-nav { display:block; padding:8px 11px; border-radius:8px; color:var(--color-muted); font-size:14px; }
   .k-nav:hover { background:var(--color-surface-2); color:var(--color-fg); }
   .k-nav-active { color:var(--color-fg); background:rgba(190,242,100,.07); border-left:2px solid var(--color-accent); padding-left:9px; }
+  .k-nav-badge { display:inline-block; margin-left:6px; padding:0 6px; border-radius:999px; font-size:11px; line-height:16px; font-weight:700; background:rgba(190,242,100,.15); color:var(--color-accent); vertical-align:middle; }
   .k-org-badge { margin:10px 0 16px; padding:8px 10px; background:var(--color-surface); border-radius:8px; }
   .k-org-badge a { font-weight:600; color:var(--color-fg); }
   .k-org-badge .role { display:block; font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--color-faint); margin-top:2px; }

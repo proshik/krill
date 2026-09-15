@@ -1,0 +1,80 @@
+# squawk configuration for Krill's migration compatibility check (`make lint-migrations`).
+#
+# Policy: a migration must keep the PREVIOUS release's binary bootable. Self-update rolls back
+# to that binary on a failed upgrade, and it has to start and keep working against whatever
+# schema the newer release already applied (see "Migrations" in docs/development.md and
+# CLAUDE.md §4). So only the rules that catch a change the previous binary could trip over are
+# kept: dropping or renaming what it reads, changing a type it scans, adding a column it does not
+# know how to fill, or a new uniqueness or foreign key that can reject a write it still performs.
+#
+# Every other built-in rule of squawk v2.65.0 is excluded explicitly below. Those are
+# lock-safety, performance and style rules (CONCURRENTLY, NOT VALID, timeouts, preferred column
+# types, idempotent statements, ...). They are sound advice for large, busy tables, but they say
+# nothing about whether the previous binary still starts, and Krill's control-plane tables are
+# small. When upgrading squawk, check its rule list for new rules and add each one here, to one
+# list or the other.
+#
+# Not configurable: `unused-ignore` (an unknown rule name in a `-- squawk-ignore` comment) is
+# always reported, which is what we want.
+#
+# What squawk does NOT catch, so reviewers still read every migration: a new or tightened CHECK
+# constraint, enum widening that the previous binary cannot read, dropping an index the previous
+# release relies on for ON CONFLICT, and CREATE UNIQUE INDEX on an existing table
+# (`disallowed-unique-constraint` only fires on ADD CONSTRAINT ... UNIQUE).
+#
+# Kept (enabled) rules, for review — squawk has no allow-list, so these are simply the default
+# rules left out of `excluded_rules`:
+#   ban-drop-column                 DROP COLUMN
+#   ban-drop-table                  DROP TABLE
+#   renaming-column                 RENAME COLUMN
+#   renaming-table                  RENAME TO
+#   changing-column-type            ALTER COLUMN ... TYPE
+#   adding-not-nullable-field       ALTER COLUMN ... SET NOT NULL
+#   adding-required-field           ADD COLUMN ... NOT NULL without a DEFAULT
+#   disallowed-unique-constraint    ADD CONSTRAINT ... UNIQUE
+#   adding-foreign-key-constraint   ADD CONSTRAINT ... FOREIGN KEY
+#   ban-drop-not-null               ALTER COLUMN ... DROP NOT NULL
+#
+# internal/database/testdata/squawk/breaking.sql holds one statement per kept rule and
+# `make lint-migrations` fails if any of them stops being reported.
+
+# The oldest Postgres Krill supports (tests run postgres:16-alpine; install.sh ships 17).
+pg_version = "16.0"
+
+# golang-migrate's postgres driver sends each migration file as one query string over pgx's
+# simple protocol, which Postgres runs as a single implicit transaction. This also keeps a UNIQUE
+# or FOREIGN KEY added to a table created earlier in the same file from being reported.
+assume_in_transaction = true
+
+excluded_rules = [
+  "adding-field-with-default",
+  "adding-serial-primary-key-field",
+  "ban-alter-domain-with-add-constraint",
+  "ban-char-field",
+  "ban-concurrent-index-creation-in-transaction",
+  "ban-create-domain-with-constraint",
+  "ban-drop-database",
+  "ban-duplicate-column-assignments",
+  "ban-truncate-cascade",
+  "ban-uncommitted-transaction",
+  "constraint-missing-not-valid",
+  "identifier-too-long",
+  "prefer-bigint-over-int",
+  "prefer-bigint-over-smallint",
+  "prefer-identity",
+  "prefer-repack",
+  "prefer-robust-stmts",
+  "prefer-text-field",
+  "prefer-timestamptz",
+  "require-concurrent-index-creation",
+  "require-concurrent-index-deletion",
+  "require-concurrent-partition-detach",
+  "require-concurrent-reindex",
+  "require-enum-value-ordering",
+  "require-lock-timeout",
+  "require-statement-timeout",
+  "transaction-nesting",
+  # Opt-in rules, off by default anyway; listed so the full rule set is accounted for.
+  "require-table-schema",
+  "require-timeout-settings",
+]

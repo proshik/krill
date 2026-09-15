@@ -21,6 +21,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/builder"
+	"github.com/proshik/krill/internal/buildinfo"
 	"github.com/proshik/krill/internal/cluster"
 	"github.com/proshik/krill/internal/config"
 	"github.com/proshik/krill/internal/database"
@@ -35,12 +36,20 @@ import (
 	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/selfupdate"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/volume"
 )
 
 func main() {
+	// Handled before run()/config.Load() so it works with no environment at
+	// all — the self-updater uses this as a smoke test right after replacing
+	// the binary, before it knows the new binary's configuration is sane.
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v" || os.Args[1] == "version") {
+		fmt.Println("krill", buildinfo.String())
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -76,7 +85,7 @@ func run() error {
 		return err
 	}
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
-	slog.Info("starting krill", "listen", cfg.ListenAddr, "base_domain", cfg.BaseDomain, "network", cfg.Network)
+	slog.Info("starting krill", "version", buildinfo.String(), "listen", cfg.ListenAddr, "base_domain", cfg.BaseDomain, "network", cfg.Network)
 
 	// Encryption-at-rest for stored credentials (opt-in via KRILL_SECRET_KEY).
 	secret.Init(cfg.SecretKey)
@@ -84,10 +93,49 @@ func run() error {
 		slog.Warn("KRILL_SECRET_KEY not set — stored secrets (DB passwords, registry/destination credentials) are NOT encrypted at rest")
 	}
 
-	// Migrations on startup.
-	if err := database.RunMigrations(cfg.DatabaseURL); err != nil {
+	// HTTP listener. The port opens before migrations and the gateway reconcile
+	// (which can take minutes), and until the router is ready the gate answers
+	// every request with a 503 "Krill is starting" page instead of leaving the
+	// browser with "connection refused".
+	gate := server.NewStartupGate()
+	srv := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: gate,
+		// Slowloris guard on the request line/headers only; body/stream reads and
+		// writes stay unbounded (long-lived WS: deploy logs, log viewer, terminal).
+		// Do NOT set ReadTimeout/WriteTimeout — those would cut those streams.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	// Listen synchronously: a busy port must still fail the start right away,
+	// not minutes later.
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.ListenAddr, err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("krill listening", "addr", cfg.ListenAddr)
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	// Migrations on startup, under their own signal handler: the one below is
+	// registered only once startup is done. Without it a SIGTERM during a slow
+	// migration — the revert timer's restart, an operator's `systemctl stop` —
+	// kills the process mid-migration and leaves the schema dirty, and no
+	// binary, new or reverted, starts against a dirty schema. With it the
+	// running migration finishes and startup ends with an error instead.
+	gate.SetPhase(server.PhaseMigrating)
+	migCtx, stopMig := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	err = database.RunMigrationsContext(migCtx, cfg.DatabaseURL)
+	stopMig()
+	if err != nil {
 		return err
 	}
+	gate.SetPhase(server.PhaseStarting)
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
@@ -147,8 +195,9 @@ func run() error {
 	// from "this install has no organizations", and applying it would detach the
 	// running gateway from every organization network over a transient DB error.
 	// When the spec changed, Reconcile waits for the new Traefik task to run
-	// (seconds normally, up to a few minutes if the image has to be pulled), so
-	// the HTTP listener starts after it.
+	// (seconds normally, up to a few minutes if the image has to be pulled). The
+	// HTTP listener is already up by then, serving the starting page.
+	gate.SetPhase(server.PhaseGateway)
 	gatewayReady := false
 	if orgNets, nerr := orgNetworks(ctx, q); nerr != nil {
 		slog.Warn("could not list organization networks; leaving the gateway as it is", "err", nerr)
@@ -157,6 +206,7 @@ func run() error {
 	} else {
 		gatewayReady = true
 	}
+	gate.SetPhase(server.PhaseStarting)
 
 	store := deploy.NewDBStore(q)
 	deploy.SetConvergeTimeout(cfg.ConvergeTimeout)
@@ -409,6 +459,17 @@ func run() error {
 	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme, panelProvider))
 	app.SetPanelGateway(gatewayTokens, panelUpstream, panelUpstreamErr)
 
+	// Self-update: discover newer releases and install one from Settings → Updates.
+	updateChecker := selfupdate.NewChecker(cfg.UpdateRepo, cfg.UpdateCheckInterval, cfg.AllowPrivateEgress)
+	updater := selfupdate.NewUpdater(firewall.LocalRunner{Timeout: 60 * time.Second}, updateChecker,
+		cfg.UpdateRepo, cfg.AllowPrivateEgress, updateBusy{
+			runningDeploys:     q.CountRunningDeployments,
+			migratingInstances: q.CountMigratingDBInstances,
+			backups:            backupSvc,
+			volumes:            volSvc,
+		}.reason)
+	app.SetSelfUpdate(updateChecker, updater)
+
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
 	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
@@ -428,15 +489,6 @@ func run() error {
 		slog.Info("agent API disabled (KRILL_AGENT_API_ENABLED=false)")
 	}
 
-	srv := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: app.Router(),
-		// Slowloris guard on the request line/headers only; body/stream reads and
-		// writes stay unbounded (long-lived WS: deploy logs, log viewer, terminal).
-		// Do NOT set ReadTimeout/WriteTimeout — those would cut those streams.
-		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
 	// A firewall change is confirmed by a request that the new ruleset had to
 	// admit; an idle keep-alive connection from before it would not prove that.
 	app.SetIdleConnCloser(func() {
@@ -444,13 +496,21 @@ func run() error {
 		srv.SetKeepAlivesEnabled(true)
 	})
 
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("krill listening", "addr", cfg.ListenAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+	// Hand the listener to the real router — only through the gate: srv.Serve is
+	// already running, and assigning srv.Handler now would race with it.
+	gate.Swap(app.Router())
+	slog.Info("krill serving")
+
+	// A binary started by a self-update confirms itself once it serves the UI,
+	// which disarms the dead-man timer that would otherwise put the previous
+	// binary back. In the background: it runs a few systemctl calls and may wait
+	// for a request that is still validating, and nothing after this point
+	// (the network migration, the signal handler) should wait on it.
+	go updater.ConfirmStartup(ctx)
+	go updateChecker.Run(ctx)
+	if cfg.UpdateCheckInterval <= 0 {
+		slog.Info("background update check disabled (KRILL_UPDATE_CHECK_INTERVAL <= 0)")
+	}
 
 	// An install that predates per-organization networks has every service —
 	// every tenant's — on the single shared overlay, where any container can

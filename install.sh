@@ -296,6 +296,10 @@ if [ -n "${KRILL_BINARY:-}" ]; then
 	[ -f "$KRILL_BINARY" ] || die "KRILL_BINARY=$KRILL_BINARY not found"
 	info "Installing krill from local binary $KRILL_BINARY ..."
 	install -m 0755 "$KRILL_BINARY" "$BIN_PATH"
+	# A krill.prev left by an earlier update from the UI may be several
+	# releases old, or even newer than what was just installed; the rollback
+	# guarantee covers only the release right before the running one.
+	rm -f "$BIN_PATH.prev"
 else
 	if [ "$KRILL_VERSION" = "latest" ]; then
 		BASE_URL="https://github.com/$KRILL_REPO/releases/latest/download"
@@ -330,15 +334,25 @@ else
 	fi
 
 	install -m 0755 "$TMP/krill" "$BIN_PATH"
+	# See above: a krill.prev from an earlier UI update is no longer the
+	# previous release.
+	rm -f "$BIN_PATH.prev"
 fi
 
 # --- 7. systemd unit ---------------------------------------------------------
+# StartLimitIntervalSec=0 disables systemd's default start-rate limit (5 starts
+# in 10s). A Krill that fails fast right after boot — Postgres still starting,
+# or a broken upgrade — would otherwise land in "failed" after a handful of
+# quick restarts, and Restart=always stops applying; with no limit it just
+# keeps retrying every RestartSec until the dependency comes up or the operator
+# intervenes.
 cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=Krill control plane
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

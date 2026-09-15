@@ -379,3 +379,45 @@ func TestRunVolumeBackupInFlight(t *testing.T) {
 		t.Fatalf("post-finish run: %v", err)
 	}
 }
+
+// InFlight lets the self-updater see whether a volume backup or restore is
+// running anywhere right now, so it can refuse to restart Krill mid-run.
+func TestInFlight(t *testing.T) {
+	store, _ := newMinioStore(t, "vol", 7)
+
+	fresh := New(&mockVolEngine{}, store, true)
+	if got := fresh.InFlight(); got != 0 {
+		t.Fatalf("InFlight on a fresh service = %d, want 0", got)
+	}
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	var startOnce, blockOnce sync.Once
+	eng := &mockVolEngine{
+		archiveFn: func(out io.Writer) error {
+			startOnce.Do(func() { close(started) })
+			blockOnce.Do(func() { <-block })
+			_, err := out.Write([]byte("PAYLOAD-123"))
+			return err
+		},
+	}
+	svc := New(eng, store, true)
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() { done <- svc.RunVolumeBackup(ctx, 1, time.Now()) }()
+
+	<-started // backup is now in-flight (inside VolumeArchive)
+	if got := svc.InFlight(); got != 1 {
+		t.Fatalf("InFlight while a backup runs = %d, want 1", got)
+	}
+
+	close(block) // let it finish
+	if err := <-done; err != nil {
+		t.Fatalf("backup run: %v", err)
+	}
+
+	if got := svc.InFlight(); got != 0 {
+		t.Fatalf("InFlight after the backup finished = %d, want 0", got)
+	}
+}
