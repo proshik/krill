@@ -46,6 +46,24 @@ resolve to localhost with no DNS setup.
 
 All settings are described in [Configuration](configuration.md).
 
+### Migrations
+
+A migration must keep the *previous* release's binary able to start against the schema it
+leaves behind: only additive changes are allowed — new tables, new columns that are nullable
+or carry a `DEFAULT`, new indexes. Dropping or renaming something, changing a column's type,
+adding `NOT NULL` (as a new column or via `SET NOT NULL`) with no default, or adding a new
+`CHECK` constraint is safe only one release after the code has stopped using the old shape;
+dropping a `CHECK` is always fine, and dropping one and re-adding it under the same name with a
+wider condition in the same migration counts as safe too (the lint can't tell a widened
+re-creation from a tightened one, so review by eye still matters). This is what makes automatic
+rollback on a failed self-update possible: `database.RunMigrations`
+(`internal/database/migrate.go`) skips applying migrations (with a warning log) when the
+database schema is already ahead of what the running binary embeds, instead of refusing to
+start. `internal/database/compat.go` lints every migration above version 46 for the disallowed
+patterns, one violation per breaking SQL statement; a statement that intentionally breaks this
+needs a `-- krill:compat-break-ok <reason>` comment directly above it, explaining which release
+it's safe from — the marker exempts only that one statement, not the rest of the file.
+
 ## Generated code
 
 Templ components (`*_templ.go`), sqlc queries (`internal/database/gen`) and the compiled CSS
