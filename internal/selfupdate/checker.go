@@ -1,4 +1,6 @@
-// Package selfupdate discovers the latest published Krill release on GitHub.
+// Package selfupdate discovers the latest published Krill release on GitHub
+// (Checker) and installs it over the running binary behind a dead-man
+// rollback timer (Updater).
 //
 // Discovery follows the unauthenticated `releases/latest` redirect rather
 // than calling the GitHub REST API: the same origin the release binaries are
