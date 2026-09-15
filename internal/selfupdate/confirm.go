@@ -17,9 +17,12 @@ import (
 //
 // It is gated only on running under systemd, not on the directory probes of
 // Supported: confirming never writes to the unit directory, its removals are
-// best effort, and skipping it would let the timer revert a good update. It holds the job
-// slot throughout, so a Start or Rollback arriving meanwhile gets
-// ErrJobRunning instead of racing it over the same markers.
+// best effort, and skipping it would let the timer revert a good update. It
+// first waits up to confirmWait for the job slot and, once it has it, holds
+// it to the end, so a Start or Rollback arriving meanwhile gets ErrJobRunning
+// instead of racing it over the same markers. When the wait expires (or ctx
+// ends) it goes ahead without the slot: letting the revert timer undo a good
+// update would be worse.
 func (u *Updater) ConfirmStartup(ctx context.Context) {
 	if ok, _ := u.underSystemd(); !ok {
 		return
@@ -34,11 +37,18 @@ func (u *Updater) ConfirmStartup(ctx context.Context) {
 		removeStaged(filepath.Dir(u.binPath))
 	}
 
-	var result *Result
+	// The first result found is the one reported. It is recorded right away,
+	// before any timer is stopped (which can retry for seconds), so a page
+	// load just after the restart already shows it.
+	reported := false
 	report := func(r Result) {
-		if result == nil {
-			result = &r
+		if reported {
+			return
 		}
+		reported = true
+		u.mu.Lock()
+		u.last = &r
+		u.mu.Unlock()
 	}
 
 	pendingPath := u.markerPath(pendingMarkerName)
@@ -54,16 +64,16 @@ func (u *Updater) ConfirmStartup(ctx context.Context) {
 		// The marker goes first: a timer we then fail to stop finds no marker
 		// and exits without reverting.
 		removeFile(pendingPath)
-		u.stopTimerWithRetry(ctx)
 		report(Result{From: pending.From, To: pending.To, OK: true})
+		u.stopTimerWithRetry(ctx)
 		slog.Info("self-update confirmed", "from", pending.From, "to", pending.To)
 	default:
 		// The previous process died after writing the marker but before it
 		// swapped the binary: we are still the old version.
 		removeFile(pendingPath)
+		report(Result{From: pending.From, To: pending.To, Reason: "interrupted"})
 		u.stopTimerWithRetry(ctx)
 		u.removePrevIfRunning()
-		report(Result{From: pending.From, To: pending.To, Reason: "interrupted"})
 		slog.Warn("self-update was interrupted before the new binary was installed",
 			"from", pending.From, "to", pending.To, "running", u.current)
 	}
@@ -96,12 +106,6 @@ func (u *Updater) ConfirmStartup(ctx context.Context) {
 		removeFile(rolledbackPath)
 		report(Result{From: rolled.From, To: rolled.To, OK: true, Reason: "rollback"})
 		slog.Info("self-update rollback completed", "from", rolled.From, "to", rolled.To)
-	}
-
-	if result != nil {
-		u.mu.Lock()
-		u.last = result
-		u.mu.Unlock()
 	}
 }
 

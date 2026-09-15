@@ -50,7 +50,10 @@ All settings are described in [Configuration](configuration.md).
 
 A migration must keep the *previous* release's binary able to start against the schema it
 leaves behind: only additive changes are allowed — new tables, new columns that are nullable
-or carry a `DEFAULT`, new indexes. Dropping or renaming something, changing a column's type,
+or carry a `DEFAULT`, new non-unique indexes. New unique indexes and foreign keys are not
+additive, an index the previous release relies on for `ON CONFLICT` must never be dropped, and
+the previous binary must tolerate new enum or `CHECK` values the new one writes — widen reads a
+release before writes. Dropping or renaming something, changing a column's type,
 adding `NOT NULL` (as a new column or via `SET NOT NULL`) with no default, or adding a new
 `CHECK` constraint is safe only one release after the code has stopped using the old shape;
 dropping a `CHECK` is always fine, and dropping one and re-adding it under the same name with a

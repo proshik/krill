@@ -381,6 +381,20 @@ func TestUpdatesPage(t *testing.T) {
 		}
 	})
 
+	// A job that gave up because work started while it downloaded says what,
+	// in the same words as the refusal at the button.
+	t.Run("job given up for work in flight", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		i.status = selfupdate.Status{Phase: selfupdate.PhaseFailed, Tag: updLatest, Err: &selfupdate.BusyError{Reason: "deploy"}}
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if !strings.Contains(body, "The update failed: a deploy is running") {
+			t.Errorf("page does not explain the busy failure")
+		}
+		if strings.Contains(body, "selfupdate: busy") {
+			t.Errorf("page shows the raw busy error")
+		}
+	})
+
 	t.Run("development build", func(t *testing.T) {
 		// Available is forced on as well: the build kind alone must hide the
 		// install card, whatever the checker says.

@@ -296,6 +296,10 @@ if [ -n "${KRILL_BINARY:-}" ]; then
 	[ -f "$KRILL_BINARY" ] || die "KRILL_BINARY=$KRILL_BINARY not found"
 	info "Installing krill from local binary $KRILL_BINARY ..."
 	install -m 0755 "$KRILL_BINARY" "$BIN_PATH"
+	# A krill.prev left by an earlier update from the UI may be several
+	# releases old, or even newer than what was just installed; the rollback
+	# guarantee covers only the release right before the running one.
+	rm -f "$BIN_PATH.prev"
 else
 	if [ "$KRILL_VERSION" = "latest" ]; then
 		BASE_URL="https://github.com/$KRILL_REPO/releases/latest/download"
@@ -330,6 +334,9 @@ else
 	fi
 
 	install -m 0755 "$TMP/krill" "$BIN_PATH"
+	# See above: a krill.prev from an earlier UI update is no longer the
+	# previous release.
+	rm -f "$BIN_PATH.prev"
 fi
 
 # --- 7. systemd unit ---------------------------------------------------------

@@ -148,7 +148,14 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	v.PhaseActive = job.Phase.Active()
 	v.JobTag = job.Tag
 	if job.Err != nil {
-		v.JobErr = job.Err.Error()
+		// A job gives up with a BusyError when work started while it
+		// downloaded; say what, in the words the refusal at the button uses.
+		var busy *selfupdate.BusyError
+		if errors.As(job.Err, &busy) {
+			v.JobErr = i18n.T(ctx, "update.busy."+busy.Reason)
+		} else {
+			v.JobErr = job.Err.Error()
+		}
 	}
 	if prev, ok := i.Previous(ctx); ok {
 		v.Previous = prev

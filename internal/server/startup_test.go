@@ -59,13 +59,51 @@ func TestStartupGateServesStartingPage(t *testing.T) {
 				"<title>Krill is starting</title>",
 				"<h1>Krill is starting</h1>",
 				"This page refreshes by itself.",
-				`http-equiv="refresh"`,
+				`fetch(location.href, {cache: "no-store"})`,
+				"location.reload()",
+				`<noscript><meta http-equiv="refresh" content="3"></noscript>`,
 			} {
 				if !strings.Contains(body, s) {
 					t.Errorf("body does not contain %q:\n%s", s, body)
 				}
 			}
+			assertRefreshOnlyInNoscript(t, body)
 		})
+	}
+}
+
+// assertRefreshOnlyInNoscript checks the page's meta refresh is only the
+// no-JS fallback. A browser with JS polls instead: a meta refresh that lands
+// on "connection refused" (a binary crash-looping through a restart) leaves
+// the browser's own error page, which never retries.
+func assertRefreshOnlyInNoscript(t *testing.T, body string) {
+	t.Helper()
+	const fallback = `<noscript><meta http-equiv="refresh" content="3"></noscript>`
+	if n := strings.Count(body, `http-equiv="refresh"`); n != 1 || !strings.Contains(body, fallback) {
+		t.Errorf("want exactly one meta refresh, inside <noscript>; got %d:\n%s", n, body)
+	}
+}
+
+// A page that answered a form POST must not be reloaded: the browser would
+// ask to resubmit the form every few seconds. It navigates to the same URL
+// with a GET instead, as the meta refresh did.
+func TestStartupGateDoesNotResubmitForms(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := serveGate(NewStartupGate(), httptest.NewRequest(method, "/login", strings.NewReader("email=a")))
+		body := rec.Body.String()
+		if strings.Contains(body, "location.reload()") {
+			t.Errorf("%s: page reloads itself, which resubmits the request:\n%s", method, body)
+		}
+		for _, want := range []string{`fetch(location.href, {cache: "no-store"})`, "location.replace("} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: body does not contain %q:\n%s", method, want, body)
+			}
+		}
+		assertRefreshOnlyInNoscript(t, body)
+	}
+	head := serveGate(NewStartupGate(), httptest.NewRequest(http.MethodHead, "/", nil))
+	if body := head.Body.String(); !strings.Contains(body, "location.reload()") {
+		t.Errorf("HEAD: page does not reload itself:\n%s", body)
 	}
 }
 

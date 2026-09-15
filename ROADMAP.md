@@ -62,7 +62,9 @@ Verified in code and tests, but not yet exercised on a real environment:
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
 11. Self-update on a real VPS from a published release to a newer one — including the
     automatic rollback (a release whose binary fails to start), the manual rollback button,
-    the restart through the transient unit, and the `%`-free revert marker on real systemd.
+    the restart through the transient unit, the `%`-free revert marker on real systemd, a
+    release whose migration fails, the Roll back button refused after an install.sh upgrade,
+    and a volume restore started during the download being refused or aborting the update.
 
 ## Open
 

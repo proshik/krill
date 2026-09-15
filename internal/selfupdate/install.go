@@ -116,6 +116,13 @@ func (u *Updater) install(ctx context.Context, tag string) (err error) {
 		return err
 	}
 
+	// Start checked for work a restart would cut short, but the download
+	// took a while and a deploy or a restore may have begun since. This is
+	// the last moment nothing on the host has changed yet, so ask again.
+	if reason := u.busyReason(); reason != "" {
+		return &BusyError{Reason: reason}
+	}
+
 	// 6. Keep a crash-looping new binary restarting until the timer fires.
 	u.setPhase(PhaseInstalling)
 	changed, err := writeDropIn(u.unitDir, u.unit)
@@ -208,6 +215,11 @@ func (u *Updater) rollback(ctx context.Context, version string) (err error) {
 	// refuse the unit name.
 	if err := u.runCmd(ctx, u.stopTimerCmd()); err != nil {
 		return fmt.Errorf("clearing old update timers: %w", err)
+	}
+	// Work may have started since Rollback checked; the swap is the first
+	// change, so this is the last moment to back out cleanly.
+	if reason := u.busyReason(); reason != "" {
+		return &BusyError{Reason: reason}
 	}
 	stage, err = swapWithPrev(bin, prev, tmp)
 	if err != nil {

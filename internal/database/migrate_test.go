@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io/fs"
 	"path"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -100,6 +102,61 @@ func TestRunMigrationsOnEmptyDatabase(t *testing.T) {
 	}
 	if v != max {
 		t.Fatalf("version after RunMigrations = %d, want %d", v, max)
+	}
+}
+
+// A shutdown signal while migrations run must not leave the schema dirty: a
+// dirty schema stops every binary from starting, the reverted one included.
+// A context cancelled before the call exercises the same GracefulStop path a
+// signal arriving mid-way takes — Up stops before the next migration — and the
+// error says the run was cut short, so startup does not go on as if the schema
+// were current.
+func TestRunMigrationsContextStopsOnCancel(t *testing.T) {
+	dsn := startTestPostgres(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := RunMigrationsContext(ctx, dsn)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunMigrationsContext with a cancelled context = %v, want an error wrapping context.Canceled", err)
+	}
+	if !strings.Contains(err.Error(), "stopped by shutdown") {
+		t.Errorf("error = %q, want it to say the migrations were stopped by shutdown", err)
+	}
+
+	m := newMigrator(t, dsn)
+	v, dirty, verr := m.Version()
+	if verr != nil && !errors.Is(verr, migrate.ErrNilVersion) {
+		t.Fatalf("Version: %v", verr)
+	}
+	if dirty {
+		t.Fatalf("schema left dirty at version %d after a cancelled run", v)
+	}
+
+	// The next start picks up where the stopped one left off.
+	if err := RunMigrationsContext(context.Background(), dsn); err != nil {
+		t.Fatalf("RunMigrationsContext after a cancelled run: %v", err)
+	}
+}
+
+func TestRunMigrationsContextCompletes(t *testing.T) {
+	dsn := startTestPostgres(t)
+
+	if err := RunMigrationsContext(context.Background(), dsn); err != nil {
+		t.Fatalf("RunMigrationsContext: %v", err)
+	}
+
+	m := newMigrator(t, dsn)
+	v, dirty, err := m.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	max, err := maxEmbeddedVersion()
+	if err != nil {
+		t.Fatalf("maxEmbeddedVersion: %v", err)
+	}
+	if dirty || v != max {
+		t.Fatalf("after RunMigrationsContext: version %d dirty=%v, want %d clean", v, dirty, max)
 	}
 }
 

@@ -156,6 +156,8 @@ databases.
 | `internal/krillcli` | `krill-cli`: commands, config, API client, deploy flow. |
 | `internal/secret` | Encryption of stored secrets. |
 | `internal/netguard` | Blocks outbound connections to private addresses (SSRF). |
+| `internal/buildinfo` | The binary's version, stamped at build time, and whether it is a release. |
+| `internal/selfupdate` | Discovering newer releases, installing one with a dead-man rollback timer, and rolling back. |
 | `internal/envtext`, `internal/logparse`, `internal/oplock` | Env-file parsing, log-line parsing, named operation locks. |
 | `internal/web` | Templates, static assets, i18n catalogs (English, Russian). |
 | `internal/database` | Migrations and generated queries. |

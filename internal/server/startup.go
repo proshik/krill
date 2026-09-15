@@ -41,6 +41,12 @@ func (p StartupPhase) messageKey() string {
 // browser (or the Updates page polling across a restart) sees progress instead
 // of "connection refused". After Swap it delegates every request to the router.
 //
+// The page refreshes itself with a script that polls its own URL and reloads
+// once anything answers, rather than with a meta refresh: a meta refresh that
+// hits a refused connection — a new binary crash-looping through its restart —
+// leaves the browser on its own error page, which never retries. The meta
+// refresh stays only as the fallback for a browser without JS.
+//
 // The gate logs nothing per request: the gateway polls the provider endpoint
 // every few seconds during startup, and the access log belongs to the router.
 type StartupGate struct {
@@ -73,6 +79,9 @@ func (g *StartupGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Title:   i18n.T(ctx, "startup.title"),
 		Message: i18n.T(ctx, StartupPhase(g.phase.Load()).messageKey()),
 		Hint:    i18n.T(ctx, "startup.hint"),
+		// Reloading the answer to a form POST would make the browser ask to
+		// resubmit it on every poll; that page follows its URL with a GET.
+		Reload: r.Method == http.MethodGet || r.Method == http.MethodHead,
 	}
 
 	h := w.Header()
@@ -94,6 +103,9 @@ func (g *StartupGate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type startupPageData struct {
 	Lang, Title, Message, Hint string
+	// Reload: the page may reload itself, because the request it answered
+	// was a GET or HEAD.
+	Reload bool
 }
 
 // startupPage is self-contained on purpose: while the gate is up, nothing else
@@ -103,7 +115,7 @@ var startupPage = template.Must(template.New("startup").Parse(`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="3">
+<noscript><meta http-equiv="refresh" content="3"></noscript>
 <title>{{.Title}}</title>
 <style>
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f8fafc;color:#0f172a}
@@ -120,6 +132,19 @@ p{margin:.25rem 0;line-height:1.5}
 <p>{{.Message}}</p>
 <p class="hint">{{.Hint}}</p>
 </main>
+<script>
+(function () {
+  var leaving = false;
+  setInterval(function () {
+    if (leaving) return;
+    fetch(location.href, {cache: "no-store"}).then(function () {
+      if (leaving) return;
+      leaving = true;
+      {{if .Reload}}location.reload();{{else}}location.replace(location.href.split("#")[0]);{{end}}
+    }, function () {});
+  }, 3000);
+})();
+</script>
 </body>
 </html>
 `))

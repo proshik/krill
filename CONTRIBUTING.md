@@ -35,7 +35,10 @@ make test
 - **Errors are never swallowed** in handlers: log them or return a 500.
 - **Secrets are never logged** — passwords, tokens, connection strings, env values.
 - **Migrations must keep the previous release bootable.** Only additive changes (new tables;
-  new columns that are nullable or have a `DEFAULT`; new indexes) are safe immediately.
+  new columns that are nullable or have a `DEFAULT`; new non-unique indexes) are safe
+  immediately. New unique indexes and foreign keys are not additive, an index the previous
+  release relies on for `ON CONFLICT` must never be dropped, and the previous binary must
+  tolerate new enum or `CHECK` values the new one writes — widen reads a release before writes.
   Dropping/renaming a column or table, changing a column's type, or adding a `NOT NULL` column
   or constraint without a default may only ship one release after the code has stopped using the
   old shape — self-update rolls back to the previous binary on a failed upgrade, and it must

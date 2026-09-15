@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -652,6 +653,56 @@ func TestStart_RefusalReleasesTheJobSlot(t *testing.T) {
 	}
 }
 
+// busyOnSecondCall is a busy callback that reports nothing the first time
+// (the check when the request arrives) and reason from then on (work that
+// started while the job was running), counting its calls.
+func busyOnSecondCall(calls *atomic.Int32, reason string) func(context.Context) string {
+	return func(context.Context) string {
+		if calls.Add(1) == 1 {
+			return ""
+		}
+		return reason
+	}
+}
+
+// assertBusyFailure checks a job refused by the busy check it runs just
+// before the point of no return.
+func assertBusyFailure(t *testing.T, st Status, reason string) {
+	t.Helper()
+	var be *BusyError
+	if st.Phase != PhaseFailed || !errors.As(st.Err, &be) || be.Reason != reason {
+		t.Fatalf("Status() = %+v, want failed with BusyError{%s}", st, reason)
+	}
+}
+
+// Work that starts while the release downloads — a deploy, a restore — must
+// not be cut short by the restart: the job asks again right before it
+// changes anything on the host, and gives up if something is now running.
+func TestStart_BusyAgainBeforeInstalling(t *testing.T) {
+	h := newHarness(t)
+	var calls atomic.Int32
+	h.u.busy = busyOnSecondCall(&calls, "deploy")
+
+	st := h.startAndWait(t)
+
+	assertBusyFailure(t, st, "deploy")
+	if n := calls.Load(); n != 2 {
+		t.Errorf("busy callback called %d times, want 2 (at Start and before installing)", n)
+	}
+	h.assertUntouched(t)
+	h.assertNoTimer(t)
+	for _, c := range h.runner.cmds() {
+		if strings.HasPrefix(c, "systemd-run") {
+			t.Errorf("unexpected command %q", c)
+		}
+	}
+	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertMissing(t, filepath.Join(h.unitDir, "krill.service.d", "10-krill-update.conf"))
+	if n := h.execCount(); n != 1 {
+		t.Errorf("staged binary executed %d times, want 1 (the smoke test runs before the check)", n)
+	}
+}
+
 func TestStart_JobRunning(t *testing.T) {
 	h := newHarness(t)
 	block := make(chan struct{})
@@ -774,6 +825,40 @@ func TestConfirmStartup_RetriesStoppingTheTimer(t *testing.T) {
 		assertMissing(t, h.pending)
 		assertLast(t, h.u, Result{From: testCurrent, To: testTag, OK: true})
 	})
+}
+
+// The result is recorded before the timer is stopped — which can retry for
+// seconds — so a page load right after the swap already reports it.
+func TestConfirmStartup_ReportsBeforeStoppingTheTimer(t *testing.T) {
+	cases := []struct {
+		name    string
+		current string
+		want    Result
+	}{
+		{"confirmed", testTag, Result{From: testCurrent, To: testTag, OK: true}},
+		{"interrupted", testCurrent, Result{From: testCurrent, To: testTag, Reason: "interrupted"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.u.current = tc.current
+			writePending(t, h, testCurrent, testTag)
+			var atStop []bool
+			h.runner.onRun = func(cmd string) {
+				if cmd == stopTimerCmd {
+					_, ok := h.u.LastResult()
+					atStop = append(atStop, ok)
+				}
+			}
+
+			h.u.ConfirmStartup(context.Background())
+
+			if len(atStop) != 1 || !atStop[0] {
+				t.Errorf("LastResult() set when the timer was stopped = %v, want [true]", atStop)
+			}
+			assertLast(t, h.u, tc.want)
+		})
+	}
 }
 
 func TestConfirmStartup_Interrupted(t *testing.T) {
@@ -1100,6 +1185,40 @@ func TestRollback_RestartFails(t *testing.T) {
 	assertNoStaged(t, h.binDir)
 }
 
+// Like an update, a rollback asks the busy callback again right before it
+// swaps the binaries.
+func TestRollback_BusyAgainBeforeTheSwap(t *testing.T) {
+	h := newHarness(t)
+	writeFile(t, h.prev, prevContent)
+	origPrev, err := os.Stat(h.prev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.set(func() { h.prevOut = "krill v0.0.9\n" })
+	var calls atomic.Int32
+	h.u.busy = busyOnSecondCall(&calls, "volume_backup")
+
+	if err := h.u.Rollback(); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	h.u.wg.Wait()
+
+	assertBusyFailure(t, h.u.Status(), "volume_backup")
+	if n := calls.Load(); n != 2 {
+		t.Errorf("busy callback called %d times, want 2 (at Rollback and before the swap)", n)
+	}
+	assertSameFile(t, h.bin, h.origBin)
+	assertSameFile(t, h.prev, origPrev)
+	for _, c := range h.runner.cmds() {
+		if strings.HasPrefix(c, "systemd-run") {
+			t.Errorf("unexpected command %q", c)
+		}
+	}
+	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertMissing(t, filepath.Join(h.runDir, rolledbackMarkerName))
+	assertNoStaged(t, h.binDir)
+}
+
 func TestRollback_Refusals(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -1110,6 +1229,21 @@ func TestRollback_Refusals(t *testing.T) {
 		{"previous prints garbage", func(t *testing.T, h *harness) {
 			writeFile(t, h.prev, prevContent)
 			h.prevOut = "Segmentation fault\n"
+		}, wantIs(ErrNoPrevious)},
+		// A .prev left from an older update, with the binary since upgraded
+		// past it another way (install.sh), may be newer than what runs now.
+		{"previous is newer than the running version", func(t *testing.T, h *harness) {
+			writeFile(t, h.prev, prevContent)
+			h.prevOut = "krill " + testTag + "\n"
+		}, wantIs(ErrNoPrevious)},
+		{"previous is the running version", func(t *testing.T, h *harness) {
+			writeFile(t, h.prev, prevContent)
+			h.prevOut = "krill " + testCurrent + "\n"
+		}, wantIs(ErrNoPrevious)},
+		{"running a development build", func(t *testing.T, h *harness) {
+			writeFile(t, h.prev, prevContent)
+			h.prevOut = "krill v0.0.9\n"
+			h.u.current = "dev+abc123"
 		}, wantIs(ErrNoPrevious)},
 		{"unsupported", func(t *testing.T, h *harness) {
 			writeFile(t, h.prev, prevContent)
@@ -1358,6 +1492,32 @@ func TestPrevious_Garbage(t *testing.T) {
 	h.set(func() { h.prevOut = "krill dev+abc\n" })
 	if v, ok := h.u.Previous(context.Background()); ok || v != "" {
 		t.Errorf("Previous() = (%q, %v), want (\"\", false)", v, ok)
+	}
+}
+
+// Only an older release is offered as a rollback target: a stale .prev at
+// or above the running version would be a step sideways or forwards.
+func TestPrevious_OnlyOlder(t *testing.T) {
+	cases := []struct {
+		name, current, prevOut string
+		want                   string // "" for no previous
+	}{
+		{"older", testCurrent, "krill v0.0.9\n", "v0.0.9"},
+		{"equal", testCurrent, "krill " + testCurrent + "\n", ""},
+		{"newer", testCurrent, "krill " + testTag + "\n", ""},
+		{"development build running", "dev+abc123", "krill v0.0.9\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			writeFile(t, h.prev, prevContent)
+			h.u.current = tc.current
+			h.set(func() { h.prevOut = tc.prevOut })
+			v, ok := h.u.Previous(context.Background())
+			if ok != (tc.want != "") || v != tc.want {
+				t.Errorf("Previous() = (%q, %v), want (%q, %v)", v, ok, tc.want, tc.want != "")
+			}
+		})
 	}
 }
 

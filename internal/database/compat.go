@@ -29,6 +29,11 @@ var compatComment = regexp.MustCompile(`--[^\n]*`)
 // they're a break depends on the rest of the file, not just the statement
 // itself; DROP COLUMN and ADD COLUMN ... NOT NULL are also handled
 // separately because Postgres allows the COLUMN keyword to be omitted.
+//
+// A new uniqueness (CREATE UNIQUE INDEX, ADD [CONSTRAINT <name>] UNIQUE) or
+// foreign key (ADD [CONSTRAINT <name>] FOREIGN KEY) is flagged whatever the
+// rest of the file does: either can make a write the previous release still
+// performs fail.
 var compatPatterns = []struct {
 	name string
 	re   *regexp.Regexp
@@ -37,6 +42,9 @@ var compatPatterns = []struct {
 	{"RENAME", regexp.MustCompile(`(?is)\bRENAME\b`)},
 	{"ALTER COLUMN ... TYPE", regexp.MustCompile(`(?is)\bALTER\s+COLUMN\b[^,;]*?\bTYPE\b`)},
 	{"ALTER COLUMN ... SET NOT NULL", regexp.MustCompile(`(?is)\bALTER\s+COLUMN\b[^,;]*?\bSET\s+NOT\s+NULL\b`)},
+	{"CREATE UNIQUE INDEX", regexp.MustCompile(`(?is)\bCREATE\s+UNIQUE\s+INDEX\b`)},
+	{"ADD CONSTRAINT ... UNIQUE", regexp.MustCompile(`(?is)\bADD\s+(?:CONSTRAINT\s+(?:"[^"]+"|\w+)\s+)?UNIQUE\b`)},
+	{"ADD CONSTRAINT ... FOREIGN KEY", regexp.MustCompile(`(?is)\bADD\s+(?:CONSTRAINT\s+(?:"[^"]+"|\w+)\s+)?FOREIGN\s+KEY\b`)},
 }
 
 // compatDropColumnExplicit matches the unambiguous "DROP COLUMN ..." form.
@@ -240,7 +248,8 @@ func statementViolations(stmt string, droppedInFile map[string]bool) []string {
 // COLUMN (with or without the COLUMN keyword), DROP TABLE, RENAME (column or
 // table), ALTER COLUMN ... TYPE, ALTER COLUMN ... SET NOT NULL, ADD COLUMN
 // ... NOT NULL (with or without the COLUMN keyword) without a DEFAULT in the
-// same clause, and a new CHECK constraint (named or not) that isn't a
+// same clause, CREATE UNIQUE INDEX, a new UNIQUE or FOREIGN KEY constraint
+// (named or not), and a new CHECK constraint (named or not) that isn't a
 // drop-and-recreate of a same-named one elsewhere in the file — DROP
 // CONSTRAINT by itself is never flagged. Comments are stripped before
 // matching, so a pattern appearing only inside a "-- ..." comment is

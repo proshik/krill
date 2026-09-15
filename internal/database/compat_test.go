@@ -120,6 +120,48 @@ ALTER TABLE app_db_links ADD CONSTRAINT app_db_links_field_chk
 			want: nil,
 		},
 		{
+			name: "new non-unique index concurrently is fine",
+			sql:  `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_applications_name ON applications (name);`,
+			want: nil,
+		},
+		// A new uniqueness or foreign key can make the previous release's
+		// writes fail, so none of them is additive.
+		{
+			name: "create unique index",
+			sql:  `CREATE UNIQUE INDEX idx_domains_host ON domains (host);`,
+			want: []string{"CREATE UNIQUE INDEX"},
+		},
+		{
+			name: "create unique index concurrently if not exists",
+			sql:  `create unique index concurrently if not exists idx_domains_host on domains (host);`,
+			want: []string{"CREATE UNIQUE INDEX"},
+		},
+		{
+			name: "add named unique constraint",
+			sql:  `ALTER TABLE domains ADD CONSTRAINT domains_host_key UNIQUE (host);`,
+			want: []string{"ADD CONSTRAINT ... UNIQUE"},
+		},
+		{
+			name: "add quoted named unique constraint using an index",
+			sql:  `ALTER TABLE domains ADD CONSTRAINT "domains_host_key" UNIQUE USING INDEX idx_domains_host;`,
+			want: []string{"ADD CONSTRAINT ... UNIQUE"},
+		},
+		{
+			name: "add unnamed unique constraint",
+			sql:  `ALTER TABLE domains ADD UNIQUE (host);`,
+			want: []string{"ADD CONSTRAINT ... UNIQUE"},
+		},
+		{
+			name: "add named foreign key",
+			sql:  `ALTER TABLE applications ADD CONSTRAINT applications_registry_fk FOREIGN KEY (registry_id) REFERENCES registries (id);`,
+			want: []string{"ADD CONSTRAINT ... FOREIGN KEY"},
+		},
+		{
+			name: "add unnamed foreign key",
+			sql:  `ALTER TABLE applications ADD FOREIGN KEY (registry_id) REFERENCES registries (id) ON DELETE SET NULL;`,
+			want: []string{"ADD CONSTRAINT ... FOREIGN KEY"},
+		},
+		{
 			name: "drop table only inside a comment is fine",
 			sql:  "-- DROP TABLE IF EXISTS old_table\nCREATE TABLE widgets (id BIGSERIAL PRIMARY KEY);",
 			want: nil,

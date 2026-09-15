@@ -122,9 +122,17 @@ func run() error {
 		}
 	}()
 
-	// Migrations on startup.
+	// Migrations on startup, under their own signal handler: the one below is
+	// registered only once startup is done. Without it a SIGTERM during a slow
+	// migration — the revert timer's restart, an operator's `systemctl stop` —
+	// kills the process mid-migration and leaves the schema dirty, and no
+	// binary, new or reverted, starts against a dirty schema. With it the
+	// running migration finishes and startup ends with an error instead.
 	gate.SetPhase(server.PhaseMigrating)
-	if err := database.RunMigrations(cfg.DatabaseURL); err != nil {
+	migCtx, stopMig := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	err = database.RunMigrationsContext(migCtx, cfg.DatabaseURL)
+	stopMig()
+	if err != nil {
 		return err
 	}
 	gate.SetPhase(server.PhaseStarting)

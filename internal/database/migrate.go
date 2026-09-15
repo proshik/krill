@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -18,16 +19,41 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// RunMigrations applies all up-migrations. Idempotent (ErrNoChange = success).
+// RunMigrations applies all up-migrations with no way to stop them early;
+// see RunMigrationsContext.
+func RunMigrations(dsn string) error {
+	return RunMigrationsContext(context.Background(), dsn)
+}
+
+// RunMigrationsContext applies all up-migrations. Idempotent (ErrNoChange =
+// success).
 //
 // Self-update rolls the binary back to the previous release on a failed
 // upgrade, so an older binary must be able to start against a schema a
 // newer one already migrated forward: if the recorded version is ahead of
-// what this binary embeds, RunMigrations logs a warning and returns without
-// calling Up() rather than failing with "no migration found for version N".
-// This is safe only because migrations are required to be additive relative
-// to the previous release — see the compatibility policy in CLAUDE.md §4.
-func RunMigrations(dsn string) error {
+// what this binary embeds, it logs a warning and returns without calling
+// Up() rather than failing with "no migration found for version N". This is
+// safe only because migrations are required to be additive relative to the
+// previous release — see the compatibility policy in CLAUDE.md §4.
+//
+// Cancelling ctx (a shutdown signal) never interrupts a migration halfway:
+// golang-migrate marks the schema dirty before each migration and clean
+// after it, and a dirty schema stops every binary from starting — the
+// previous release a rollback puts back included. The in-flight migration
+// finishes, no further one starts, and the call returns an error wrapping
+// ctx.Err() even when nothing was left to apply, so the caller does not go
+// on starting as if the schema were current.
+func RunMigrationsContext(ctx context.Context, dsn string) error {
+	if err := runMigrations(ctx, dsn); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("migrations stopped by shutdown: %w", err)
+	}
+	return nil
+}
+
+func runMigrations(ctx context.Context, dsn string) error {
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		return err
@@ -65,7 +91,25 @@ func RunMigrations(dsn string) error {
 		}
 	}
 
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+	// GracefulStop lets the running migration finish and makes Up return
+	// before the next one. The goroutine exits as soon as Up returns.
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case <-ctx.Done():
+			select {
+			case m.GracefulStop <- true:
+			default: // a stop is already pending
+			}
+		case <-done:
+		}
+	}()
+	err = m.Up()
+	close(done)
+	<-exited
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
 	}
 	return nil

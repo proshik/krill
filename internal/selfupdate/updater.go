@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/proshik/krill/internal/buildinfo"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/netguard"
@@ -251,7 +253,9 @@ func (u *Updater) busyReason() string {
 // install job in the background (watch it through Status). Refusals, in
 // order: ErrUnsupported, ErrJobRunning, ErrInvalidTag, ErrNotLatest (tag is
 // not the checker's cached latest release), ErrNotNewer, ErrPending, and a
-// *BusyError.
+// *BusyError. The job asks the busy callback once more after the download,
+// before it changes anything on the host, and fails with a *BusyError
+// (reported through Status) if work has started in the meantime.
 func (u *Updater) Start(tag string) error {
 	if ok, reason := u.Supported(); !ok {
 		return fmt.Errorf("%w: %s", ErrUnsupported, reason)
@@ -293,8 +297,9 @@ func (u *Updater) checkStart(tag string) error {
 // release that serves the UI but is broken. No revert timer is armed: the
 // target already ran here, and a timer would bring the broken one back.
 // Refusals, in order: ErrUnsupported, ErrJobRunning, ErrPending,
-// ErrNoPrevious (no .prev, or it does not report a release version), and a
-// *BusyError.
+// ErrNoPrevious (no .prev, or it does not report a release older than the
+// running version), and a *BusyError. Like Start's job, the rollback job
+// asks the busy callback again right before the swap.
 func (u *Updater) Rollback() error {
 	if ok, reason := u.Supported(); !ok {
 		return fmt.Errorf("%w: %s", ErrUnsupported, reason)
@@ -330,6 +335,10 @@ func (u *Updater) checkRollback() (string, error) {
 		slog.Warn("self-update: the previous binary failed its smoke test", "path", prev, "output", truncate(out, 200), "err", err)
 		return "", ErrNoPrevious
 	}
+	if !u.olderThanCurrent(version) {
+		slog.Warn("self-update: the previous binary is not older than the running one", "path", prev, "previous", version, "running", u.current)
+		return "", ErrNoPrevious
+	}
 	if reason := u.busyReason(); reason != "" {
 		return "", &BusyError{Reason: reason}
 	}
@@ -362,8 +371,9 @@ func (u *Updater) launch(phase Phase, tag, failMsg string, job func(context.Cont
 }
 
 // Previous returns the version <bin>.prev reports ("v0.1.3"), or false when
-// there is no previous binary or it does not report a release version. The
-// result is cached per file so page renders do not exec it every time.
+// there is no previous binary, it does not report a release version, or that
+// version is not older than the running one. The parsed version is cached per
+// file so page renders do not exec it every time.
 func (u *Updater) Previous(ctx context.Context) (string, bool) {
 	if u.binPath == "" {
 		return "", false
@@ -376,22 +386,34 @@ func (u *Updater) Previous(ctx context.Context) (string, bool) {
 	u.mu.Lock()
 	cache := u.prevCache
 	u.mu.Unlock()
-	if cache.matches(fi) {
-		return cache.version, cache.ok
+	version, ok := cache.version, cache.ok
+	if !cache.matches(fi) {
+		out, err := u.execVersion(ctx, prev)
+		version, ok = parseVersion(out)
+		if err != nil {
+			version, ok = "", false
+		}
+		// A run cut short by the caller says nothing about the file.
+		if ctx.Err() == nil {
+			u.mu.Lock()
+			u.prevCache = prevVersionCache{info: fi, version: version, ok: ok}
+			u.mu.Unlock()
+		}
 	}
+	if !ok || !u.olderThanCurrent(version) {
+		return "", false
+	}
+	return version, true
+}
 
-	out, err := u.execVersion(ctx, prev)
-	version, ok := parseVersion(out)
-	if err != nil {
-		version, ok = "", false
-	}
-	// A run cut short by the caller says nothing about the file.
-	if ctx.Err() == nil {
-		u.mu.Lock()
-		u.prevCache = prevVersionCache{info: fi, version: version, ok: ok}
-		u.mu.Unlock()
-	}
-	return version, ok
+// olderThanCurrent reports whether version, a release tag, is strictly older
+// than the running version. The rollback guarantee covers only going back to
+// an earlier release: a <bin>.prev left from an update several releases ago,
+// with the binary since replaced some other way, may be the running version
+// or newer. A running version that is not valid semver (a "dev" build) ranks
+// below every release, so nothing counts as older than it.
+func (u *Updater) olderThanCurrent(version string) bool {
+	return semver.Compare(version, u.current) < 0
 }
 
 // parseVersion extracts the version from `krill --version` output: the first
