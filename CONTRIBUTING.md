@@ -36,18 +36,20 @@ make test
 - **Secrets are never logged** — passwords, tokens, connection strings, env values.
 - **Migrations must keep the previous release bootable.** Only additive changes (new tables;
   new columns that are nullable or have a `DEFAULT`; new non-unique indexes) are safe
-  immediately. New unique indexes and foreign keys are not additive, an index the previous
-  release relies on for `ON CONFLICT` must never be dropped, and the previous binary must
-  tolerate new enum or `CHECK` values the new one writes — widen reads a release before writes.
-  Dropping/renaming a column or table, changing a column's type, or adding a `NOT NULL` column
-  or constraint without a default may only ship one release after the code has stopped using the
-  old shape — self-update rolls back to the previous binary on a failed upgrade, and it must
-  still start against the newer schema. Dropping a `CHECK` constraint is always fine; adding a
-  new one is only safe if the same migration also drops a same-named one (the repo's
-  drop-and-recreate-wider pattern), since the lint can't otherwise tell a widened re-creation
-  from a tightened or brand-new one — it still takes a human reading the migration. `make test`
-  lints this per statement (see `internal/database/compat.go`); an intentional exception needs a
-  `-- krill:compat-break-ok <reason>` comment directly above that one statement.
+  immediately. New unique indexes and foreign keys on existing tables are not additive, an index
+  the previous release relies on for `ON CONFLICT` must never be dropped, and the previous binary
+  must tolerate new enum or `CHECK` values the new one writes — widen reads a release before
+  writes. Dropping/renaming a column or table, changing a column's type, or adding a `NOT NULL`
+  column or constraint without a default may only ship one release after the code has stopped
+  using the old shape (expand/contract) — self-update rolls back to the previous binary on a
+  failed upgrade, and it must still start against the newer schema. CI checks new migrations
+  with [squawk](https://squawkhq.com): run `./tools/get-squawk.sh` once, then
+  `make lint-migrations` (rules in `.squawk.toml`). squawk catches the mechanical cases only;
+  reviewers still read every migration, since it does not catch a new or tightened `CHECK`, enum
+  widening, a dropped `ON CONFLICT` index or `CREATE UNIQUE INDEX` on an existing table. An
+  intentional exception needs `-- squawk-ignore <rule>` on the line directly before the
+  statement, followed on the same line by a comment with the reason and the release it is safe
+  from: `-- squawk-ignore ban-drop-column -- safe from v0.5.0: unused since v0.4.0`.
 - **Host-side upgrade steps must be idempotent startup code, not a manual step.** Anything
   `install.sh` would otherwise need to change on an upgrade — the systemd unit, the Postgres
   container, environment defaults — belongs in code the binary runs every time it starts, so a

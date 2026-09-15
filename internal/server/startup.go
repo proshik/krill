@@ -45,7 +45,10 @@ func (p StartupPhase) messageKey() string {
 // once anything answers, rather than with a meta refresh: a meta refresh that
 // hits a refused connection — a new binary crash-looping through its restart —
 // leaves the browser on its own error page, which never retries. The meta
-// refresh stays only as the fallback for a browser without JS.
+// refresh stays only as the fallback for a browser without JS. A 502 or 504 is
+// not an answer from Krill: through the panel domain Traefik returns those
+// while the process is down, and reloading onto Traefik's error page would end
+// the polling, so the script keeps polling. A 503 is this gate's own page.
 //
 // The gate logs nothing per request: the gateway polls the provider endpoint
 // every few seconds during startup, and the access log belongs to the router.
@@ -137,8 +140,9 @@ p{margin:.25rem 0;line-height:1.5}
   var leaving = false;
   setInterval(function () {
     if (leaving) return;
-    fetch(location.href, {cache: "no-store"}).then(function () {
+    fetch(location.href, {cache: "no-store"}).then(function (res) {
       if (leaving) return;
+      if (res.status === 502 || res.status === 504) return;
       leaving = true;
       {{if .Reload}}location.reload();{{else}}location.replace(location.href.split("#")[0]);{{end}}
     }, function () {});

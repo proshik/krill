@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"io/fs"
+	"net"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,6 +83,25 @@ func TestMaxEmbeddedVersion(t *testing.T) {
 	}
 }
 
+func TestMigrationVersion(t *testing.T) {
+	cases := []struct {
+		name   string
+		wantV  uint
+		wantOK bool
+	}{
+		{"000046_panel_hsts.up.sql", 46, true},
+		{"000001_init.up.sql", 1, true},
+		{"README.md", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		v, ok := migrationVersion(c.name)
+		if ok != c.wantOK || (ok && v != c.wantV) {
+			t.Errorf("migrationVersion(%q) = (%d, %v), want (%d, %v)", c.name, v, ok, c.wantV, c.wantOK)
+		}
+	}
+}
+
 func TestRunMigrationsOnEmptyDatabase(t *testing.T) {
 	dsn := startTestPostgres(t)
 
@@ -107,10 +128,11 @@ func TestRunMigrationsOnEmptyDatabase(t *testing.T) {
 
 // A shutdown signal while migrations run must not leave the schema dirty: a
 // dirty schema stops every binary from starting, the reverted one included.
-// A context cancelled before the call exercises the same GracefulStop path a
-// signal arriving mid-way takes — Up stops before the next migration — and the
-// error says the run was cut short, so startup does not go on as if the schema
-// were current.
+// A context cancelled before the call must stop the run before it reaches the
+// latest migration — either before any work at all (the database ping honours
+// ctx) or through GracefulStop after at most one migration — and the error
+// must wrap context.Canceled, so startup does not go on as if the schema were
+// current.
 func TestRunMigrationsContextStopsOnCancel(t *testing.T) {
 	dsn := startTestPostgres(t)
 
@@ -120,10 +142,11 @@ func TestRunMigrationsContextStopsOnCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunMigrationsContext with a cancelled context = %v, want an error wrapping context.Canceled", err)
 	}
-	if !strings.Contains(err.Error(), "stopped by shutdown") {
-		t.Errorf("error = %q, want it to say the migrations were stopped by shutdown", err)
-	}
 
+	max, err := maxEmbeddedVersion()
+	if err != nil {
+		t.Fatalf("maxEmbeddedVersion: %v", err)
+	}
 	m := newMigrator(t, dsn)
 	v, dirty, verr := m.Version()
 	if verr != nil && !errors.Is(verr, migrate.ErrNilVersion) {
@@ -132,10 +155,64 @@ func TestRunMigrationsContextStopsOnCancel(t *testing.T) {
 	if dirty {
 		t.Fatalf("schema left dirty at version %d after a cancelled run", v)
 	}
+	if verr == nil && v >= max {
+		t.Fatalf("schema at version %d after a cancelled run, want it below the latest (%d): the run was not stopped", v, max)
+	}
 
 	// The next start picks up where the stopped one left off.
 	if err := RunMigrationsContext(context.Background(), dsn); err != nil {
 		t.Fatalf("RunMigrationsContext after a cancelled run: %v", err)
+	}
+}
+
+// A shutdown while the database does not answer must end the run promptly
+// instead of waiting on a connection golang-migrate opens with
+// context.Background(). The listener accepts connections and never replies,
+// which is what an unreachable-but-routable database looks like.
+func TestRunMigrationsContextCancelWhileDatabaseSilent(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var (
+		mu    sync.Mutex
+		conns []net.Conn
+	)
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dsn := "postgres://krill:krill@" + ln.Addr().String() + "/krill?sslmode=disable"
+	result := make(chan error, 1)
+	go func() { result <- RunMigrationsContext(ctx, dsn) }()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunMigrationsContext = %v, want an error wrapping context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunMigrationsContext did not return within 5s of the context being cancelled")
 	}
 }
 

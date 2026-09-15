@@ -46,6 +46,13 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Every migration must keep the previous release bootable (self-update
+      # rolls back to it); squawk checks the new ones, see .squawk.toml.
+      - name: Migration compatibility (squawk)
+        run: |
+          ./tools/get-squawk.sh
+          make lint-migrations
+
       # Default suite only. Integration tests are behind the `integration` build
       # tag (-tags=integration) and are intentionally NOT run here.
       # testcontainers spins up Postgres on demand against the native daemon.

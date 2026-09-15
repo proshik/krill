@@ -60,6 +60,9 @@ func TestStartupGateServesStartingPage(t *testing.T) {
 				"<h1>Krill is starting</h1>",
 				"This page refreshes by itself.",
 				`fetch(location.href, {cache: "no-store"})`,
+				// Through the panel domain Traefik answers 502/504 while Krill
+				// is down; reloading onto its error page would end the polling.
+				"if (res.status === 502 || res.status === 504) return;",
 				"location.reload()",
 				`<noscript><meta http-equiv="refresh" content="3"></noscript>`,
 			} {
@@ -94,7 +97,7 @@ func TestStartupGateDoesNotResubmitForms(t *testing.T) {
 		if strings.Contains(body, "location.reload()") {
 			t.Errorf("%s: page reloads itself, which resubmits the request:\n%s", method, body)
 		}
-		for _, want := range []string{`fetch(location.href, {cache: "no-store"})`, "location.replace("} {
+		for _, want := range []string{`fetch(location.href, {cache: "no-store"})`, "if (res.status === 502 || res.status === 504) return;", "location.replace("} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: body does not contain %q:\n%s", method, want, body)
 			}

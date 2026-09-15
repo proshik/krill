@@ -221,8 +221,8 @@ one:
 ## Uninstall
 
 ```sh
+systemctl stop krill-update-revert.timer krill-update-restart.timer 2>/dev/null   # first: a timer could restart krill
 systemctl disable --now krill
-systemctl stop krill-update-revert.timer krill-update-restart.timer 2>/dev/null
 rm -f /etc/systemd/system/krill.service /usr/local/bin/krill /usr/local/bin/krill.prev
 rm -f /etc/systemd/system/krill.service.d/10-krill-update.conf
 rmdir /etc/systemd/system/krill.service.d 2>/dev/null

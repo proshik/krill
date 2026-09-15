@@ -1,6 +1,7 @@
-.PHONY: generate build build-cli run test test-integration tidy db-up db-down css css-watch
+.PHONY: generate build build-cli run test test-integration lint-migrations tidy db-up db-down css css-watch
 
 TAILWIND = ./tools/tailwindcss
+SQUAWK = ./tools/squawk
 
 # Shared by both binaries: internal/buildinfo.Version, stamped via ldflags so
 # `krill --version` and `krill-cli version` report the same thing a release
@@ -39,6 +40,38 @@ test:
 
 test-integration:
 	$(TC_ENV) go test -tags=integration ./...
+
+# Migrations numbered at or below this predate the compatibility policy (a migration must keep
+# the previous release bootable, so self-update can roll back); only later ones are linted.
+MIGRATION_COMPAT_FROM ?= 46
+SQUAWK_CONFIG = .squawk.toml
+SQUAWK_FIXTURES = internal/database/testdata/squawk
+
+# Lints new migrations with squawk (rules in .squawk.toml), then checks the rule set still has
+# teeth: breaking.sql must report every `-- expect: <rule>` it lists and compatible.sql must pass.
+lint-migrations:
+	@test -x $(SQUAWK) || { echo "lint-migrations: $(SQUAWK) not found; run ./tools/get-squawk.sh" >&2; exit 1; }
+	@files=$$(printf '%s\n' internal/database/migrations/*.up.sql | \
+		awk -v from=$(MIGRATION_COMPAT_FROM) '{ n = $$0; sub(/.*\//, "", n); sub(/_.*/, "", n); if (n + 0 > from) print }'); \
+	if [ -z "$$files" ]; then \
+		echo "lint-migrations: no migrations above $(MIGRATION_COMPAT_FROM), nothing to lint"; \
+	else \
+		$(SQUAWK) --config $(SQUAWK_CONFIG) $$files || exit 1; \
+	fi
+	@if out=$$($(SQUAWK) --config $(SQUAWK_CONFIG) --reporter gcc $(SQUAWK_FIXTURES)/breaking.sql 2>&1); then \
+		echo "lint-migrations: self-check failed: squawk accepted $(SQUAWK_FIXTURES)/breaking.sql" >&2; exit 1; \
+	fi; \
+	rules=$$(sed -n 's/^-- expect: *//p' $(SQUAWK_FIXTURES)/breaking.sql); \
+	[ -n "$$rules" ] || { echo "lint-migrations: self-check failed: no '-- expect:' lines in breaking.sql" >&2; exit 1; }; \
+	for rule in $$rules; do \
+		printf '%s\n' "$$out" | grep -q "warning: $$rule " || { \
+			echo "lint-migrations: self-check failed: $$rule is no longer reported for breaking.sql" >&2; \
+			printf '%s\n' "$$out" >&2; exit 1; }; \
+	done
+	@$(SQUAWK) --config $(SQUAWK_CONFIG) $(SQUAWK_FIXTURES)/compatible.sql >/dev/null || { \
+		echo "lint-migrations: self-check failed: squawk rejected $(SQUAWK_FIXTURES)/compatible.sql" >&2; \
+		$(SQUAWK) --config $(SQUAWK_CONFIG) $(SQUAWK_FIXTURES)/compatible.sql >&2; exit 1; }
+	@echo "lint-migrations: ok (self-check passed)"
 
 tidy:
 	go mod tidy

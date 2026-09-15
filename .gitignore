@@ -11,5 +11,6 @@
 internal/database/schema.sql
 .superpowers/
 /tools/tailwindcss
+/tools/squawk
 # Maintainer design specs/plans and Russian planning notes: local-only, never published
 /docs/superpowers/

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -63,6 +64,14 @@ func runMigrations(ctx context.Context, dsn string) error {
 		return err
 	}
 	defer sqlDB.Close()
+
+	// golang-migrate pings and takes its advisory lock with
+	// context.Background(), so a shutdown while the database does not answer
+	// would otherwise wait for systemd's stop timeout. Pinging with ctx first
+	// makes that wait end with the signal.
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping database: %w", err)
+	}
 
 	driver, err := postgres.WithInstance(sqlDB, &postgres.Config{})
 	if err != nil {
@@ -143,4 +152,21 @@ func maxEmbeddedVersion() (uint, error) {
 		return 0, fmt.Errorf("no migration files found under migrations/")
 	}
 	return highest, nil
+}
+
+// migrationVersion parses the leading decimal digits of a migration file
+// name (e.g. "000047_add_widgets.up.sql" -> 47, true).
+func migrationVersion(name string) (uint, bool) {
+	i := 0
+	for i < len(name) && name[i] >= '0' && name[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(name[:i], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return uint(v), true
 }

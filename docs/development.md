@@ -50,22 +50,49 @@ All settings are described in [Configuration](configuration.md).
 
 A migration must keep the *previous* release's binary able to start against the schema it
 leaves behind: only additive changes are allowed — new tables, new columns that are nullable
-or carry a `DEFAULT`, new non-unique indexes. New unique indexes and foreign keys are not
-additive, an index the previous release relies on for `ON CONFLICT` must never be dropped, and
-the previous binary must tolerate new enum or `CHECK` values the new one writes — widen reads a
-release before writes. Dropping or renaming something, changing a column's type,
-adding `NOT NULL` (as a new column or via `SET NOT NULL`) with no default, or adding a new
-`CHECK` constraint is safe only one release after the code has stopped using the old shape;
-dropping a `CHECK` is always fine, and dropping one and re-adding it under the same name with a
-wider condition in the same migration counts as safe too (the lint can't tell a widened
-re-creation from a tightened one, so review by eye still matters). This is what makes automatic
-rollback on a failed self-update possible: `database.RunMigrations`
-(`internal/database/migrate.go`) skips applying migrations (with a warning log) when the
-database schema is already ahead of what the running binary embeds, instead of refusing to
-start. `internal/database/compat.go` lints every migration above version 46 for the disallowed
-patterns, one violation per breaking SQL statement; a statement that intentionally breaks this
-needs a `-- krill:compat-break-ok <reason>` comment directly above it, explaining which release
-it's safe from — the marker exempts only that one statement, not the rest of the file.
+or carry a `DEFAULT`, new non-unique indexes. New unique indexes and foreign keys on existing
+tables are not additive, an index the previous release relies on for `ON CONFLICT` must never be
+dropped, and the previous binary must tolerate new enum or `CHECK` values the new one writes —
+widen reads a release before writes. Dropping or renaming something, changing a column's type,
+adding `NOT NULL` (as a new column or via `SET NOT NULL`) with no default, dropping `NOT NULL`,
+or adding a `CHECK` that could reject what the previous release writes is safe only one release
+after the code has stopped using the old shape (expand/contract). Dropping a constraint is always
+fine. This is what makes automatic rollback on a failed self-update possible:
+`database.RunMigrations` (`internal/database/migrate.go`) skips applying migrations (with a
+warning log) when the database schema is already ahead of what the running binary embeds,
+instead of refusing to start.
+
+CI checks every migration above version 46 with [squawk](https://squawkhq.com), a Postgres
+migration linter. To run the same check locally:
+
+```sh
+./tools/get-squawk.sh    # once: downloads the pinned, checksum-verified binary to tools/squawk
+make lint-migrations
+```
+
+`.squawk.toml` keeps only the rules about compatibility with the previous binary (dropping or
+renaming a column or table, changing a column type, `SET NOT NULL`, a `NOT NULL` column without a
+default, `ADD CONSTRAINT ... UNIQUE`, a new foreign key, `DROP NOT NULL`) and turns the rest off.
+The target also checks the rule set against `internal/database/testdata/squawk/breaking.sql`
+(must fail, reporting every rule it expects) and `compatible.sql` (must pass). A unique index or
+foreign key added to a table created earlier in the same migration is not flagged.
+
+squawk checks the mechanical cases; reviewers still read every migration. It does not catch a new
+or tightened `CHECK` constraint, enum widening the previous binary cannot handle, dropping an
+index used by `ON CONFLICT`, or `CREATE UNIQUE INDEX` on an existing table.
+
+A statement that intentionally breaks the policy needs `-- squawk-ignore <rule>` on the line
+directly before it, followed on the same line by a comment with the reason and the release it is
+safe from:
+
+```sql
+-- squawk-ignore ban-drop-column -- safe from v0.5.0: nothing since v0.4.0 reads legacy_note
+ALTER TABLE users DROP COLUMN legacy_note;
+```
+
+The ignore applies to the line squawk reports, so keep nothing between it and the statement (a
+reason on its own line goes above the ignore), and in a multi-line statement put it right above
+the offending clause.
 
 ## Generated code
 
