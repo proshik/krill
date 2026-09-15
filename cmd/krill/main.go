@@ -36,6 +36,7 @@ import (
 	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/selfupdate"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/volume"
@@ -84,7 +85,7 @@ func run() error {
 		return err
 	}
 	setupLogging(cfg.LogLevel, cfg.LogFormat)
-	slog.Info("starting krill", "listen", cfg.ListenAddr, "base_domain", cfg.BaseDomain, "network", cfg.Network)
+	slog.Info("starting krill", "version", buildinfo.String(), "listen", cfg.ListenAddr, "base_domain", cfg.BaseDomain, "network", cfg.Network)
 
 	// Encryption-at-rest for stored credentials (opt-in via KRILL_SECRET_KEY).
 	secret.Init(cfg.SecretKey)
@@ -450,6 +451,17 @@ func run() error {
 	app.SetGatewayReconcile(startGatewayReconciler(ctx, engine, q, cfg.Network, acme, panelProvider))
 	app.SetPanelGateway(gatewayTokens, panelUpstream, panelUpstreamErr)
 
+	// Self-update: discover newer releases and install one from Settings → Updates.
+	updateChecker := selfupdate.NewChecker(cfg.UpdateRepo, cfg.UpdateCheckInterval, cfg.AllowPrivateEgress)
+	updater := selfupdate.NewUpdater(firewall.LocalRunner{Timeout: 60 * time.Second}, updateChecker,
+		cfg.UpdateRepo, cfg.AllowPrivateEgress, updateBusy{
+			runningDeploys:     q.CountRunningDeployments,
+			migratingInstances: q.CountMigratingDBInstances,
+			backups:            backupSvc,
+			volumes:            volSvc,
+		}.reason)
+	app.SetSelfUpdate(updateChecker, updater)
+
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
 	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
@@ -480,6 +492,17 @@ func run() error {
 	// already running, and assigning srv.Handler now would race with it.
 	gate.Swap(app.Router())
 	slog.Info("krill serving")
+
+	// A binary started by a self-update confirms itself once it serves the UI,
+	// which disarms the dead-man timer that would otherwise put the previous
+	// binary back. In the background: it runs a few systemctl calls and may wait
+	// for a request that is still validating, and nothing after this point
+	// (the network migration, the signal handler) should wait on it.
+	go updater.ConfirmStartup(ctx)
+	go updateChecker.Run(ctx)
+	if cfg.UpdateCheckInterval <= 0 {
+		slog.Info("background update check disabled (KRILL_UPDATE_CHECK_INTERVAL <= 0)")
+	}
 
 	// An install that predates per-organization networks has every service —
 	// every tenant's — on the single shared overlay, where any container can
