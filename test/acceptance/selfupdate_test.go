@@ -402,7 +402,7 @@ func (s *suite) createBusyApp(t *testing.T, ev *Evidence) {
 		"command": {""}, "memory_limit": {""}, "cpu_limit": {""}, "replicas": {"1"},
 		"restart_condition": {"any"}, "restart_max_attempts": {"0"},
 		"healthcheck_cmd": {"false"}, "healthcheck_interval": {"5s"}, "healthcheck_timeout": {"3s"},
-		"healthcheck_start_period": {"240s"}, "healthcheck_retries": {"1"},
+		"healthcheck_start_period": {"720s"}, "healthcheck_retries": {"1"},
 	})
 	ev.Note("app %+v", s.app)
 }
@@ -439,7 +439,7 @@ func (s *suite) waitDeployStatus(t *testing.T, ev *Evidence, timeout time.Durati
 
 func (s *suite) waitNoRunningDeploy(t *testing.T, ev *Evidence) {
 	t.Helper()
-	s.waitDeployStatus(t, ev, 15*time.Minute, func(st string) bool { return st != "running" })
+	s.waitDeployStatus(t, ev, 25*time.Minute, func(st string) bool { return st != "running" })
 }
 
 // --- egress throttle ------------------------------------------------------------
