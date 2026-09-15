@@ -1,4 +1,4 @@
-.PHONY: generate build build-cli run test test-integration lint-migrations tidy db-up db-down css css-watch
+.PHONY: generate build build-cli run test test-integration acceptance-selfupdate acceptance-vm-smoke lint-migrations tidy db-up db-down css css-watch
 
 TAILWIND = ./tools/tailwindcss
 SQUAWK = ./tools/squawk
@@ -40,6 +40,16 @@ test:
 
 test-integration:
 	$(TC_ENV) go test -tags=integration ./...
+
+# Live self-update acceptance in a disposable Lima VM (test/acceptance, see
+# docs/development.md). Not part of `make test`. acceptance-selfupdate
+# publishes throwaway releases to KRILL_ACCEPT_REPO; acceptance-vm-smoke
+# touches no GitHub repository.
+acceptance-selfupdate:
+	KRILL_ACCEPT=1 go test -tags=acceptance -timeout 150m -v -run TestSelfUpdateAcceptance ./test/acceptance/
+
+acceptance-vm-smoke:
+	KRILL_ACCEPT=1 go test -tags=acceptance -timeout 40m -v -run TestVMSmoke ./test/acceptance/
 
 # Migrations numbered at or below this predate the compatibility policy (a migration must keep
 # the previous release bootable, so self-update can roll back); only later ones are linted.

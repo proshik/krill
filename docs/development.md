@@ -131,6 +131,42 @@ Krill (`:18080`) and Traefik (host `:80`), then walks through login, roles, imag
 Dockerfile deploys, rolling updates, routing and a managed Postgres. It cleans up after itself
 and exits non-zero on any failed check.
 
+### Self-update acceptance
+
+[`test/acceptance/`](../test/acceptance/) proves **Settings → Updates** on a real systemd host:
+it builds five throwaway releases of the current `HEAD` (`v0.90.0`–`v0.90.4`, with extra
+migrations, a crash right after migrating, a 45-second migration and a failing one), installs
+`v0.90.0` with `install.sh` into a disposable [Lima](https://lima-vm.io) VM (Ubuntu 24.04,
+4 CPUs, 6 GiB), and drives the Updates page over a port forward to `127.0.0.1:28080`. The
+tests carry the `acceptance` build tag and do nothing unless `KRILL_ACCEPT=1`, so `make test`
+never runs them.
+
+Prerequisites: `limactl` 2.x, Go, and for the full run the `gh` CLI signed in with write access
+to the test repository (default `proshik/krill-update-e2e`, public, with at least one commit).
+It runs in two phases:
+
+```sh
+make acceptance-vm-smoke     # builds the releases, creates the VM, installs v0.90.0, checks the page
+make acceptance-selfupdate   # the full scenario chain
+```
+
+- **VM smoke** writes nothing to GitHub. The first run downloads the Ubuntu image and installs
+  Docker in the VM: 10–25 minutes.
+- **The full run publishes the five releases to the test repository** and moves its "latest"
+  release with `gh release edit --latest` as the scenarios go: a deploy refusing the update,
+  an update and a manual rollback, a crash-looping release put back by the 10-minute timer,
+  `install.sh` over a UI update with `systemctl stop` in the middle of a migration, and the
+  documented recovery from a failed migration. The two timer scenarios wait for the timer, so
+  expect well over an hour.
+
+Settings, all optional: `KRILL_ACCEPT_VM` (`krill-accept`), `KRILL_ACCEPT_REPO`,
+`KRILL_ACCEPT_HOST_PORT` (`28080`), `KRILL_ACCEPT_ARCH` (`arm64`), `KRILL_ACCEPT_WORKDIR`
+(`.superpowers/acceptance`, git-ignored: exported sources, built releases, the Lima template
+and `report.md` with the evidence of every step). The VM is deleted at the end unless
+`KRILL_ACCEPT_KEEP_VM=1`; a failed step stops the chain and keeps the VM for inspection
+(`limactl shell krill-accept`). Each run starts from a fresh install inside the VM, so a kept
+VM can be reused. Delete it with `limactl delete --force krill-accept`.
+
 ## Make targets
 
 | Target | What it does |
@@ -141,6 +177,8 @@ and exits non-zero on any failed check.
 | `make build-cli` | Build `bin/krill-cli` (needs no generated code). |
 | `make test` | All tests, with the Colima socket settings. |
 | `make test-integration` | Tests tagged `integration`. |
+| `make acceptance-vm-smoke` | Self-update acceptance, VM part only (see above). |
+| `make acceptance-selfupdate` | Full self-update acceptance; publishes test releases. |
 | `make css` / `make css-watch` | Rebuild CSS once / on change. |
 | `make db-up` / `make db-down` | Start / stop the development Postgres. |
 | `make tidy` | `go mod tidy`. |
