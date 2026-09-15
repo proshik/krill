@@ -278,6 +278,9 @@ func TestNewer(t *testing.T) {
 		{"dev+commit current never compares newer", "dev+abc123", "v0.2.0", false},
 		{"a prerelease latest still outranks an older release by plain semver", "v0.1.0", "v0.2.0-rc1", true},
 		{"empty latest is not newer", "v0.1.0", "", false},
+		{"a git describe build is never older than the tag it descends from", "v0.1.3-6-g1a09ec0-dirty", "v0.1.3", false},
+		{"a git describe build is never offered a newer release either", "v0.1.2-3-gabc1234", "v0.1.3", false},
+		{"a dirty tag build is not a release", "v0.1.3-dirty", "v0.2.0", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -44,11 +44,15 @@ func ValidTag(tag string) bool {
 }
 
 // Newer reports whether latest is a strictly greater semantic version than
-// current. Both must be valid semver for the comparison to mean anything —
-// in particular the "dev" and "dev+<rev>" strings a local (non-release)
-// build reports, and an empty string, never compare as newer than anything.
+// current, where current must be a release build (buildinfo.IsRelease): only
+// a release is ever offered an update. A local build never is — neither the
+// "dev" and "dev+<rev>" strings a plain `go build` reports nor the
+// `git describe` string `make build` stamps. The latter ("v0.1.3-6-g1a09ec0",
+// "v0.1.3-dirty") is valid semver, but a prerelease, so plain semver would
+// rank it older than the very tag it descends from and "update" it backwards.
+// An invalid or empty latest is never newer either.
 func Newer(current, latest string) bool {
-	return semver.IsValid(current) && semver.IsValid(latest) && semver.Compare(latest, current) > 0
+	return buildinfo.IsRelease(current) && semver.IsValid(latest) && semver.Compare(latest, current) > 0
 }
 
 // Release is a discovered GitHub release.

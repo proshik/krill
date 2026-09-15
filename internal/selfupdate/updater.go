@@ -225,6 +225,17 @@ func (u *Updater) setPhase(p Phase) {
 	u.mu.Unlock()
 }
 
+// Busy returns the reason an update or rollback would be refused right now
+// because of other work in flight ("deploy", "backup", ...), or "" when
+// nothing is running or no busy callback is wired. The UI uses it to disable
+// its buttons and say why; ctx bounds the check.
+func (u *Updater) Busy(ctx context.Context) string {
+	if u.busy == nil {
+		return ""
+	}
+	return u.busy(ctx)
+}
+
 // busyReason asks the busy callback, bounded so a stuck database cannot hang
 // a Start.
 func (u *Updater) busyReason() string {

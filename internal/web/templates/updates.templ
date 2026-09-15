@@ -1,0 +1,190 @@
+package templates
+
+import (
+	"net/url"
+	"time"
+
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// UpdatesView is the state of Krill's self-update, as the Updates page shows it.
+type UpdatesView struct {
+	Wired          bool
+	Current        string
+	IsRelease      bool   // Current is a release build; only a release is offered updates
+	Latest         string // "" when never discovered
+	LatestURL      string
+	CheckedAt      time.Time // zero when never checked
+	CheckErr       string    // last check error text, "" when none
+	Available      bool      // Latest is newer than Current
+	Supported      bool
+	UnsupportedKey string // "update.unsupported.<code>"
+	BusyKey        string // "update.busy.<reason>" when busy, else ""
+	Phase          string // installer status phase
+	PhaseActive    bool
+	JobTag         string
+	JobErr         string
+	Previous       string // version of krill.prev, "" when none
+	HasLast        bool
+	LastFrom       string
+	LastTo         string
+	LastReason     string
+	LastOK         bool
+}
+
+// blocked reports whether installing or rolling back is refused right now.
+func (v UpdatesView) blocked() bool {
+	return !v.Supported || v.BusyKey != "" || v.PhaseActive
+}
+
+// updatesPath is the Updates page of an organization.
+func updatesPath(orgID int64) string {
+	return "/orgs/" + itoa(orgID) + "/updates"
+}
+
+// updateStatusURL is the status fragment's poll address; from is the version
+// that rendered the page.
+func updateStatusURL(orgID int64, current string) string {
+	return updatesPath(orgID) + "/status?from=" + url.QueryEscape(current)
+}
+
+// Updates renders the running and latest versions, the update and rollback
+// actions, the status of a running job and the outcome of the last one.
+templ Updates(org db.Organization, role string, v UpdatesView) {
+	@Layout(i18n.T(ctx, "update.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.desc") }</p>
+		if !v.Wired {
+			<div class="k-card mb-4">
+				<p style="max-width:720px">{ i18n.T(ctx, "update.unwired") }</p>
+			</div>
+		} else {
+			if v.HasLast {
+				switch v.LastReason {
+					case "reverted":
+						@updateResult(false, i18n.Tf(ctx, "update.result.reverted", v.LastTo))
+					case "interrupted":
+						@updateResult(false, i18n.Tf(ctx, "update.result.interrupted", v.LastTo))
+					case "rollback":
+						@updateResult(true, i18n.Tf(ctx, "update.result.rollback", v.LastFrom, v.LastTo))
+					default:
+						if v.LastOK {
+							@updateResult(true, i18n.Tf(ctx, "update.result.updated", v.LastFrom, v.LastTo))
+						}
+				}
+			}
+			<div class="k-card mb-4">
+				<div class="flex items-center gap-2 mb-2">
+					<span class="k-label" style="margin:0">{ i18n.T(ctx, "update.current") }</span>
+					<span class="k-mono">{ v.Current }</span>
+				</div>
+				<div class="flex items-center gap-2 mb-2">
+					<span class="k-label" style="margin:0">{ i18n.T(ctx, "update.latest") }</span>
+					if v.Latest != "" {
+						<span class="k-mono">{ v.Latest }</span>
+						<a href={ templ.URL(v.LatestURL) } target="_blank" rel="noopener noreferrer" style="color:var(--color-accent);font-size:13px">{ i18n.T(ctx, "update.release_notes") }</a>
+					} else {
+						<span style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "update.latest.none") }</span>
+					}
+				</div>
+				if !v.CheckedAt.IsZero() {
+					<p style="color:var(--color-muted);font-size:13px">{ i18n.Tf(ctx, "update.checked_at", v.CheckedAt.UTC().Format("2006-01-02 15:04 UTC")) }</p>
+				}
+				if v.CheckErr != "" {
+					<p style="color:var(--color-err);font-size:13px;max-width:720px">{ i18n.Tf(ctx, "update.check_failed", v.CheckErr) }</p>
+				}
+				<form method="post" action={ templ.SafeURL(updatesPath(org.ID) + "/check") } class="mt-3">
+					<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "update.check_now") }</button>
+				</form>
+			</div>
+			if !v.IsRelease {
+				<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "update.dev_build", v.Current) }</p>
+			} else if v.Available {
+				<div class="k-card mb-4">
+					<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "update.available", v.Latest) }</p>
+					@updateBlockedReason(v)
+					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/install") } data-confirm={ i18n.Tf(ctx, "update.confirm.install", v.Latest) } data-confirm-label={ i18n.T(ctx, "update.install") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel, 'primary')">
+						<input type="hidden" name="tag" value={ v.Latest }/>
+						<button class="k-btn k-btn-primary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.install_to", v.Latest) }</button>
+					</form>
+				</div>
+			} else if v.Latest != "" {
+				<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.up_to_date") }</p>
+			}
+			if v.Phase != "idle" {
+				@UpdateStatus(org.ID, v.Current, v.Phase, v.PhaseActive, v.JobTag, v.JobErr)
+			}
+			if v.Previous != "" {
+				<div class="k-card mb-4">
+					<p class="mb-2">{ i18n.Tf(ctx, "update.previous", v.Previous) }</p>
+					<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.rollback.desc") }</p>
+					if !v.Available {
+						@updateBlockedReason(v)
+					}
+					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/rollback") } data-confirm={ i18n.Tf(ctx, "update.confirm.rollback", v.Previous) } data-confirm-label={ i18n.T(ctx, "update.rollback") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel)">
+						<button class="k-btn k-btn-secondary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.rollback_to", v.Previous) }</button>
+					</form>
+				</div>
+			}
+		}
+	}
+}
+
+// updateResult is the outcome of the previous process's update or rollback.
+templ updateResult(ok bool, text string) {
+	<div class="k-card mb-4">
+		<div class="flex items-center gap-2">
+			if ok {
+				<span class="k-badge k-badge-running"><span class="k-dot"></span></span>
+			} else {
+				<span class="k-badge k-badge-error"><span class="k-dot"></span></span>
+			}
+			<span style="max-width:720px">{ text }</span>
+		</div>
+	</div>
+}
+
+// updateBlockedReason says why the update and rollback buttons are disabled:
+// the host cannot update itself, or other work must finish first.
+templ updateBlockedReason(v UpdatesView) {
+	if !v.Supported {
+		<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.unsupported.intro") } { i18n.T(ctx, v.UnsupportedKey) }</p>
+	} else if v.BusyKey != "" {
+		<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "update.busy_intro", i18n.T(ctx, v.BusyKey)) }</p>
+	}
+}
+
+// UpdateStatus is the status of the self-update job: an active phase or
+// "failed" (the page never renders it for an idle installer). While the job is
+// active it polls itself every 2 seconds; the poll answers with a full page
+// refresh as soon as the job is no longer active, so the failed card only ever
+// comes from a page render.
+templ UpdateStatus(orgID int64, current, phase string, active bool, tag, errText string) {
+	<div
+		id="k-update-status"
+		class="k-card mb-4"
+		if active {
+			hx-get={ updateStatusURL(orgID, current) }
+			hx-trigger="every 2s"
+			hx-swap="outerHTML"
+		}
+	>
+		<div class="flex items-center gap-2">
+			if active {
+				<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "update.phase." + phase) }</span>
+			} else {
+				<span class="k-badge k-badge-error"><span class="k-dot"></span>{ i18n.T(ctx, "update.phase." + phase) }</span>
+			}
+			if tag != "" {
+				<span class="k-mono">{ i18n.Tf(ctx, "update.job_tag", tag) }</span>
+			}
+		</div>
+		if phase == "restarting" {
+			<p class="mt-3" style="max-width:720px">{ i18n.T(ctx, "update.restarting_hint") }</p>
+		}
+		if phase == "failed" {
+			<p class="mt-3" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "update.job_failed", errText) }</p>
+		}
+	</div>
+}

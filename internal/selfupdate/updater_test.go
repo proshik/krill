@@ -602,6 +602,7 @@ func TestStart_Refusals(t *testing.T) {
 		{"nothing discovered yet", testTag, func(_ *testing.T, h *harness) { h.checker.state.Latest = Release{} }, wantIs(ErrNotLatest)},
 		{"not newer", testCurrent, func(_ *testing.T, h *harness) { h.checker.state.Latest = Release{Tag: testCurrent} }, wantIs(ErrNotNewer)},
 		{"dev build", testTag, func(_ *testing.T, h *harness) { h.u.current = "dev+abc123" }, wantIs(ErrNotNewer)},
+		{"git describe build", testTag, func(_ *testing.T, h *harness) { h.u.current = testTag + "-6-g1a09ec0-dirty" }, wantIs(ErrNotNewer)},
 		{"pending marker", testTag, func(t *testing.T, h *harness) { writeFile(t, h.pending, "{}") }, wantIs(ErrPending)},
 		{"busy", testTag, func(_ *testing.T, h *harness) {
 			h.u.busy = func(context.Context) string { return "deploy" }
@@ -1284,6 +1285,35 @@ func TestLinkOrCopy(t *testing.T) {
 		}
 		assertMissing(t, dst)
 	})
+}
+
+// --- Busy ---------------------------------------------------------------------
+
+func TestBusy(t *testing.T) {
+	type ctxKey struct{}
+	h := newHarness(t)
+
+	if got := h.u.Busy(context.Background()); got != "" {
+		t.Errorf("Busy() without a callback = %q, want \"\"", got)
+	}
+
+	var seen any
+	h.u.busy = func(ctx context.Context) string {
+		seen = ctx.Value(ctxKey{})
+		return "volume_backup"
+	}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "caller")
+	if got := h.u.Busy(ctx); got != "volume_backup" {
+		t.Errorf("Busy() = %q, want volume_backup", got)
+	}
+	if seen != "caller" {
+		t.Errorf("the callback got a context without the caller's value (%v)", seen)
+	}
+
+	h.u.busy = func(context.Context) string { return "" }
+	if got := h.u.Busy(context.Background()); got != "" {
+		t.Errorf("Busy() when idle = %q, want \"\"", got)
+	}
 }
 
 // --- Previous -----------------------------------------------------------------
