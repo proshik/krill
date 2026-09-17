@@ -2,12 +2,15 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
@@ -121,8 +124,8 @@ func TestObservabilityRequiresInstanceAdmin(t *testing.T) {
 	if env.ctl.count() != 0 || len(env.checked) != 0 {
 		t.Error("a refused request reached the agent")
 	}
-	if _, err := env.q.GetObservabilitySettings(context.Background()); err == nil {
-		t.Error("a refused request stored settings")
+	if _, err := env.q.GetObservabilitySettings(context.Background()); !errors.Is(err, pgx.ErrNoRows) {
+		t.Errorf("a refused request stored settings (err=%v, want pgx.ErrNoRows)", err)
 	}
 }
 
@@ -190,6 +193,98 @@ func TestObservabilitySaveEnableDisable(t *testing.T) {
 	env.do(t, http.MethodPost, env.base+"/disable", url.Values{}, env.cookie)
 	if s, _ := observability.Load(ctx, env.q); s.Enabled || env.ctl.count() != 3 {
 		t.Errorf("after disable: enabled=%v triggers=%d", s.Enabled, env.ctl.count())
+	}
+}
+
+// TestObservabilitySaveUndecryptablePassword covers the fix for the finding
+// in review round 1: a save must still trigger a reconcile when the
+// (raw, undecrypted) enabled bit is on, even if a stored password can no
+// longer be decrypted under the current KRILL_SECRET_KEY — and the response
+// must say so rather than claim plain success.
+func TestObservabilitySaveUndecryptablePassword(t *testing.T) {
+	secret.Init("old-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+
+	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
+		t.Fatalf("initial save: %q", flashCookieValue(rec))
+	}
+	if rec := env.do(t, http.MethodPost, env.base+"/enable", url.Values{}, env.cookie); hasErrFlash(rec) {
+		t.Fatalf("enable: %q", flashCookieValue(rec))
+	}
+	if env.ctl.count() != 1 {
+		t.Fatalf("triggers after enable = %d, want 1", env.ctl.count())
+	}
+
+	// Rotate the key: the stored metrics password can no longer be decrypted.
+	secret.Init("new-key")
+
+	// Save again (empty password field keeps the now-undecryptable stored
+	// value). The settings are still enabled, so this must still trigger a
+	// reconcile — but the response must flash the undecryptable error, not
+	// a plain success.
+	form := fullForm()
+	form.Set("metrics_password", "")
+	rec := env.do(t, http.MethodPost, env.base, form, env.cookie)
+	if !hasErrFlash(rec) {
+		t.Fatalf("save with an undecryptable stored password = %q, want an error flash", flashCookieValue(rec))
+	}
+	if msg := flashText(rec); !strings.Contains(msg, "cannot be decrypted") {
+		t.Errorf("flash = %q, want the undecryptable-password text", msg)
+	}
+	if env.ctl.count() != 2 {
+		t.Errorf("triggers = %d, want 2 (the reconcile must still run despite the decrypt failure)", env.ctl.count())
+	}
+}
+
+// TestObservabilitySaveValidationErrors covers the remaining Save error ->
+// flash mappings not already exercised by TestObservabilitySaveEnableDisable
+// (which covers ErrInvalidURL).
+func TestObservabilitySaveValidationErrors(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+
+	cases := []struct {
+		name string
+		form url.Values
+		want string
+	}{
+		{
+			name: "invalid user",
+			form: url.Values{"metrics_url": {"https://mimir.example.com/api/v1/push"}, "metrics_user": {"bad user"}},
+			want: "must not contain spaces",
+		},
+		{
+			name: "password too long",
+			form: url.Values{"metrics_url": {"https://mimir.example.com/api/v1/push"}, "metrics_user": {"tenant"}, "metrics_password": {strings.Repeat("x", 4097)}},
+			want: "too long",
+		},
+	}
+	for _, c := range cases {
+		rec := env.do(t, http.MethodPost, env.base, c.form, env.cookie)
+		if !hasErrFlash(rec) {
+			t.Errorf("%s: accepted, want an error flash", c.name)
+			continue
+		}
+		if msg := flashText(rec); !strings.Contains(msg, c.want) {
+			t.Errorf("%s: flash = %q, want it to contain %q", c.name, msg, c.want)
+		}
+	}
+
+	// ErrNothingConfigured: clearing both addresses while enabled is refused.
+	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
+		t.Fatalf("save: %q", flashCookieValue(rec))
+	}
+	if rec := env.do(t, http.MethodPost, env.base+"/enable", url.Values{}, env.cookie); hasErrFlash(rec) {
+		t.Fatalf("enable: %q", flashCookieValue(rec))
+	}
+	rec := env.do(t, http.MethodPost, env.base, url.Values{}, env.cookie)
+	if !hasErrFlash(rec) {
+		t.Fatal("clearing both addresses while enabled was accepted")
+	}
+	if msg := flashText(rec); !strings.Contains(msg, "Set a metrics or a logs address") {
+		t.Errorf("flash = %q", msg)
 	}
 }
 

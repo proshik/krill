@@ -101,12 +101,39 @@ func (s *Server) saveObservability(w http.ResponseWriter, r *http.Request) {
 		s.flashObsErr(w, r, "saveObservability", err)
 		return
 	}
-	cur, err := observability.Load(r.Context(), s.q)
-	enabled := err == nil && cur.Enabled
+
+	// Whether to trigger a reconcile depends only on the raw enabled bit, not
+	// on whether the stored passwords still decrypt: Save deliberately keeps a
+	// password that no longer decrypts (KRILL_SECRET_KEY rotated), and the
+	// reconcile still needs to run for whatever DID change (a new URL, say).
+	row, err := s.q.GetObservabilitySettings(r.Context())
+	if err != nil {
+		logFrom(r).Error("saveObservability: read settings after save failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	enabled := row.Enabled
 	logFrom(r).Info("observability settings saved",
 		"metrics", strings.TrimSpace(in.Metrics.URL) != "", "logs", strings.TrimSpace(in.Logs.URL) != "", "enabled", enabled)
 	if enabled {
 		s.obs.ctl.Trigger()
+	}
+
+	// Load decrypts the stored passwords; a stored one that no longer
+	// decrypts must not be reported as a plain success, even though the save
+	// itself (and the trigger above) already went through.
+	if _, err := observability.Load(r.Context(), s.q); err != nil {
+		if errors.Is(err, secret.ErrUndecryptable) {
+			logFrom(r).Warn("saveObservability: a stored password cannot be decrypted with the current key")
+			s.flashErrT(w, r, "flash.err.obs_undecryptable")
+			return
+		}
+		logFrom(r).Error("saveObservability: reload after save failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+
+	if enabled {
 		s.flashOK(w, r, "flash.ok.obs_saved_applying")
 	} else {
 		s.flashOK(w, r, "flash.ok.obs_saved")
@@ -175,6 +202,15 @@ func (s *Server) checkObservability(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, observabilityBack(o.ID), http.StatusSeeOther)
 }
 
+// checkArgKeys are the observability.Result keys whose i18n text takes a %s
+// argument (Detail) — the other keys never take Detail, so it would be wrong
+// to feed Tf a key that has no verb just because Detail happened to be "".
+var checkArgKeys = map[string]bool{
+	"obs.check.auth":    true,
+	"obs.check.http":    true,
+	"obs.check.network": true,
+}
+
 func checkMessage(ctx context.Context, rep observability.Report) (string, bool) {
 	allOK := true
 	var parts []string
@@ -182,7 +218,7 @@ func checkMessage(ctx context.Context, rep observability.Report) (string, bool) 
 		text := i18n.T(ctx, "obs.check.not_configured")
 		if res != nil {
 			allOK = allOK && res.OK
-			if res.Detail != "" {
+			if checkArgKeys[res.Key] {
 				text = i18n.Tf(ctx, res.Key, res.Detail)
 			} else {
 				text = i18n.T(ctx, res.Key)
