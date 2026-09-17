@@ -21,11 +21,16 @@ type fakeEngine struct {
 	update   string            // UpdateState reported before a deploy
 	rollback bool              // a deploy rolls back
 	neverRun bool              // a deploy's task never runs
+	created  bool              // NetworkEnsure reports the network as new
 }
 
 func newFakeEngine() *fakeEngine { return &fakeEngine{objects: map[string][]byte{}} }
 
-func (f *fakeEngine) NetworkEnsure(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeEngine) NetworkEnsure(context.Context, string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.created, nil
+}
 func (f *fakeEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -42,6 +47,8 @@ func (f *fakeEngine) ServiceRemove(context.Context, string) error {
 	return nil
 }
 func (f *fakeEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return docker.ServiceState{Found: f.labels != nil, Running: 1, Desired: 1}, nil
 }
 func (f *fakeEngine) ServiceProgress(_ context.Context, _ string, exclude []string) (docker.ServiceProgress, error) {
@@ -194,6 +201,30 @@ func TestReconcileRedeploysWhileUpdateUnsettled(t *testing.T) {
 	}
 }
 
+// A recreated network is new to Swarm even under the old name, so a service
+// whose spec hash still matches must be deployed again to attach to it.
+func TestReconcileRedeploysWhenNetworkRecreated(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	ctx := context.Background()
+	s := fullSettings()
+	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+		t.Fatal(err)
+	}
+	eng.mu.Lock()
+	eng.created = true
+	eng.mu.Unlock()
+	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.deploys) != 2 {
+		t.Fatalf("deploys = %d, want 2 (the network was recreated)", len(eng.deploys))
+	}
+	if eng.deploys[1].Labels[specHashLabel] != eng.deploys[0].Labels[specHashLabel] {
+		t.Error("the spec itself changed; the test no longer isolates the network flag")
+	}
+}
+
 func TestReconcileFailures(t *testing.T) {
 	fastConverge(t)
 	ctx := context.Background()
@@ -202,6 +233,9 @@ func TestReconcileFailures(t *testing.T) {
 	eng.rollback = true
 	if err := Reconcile(ctx, eng, fullSettings(), "krill-net"); err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Errorf("rollback: %v", err)
+	}
+	if len(eng.pruned) != 0 {
+		t.Error("objects pruned after a rolled-back deploy")
 	}
 
 	eng = newFakeEngine()

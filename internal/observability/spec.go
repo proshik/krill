@@ -58,7 +58,9 @@ func objectsOf(s Settings, cfg []byte) Objects {
 
 // NodeSpec is the global agent service. It sits on the base network only (for
 // egress) and never on an organization's network: a container holding the
-// docker socket stays out of the networks tenant code runs in.
+// docker socket stays out of the networks tenant code runs in. Tenant services
+// the per-organization network migration has not moved yet still share the
+// base network; the agent listens on nothing reachable, so that exposes nothing.
 func NodeSpec(obj Objects, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
 		Name:     NodeServiceName,

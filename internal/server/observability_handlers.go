@@ -76,6 +76,8 @@ func (s *Server) flashObsErr(w http.ResponseWriter, r *http.Request, op string, 
 		s.flashErrT(w, r, "flash.err.obs_nothing")
 	case errors.Is(err, observability.ErrNotSaved):
 		s.flashErrT(w, r, "flash.err.obs_not_saved")
+	case errors.Is(err, observability.ErrPasswordRequired):
+		s.flashErrT(w, r, "flash.err.obs_password_required")
 	case errors.Is(err, secret.ErrUndecryptable):
 		s.flashErrT(w, r, "flash.err.obs_undecryptable")
 	default:
@@ -194,11 +196,11 @@ func (s *Server) checkObservability(w http.ResponseWriter, r *http.Request) {
 	}
 	msg, allOK := checkMessage(r.Context(), s.obs.check(r.Context(), st))
 	logFrom(r).Info("observability check", "ok", allOK)
+	kind := "ok"
 	if !allOK {
-		s.flashErr(w, r, msg) // sets the flash and redirects back
-		return
+		kind = "err"
 	}
-	s.setFlash(w, r, "ok", msg)
+	s.setFlash(w, r, kind, msg)
 	http.Redirect(w, r, observabilityBack(o.ID), http.StatusSeeOther)
 }
 

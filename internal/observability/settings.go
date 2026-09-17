@@ -25,6 +25,7 @@ var (
 	ErrInvalidPassword   = errors.New("observability: the password is too long")
 	ErrNothingConfigured = errors.New("observability: neither a metrics nor a logs address is set")
 	ErrNotSaved          = errors.New("observability: the settings have not been saved yet")
+	ErrPasswordRequired  = errors.New("observability: the address changed; enter the password again")
 )
 
 // Target is one destination the agent pushes to.
@@ -122,6 +123,24 @@ func Load(ctx context.Context, q Store) (Settings, error) {
 	}, nil
 }
 
+// LoadForReconcile is Load for the reconciler: a disabled configuration reads
+// as the zero Settings without decrypting anything. Otherwise a password that
+// no longer decrypts (a rotated KRILL_SECRET_KEY) would fail every pass, and
+// turning the agent off would never remove it.
+func LoadForReconcile(ctx context.Context, q Store) (Settings, error) {
+	row, err := q.GetObservabilitySettings(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Settings{}, nil
+	}
+	if err != nil {
+		return Settings{}, err
+	}
+	if !row.Enabled {
+		return Settings{}, nil
+	}
+	return Load(ctx, q)
+}
+
 // Save stores the form. It works on the stored (encrypted) passwords rather
 // than on Load's result, so a password that no longer decrypts can still be
 // kept or replaced.
@@ -130,11 +149,11 @@ func Save(ctx context.Context, q Store, in Input) error {
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	mURL, mUser, mPass, err := mergeTarget(in.Metrics, row.MetricsPassword)
+	mURL, mUser, mPass, err := mergeTarget(in.Metrics, row.MetricsUrl, row.MetricsPassword)
 	if err != nil {
 		return err
 	}
-	lURL, lUser, lPass, err := mergeTarget(in.Logs, row.LogsPassword)
+	lURL, lUser, lPass, err := mergeTarget(in.Logs, row.LogsUrl, row.LogsPassword)
 	if err != nil {
 		return err
 	}
@@ -149,8 +168,10 @@ func Save(ctx context.Context, q Store, in Input) error {
 
 // mergeTarget validates one target and returns what to store. Without a URL
 // nothing is kept; without a user there is no basic auth and so no password;
-// an empty password keeps storedPassword (still encrypted).
-func mergeTarget(in TargetInput, storedPassword string) (u, user, password string, err error) {
+// an empty password keeps storedPassword (still encrypted), but only while
+// the address still points at the server storedURL did — a kept password must
+// never be sent to a different host.
+func mergeTarget(in TargetInput, storedURL, storedPassword string) (u, user, password string, err error) {
 	if u, err = NormalizeURL(in.URL); err != nil {
 		return "", "", "", err
 	}
@@ -165,9 +186,38 @@ func mergeTarget(in TargetInput, storedPassword string) (u, user, password strin
 		return u, "", "", nil
 	}
 	if in.Password == "" {
+		if storedPassword != "" && !sameServer(u, storedURL) {
+			return "", "", "", ErrPasswordRequired
+		}
 		return u, user, storedPassword, nil
 	}
 	return u, user, secret.Enc(in.Password), nil
+}
+
+// sameServer reports whether two push addresses reach the same server: the
+// same scheme, host and effective port (the scheme's default when absent).
+func sameServer(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return ua.Scheme == ub.Scheme &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		effectivePort(ua) == effectivePort(ub)
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch u.Scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
 }
 
 // SetEnabled turns the agent on or off. Turning it on needs saved settings

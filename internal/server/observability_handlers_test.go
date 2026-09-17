@@ -288,6 +288,30 @@ func TestObservabilitySaveValidationErrors(t *testing.T) {
 	}
 }
 
+// A kept password must not follow the address to another server.
+func TestObservabilitySavePasswordNeedsSameServer(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
+		t.Fatalf("save: %q", flashCookieValue(rec))
+	}
+	form := fullForm()
+	form.Set("metrics_url", "https://evil.example.net/api/v1/push")
+	form.Set("metrics_password", "")
+	rec := env.do(t, http.MethodPost, env.base, form, env.cookie)
+	if !hasErrFlash(rec) {
+		t.Fatal("a host change without a password was accepted")
+	}
+	if msg := flashText(rec); !strings.Contains(msg, "points to a different server") {
+		t.Errorf("flash = %q", msg)
+	}
+	s, err := observability.Load(context.Background(), env.q)
+	if err != nil || s.Metrics.URL != "https://mimir.example.com/api/v1/push" {
+		t.Errorf("stored = %+v %v", s, err)
+	}
+}
+
 func TestObservabilityCheck(t *testing.T) {
 	env := newObsEnv(t, true)
 	if rec := env.do(t, http.MethodPost, env.base+"/check", url.Values{}, env.cookie); !hasErrFlash(rec) || len(env.checked) != 0 {
@@ -299,7 +323,11 @@ func TestObservabilityCheck(t *testing.T) {
 		Metrics: &observability.Result{OK: true, Key: "obs.check.ok_v1_only"},
 		Logs:    &observability.Result{Key: "obs.check.auth", Detail: "401"},
 	}
+	// A failed check lands back on the page regardless of the Referer.
 	rec := env.do(t, http.MethodPost, env.base+"/check", url.Values{}, env.cookie)
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || loc != env.base {
+		t.Errorf("failed check redirect = %d %q, want 303 %q", rec.Code, loc, env.base)
+	}
 	if len(env.checked) != 1 || env.checked[0].Logs.Password != "s3cret-l" {
 		t.Fatalf("checked = %+v", env.checked)
 	}

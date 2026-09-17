@@ -180,6 +180,11 @@ environment at all, so it is safe to run first.
 Neither kind of rollback undoes database changes made by the newer release — only the binary
 goes back.
 
+Rolling back to a release without the [observability agent](guides/observability.md) leaves
+the agent running with nothing managing it; remove it with `docker service rm krill-alloy-node`
+and its configs and secrets labelled `krill.observability=node-agent` (see
+[Turning it off](guides/observability.md#7-turning-it-off--troubleshooting)).
+
 **A failed migration is not rolled back.** Migrations run when the new binary starts. If one
 fails, or Krill is killed in the middle of one, the database is left marked "dirty" and no
 binary starts against it — the previous one the timer puts back included. `journalctl -u krill`
@@ -242,9 +247,19 @@ docker network rm krill-state                                   # after the cont
 ```
 
 This leaves behind what Krill created in Docker: the services for your apps, database
-instances and Traefik (`krill-traefik`), their volumes and the overlay networks. Delete apps
-and databases from the UI before uninstalling, or remove the rest with `docker service rm`,
-`docker volume rm` and `docker network rm` afterwards.
+instances and Traefik (`krill-traefik`), their volumes and the overlay networks, and — if the
+observability agent was ever turned on — the `krill-alloy-node` service, its configs and
+secrets (labelled `krill.observability=node-agent`) and the `krill-alloy-node-data` volume on
+every node. Delete apps and databases from the UI and turn observability off before
+uninstalling, or remove the rest with `docker service rm`, `docker volume rm` and
+`docker network rm` afterwards:
+
+```sh
+docker service rm krill-alloy-node
+docker config rm $(docker config ls -q --filter label=krill.observability=node-agent)
+docker secret rm $(docker secret ls -q --filter label=krill.observability=node-agent)
+docker volume rm krill-alloy-node-data   # on every node, once the agent's task is gone
+```
 
 ## Run the container image instead
 

@@ -62,7 +62,7 @@ templ observabilityTarget(name, title, hint, url, user string, hasPassword bool)
 	<label class="k-label" for={ name + "_url" }>{ i18n.T(ctx, "obs.url") }</label>
 	<input class="k-input mb-1" id={ name + "_url" } name={ name + "_url" } type="url" value={ url }/>
 	<p class="mb-3" style="color:var(--color-muted);font-size:13px">{ hint }</p>
-	<div class="flex gap-3 mb-4">
+	<div class="flex gap-3 mb-1">
 		<div class="flex-1">
 			<label class="k-label" for={ name + "_user" }>{ i18n.T(ctx, "obs.user") }</label>
 			<input class="k-input" id={ name + "_user" } name={ name + "_user" } value={ user }/>
@@ -76,6 +76,7 @@ templ observabilityTarget(name, title, hint, url, user string, hasPassword bool)
 			}
 		</div>
 	</div>
+	<p class="mb-4" style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "obs.password_clear_hint") }</p>
 }
 
 templ observabilityState(orgID int64, v ObservabilityView) {

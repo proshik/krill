@@ -73,7 +73,10 @@ Verified in code and tests, but not yet exercised on a real environment:
     (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
 12. The observability agent on a real two-node cluster: the agent appears on a node added
     later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
-    and Loki, memory of the agent under load, Check against Mimir with authentication.
+    and Loki, memory of the agent under load, Check against Mimir with authentication, a worker
+    down or drained during a settings change (global update with parallelism 1), an authenticated
+    receiver (the 0400 root-owned secret is readable by Alloy), and memory over a long window (it
+    was still rising at 14 minutes).
 
 ## Open
 

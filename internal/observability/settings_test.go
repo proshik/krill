@@ -169,3 +169,84 @@ func TestLoadUndecryptable(t *testing.T) {
 		t.Fatalf("save while undecryptable: %v", err)
 	}
 }
+
+func TestLoadForReconcile(t *testing.T) {
+	ctx := context.Background()
+	q := newStore(t)
+	if s, err := observability.LoadForReconcile(ctx, q); err != nil || s != (observability.Settings{}) {
+		t.Fatalf("no row = %+v, %v", s, err)
+	}
+	secret.Init("old-key")
+	defer secret.Init("")
+	if err := observability.Save(ctx, q, observability.Input{Metrics: observability.TargetInput{URL: "https://m/x", User: "u", Password: "p"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := observability.SetEnabled(ctx, q, true); err != nil {
+		t.Fatal(err)
+	}
+	secret.Init("new-key")
+	// Enabled: the agent is built from the passwords, so the failure surfaces.
+	if _, err := observability.LoadForReconcile(ctx, q); !errors.Is(err, secret.ErrUndecryptable) {
+		t.Errorf("enabled + undecryptable = %v, want ErrUndecryptable", err)
+	}
+	// Disabled: nothing is decrypted and the result tears the agent down.
+	if err := observability.SetEnabled(ctx, q, false); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := observability.LoadForReconcile(ctx, q); err != nil || s != (observability.Settings{}) {
+		t.Errorf("disabled + undecryptable = %+v, %v; want zero Settings, nil", s, err)
+	}
+}
+
+func TestSavePasswordFollowsOnlyTheSameServer(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	ctx := context.Background()
+	q := newStore(t)
+	base := observability.Input{
+		Metrics: observability.TargetInput{URL: "https://m.example.com/api/v1/push", User: "tenant", Password: "mpw"},
+		Logs:    observability.TargetInput{URL: "http://l.example.com/loki/api/v1/push", User: "loki", Password: "lpw"},
+	}
+	if err := observability.Save(ctx, q, base); err != nil {
+		t.Fatal(err)
+	}
+	keep := func(m, l string) observability.Input {
+		return observability.Input{
+			Metrics: observability.TargetInput{URL: m, User: "tenant"},
+			Logs:    observability.TargetInput{URL: l, User: "loki"},
+		}
+	}
+	for _, in := range []observability.Input{
+		keep("https://other.example.com/api/v1/push", base.Logs.URL),         // host
+		keep("https://m.example.com:8443/api/v1/push", base.Logs.URL),        // port
+		keep("http://m.example.com/api/v1/push", base.Logs.URL),              // scheme
+		keep(base.Metrics.URL, "http://l.example.com:3100/loki/api/v1/push"), // logs port
+	} {
+		if err := observability.Save(ctx, q, in); !errors.Is(err, observability.ErrPasswordRequired) {
+			t.Errorf("Save(%+v) = %v, want ErrPasswordRequired", in, err)
+		}
+	}
+	if s, _ := observability.Load(ctx, q); s.Metrics != (observability.Target{URL: base.Metrics.URL, User: "tenant", Password: "mpw"}) {
+		t.Errorf("a refused save changed the row: %+v", s)
+	}
+
+	// The effective port counts: an explicit default port is the same server,
+	// and so is a different path.
+	if err := observability.Save(ctx, q, keep("https://m.example.com:443/prom/push", "http://l.example.com:80/loki/api/v1/push")); err != nil {
+		t.Fatalf("same server, other path: %v", err)
+	}
+	s, _ := observability.Load(ctx, q)
+	if s.Metrics.Password != "mpw" || s.Logs.Password != "lpw" || s.Metrics.URL != "https://m.example.com:443/prom/push" {
+		t.Errorf("password not kept on a path change: %+v", s)
+	}
+
+	// A new password may go anywhere.
+	in := keep("https://other.example.com/api/v1/push", s.Logs.URL)
+	in.Metrics.Password = "newpw"
+	if err := observability.Save(ctx, q, in); err != nil {
+		t.Fatalf("host change with a new password: %v", err)
+	}
+	if s, _ = observability.Load(ctx, q); s.Metrics.Password != "newpw" || s.Metrics.URL != "https://other.example.com/api/v1/push" {
+		t.Errorf("after host change with a new password: %+v", s)
+	}
+}

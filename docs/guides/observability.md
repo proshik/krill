@@ -23,6 +23,10 @@ including nodes added later. Each task:
 - tails the Docker logs of **every** container on that node (Krill's own services included) and
   pushes them to Loki.
 
+That is the stdout/stderr of every container on every node — Krill's own state database and
+every tenant's apps and database servers included — so the Loki you point it at ends up holding
+every tenant's logs. Give it the same care as Krill itself.
+
 Krill renders the agent's whole configuration from the settings you save and replaces it on
 every change; there is no reason to edit it by hand, and doing so would be undone on the next
 save. Nothing collected is stored by Krill — it goes straight to your own receiver.
@@ -62,7 +66,10 @@ For each of the two pipelines, fill in the **full push URL** — not just a host
 
 An empty URL turns that pipeline off; you can run metrics-only, logs-only, or both. User and
 password are optional (basic auth); leaving the password field empty on an edit keeps the one
-already stored.
+already stored — but only while the address still points at the same server (scheme, host and
+port; a different path is fine). If you change the server, enter the password again: Krill
+refuses to send a stored password to a host it wasn't entered for. To remove a stored password,
+clear the user field and save.
 
 **Check** sends one throwaway sample to each configured address before you commit to turning
 the agent on: a metrics sample `krill_observability_check{krill_instance="..."}` over Remote
@@ -96,7 +103,7 @@ and any error from the last reconcile pass.
 | `krill_env` | Environment name | App log lines |
 | `krill_app` | App name | App log lines |
 | `krill_app_id` | App id | App log lines |
-| `krill_service` | The app's Swarm service name (`krill-<appID>`) | App log lines |
+| `krill_service` | Swarm's `com.docker.swarm.service.name` container label — e.g. `krill-<appID>` for an app | Log lines of every Swarm task: apps, database servers, Traefik, the agent itself |
 
 Names can be renamed; ids can't, so a query keyed on an id keeps returning the same series
 across a rename. The `_id` labels exist for that reason — prefer them for anything long-lived
@@ -127,8 +134,11 @@ especially on a single 2 vCPU / 2 GB node.
 
 - The agent needs the Docker socket to discover containers and read their logs — on Docker,
   socket access is effectively root on that node. Because of that:
-  - it is **not** attached to any organization's overlay network — only the base network Krill
-    uses for its own egress;
+  - it is **not** attached to any organization's overlay network — only the base network
+    (`KRILL_NETWORK`) Krill uses for its own egress. Until the
+    [per-organization network migration](../architecture.md) has finished, tenant services not
+    yet moved still share that base network with the agent; since the agent listens on nothing
+    reachable, that exposes nothing;
   - it **publishes no ports**; its own UI binds to `127.0.0.1:12345` inside the container,
     unreachable from anywhere else, including other nodes.
 - The image is pinned by digest, not just by tag, so what runs is exactly what was reviewed.
@@ -151,6 +161,15 @@ behind:
 
 Turning it back on redeploys the service from scratch with whatever settings are currently
 saved.
+
+**After rolling back to a Krill release without this feature** (a failed self-update, or a
+manual rollback), nothing manages the agent any more and it keeps running. Remove it by hand:
+
+```sh
+docker service rm krill-alloy-node
+docker config rm $(docker config ls -q --filter label=krill.observability=node-agent)
+docker secret rm $(docker secret ls -q --filter label=krill.observability=node-agent)
+```
 
 **If a node's agent won't come up:**
 

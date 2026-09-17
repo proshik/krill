@@ -477,7 +477,7 @@ func run() error {
 	var obsRec *observability.Reconciler
 	if obsEngine, ok := engine.(observability.Engine); ok {
 		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
-			return observability.Load(c, q)
+			return observability.LoadForReconcile(c, q)
 		}, cfg.Network)
 		instance, _ := os.Hostname()
 		checker := observability.Checker{AllowPrivate: cfg.AllowPrivateEgress, Instance: instance}

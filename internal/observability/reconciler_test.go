@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/testutil"
 )
 
 type countingApply struct {
@@ -123,7 +126,9 @@ func TestReconcilerReportsErrors(t *testing.T) {
 
 func TestReconcilerStateError(t *testing.T) {
 	r := NewReconciler(newFakeEngine(), nil, "krill-net")
-	r.state = func(context.Context) (docker.ServiceState, error) { return docker.ServiceState{}, errors.New("daemon down") }
+	r.state = func(context.Context) (docker.ServiceState, error) {
+		return docker.ServiceState{}, errors.New("daemon down")
+	}
 	if st := r.Status(context.Background()); st.StateErr != "daemon down" {
 		t.Errorf("status = %+v", st)
 	}
@@ -149,5 +154,29 @@ func TestReconcilerBusyStaysTrueWithBufferedTrigger(t *testing.T) {
 
 	if st := r.Status(ctx); !st.Busy {
 		t.Error("Busy went false while a trigger was still buffered")
+	}
+}
+
+// Turning the agent off must work even when a stored password no longer
+// decrypts (a rotated KRILL_SECRET_KEY): the reconciler's loader must not
+// decrypt a disabled configuration.
+func TestReconcilerTearsDownDisabledWithUndecryptablePassword(t *testing.T) {
+	ctx := context.Background()
+	q := db.New(testutil.NewTestDB(t))
+	secret.Init("old-key")
+	defer secret.Init("")
+	if err := Save(ctx, q, Input{Logs: TargetInput{URL: "https://l/x", User: "u", Password: "p"}}); err != nil {
+		t.Fatal(err)
+	}
+	secret.Init("new-key")
+	eng := newFakeEngine()
+	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
+	r := NewReconciler(eng, func(c context.Context) (Settings, error) { return LoadForReconcile(c, q) }, "krill-net")
+	r.pass(ctx)
+	if st := r.Status(ctx); st.LastErr != "" {
+		t.Errorf("pass failed: %s", st.LastErr)
+	}
+	if eng.removed != 1 {
+		t.Errorf("agent not removed: removed=%d", eng.removed)
 	}
 }

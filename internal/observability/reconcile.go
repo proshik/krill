@@ -54,7 +54,8 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string) erro
 			return fmt.Errorf("create the logs password secret: %w", err)
 		}
 	}
-	if _, err := eng.NetworkEnsure(ctx, network); err != nil {
+	netCreated, err := eng.NetworkEnsure(ctx, network)
+	if err != nil {
 		return err
 	}
 	spec := NodeSpec(obj, network)
@@ -63,8 +64,10 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string) erro
 		return fmt.Errorf("read the agent's tasks: %w", err)
 	}
 	// A matching label proves the spec was written, not that it finished
-	// rolling out; an unsettled update is deployed again.
-	if before.Found && docker.UpdateSettled(before.UpdateState) {
+	// rolling out; an unsettled update is deployed again. A network that was
+	// just (re)created has the same name but is new to Swarm, so the service
+	// is deployed again to attach to it.
+	if before.Found && !netCreated && docker.UpdateSettled(before.UpdateState) {
 		if cur, found, err := eng.ServiceLabels(ctx, NodeServiceName); err == nil && found {
 			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
 				prune(ctx, eng, obj)
