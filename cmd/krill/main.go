@@ -32,6 +32,7 @@ import (
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/panel"
@@ -470,6 +471,21 @@ func run() error {
 		}.reason)
 	app.SetSelfUpdate(updateChecker, updater)
 
+	// Observability: Krill's own Alloy agent on every node (Settings →
+	// Observability). The real engine implements the Swarm config/secret
+	// capability; anything else leaves the page unwired.
+	var obsRec *observability.Reconciler
+	if obsEngine, ok := engine.(observability.Engine); ok {
+		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
+			return observability.Load(c, q)
+		}, cfg.Network)
+		instance, _ := os.Hostname()
+		checker := observability.Checker{AllowPrivate: cfg.AllowPrivateEgress, Instance: instance}
+		app.SetObservability(obsRec, checker.Check)
+	} else {
+		slog.Warn("observability unavailable: the docker engine cannot manage swarm configs and secrets")
+	}
+
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
 	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
@@ -510,6 +526,14 @@ func run() error {
 	go updateChecker.Run(ctx)
 	if cfg.UpdateCheckInterval <= 0 {
 		slog.Info("background update check disabled (KRILL_UPDATE_CHECK_INTERVAL <= 0)")
+	}
+
+	// Converge the agent to the stored settings once per start: deploy it if
+	// it is on, remove it (and its leftover configs and secrets) if it is off.
+	// In the background — pulling the image can take minutes.
+	if obsRec != nil {
+		go obsRec.Run(ctx)
+		obsRec.Trigger()
 	}
 
 	// An install that predates per-organization networks has every service —
