@@ -115,9 +115,11 @@ Example queries once data is flowing:
 ## 5. Cost
 
 The agent's Swarm service is limited to **256 MiB of memory and half a CPU core, per node**.
-Alloy sets its own `GOMEMLIMIT` from that cgroup limit — Krill does not pass one. Measured
-idle usage was about **50 MiB** on a Colima development VM (2026-09-16); expect the live
-two-node acceptance run to refine this number under real load. On a small server, half a CPU
+Alloy sets its own `GOMEMLIMIT` from that cgroup limit — Krill does not pass one. On a
+single-node Colima development VM (2026-09-17, about a dozen containers, both pipelines on)
+the agent started at about **55 MiB** and settled at about **105 MiB** after 10–15 minutes
+(cgroup peak 108 MiB, nearly all of it Go heap); expect the live two-node acceptance run to
+refine this number under real load. On a small server, half a CPU
 core and up to 256 MiB per node is still a real share of the box — decide before turning it on,
 especially on a single 2 vCPU / 2 GB node.
 
