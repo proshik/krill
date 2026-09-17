@@ -52,11 +52,15 @@ func NewReconciler(eng Engine, load func(context.Context) (Settings, error), net
 }
 
 // Trigger asks for a pass. It never blocks; one pending request is enough,
-// because every pass reads the settings fresh.
+// because every pass reads the settings fresh. The (non-blocking) channel
+// send happens inside the same critical section as setting busy=true: pass
+// derives busy from len(r.trigger) under the same lock, so releasing the
+// lock between the two would let a finishing pass observe an empty channel
+// and report busy=false while this trigger is still in flight to it.
 func (r *Reconciler) Trigger() {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.busy = true
-	r.mu.Unlock()
 	select {
 	case r.trigger <- struct{}{}:
 	default:

@@ -128,3 +128,26 @@ func TestReconcilerStateError(t *testing.T) {
 		t.Errorf("status = %+v", st)
 	}
 }
+
+// TestReconcilerBusyStaysTrueWithBufferedTrigger pins the invariant the fix
+// for the Trigger/pass race relies on: Trigger sets busy=true and buffers
+// its channel send under the same lock, so by the time it returns the
+// buffered trigger and Busy=true always agree. Calling pass directly right
+// after Trigger (bypassing Run's own receive) reproduces the exact window
+// the finding described — a pass finishing while a trigger is still
+// buffered — deterministically, with no goroutines or timing involved: if
+// Trigger's two effects were not atomic, pass would see an empty channel
+// here and incorrectly clear Busy.
+func TestReconcilerBusyStaysTrueWithBufferedTrigger(t *testing.T) {
+	a := &countingApply{done: make(chan struct{}, 10)}
+	r := newTestReconciler(func(context.Context) (Settings, error) { return fullSettings(), nil }, a)
+	ctx := context.Background()
+
+	r.Trigger()
+	r.pass(ctx) // the trigger is still buffered: Run has not drained it
+	waitDone(t, a.done)
+
+	if st := r.Status(ctx); !st.Busy {
+		t.Error("Busy went false while a trigger was still buffered")
+	}
+}
