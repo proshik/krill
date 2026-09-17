@@ -3,6 +3,7 @@ package observability
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,11 @@ import (
 const (
 	defaultCheckTimeout = 10 * time.Second
 	snippetLimit        = 300
+	// maxResponseBody bounds how much of a response body the transport will
+	// ever hand to a reader (the exp remote-write client's own io.ReadAll,
+	// or our own), so a misbehaving or malicious endpoint can't force an
+	// unbounded read.
+	maxResponseBody = 64 * 1024
 )
 
 // Result is the verdict on one target. Key is an i18n key; Detail is its
@@ -116,7 +122,20 @@ func (t *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error
 		return nil, err
 	}
 	t.status, t.connErr = resp.StatusCode, nil
+	if resp.Body != nil {
+		// Bound how much of the body the caller (the exp remote-write
+		// client's own io.ReadAll, or checkLogs') can ever read, regardless
+		// of what the endpoint sends.
+		resp.Body = limitedBody{Reader: io.LimitReader(resp.Body, maxResponseBody), Closer: resp.Body}
+	}
 	return resp, nil
+}
+
+// limitedBody caps a response body's Read while still closing the
+// underlying body.
+type limitedBody struct {
+	io.Reader
+	io.Closer
 }
 
 func (t *recordingTransport) last() (int, error) {
@@ -131,6 +150,9 @@ func (c Checker) client(t Target) (*http.Client, *recordingTransport) {
 			DialContext:           netguard.DialContext(c.AllowPrivate),
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: c.timeout(),
+			// One request per target per check: keeping a connection idle
+			// afterwards only leaks it (and the goroutines that go with it).
+			DisableKeepAlives: true,
 		},
 		user:     t.User,
 		password: t.Password,
@@ -146,6 +168,7 @@ func (c Checker) client(t Target) (*http.Client, *recordingTransport) {
 
 func (c Checker) checkMetrics(ctx context.Context, t Target, now time.Time) Result {
 	hc, rt := c.client(t)
+	redact := redactor(t)
 	api, err := remote.NewAPI(t.URL,
 		remote.WithAPIPath(""), // the stored URL is the full push URL, as in Alloy
 		remote.WithAPIHTTPClient(hc),
@@ -154,13 +177,13 @@ func (c Checker) checkMetrics(ctx context.Context, t Target, now time.Time) Resu
 		remote.WithAPINoRetryOnRateLimit(),
 	)
 	if err != nil {
-		return Result{Key: "obs.check.network", Detail: snippet(err.Error())}
+		return Result{Key: "obs.check.network", Detail: safeSnippet(err.Error(), redact)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 	_, werr := api.Write(ctx, remote.WriteV2MessageType, c.sample(now))
 	code, connErr := rt.last()
-	return classify(code, werr, connErr, "obs.check.not_found_metrics", true)
+	return classify(code, werr, connErr, "obs.check.not_found_metrics", true, redact)
 }
 
 func (c Checker) sample(now time.Time) *writev2.Request {
@@ -179,18 +202,19 @@ func (c Checker) sample(now time.Time) *writev2.Request {
 
 func (c Checker) checkLogs(ctx context.Context, t Target, now time.Time) Result {
 	hc, rt := c.client(t)
+	redact := redactor(t)
 	body, err := json.Marshal(map[string]any{"streams": []any{map[string]any{
 		"stream": map[string]string{"krill_check": "observability", "krill_instance": c.instance()},
 		"values": [][]string{{strconv.FormatInt(now.UnixNano(), 10), "krill observability check"}},
 	}}})
 	if err != nil {
-		return Result{Key: "obs.check.network", Detail: snippet(err.Error())}
+		return Result{Key: "obs.check.network", Detail: safeSnippet(err.Error(), redact)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.URL, bytes.NewReader(body))
 	if err != nil {
-		return Result{Key: "obs.check.network", Detail: snippet(err.Error())}
+		return Result{Key: "obs.check.network", Detail: safeSnippet(err.Error(), redact)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, herr := hc.Do(req)
@@ -202,11 +226,14 @@ func (c Checker) checkLogs(ctx context.Context, t Target, now time.Time) Result 
 		}
 	}
 	code, connErr := rt.last()
-	return classify(code, herr, connErr, "obs.check.not_found_logs", false)
+	return classify(code, herr, connErr, "obs.check.not_found_logs", false, redact)
 }
 
-// classify turns an attempt into a verdict (spec §4, «Проверить»).
-func classify(code int, err, connErr error, notFoundKey string, remoteWriteV2 bool) Result {
+// classify turns an attempt into a verdict (spec §4, «Проверить»). redact
+// strips t's credentials from any text pulled from the response; classify
+// applies it around snippet() rather than leaving that to the caller, so a
+// truncated Detail can never leave a partial secret behind.
+func classify(code int, err, connErr error, notFoundKey string, remoteWriteV2 bool, redact func(string) string) Result {
 	switch {
 	case code >= 200 && code < 300 && err == nil:
 		return Result{OK: true, Key: "obs.check.ok"}
@@ -230,7 +257,7 @@ func classify(code int, err, connErr error, notFoundKey string, remoteWriteV2 bo
 				text = fmt.Sprintf("HTTP %d: %s", code, text)
 			}
 		}
-		return Result{Key: "obs.check.http", Detail: snippet(text)}
+		return Result{Key: "obs.check.http", Detail: safeSnippet(text, redact)}
 	case errors.Is(connErr, netguard.ErrBlocked):
 		return Result{Key: "obs.check.private"}
 	}
@@ -241,7 +268,34 @@ func classify(code int, err, connErr error, notFoundKey string, remoteWriteV2 bo
 	if e == nil {
 		e = errors.New("no response")
 	}
-	return Result{Key: "obs.check.network", Detail: snippet(e.Error())}
+	return Result{Key: "obs.check.network", Detail: safeSnippet(e.Error(), redact)}
+}
+
+// redactor returns a function that strips t's password and its basic-auth
+// base64 encoding from a string. A target that echoes the request back in
+// its error response — deliberately or by a bug — must never be able to
+// leak the credential into a flash message; "passwords are never rendered
+// or logged" applies to whatever text the target itself sends back too.
+func redactor(t Target) func(string) string {
+	return func(s string) string {
+		if t.Password != "" {
+			s = strings.ReplaceAll(s, t.Password, "***")
+		}
+		if t.User != "" || t.Password != "" {
+			enc := base64.StdEncoding.EncodeToString([]byte(t.User + ":" + t.Password))
+			s = strings.ReplaceAll(s, enc, "***")
+		}
+		return s
+	}
+}
+
+// safeSnippet redacts, then truncates via snippet, then redacts again.
+// Redacting only after truncation could leave half a secret behind if
+// snippetLimit happened to cut through it; the second pass is a defensive
+// guarantee that nothing snippet's own tag/whitespace cleanup could expose
+// survives either.
+func safeSnippet(s string, redact func(string) string) string {
+	return redact(snippet(redact(s)))
 }
 
 var (

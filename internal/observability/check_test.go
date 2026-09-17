@@ -2,9 +2,12 @@ package observability
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,7 +21,9 @@ func server(t *testing.T, h http.HandlerFunc) string {
 	return s.URL
 }
 
-func checker() Checker { return Checker{AllowPrivate: true, Instance: "test", Timeout: 3 * time.Second} }
+func checker() Checker {
+	return Checker{AllowPrivate: true, Instance: "test", Timeout: 3 * time.Second}
+}
 
 func TestCheckMetricsVerdicts(t *testing.T) {
 	cases := []struct {
@@ -154,7 +159,9 @@ func TestCheckPrivateAndNetwork(t *testing.T) {
 }
 
 func TestCheckRefusesRedirects(t *testing.T) {
-	url := server(t, func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "http://example.com/", http.StatusFound) })
+	url := server(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/", http.StatusFound)
+	})
 	r := checker().Check(context.Background(), Settings{Logs: Target{URL: url}}).Logs
 	if r.OK || r.Key != "obs.check.http" || !strings.Contains(r.Detail, "302") {
 		t.Errorf("redirect = %+v", r)
@@ -168,5 +175,64 @@ func TestSnippet(t *testing.T) {
 	long := snippet(strings.Repeat("я", 400))
 	if len(long) > snippetLimit+len("…") || !strings.HasSuffix(long, "…") || !strings.HasPrefix(long, "я") {
 		t.Errorf("long snippet = %q (%d bytes)", long, len(long))
+	}
+}
+
+// TestCheckRedactsEchoedCredentials guards against a target that reflects the
+// request back in its error body (deliberately, or via a misconfigured
+// debug/error page): the password and its basic-auth encoding must never
+// reach Detail, for either target kind.
+func TestCheckRedactsEchoedCredentials(t *testing.T) {
+	const user, password = "u", "s3cret"
+	enc := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
+	echo := server(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, fmt.Sprintf("bad request, you sent Authorization: %s", r.Header.Get("Authorization")), http.StatusBadRequest)
+	})
+	rep := checker().Check(context.Background(), Settings{
+		Metrics: Target{URL: echo, User: user, Password: password},
+		Logs:    Target{URL: echo, User: user, Password: password},
+	})
+	for name, r := range map[string]*Result{"metrics": rep.Metrics, "logs": rep.Logs} {
+		if r.OK || r.Key != "obs.check.http" {
+			t.Fatalf("%s result = %+v", name, r)
+		}
+		if strings.Contains(r.Detail, password) {
+			t.Errorf("%s detail leaks the password: %q", name, r.Detail)
+		}
+		if strings.Contains(r.Detail, enc) {
+			t.Errorf("%s detail leaks the basic-auth token: %q", name, r.Detail)
+		}
+	}
+}
+
+// TestCheckDoesNotLeakConnections guards against a fresh, never-closed
+// keep-alive connection (and its transport goroutines) per Check.
+func TestCheckDoesNotLeakConnections(t *testing.T) {
+	url := server(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+
+	// Warm up first: the runtime's own steady-state goroutine count (GC,
+	// finalizer, etc.) can still be settling right after process start.
+	for i := 0; i < 3; i++ {
+		checker().Check(context.Background(), Settings{Metrics: Target{URL: url}, Logs: Target{URL: url}})
+	}
+	runtime.GC()
+	base := runtime.NumGoroutine()
+
+	for i := 0; i < 20; i++ {
+		checker().Check(context.Background(), Settings{Metrics: Target{URL: url}, Logs: Target{URL: url}})
+	}
+
+	// A closed connection's goroutines can take a moment to unwind; poll
+	// instead of asserting immediately after the last request returns.
+	const slack = 10
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		runtime.GC()
+		if n := runtime.NumGoroutine(); n <= base+slack {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("goroutines = %d, want <= %d (baseline %d)", n, base+slack, base)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
