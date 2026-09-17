@@ -1,0 +1,199 @@
+package observability
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+	"unicode"
+
+	"github.com/jackc/pgx/v5"
+
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/secret"
+)
+
+const (
+	maxUserLen     = 256
+	maxPasswordLen = 4096
+)
+
+var (
+	ErrInvalidURL        = errors.New("observability: the address must be an http(s) URL without credentials, a fragment or spaces")
+	ErrInvalidUser       = errors.New("observability: the user name must not contain spaces, quotes or backslashes")
+	ErrInvalidPassword   = errors.New("observability: the password is too long")
+	ErrNothingConfigured = errors.New("observability: neither a metrics nor a logs address is set")
+	ErrNotSaved          = errors.New("observability: the settings have not been saved yet")
+)
+
+// Target is one destination the agent pushes to.
+type Target struct {
+	URL      string
+	User     string // "" = no basic auth
+	Password string // plaintext; "" = none
+}
+
+// Configured reports whether the pipeline for this target is on.
+func (t Target) Configured() bool { return t.URL != "" }
+
+// Settings is the stored configuration with passwords decrypted.
+type Settings struct {
+	Enabled bool
+	Metrics Target // Prometheus remote_write
+	Logs    Target // Loki push API
+}
+
+// TargetInput is one target as the settings form submits it.
+type TargetInput struct {
+	URL, User string
+	Password  string // "" keeps the stored password
+}
+
+// Input is the settings form.
+type Input struct{ Metrics, Logs TargetInput }
+
+// Store is the slice of the generated queries the settings need.
+type Store interface {
+	GetObservabilitySettings(ctx context.Context) (db.ObservabilitySetting, error)
+	SaveObservabilitySettings(ctx context.Context, arg db.SaveObservabilitySettingsParams) error
+	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
+}
+
+// safeText reports whether s can be written into the agent's configuration
+// as a string literal: no whitespace or control characters, no quote and no
+// backslash. Rejecting them up front keeps the generated file unambiguous.
+func safeText(s string) bool {
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.IsControl(r) || r == '"' || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeURL validates a push address. "" is allowed and turns the
+// pipeline off. Credentials belong in the user and password fields: in the
+// URL they would end up in the generated configuration in clear text.
+func NormalizeURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if !safeText(raw) {
+		return "", ErrInvalidURL
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+		u.User != nil || u.Fragment != "" || u.Opaque != "" {
+		return "", ErrInvalidURL
+	}
+	return u.String(), nil
+}
+
+func checkUser(u string) error {
+	if len(u) > maxUserLen || !safeText(u) {
+		return ErrInvalidUser
+	}
+	return nil
+}
+
+// Load reads the settings. An instance that never saved any reads as off.
+func Load(ctx context.Context, q Store) (Settings, error) {
+	row, err := q.GetObservabilitySettings(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Settings{}, nil
+	}
+	if err != nil {
+		return Settings{}, err
+	}
+	mp, err := secret.Dec(row.MetricsPassword)
+	if err != nil {
+		return Settings{}, fmt.Errorf("metrics password: %w", err)
+	}
+	lp, err := secret.Dec(row.LogsPassword)
+	if err != nil {
+		return Settings{}, fmt.Errorf("logs password: %w", err)
+	}
+	return Settings{
+		Enabled: row.Enabled,
+		Metrics: Target{URL: row.MetricsUrl, User: row.MetricsUser, Password: mp},
+		Logs:    Target{URL: row.LogsUrl, User: row.LogsUser, Password: lp},
+	}, nil
+}
+
+// Save stores the form. It works on the stored (encrypted) passwords rather
+// than on Load's result, so a password that no longer decrypts can still be
+// kept or replaced.
+func Save(ctx context.Context, q Store, in Input) error {
+	row, err := q.GetObservabilitySettings(ctx)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	mURL, mUser, mPass, err := mergeTarget(in.Metrics, row.MetricsPassword)
+	if err != nil {
+		return err
+	}
+	lURL, lUser, lPass, err := mergeTarget(in.Logs, row.LogsPassword)
+	if err != nil {
+		return err
+	}
+	if row.Enabled && mURL == "" && lURL == "" {
+		return ErrNothingConfigured
+	}
+	return q.SaveObservabilitySettings(ctx, db.SaveObservabilitySettingsParams{
+		MetricsUrl: mURL, MetricsUser: mUser, MetricsPassword: mPass,
+		LogsUrl: lURL, LogsUser: lUser, LogsPassword: lPass,
+	})
+}
+
+// mergeTarget validates one target and returns what to store. Without a URL
+// nothing is kept; without a user there is no basic auth and so no password;
+// an empty password keeps storedPassword (still encrypted).
+func mergeTarget(in TargetInput, storedPassword string) (u, user, password string, err error) {
+	if u, err = NormalizeURL(in.URL); err != nil {
+		return "", "", "", err
+	}
+	user = strings.TrimSpace(in.User)
+	if err = checkUser(user); err != nil {
+		return "", "", "", err
+	}
+	if len(in.Password) > maxPasswordLen {
+		return "", "", "", ErrInvalidPassword
+	}
+	if u == "" || user == "" {
+		return u, "", "", nil
+	}
+	if in.Password == "" {
+		return u, user, storedPassword, nil
+	}
+	return u, user, secret.Enc(in.Password), nil
+}
+
+// SetEnabled turns the agent on or off. Turning it on needs saved settings
+// with at least one address, and passwords that decrypt: the agent's
+// configuration is built from them.
+func SetEnabled(ctx context.Context, q Store, on bool) error {
+	if on {
+		if _, err := q.GetObservabilitySettings(ctx); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotSaved
+		} else if err != nil {
+			return err
+		}
+		s, err := Load(ctx, q)
+		if err != nil {
+			return err
+		}
+		if !s.Metrics.Configured() && !s.Logs.Configured() {
+			return ErrNothingConfigured
+		}
+	}
+	n, err := q.SetObservabilityEnabled(ctx, on)
+	if err != nil {
+		return err
+	}
+	if n == 0 && on {
+		return ErrNotSaved
+	}
+	return nil
+}
