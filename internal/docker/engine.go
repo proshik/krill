@@ -218,6 +218,21 @@ type RemoteExecConfigurable interface {
 	SetRemoteClientProvider(p RemoteClientProvider)
 }
 
+// SwarmObjects is the optional capability to manage Swarm configs and secrets.
+// Only the real *dockerEngine implements it; callers type-assert, so the Engine
+// interface and its test fakes stay unchanged.
+type SwarmObjects interface {
+	// ConfigEnsure creates the config unless one with that name exists.
+	ConfigEnsure(ctx context.Context, name string, data []byte, labels map[string]string) error
+	// SecretEnsure creates the secret unless one with that name exists.
+	SecretEnsure(ctx context.Context, name string, data []byte, labels map[string]string) error
+	// PruneObjects removes the configs and secrets labelled key=value whose
+	// names are not in keep, skipping any a service still uses.
+	PruneObjects(ctx context.Context, labelKey, labelValue string, keep []string) error
+}
+
+var _ SwarmObjects = (*dockerEngine)(nil)
+
 // ServiceName builds the Swarm service name for an application from its id.
 func ServiceName(appID int64) string {
 	return "krill-" + strconv.FormatInt(appID, 10)

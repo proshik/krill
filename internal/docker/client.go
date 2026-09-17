@@ -286,6 +286,13 @@ func (e *dockerEngine) findService(ctx context.Context, name string) (swarm.Serv
 }
 
 func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) error {
+	var err error
+	if spec.Configs, err = resolveRefs(ctx, spec.Configs, e.configID); err != nil {
+		return err
+	}
+	if spec.Secrets, err = resolveRefs(ctx, spec.Secrets, e.secretID); err != nil {
+		return err
+	}
 	sw := buildSwarmSpec(spec)
 	cur, found, err := e.findService(ctx, spec.Name)
 	if err != nil {
