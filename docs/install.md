@@ -8,6 +8,7 @@ own Postgres and a Docker Swarm. One command does all of it.
 - [Installer options](#installer-options)
 - [Use a managed / external Postgres](#use-a-managed--external-postgres)
 - [After the install](#after-the-install)
+- [Observability](#observability)
 - [Upgrade](#upgrade)
 - [Uninstall](#uninstall)
 - [Run the container image instead](#run-the-container-image-instead)
@@ -101,6 +102,14 @@ proxy of your own in front of Krill.
 
 Every setting is listed in [Configuration](configuration.md). Logs:
 `journalctl -u krill -f`.
+
+## Observability
+
+Krill can run a Grafana Alloy agent on every node to ship host metrics and container logs to
+your own Prometheus-compatible storage and Loki — nothing is kept by Krill itself. It's opt-in
+from **Settings → Observability** and needs no installer option or environment variable. See
+[Observability](guides/observability.md) for requirements, setup and what it costs on a small
+server.
 
 ## Upgrade
 
