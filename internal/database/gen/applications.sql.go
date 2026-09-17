@@ -178,6 +178,35 @@ func (q *Queries) GetApplicationChain(ctx context.Context, id int64) (GetApplica
 	return i, err
 }
 
+const getApplicationIdentity = `-- name: GetApplicationIdentity :one
+SELECT o.id AS org_id, o.name AS org_name, p.name AS project_name, e.name AS env_name
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN organizations o ON o.id = p.organization_id
+WHERE a.id = $1
+`
+
+type GetApplicationIdentityRow struct {
+	OrgID       int64  `json:"org_id"`
+	OrgName     string `json:"org_name"`
+	ProjectName string `json:"project_name"`
+	EnvName     string `json:"env_name"`
+}
+
+// The names and ids an app's containers are labelled with for log collection.
+func (q *Queries) GetApplicationIdentity(ctx context.Context, id int64) (GetApplicationIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getApplicationIdentity, id)
+	var i GetApplicationIdentityRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.OrgName,
+		&i.ProjectName,
+		&i.EnvName,
+	)
+	return i, err
+}
+
 const listApplicationIDsByOrg = `-- name: ListApplicationIDsByOrg :many
 SELECT a.id
 FROM applications a

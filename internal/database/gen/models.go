@@ -242,6 +242,18 @@ type NotificationChannel struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+type ObservabilitySetting struct {
+	ID              int16     `json:"id"`
+	Enabled         bool      `json:"enabled"`
+	MetricsUrl      string    `json:"metrics_url"`
+	MetricsUser     string    `json:"metrics_user"`
+	MetricsPassword string    `json:"metrics_password"`
+	LogsUrl         string    `json:"logs_url"`
+	LogsUser        string    `json:"logs_user"`
+	LogsPassword    string    `json:"logs_password"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type Organization struct {
 	ID                int64              `json:"id"`
 	Name              string             `json:"name"`

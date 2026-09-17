@@ -121,6 +121,8 @@ type Querier interface {
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
+	// The names and ids an app's containers are labelled with for log collection.
+	GetApplicationIdentity(ctx context.Context, id int64) (GetApplicationIdentityRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
 	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
 	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
@@ -135,6 +137,7 @@ type Querier interface {
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
+	GetObservabilitySettings(ctx context.Context) (ObservabilitySetting, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
 	GetOrganizationBySlug(ctx context.Context, slug string) (Organization, error)
 	GetOrganizationNetworkByApp(ctx context.Context, id int64) (string, error)
@@ -213,6 +216,7 @@ type Querier interface {
 	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
 	// honest: the job died mid-copy and the service was left scaled to 0.
 	ResetMigratingInstances(ctx context.Context) error
+	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error
@@ -227,6 +231,7 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error
 	SetPanelDirectPort(ctx context.Context, arg SetPanelDirectPortParams) error
