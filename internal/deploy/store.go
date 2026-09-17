@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/envtext"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/traefik"
 )
@@ -99,6 +100,14 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 		return App{}, err
 	}
 	out.Network = netName
+	ident, err := s.q.GetApplicationIdentity(ctx, a.ID)
+	if err != nil {
+		return App{}, err
+	}
+	out.ContainerLabels = observability.ContainerLabels(observability.AppIdentity{
+		OrgID: ident.OrgID, Org: ident.OrgName, Project: ident.ProjectName, Env: ident.EnvName,
+		AppID: a.ID, App: a.Name,
+	})
 	out.Replicas = uint64(a.Replicas)
 	out.RestartCondition = a.RestartCondition
 	out.RestartMaxAttempts = uint64(a.RestartMaxAttempts)

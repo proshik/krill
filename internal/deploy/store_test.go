@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -808,5 +809,30 @@ func TestCountRunningDeployments(t *testing.T) {
 	}
 	if got != 2 {
 		t.Errorf("CountRunningDeployments = %d, want 2", got)
+	}
+}
+
+func TestGetApplicationContainerLabels(t *testing.T) {
+	q := db.New(testutil.NewTestDB(t))
+	ctx := context.Background()
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "lbl@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Acme", Slug: "acme-lbl", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Shop", Slug: "shop-lbl", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine",
+		Domain: "web.lbl", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewDBStore(q).GetApplication(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := got.ContainerLabels
+	if l["krill.org"] != "Acme" || l["krill.project"] != "Shop" || l["krill.env"] != "production" ||
+		l["krill.app"] != "web" || l["krill.app-id"] != strconv.FormatInt(app.ID, 10) || l["krill.org-id"] != strconv.FormatInt(o.ID, 10) {
+		t.Errorf("container labels = %v", l)
 	}
 }
