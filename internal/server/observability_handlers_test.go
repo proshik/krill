@@ -1,0 +1,239 @@
+package server_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/config"
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/observability"
+	"github.com/proshik/krill/internal/org"
+	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/server"
+	"github.com/proshik/krill/internal/testutil"
+)
+
+type fakeObsCtl struct {
+	mu       sync.Mutex
+	triggers int
+	status   observability.Status
+}
+
+func (f *fakeObsCtl) Trigger() { f.mu.Lock(); f.triggers++; f.mu.Unlock() }
+func (f *fakeObsCtl) Status(context.Context) observability.Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.status
+}
+func (f *fakeObsCtl) count() int { f.mu.Lock(); defer f.mu.Unlock(); return f.triggers }
+
+type obsEnv struct {
+	h       http.Handler
+	q       *db.Queries
+	ctl     *fakeObsCtl
+	checked []observability.Settings
+	report  observability.Report
+	base    string
+	cookie  *http.Cookie
+}
+
+// newObsEnv wires the page like main does; wired=false leaves it unwired.
+// The signed-in user owns the organization and is an instance operator.
+func newObsEnv(t *testing.T, wired bool) *obsEnv {
+	t.Helper()
+	q := db.New(testutil.NewTestDB(t))
+	orgSvc := org.NewService(q)
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net"}
+	hub := deploy.NewLogHub()
+	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net"))
+	env := &obsEnv{q: q, ctl: &fakeObsCtl{}}
+	if wired {
+		srv.SetObservability(env.ctl, func(_ context.Context, s observability.Settings) observability.Report {
+			env.checked = append(env.checked, s)
+			return env.report
+		})
+	}
+	env.h = srv.Router()
+	uid := mkUser(t, q, "op@k.local")
+	if err := q.SetUserAdmin(context.Background(), db.SetUserAdminParams{ID: uid, IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := orgSvc.CreateOrg(context.Background(), uid, "Ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.base = "/orgs/" + i64(o.ID) + "/observability"
+	env.cookie = loginAs(t, q, "op@k.local")
+	return env
+}
+
+func (e *obsEnv) do(t *testing.T, method, path string, form url.Values, cookie *http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	var body *strings.Reader
+	if form != nil {
+		body = strings.NewReader(form.Encode())
+	} else {
+		body = strings.NewReader("")
+	}
+	req := httptest.NewRequest(method, path, body)
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
+// flashText (decoded message of the flash cookie) is already defined in
+// placement_test.go — reused here rather than redeclared.
+
+func fullForm() url.Values {
+	return url.Values{
+		"metrics_url": {"https://mimir.example.com/api/v1/push"}, "metrics_user": {"tenant"}, "metrics_password": {"s3cret-m"},
+		"logs_url": {"https://loki.example.com/loki/api/v1/push"}, "logs_user": {"loki"}, "logs_password": {"s3cret-l"},
+	}
+}
+
+func TestObservabilityRequiresInstanceAdmin(t *testing.T) {
+	env := newObsEnv(t, true)
+	uid := mkUser(t, env.q, "owner@k.local")
+	o, _ := org.NewService(env.q).CreateOrg(context.Background(), uid, "Plain")
+	base := "/orgs/" + i64(o.ID) + "/observability"
+	cookie := loginAs(t, env.q, "owner@k.local")
+	if rec := env.do(t, http.MethodGet, base, nil, cookie); rec.Code != http.StatusNotFound {
+		t.Errorf("GET = %d, want 404", rec.Code)
+	}
+	for _, p := range []string{"", "/check", "/enable", "/disable"} {
+		if rec := env.do(t, http.MethodPost, base+p, fullForm(), cookie); rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404", p, rec.Code)
+		}
+	}
+	if env.ctl.count() != 0 || len(env.checked) != 0 {
+		t.Error("a refused request reached the agent")
+	}
+	if _, err := env.q.GetObservabilitySettings(context.Background()); err == nil {
+		t.Error("a refused request stored settings")
+	}
+}
+
+func TestObservabilityUnwired(t *testing.T) {
+	env := newObsEnv(t, false)
+	rec := env.do(t, http.MethodGet, env.base, nil, env.cookie)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "not available") {
+		t.Errorf("page = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = env.do(t, http.MethodPost, env.base, fullForm(), env.cookie)
+	if !hasErrFlash(rec) {
+		t.Error("save accepted while unwired")
+	}
+}
+
+func TestObservabilitySaveEnableDisable(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+	ctx := context.Background()
+
+	if rec := env.do(t, http.MethodPost, env.base+"/enable", url.Values{}, env.cookie); !hasErrFlash(rec) {
+		t.Error("enable before save accepted")
+	}
+	if rec := env.do(t, http.MethodPost, env.base, url.Values{"metrics_url": {"not a url"}}, env.cookie); !hasErrFlash(rec) {
+		t.Error("invalid URL accepted")
+	}
+	rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie)
+	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("save = %d %q", rec.Code, flashCookieValue(rec))
+	}
+	if env.ctl.count() != 0 {
+		t.Error("saving while off triggered a reconcile")
+	}
+	s, err := observability.Load(ctx, env.q)
+	if err != nil || s.Metrics.Password != "s3cret-m" || s.Logs.User != "loki" {
+		t.Fatalf("stored = %+v %v", s, err)
+	}
+
+	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
+	for _, secretText := range []string{"s3cret-m", "s3cret-l"} {
+		if strings.Contains(page, secretText) {
+			t.Errorf("page shows a password")
+		}
+	}
+	if !strings.Contains(page, "https://mimir.example.com/api/v1/push") || !strings.Contains(page, "leave empty to keep") {
+		t.Error("page does not show the stored settings")
+	}
+
+	if rec := env.do(t, http.MethodPost, env.base+"/enable", url.Values{}, env.cookie); hasErrFlash(rec) {
+		t.Fatalf("enable: %q", flashCookieValue(rec))
+	}
+	if s, _ := observability.Load(ctx, env.q); !s.Enabled || env.ctl.count() != 1 {
+		t.Errorf("enabled=%v triggers=%d", s.Enabled, env.ctl.count())
+	}
+
+	// Saving while on applies the change; an empty password keeps the old one.
+	form := fullForm()
+	form.Set("metrics_password", "")
+	env.do(t, http.MethodPost, env.base, form, env.cookie)
+	if s, _ := observability.Load(ctx, env.q); s.Metrics.Password != "s3cret-m" || env.ctl.count() != 2 {
+		t.Errorf("password=%q triggers=%d", s.Metrics.Password, env.ctl.count())
+	}
+
+	env.do(t, http.MethodPost, env.base+"/disable", url.Values{}, env.cookie)
+	if s, _ := observability.Load(ctx, env.q); s.Enabled || env.ctl.count() != 3 {
+		t.Errorf("after disable: enabled=%v triggers=%d", s.Enabled, env.ctl.count())
+	}
+}
+
+func TestObservabilityCheck(t *testing.T) {
+	env := newObsEnv(t, true)
+	if rec := env.do(t, http.MethodPost, env.base+"/check", url.Values{}, env.cookie); !hasErrFlash(rec) || len(env.checked) != 0 {
+		t.Error("check without settings was run")
+	}
+	env.do(t, http.MethodPost, env.base, fullForm(), env.cookie)
+
+	env.report = observability.Report{
+		Metrics: &observability.Result{OK: true, Key: "obs.check.ok_v1_only"},
+		Logs:    &observability.Result{Key: "obs.check.auth", Detail: "401"},
+	}
+	rec := env.do(t, http.MethodPost, env.base+"/check", url.Values{}, env.cookie)
+	if len(env.checked) != 1 || env.checked[0].Logs.Password != "s3cret-l" {
+		t.Fatalf("checked = %+v", env.checked)
+	}
+	if !hasErrFlash(rec) {
+		t.Error("a failed logs check flashed success")
+	}
+	msg := flashText(rec)
+	if !strings.Contains(msg, "Metrics: the address and credentials are fine") || !strings.Contains(msg, "Logs: wrong user or password (HTTP 401)") {
+		t.Errorf("flash = %q", msg)
+	}
+
+	env.report = observability.Report{Metrics: &observability.Result{OK: true, Key: "obs.check.ok"}}
+	rec = env.do(t, http.MethodPost, env.base+"/check", url.Values{}, env.cookie)
+	if hasErrFlash(rec) || !strings.Contains(flashText(rec), "Logs: not configured") {
+		t.Errorf("flash = %q", flashCookieValue(rec))
+	}
+}
+
+func TestObservabilityStatusOnPage(t *testing.T) {
+	env := newObsEnv(t, true)
+	env.ctl.status = observability.Status{
+		Busy:    true,
+		LastErr: "the agent is not running on every node",
+		Service: docker.ServiceState{Found: true, Running: 1, Desired: 2, Failed: 1},
+	}
+	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
+	for _, want := range []string{"Agents running: 1 of 2", "Failed tasks: 1", "Applying the settings", "not running on every node", "256 MiB"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}

@@ -12,6 +12,8 @@ func TestSettingsSections(t *testing.T) {
 	}{
 		{"/orgs/1/panel-domain", "panel-domain"},
 		{"/orgs/1/panel-domain/confirm", "panel-domain"},
+		{"/orgs/1/observability", "observability"},
+		{"/orgs/1/observability/check", "observability"},
 		{"/orgs/1/updates", "updates"},
 		{"/orgs/1/updates/status", "updates"},
 		{"/orgs/1/registries", "registries"},
