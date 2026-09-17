@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"io"
+	"os"
 	"strconv"
 	"time"
 )
@@ -32,6 +33,16 @@ type MountSpec struct {
 	Owner    string // "uid:gid" to chown the volume to before deploy; "" => skip
 }
 
+// FileRef mounts a Swarm config or secret into the service's containers as a
+// file. Swarm references an object by ID, which ServiceDeploy looks up from
+// Name, so callers leave ID empty.
+type FileRef struct {
+	Name   string
+	Target string      // configs: absolute path; secrets: file name under /run/secrets
+	Mode   os.FileMode // 0 => 0444
+	ID     string      `json:"-"`
+}
+
 // ServiceSpec — our neutral description of a Swarm service.
 type ServiceSpec struct {
 	Name     string
@@ -47,14 +58,23 @@ type ServiceSpec struct {
 	// than one network sets it — today that is just the Traefik gateway, which
 	// must reach every organization's network while those stay isolated from
 	// each other.
-	Networks     []string
-	Ports        []PortSpec
-	Mounts       []MountSpec
-	Constraints  []string // e.g. node.role==manager
-	Global       bool     // true => Mode.Global (one task per matching node); Replicas ignored
-	SpreadNodeID bool     // add a spread-over-node.id placement preference (distribute replicas)
-	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
-	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
+	Networks []string
+	Ports    []PortSpec
+	Mounts   []MountSpec
+	Configs  []FileRef // Swarm configs mounted as files
+	Secrets  []FileRef // Swarm secrets mounted under /run/secrets
+	// ContainerLabels land on the containers, unlike Labels (service level):
+	// a log collector reading the docker socket sees only these.
+	ContainerLabels map[string]string
+	Hostname        string // container hostname; Swarm templates allowed, e.g. {{.Node.Hostname}}
+	// UpdateStopFirst stops the old task before starting its replacement — for
+	// a task that holds something node-local, like an agent's WAL directory.
+	UpdateStopFirst bool
+	Constraints     []string // e.g. node.role==manager
+	Global          bool     // true => Mode.Global (one task per matching node); Replicas ignored
+	SpreadNodeID    bool     // add a spread-over-node.id placement preference (distribute replicas)
+	DNSRR           bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
+	RegistryAuth    string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
 
 	MemoryLimitBytes   int64  // 0 = no limit
 	NanoCPUs           int64  // 0 = no limit
@@ -116,6 +136,16 @@ type ServiceProgress struct {
 	Failed      int      // non-excluded tasks failed/rejected
 	UpdateState string   // swarm UpdateStatus.State; "" when never updated
 	TaskIDs     []string // IDs of the desired-state=running tasks seen (the baseline for the next deploy)
+}
+
+// UpdateSettled reports whether a service's last rolling update has come to
+// rest. "" means the service was never updated.
+func UpdateSettled(state string) bool {
+	switch state {
+	case "updating", "paused", "rollback_started", "rollback_paused":
+		return false
+	}
+	return true
 }
 
 // ContainerStat is a one-shot CPU/memory sample for a running container.

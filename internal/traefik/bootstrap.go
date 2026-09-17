@@ -170,7 +170,7 @@ func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNe
 	// A failed or empty label read is not a reason to skip either: it only
 	// means we cannot tell whether anything changed, and a redundant restart
 	// beats a gateway that never learns about a new network.
-	if !created && updateSettled(before.UpdateState) {
+	if !created && docker.UpdateSettled(before.UpdateState) {
 		if cur, found, err := eng.ServiceLabels(ctx, ServiceName); err == nil && found {
 			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
 				return nil
@@ -192,16 +192,6 @@ func Reconcile(ctx context.Context, eng docker.Engine, baseNetwork string, orgNe
 	return nil
 }
 
-// updateSettled reports whether the gateway's last update has come to rest.
-// "" means the service was never updated.
-func updateSettled(state string) bool {
-	switch state {
-	case "updating", "paused", "rollback_started", "rollback_paused":
-		return false
-	}
-	return true
-}
-
 // waitGateway polls until a gateway task outside baseline is running and Swarm
 // has completed the update. A running task alone is not enough: for its monitor
 // period Swarm still reports the update in progress and rolls it back if the
@@ -218,7 +208,7 @@ func waitGateway(ctx context.Context, eng docker.Engine, baseline []string) erro
 			lastErr = err
 		case p.Found && !first && strings.HasPrefix(p.UpdateState, "rollback"):
 			return errors.New("gateway update rolled back: Swarm restored the previous Traefik spec")
-		case p.Found && p.Desired > 0 && p.Running >= p.Desired && updateSettled(p.UpdateState):
+		case p.Found && p.Desired > 0 && p.Running >= p.Desired && docker.UpdateSettled(p.UpdateState):
 			return nil
 		}
 		select {

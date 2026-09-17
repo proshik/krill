@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"os"
 	"sort"
 
 	container "github.com/docker/docker/api/types/container"
@@ -35,6 +36,25 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 			Source:   m.Source,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
+		})
+	}
+
+	cs.Hostname = s.Hostname
+	if len(s.ContainerLabels) > 0 {
+		cs.Labels = s.ContainerLabels
+	}
+	for _, c := range s.Configs {
+		cs.Configs = append(cs.Configs, &swarm.ConfigReference{
+			File:       &swarm.ConfigReferenceFileTarget{Name: c.Target, UID: "0", GID: "0", Mode: fileMode(c.Mode)},
+			ConfigID:   c.ID,
+			ConfigName: c.Name,
+		})
+	}
+	for _, sc := range s.Secrets {
+		cs.Secrets = append(cs.Secrets, &swarm.SecretReference{
+			File:       &swarm.SecretReferenceFileTarget{Name: sc.Target, UID: "0", GID: "0", Mode: fileMode(sc.Mode)},
+			SecretID:   sc.ID,
+			SecretName: sc.Name,
 		})
 	}
 
@@ -96,7 +116,7 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		Mode:         svcMode,
 		UpdateConfig: &swarm.UpdateConfig{
 			Parallelism:   1,
-			Order:         updateOrder(s.Ports),
+			Order:         updateOrder(s),
 			FailureAction: swarm.UpdateFailureActionRollback,
 		},
 		RollbackConfig: &swarm.UpdateConfig{
@@ -130,20 +150,34 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 }
 
 // updateOrder is start-first (zero downtime) unless the service publishes a
-// host-mode port. A host-mode port is bound by the task on its node, so a
-// start-first replacement cannot be placed while the task it replaces still
-// holds the port: it stays Pending with "host-mode port conflict", and because
-// start-first stops the old task only once the new one runs, the update never
-// finishes and never fails — the old spec just keeps running. Traefik (:80/:443
-// on the manager), raw TCP/UDP app ports and database proxies all publish in
-// host mode, so they stop the old task first and accept a brief gap.
-func updateOrder(ports []PortSpec) string {
-	for _, p := range ports {
+// host-mode port or asks for UpdateStopFirst explicitly. A host-mode port is
+// bound by the task on its node, so a start-first replacement cannot be placed
+// while the task it replaces still holds the port: it stays Pending with
+// "host-mode port conflict", and because start-first stops the old task only
+// once the new one runs, the update never finishes and never fails — the old
+// spec just keeps running. Traefik (:80/:443 on the manager), raw TCP/UDP app
+// ports and database proxies all publish in host mode, so they stop the old
+// task first and accept a brief gap. UpdateStopFirst covers the same situation
+// for a service that holds something else node-local instead of a port, like
+// an agent's WAL directory.
+func updateOrder(s ServiceSpec) string {
+	if s.UpdateStopFirst {
+		return swarm.UpdateOrderStopFirst
+	}
+	for _, p := range s.Ports {
 		if p.Mode == "host" {
 			return swarm.UpdateOrderStopFirst
 		}
 	}
 	return swarm.UpdateOrderStartFirst
+}
+
+// fileMode defaults an unset mode to world-readable, Swarm's own default.
+func fileMode(m os.FileMode) os.FileMode {
+	if m == 0 {
+		return 0o444
+	}
+	return m
 }
 
 // restartCondition maps a human restart condition to the Swarm enum.
