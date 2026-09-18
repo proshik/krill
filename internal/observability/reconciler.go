@@ -23,21 +23,23 @@ type Status struct {
 	LastErr  string
 	Service  docker.ServiceState
 	StateErr string
+	Coverage Coverage
 }
 
 // Reconciler runs Reconcile in the background whenever the settings change,
 // and once at startup, so a request never waits on an image pull.
 type Reconciler struct {
 	load     func(context.Context) (Settings, error)
-	apply    func(context.Context, Settings) error
+	apply    func(context.Context, Settings) (Coverage, error)
 	state    func(context.Context) (docker.ServiceState, error)
 	debounce time.Duration
 	trigger  chan struct{}
 
-	mu      sync.Mutex
-	busy    bool
-	lastRun time.Time
-	lastErr string
+	mu       sync.Mutex
+	busy     bool
+	lastRun  time.Time
+	lastErr  string
+	coverage Coverage
 }
 
 // NewReconciler wires a reconciler to the engine, the settings loader, the
@@ -49,13 +51,13 @@ func NewReconciler(eng Engine, load func(context.Context) (Settings, error),
 	nodes func(context.Context) ([]NodeName, error), network string) *Reconciler {
 	return &Reconciler{
 		load: load,
-		apply: func(ctx context.Context, s Settings) error {
+		apply: func(ctx context.Context, s Settings) (Coverage, error) {
 			if !s.Enabled {
 				return Reconcile(ctx, eng, s, network, nil)
 			}
 			ns, err := nodes(ctx)
 			if err != nil {
-				return fmt.Errorf("list cluster nodes: %w", err)
+				return Coverage{}, fmt.Errorf("list cluster nodes: %w", err)
 			}
 			return Reconcile(ctx, eng, s, network, ns)
 		},
@@ -106,8 +108,9 @@ func (r *Reconciler) pass(ctx context.Context) {
 	pctx, cancel := context.WithTimeout(ctx, passTimeout)
 	defer cancel()
 	s, err := r.load(pctx)
+	var cov Coverage
 	if err == nil {
-		err = r.apply(pctx, s)
+		cov, err = r.apply(pctx, s)
 	}
 	if err != nil {
 		slog.Error("observability reconcile failed", "err", err)
@@ -116,6 +119,10 @@ func (r *Reconciler) pass(ctx context.Context) {
 	defer r.mu.Unlock()
 	r.lastRun = time.Now()
 	r.lastErr = ""
+	// cov is the zero Coverage on a real failure (Reconcile's error paths all
+	// return it), so this also clears any earlier partial-coverage note once
+	// the pass itself fails outright — LastErr is what the page shows then.
+	r.coverage = cov
 	if err != nil {
 		r.lastErr = err.Error()
 	}
@@ -125,7 +132,7 @@ func (r *Reconciler) pass(ctx context.Context) {
 // Status reports the last pass and the agent's current tasks.
 func (r *Reconciler) Status(ctx context.Context) Status {
 	r.mu.Lock()
-	st := Status{Busy: r.busy, LastRun: r.lastRun, LastErr: r.lastErr}
+	st := Status{Busy: r.busy, LastRun: r.lastRun, LastErr: r.lastErr, Coverage: r.coverage}
 	r.mu.Unlock()
 	sctx, cancel := context.WithTimeout(ctx, stateTimeout)
 	defer cancel()

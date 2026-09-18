@@ -595,9 +595,13 @@ func run() error {
 // would never get a name that way) and not a hardcoded name for the manager
 // (that would silently rename krill_node on every existing install the
 // moment it upgrades, before the operator ever names anything). A node with
-// no label is left out of the mapping entirely: its krill_node keeps showing
-// the raw Swarm hostname, exactly like an install that has never labelled
-// any node — nothing changes silently.
+// no label gets an empty Name: RenderNodeConfig leaves it out of the
+// krill_node mapping (its krill_node keeps showing the raw Swarm hostname,
+// exactly like an install that has never labelled any node — nothing changes
+// silently), but Reconcile still needs it in the list, Ready flag and all, to
+// know how many nodes the agent is expected to reach on this pass (see
+// Coverage) — a label is a display choice, not a reason to stop counting a
+// node.
 func obsNodeNames(swarmNodes []docker.SwarmNode, labels []db.NodeLabel) []observability.NodeName {
 	labelByID := make(map[string]string, len(labels))
 	for _, l := range labels {
@@ -605,9 +609,11 @@ func obsNodeNames(swarmNodes []docker.SwarmNode, labels []db.NodeLabel) []observ
 	}
 	names := make([]observability.NodeName, 0, len(swarmNodes))
 	for _, n := range swarmNodes {
-		if label, ok := labelByID[n.ID]; ok {
-			names = append(names, observability.NodeName{Hostname: n.Hostname, Name: label})
-		}
+		names = append(names, observability.NodeName{
+			Hostname: n.Hostname,
+			Name:     labelByID[n.ID],
+			Ready:    n.State == "ready" && n.Availability == "active",
+		})
 	}
 	return names
 }

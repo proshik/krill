@@ -49,9 +49,15 @@ save. Nothing collected is stored by Krill — it goes straight to your own rece
   docker pull grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839
   ```
 
-  Do this on **every** node — Krill waits for the agent to be running on **all** of them before
-  it reports success, so even one node stuck pulling the image fails the whole attempt after a
-  few minutes (see [Troubleshooting](#7-turning-it-off--troubleshooting)).
+  Do this on **every** node. Krill waits for the agent to be running only on the nodes Swarm can
+  currently schedule a task on — a node that is down, drained or paused (see **Nodes**) is not
+  part of that wait, so it does not hold up the rest of the cluster, but it also does not get the
+  new configuration until it reconnects. If a node Swarm still considers healthy is nonetheless
+  stuck (an image pull that never finishes, a manager-to-worker connection that drops mid-update),
+  the whole attempt fails after a few minutes, same as before (see
+  [Troubleshooting](#7-turning-it-off--troubleshooting)). Either way, once a pass does converge the
+  page names any node still running the PREVIOUS configuration instead of quietly counting it as
+  covered — see **Node coverage** below.
 
 ## 3. Turning it on
 
@@ -70,6 +76,11 @@ already stored — but only while the address still points at the same server (s
 port; a different path is fine). If you change the server, enter the password again: Krill
 refuses to send a stored password to a host it wasn't entered for. To remove a stored password,
 clear the user field and save.
+
+Blanking a target's URL field alone does **not** clear it: Krill refuses the save and asks you to
+tick **Remove these settings** next to that target first. This is deliberate — an address field
+left empty by mistake (a browser that didn't restore it, a save that landed before you finished
+editing) must not silently drop a working configuration.
 
 **Check** sends one throwaway sample to each configured address before you commit to turning
 the agent on: a metrics sample `krill_observability_check{krill_instance="..."}` over Remote
@@ -91,6 +102,17 @@ check **never blocks** turning the agent on — it's a diagnostic, not a gate.
 
 Once saved and turned on, the page shows how many of the cluster's nodes are running the agent
 and any error from the last reconcile pass.
+
+**Node coverage.** A successful pass can still leave a node behind: Swarm's own node count for a
+global service only reflects the nodes it could actually schedule a fresh task on, so a node that
+was unreachable for this whole pass never shows up as missing from Swarm's side — it just quietly
+keeps running its previous task. When that happens the page adds a line naming the node(s) still
+on the **previous** settings (not merely "unreachable" — after rotating a push credential this is
+the difference between "done" and "half the cluster is still sending the old password"). This is
+not an error: the agent is deployed, and Swarm places the task itself once the node reconnects
+(a few tens of seconds on a live cluster). The note is only as fresh as the last pass — it clears
+the next time one runs, which is any settings save, or a node being added or removed; it does not
+refresh on its own between those.
 
 ## 4. Labels
 
@@ -138,12 +160,20 @@ Example queries once data is flowing:
 ## 5. Cost
 
 The agent's Swarm service is limited to **256 MiB of memory and half a CPU core, per node**.
-Alloy sets its own `GOMEMLIMIT` from that cgroup limit — Krill does not pass one. On a
-single-node Colima development VM (2026-09-17, about a dozen containers, both pipelines on)
-the agent started at about **55 MiB** and settled at about **105 MiB** after 10–15 minutes
-(cgroup peak 108 MiB, nearly all of it Go heap); expect the live two-node acceptance run to
-refine this number under real load. On a small server, half a CPU
-core and up to 256 MiB per node is still a real share of the box — decide before turning it on,
+Alloy sets its own `GOMEMLIMIT` from that cgroup limit — Krill does not pass one. Measured on a
+live two-node cluster (2026-09-18, both pipelines on, real app and database traffic) across five
+container generations over nine hours, the agent's actual working set — `anon` in
+`/sys/fs/cgroup/memory.stat`, i.e. memory the kernel cannot reclaim without swapping — settled at
+**51–59 MiB** on both nodes; a clean data volume and one that already held preserved read
+positions from a previous generation both reach that same plateau in 3–4 minutes. What `docker
+stats` and `memory.current` report is a different, larger number: both count the page cache
+alongside that working set, and the cache does not shrink on its own while nothing on the node is
+under memory pressure — one observation on a live node reached **237 MiB** in `docker stats` with
+that same ~55 MiB working set underneath; the rest was page cache the kernel simply had not needed
+to reclaim yet (its composition was not measured). The kernel evicts that cache under real memory
+pressure well before the OOM killer would ever run, so it is headroom, not a leak — but if you are
+budgeting memory for a small server, watch `anon`, not `docker stats`. Either way, half a CPU core
+and up to 256 MiB per node is still a real share of the box — decide before turning it on,
 especially on a single 2 vCPU / 2 GB node.
 
 ## 6. Security

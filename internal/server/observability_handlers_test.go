@@ -272,7 +272,8 @@ func TestObservabilitySaveValidationErrors(t *testing.T) {
 		}
 	}
 
-	// ErrNothingConfigured: clearing both addresses while enabled is refused.
+	// An empty submit while something is configured is refused with the
+	// clear-confirmation flash (Task B), not silently treated as a clear.
 	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
 		t.Fatalf("save: %q", flashCookieValue(rec))
 	}
@@ -281,10 +282,59 @@ func TestObservabilitySaveValidationErrors(t *testing.T) {
 	}
 	rec := env.do(t, http.MethodPost, env.base, url.Values{}, env.cookie)
 	if !hasErrFlash(rec) {
+		t.Fatal("an empty submit over a configured target was accepted")
+	}
+	if msg := flashText(rec); !strings.Contains(msg, `tick "Remove these settings"`) {
+		t.Errorf("flash = %q", msg)
+	}
+
+	// ErrNothingConfigured: confirming the clear on both targets while
+	// enabled is still refused — clearing everything would leave the agent
+	// enabled with nothing to send.
+	rec = env.do(t, http.MethodPost, env.base, url.Values{"metrics_clear": {"on"}, "logs_clear": {"on"}}, env.cookie)
+	if !hasErrFlash(rec) {
 		t.Fatal("clearing both addresses while enabled was accepted")
 	}
 	if msg := flashText(rec); !strings.Contains(msg, "Set a metrics or a logs address") {
 		t.Errorf("flash = %q", msg)
+	}
+}
+
+// TestObservabilitySaveClearRequiresConfirmation is the server-level half of
+// Task B: an accidentally empty URL on an already-configured target is
+// refused, and ticking the confirmation checkbox is what actually clears it.
+func TestObservabilitySaveClearRequiresConfirmation(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+
+	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
+		t.Fatalf("save: %q", flashCookieValue(rec))
+	}
+
+	// Submitting the logs target with a blank URL and no confirmation is
+	// refused, and the stored logs target is untouched.
+	form := fullForm()
+	form.Set("logs_url", "")
+	rec := env.do(t, http.MethodPost, env.base, form, env.cookie)
+	if !hasErrFlash(rec) {
+		t.Fatal("a blank URL without confirmation was accepted")
+	}
+	if msg := flashText(rec); !strings.Contains(msg, `tick "Remove these settings"`) {
+		t.Errorf("flash = %q", msg)
+	}
+	s, err := observability.Load(context.Background(), env.q)
+	if err != nil || !s.Logs.Configured() {
+		t.Errorf("a refused clear erased the logs target: %+v, %v", s, err)
+	}
+
+	// Ticking the checkbox confirms the clear.
+	form.Set("logs_clear", "on")
+	if rec := env.do(t, http.MethodPost, env.base, form, env.cookie); hasErrFlash(rec) {
+		t.Fatalf("confirmed clear: %q", flashCookieValue(rec))
+	}
+	if s, _ := observability.Load(context.Background(), env.q); s.Logs.Configured() {
+		t.Errorf("the confirmed clear did not remove the logs target: %+v", s)
 	}
 }
 
@@ -358,5 +408,37 @@ func TestObservabilityStatusOnPage(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}
+	}
+}
+
+// TestObservabilityStatusShowsPartialCoverage is the page-rendering half of
+// Task C: a node still on the previous settings must be named, and the text
+// must say so — not merely that the node is unreachable — because that is
+// the whole point after rotating a push credential.
+func TestObservabilityStatusShowsPartialCoverage(t *testing.T) {
+	env := newObsEnv(t, true)
+	env.ctl.status = observability.Status{
+		Service:  docker.ServiceState{Found: true, Running: 1, Desired: 1},
+		Coverage: observability.Coverage{Expected: 2, Deployed: 1, Missing: []string{"worker-1"}},
+	}
+	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
+	for _, want := range []string{"Deployed on 1 of 2 nodes", "worker-1", "previous settings", "next reconcile pass"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}
+
+// TestObservabilityStatusHidesCoverageWhenFull proves the note only appears
+// when something is actually missing — full coverage adds no extra line.
+func TestObservabilityStatusHidesCoverageWhenFull(t *testing.T) {
+	env := newObsEnv(t, true)
+	env.ctl.status = observability.Status{
+		Service:  docker.ServiceState{Found: true, Running: 2, Desired: 2},
+		Coverage: observability.Coverage{Expected: 2, Deployed: 2},
+	}
+	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
+	if strings.Contains(page, "previous settings") {
+		t.Error("page shows a coverage note with nothing missing")
 	}
 }

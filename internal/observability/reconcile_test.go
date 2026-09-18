@@ -22,6 +22,15 @@ type fakeEngine struct {
 	rollback bool              // a deploy rolls back
 	neverRun bool              // a deploy's task never runs
 	created  bool              // NetworkEnsure reports the network as new
+
+	// tasks/nextTasks/tasksErr drive ServiceTasks and, once set, ServiceProgress
+	// too (see progressFromTasks): tasks is the CURRENT per-node placement;
+	// nextTasks, when non-nil, replaces it the moment ServiceDeploy runs — so a
+	// test can hold "before this deploy" and "after this deploy" apart, exactly
+	// like a real rolling update replacing some nodes' tasks and not others.
+	tasks     []docker.TaskPlacement
+	nextTasks []docker.TaskPlacement
+	tasksErr  error
 }
 
 func newFakeEngine() *fakeEngine { return &fakeEngine{objects: map[string][]byte{}} }
@@ -37,6 +46,10 @@ func (f *fakeEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) erro
 	f.deploys = append(f.deploys, s)
 	f.labels = s.Labels
 	f.update = "deployed"
+	if f.nextTasks != nil {
+		f.tasks = f.nextTasks
+		f.nextTasks = nil
+	}
 	return nil
 }
 func (f *fakeEngine) ServiceRemove(context.Context, string) error {
@@ -57,6 +70,9 @@ func (f *fakeEngine) ServiceProgress(_ context.Context, _ string, exclude []stri
 	if f.labels == nil {
 		return docker.ServiceProgress{}, nil
 	}
+	if f.tasks != nil {
+		return progressFromTasks(f.tasks, exclude), nil
+	}
 	if f.update != "deployed" { // before any deploy in this test
 		return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: f.update, TaskIDs: []string{"old"}}, nil
 	}
@@ -68,10 +84,40 @@ func (f *fakeEngine) ServiceProgress(_ context.Context, _ string, exclude []stri
 	}
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: "completed", TaskIDs: []string{"new"}}, nil
 }
+
+// progressFromTasks mirrors the real engine's ServiceProgress (see
+// internal/docker/client.go): only tasks whose ID is not in exclude count
+// toward Desired/Running, exactly like a StartFirst/StopFirst update leaves a
+// node's OLD task alone (same ID, so excluded) until Swarm can replace it.
+func progressFromTasks(tasks []docker.TaskPlacement, exclude []string) docker.ServiceProgress {
+	old := make(map[string]bool, len(exclude))
+	for _, id := range exclude {
+		old[id] = true
+	}
+	var running, fresh int
+	ids := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		ids = append(ids, t.ID)
+		if old[t.ID] {
+			continue
+		}
+		fresh++
+		if t.State == "running" {
+			running++
+		}
+	}
+	return docker.ServiceProgress{Found: true, Desired: fresh, Running: running, UpdateState: "completed", TaskIDs: ids}
+}
+
 func (f *fakeEngine) ServiceLabels(context.Context, string) (map[string]string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.labels, f.labels != nil, nil
+}
+func (f *fakeEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tasks, f.tasksErr
 }
 func (f *fakeEngine) ConfigEnsure(_ context.Context, name string, data []byte, labels map[string]string) error {
 	return f.ensure(name, data, labels)
@@ -108,7 +154,7 @@ func fastConverge(t *testing.T) {
 func TestReconcileDeploysAgent(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
-	if err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nil); err != nil {
+	if _, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -165,10 +211,10 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -176,7 +222,7 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	}
 	first := eng.deploys[0]
 	s.Logs.Password = "rotated"
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -193,7 +239,7 @@ func TestReconcileRedeploysWhileUpdateUnsettled(t *testing.T) {
 	s := fullSettings()
 	eng.labels = NodeSpec(objectsFor(t, s, nil), "krill-net").Labels // same hash, but…
 	eng.update = "paused"                                            // …the update never finished
-	if err := Reconcile(context.Background(), eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(context.Background(), eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -208,13 +254,13 @@ func TestReconcileRedeploysWhenNetworkRecreated(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	eng.mu.Lock()
 	eng.created = true
 	eng.mu.Unlock()
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -231,7 +277,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng := newFakeEngine()
 	eng.rollback = true
-	if err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil); err == nil || !strings.Contains(err.Error(), "rolled back") {
+	if _, err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil); err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Errorf("rollback: %v", err)
 	}
 	if len(eng.pruned) != 0 {
@@ -240,7 +286,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng = newFakeEngine()
 	eng.neverRun = true
-	err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil)
+	_, err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil)
 	if err == nil || !strings.Contains(err.Error(), "docker service ps "+NodeServiceName) {
 		t.Errorf("timeout: %v", err)
 	}
@@ -249,7 +295,7 @@ func TestReconcileFailures(t *testing.T) {
 	}
 
 	eng = newFakeEngine()
-	if err := Reconcile(ctx, eng, Settings{Enabled: true}, "krill-net", nil); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
+	if _, err := Reconcile(ctx, eng, Settings{Enabled: true}, "krill-net", nil); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
 		t.Errorf("nothing configured: %v, deploys %d", err, len(eng.deploys))
 	}
 }
@@ -257,7 +303,7 @@ func TestReconcileFailures(t *testing.T) {
 func TestReconcileDisabled(t *testing.T) {
 	ctx := context.Background()
 	eng := newFakeEngine()
-	if err := Reconcile(ctx, eng, Settings{}, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, Settings{}, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 0 || len(eng.pruned) != 1 || len(eng.pruned[0]) != 0 {
@@ -266,7 +312,7 @@ func TestReconcileDisabled(t *testing.T) {
 	eng.labels = map[string]string{specHashLabel: "x"}
 	s := fullSettings()
 	s.Enabled = false
-	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 1 {
@@ -313,10 +359,10 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -325,7 +371,7 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	first := eng.deploys[0]
 	// A worker joins.
 	nodes := []NodeName{{Hostname: "h1", Name: "control-plane"}, {Hostname: "h2", Name: "worker-1"}}
-	if err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil {
+	if _, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -333,5 +379,171 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	}
 	if eng.deploys[1].Labels[specHashLabel] == first.Labels[specHashLabel] {
 		t.Error("spec hash did not change with the node list")
+	}
+}
+
+// twoReadyNodes is the two-node shape the coverage tests below drive: both
+// ready and active, so Reconcile expects the agent on both of them.
+func twoReadyNodes() []NodeName {
+	return []NodeName{
+		{Hostname: "h1", Name: "control-plane", Ready: true},
+		{Hostname: "h2", Name: "worker-1", Ready: true},
+	}
+}
+
+// TestReconcileCoverageFull is the good case: both ready nodes end this pass
+// running a fresh (non-baseline) task, so Coverage reports full coverage and
+// no missing node.
+func TestReconcileCoverageFull(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1", NodeName: "h1", State: "running"},
+		{ID: "t2", NodeName: "h2", State: "running"},
+	}
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoReadyNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Expected != 2 || cov.Deployed != 2 || len(cov.Missing) != 0 {
+		t.Errorf("coverage = %+v, want full coverage of 2 nodes", cov)
+	}
+}
+
+// TestReconcileCoverageReportsLaggingNode reproduces the live-acceptance
+// finding: a global service's Desired count only reflects the nodes Swarm
+// actually scheduled a fresh task on, so a node whose container never
+// received the new assignment can still make waitAgent converge quickly
+// (Running >= Desired, both counting only the OTHER node). Reconcile must
+// still report that the lagging node is missing, by name, once the pass
+// succeeds — not silently accept the smaller Desired count as "everyone".
+func TestReconcileCoverageReportsLaggingNode(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	ctx := context.Background()
+	s := fullSettings()
+	nodes := twoReadyNodes()
+
+	// First pass: a clean deploy, both nodes converge.
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1", NodeName: "h1", State: "running"},
+		{ID: "t2", NodeName: "h2", State: "running"},
+	}
+	if cov, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil || cov.Expected != 2 || cov.Deployed != 2 {
+		t.Fatalf("first pass = %+v, %v", cov, err)
+	}
+
+	// Rotate the logs password: a redeploy. h1 gets a fresh task; h2's
+	// container never receives one (its ID, t2, does not change) — it is
+	// unreachable from the manager's perspective for this whole pass, exactly
+	// like the live finding.
+	s.Logs.Password = "rotated"
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1-new", NodeName: "h1", State: "running"},
+		{ID: "t2", NodeName: "h2", State: "running"}, // unchanged: still the pre-deploy task
+	}
+	cov, err := Reconcile(ctx, eng, s, "krill-net", nodes)
+	if err != nil {
+		t.Fatalf("second pass failed instead of succeeding with partial coverage: %v", err)
+	}
+	if cov.Expected != 2 || cov.Deployed != 1 {
+		t.Fatalf("coverage = %+v, want 1 of 2 deployed", cov)
+	}
+	if len(cov.Missing) != 1 || cov.Missing[0] != "worker-1" {
+		t.Errorf("missing = %v, want [worker-1]", cov.Missing)
+	}
+}
+
+// TestReconcileSkipsUnchangedButRefreshesCoverage proves the short-circuit
+// path (spec hash unchanged, so nothing is redeployed) still reports fresh
+// coverage: a node can go missing between two passes with no settings change
+// at all, and the operator needs to see that on the next trigger (a node
+// add/remove, another settings save), not only right after a redeploy.
+func TestReconcileSkipsUnchangedButRefreshesCoverage(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	ctx := context.Background()
+	s := fullSettings()
+	nodes := twoReadyNodes()
+
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1", NodeName: "h1", State: "running"},
+		{ID: "t2", NodeName: "h2", State: "running"},
+	}
+	if cov, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil || cov.Deployed != 2 {
+		t.Fatalf("first pass = %+v, %v", cov, err)
+	}
+
+	// h2 goes down between passes; nothing about the settings or node list
+	// changes.
+	eng.mu.Lock()
+	eng.tasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
+	eng.mu.Unlock()
+
+	cov, err := Reconcile(ctx, eng, s, "krill-net", nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.deploys) != 1 {
+		t.Fatalf("an unchanged spec redeployed: %d deploys", len(eng.deploys))
+	}
+	if cov.Expected != 2 || cov.Deployed != 1 || len(cov.Missing) != 1 || cov.Missing[0] != "worker-1" {
+		t.Errorf("coverage after the skip path = %+v", cov)
+	}
+}
+
+// TestReconcileCoverageIgnoresNotReadyNodes proves a node Swarm itself
+// reports as down/drained/paused is never counted as "expected": Swarm will
+// not schedule a task there, so its absence is not news and must not show up
+// as a missing node.
+func TestReconcileCoverageIgnoresNotReadyNodes(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	nodes := []NodeName{
+		{Hostname: "h1", Name: "control-plane", Ready: true},
+		{Hostname: "h2", Name: "worker-1", Ready: false}, // down/drained/paused
+	}
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1", NodeName: "h1", State: "running"},
+		// h2 has no task at all — it is not ready, so this must not matter.
+	}
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Expected != 1 || cov.Deployed != 1 || len(cov.Missing) != 0 {
+		t.Errorf("coverage = %+v, want the not-ready node excluded entirely", cov)
+	}
+}
+
+// TestReconcileCoverageListingFailureIsNotFatal proves a transient
+// ServiceTasks failure degrades to "nothing to report" rather than failing an
+// otherwise-successful pass: the agent IS deployed, and a listing hiccup must
+// not turn that into an error the page shows instead of the real state.
+func TestReconcileCoverageListingFailureIsNotFatal(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	eng.nextTasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
+	eng.tasksErr = errors.New("connection refused")
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoReadyNodes())
+	if err != nil {
+		t.Fatalf("a coverage-listing failure must not fail the pass: %v", err)
+	}
+	if cov.Expected != 0 || cov.Deployed != 0 || len(cov.Missing) != 0 {
+		t.Errorf("coverage = %+v, want the zero value on a listing failure", cov)
+	}
+}
+
+// TestReconcileTeardownReportsNoCoverage proves disabling the agent never
+// reports coverage — there is no agent to be missing from.
+func TestReconcileTeardownReportsNoCoverage(t *testing.T) {
+	eng := newFakeEngine()
+	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
+	cov, err := Reconcile(context.Background(), eng, Settings{}, "krill-net", twoReadyNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Expected != 0 || cov.Deployed != 0 || len(cov.Missing) != 0 {
+		t.Errorf("coverage = %+v, want the zero value on teardown", cov)
 	}
 }

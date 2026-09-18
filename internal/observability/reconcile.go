@@ -20,7 +20,77 @@ type Engine interface {
 	ServiceState(ctx context.Context, name string) (docker.ServiceState, error)
 	ServiceProgress(ctx context.Context, name string, exclude []string) (docker.ServiceProgress, error)
 	ServiceLabels(ctx context.Context, name string) (map[string]string, bool, error)
+	// ServiceTasks reports every current task and the node it runs on — used
+	// after a pass converges to tell a node still running its PREVIOUS task
+	// from one running the new one (see Coverage).
+	ServiceTasks(ctx context.Context, name string) ([]docker.TaskPlacement, error)
 	docker.SwarmObjects
+}
+
+// Coverage is how many of the ready-and-active nodes Reconcile expected the
+// agent to reach on this pass actually run its current configuration, once
+// the pass has confirmed the service itself converged. Partial coverage is
+// not a failure — the pass still succeeds — but an operator who just rotated
+// a push credential needs to know a missing node is still sending with the
+// PREVIOUS settings, not merely that it is unreachable.
+type Coverage struct {
+	Expected int
+	Deployed int
+	Missing  []string // Krill display names of ready nodes still on the previous configuration
+}
+
+// readyNodes is the subset nodes Reconcile expects the global service to
+// reach on this pass: Swarm reports them State "ready" and Availability
+// "active". The rest (down, drained, paused) are not counted — Swarm itself
+// will not schedule a task there, so their absence is not news.
+func readyNodes(nodes []NodeName) []NodeName {
+	var ready []NodeName
+	for _, n := range nodes {
+		if n.Ready {
+			ready = append(ready, n)
+		}
+	}
+	return ready
+}
+
+// coverage reports, for each ready node, whether ServiceTasks currently shows
+// it running a task that is not in stale and is itself running. stale is the
+// pre-deploy baseline task IDs (nil when this call is not following a fresh
+// deploy — see Reconcile's two call sites): a node whose only task is still
+// in stale never received the update — its container just never got a new
+// assignment — even though its State still reports "running" (see
+// docker.TaskPlacement). ServiceTasks failing is logged and reported as full
+// coverage: the agent IS deployed, and a transient listing failure must not
+// turn a successful pass into a false alarm.
+func coverage(ctx context.Context, eng Engine, nodes []NodeName, stale []string) Coverage {
+	ready := readyNodes(nodes)
+	if len(ready) == 0 {
+		return Coverage{}
+	}
+	tasks, err := eng.ServiceTasks(ctx, NodeServiceName)
+	if err != nil {
+		slog.Warn("observability: could not check node coverage", "err", err)
+		return Coverage{}
+	}
+	old := make(map[string]bool, len(stale))
+	for _, id := range stale {
+		old[id] = true
+	}
+	up := make(map[string]bool, len(tasks))
+	for _, t := range tasks {
+		if t.State == "running" && !old[t.ID] {
+			up[t.NodeName] = true
+		}
+	}
+	cov := Coverage{Expected: len(ready)}
+	for _, n := range ready {
+		if up[n.Hostname] {
+			cov.Deployed++
+		} else {
+			cov.Missing = append(cov.Missing, n.DisplayName())
+		}
+	}
+	return cov
 }
 
 // convergeTimeout covers pulling the agent image on every node.
@@ -31,38 +101,41 @@ var (
 
 // Reconcile converges the agent to s: deployed with this configuration when
 // enabled, absent otherwise. nodes maps Swarm hostnames to the names Krill
-// shows for them (see RenderNodeConfig); it is unused when s is disabled.
-func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) error {
+// shows for them (see RenderNodeConfig) and marks which are currently ready
+// to run a task (see Coverage); both are unused when s is disabled. The
+// returned Coverage is only meaningful on a nil error — a real failure (the
+// deploy itself did not converge) is reported as the error, not as Coverage.
+func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) (Coverage, error) {
 	if !s.Enabled {
-		return teardown(ctx, eng)
+		return Coverage{}, teardown(ctx, eng)
 	}
 	cfg, err := RenderNodeConfig(s, nodes)
 	if err != nil {
-		return err
+		return Coverage{}, err
 	}
 	obj := objectsOf(s, cfg)
 	labels := map[string]string{ObjectLabel: ObjectLabelValue}
 	if err := eng.ConfigEnsure(ctx, obj.Config, cfg, labels); err != nil {
-		return fmt.Errorf("create the agent configuration: %w", err)
+		return Coverage{}, fmt.Errorf("create the agent configuration: %w", err)
 	}
 	if obj.MetricsSecret != "" {
 		if err := eng.SecretEnsure(ctx, obj.MetricsSecret, []byte(s.Metrics.Password), labels); err != nil {
-			return fmt.Errorf("create the metrics password secret: %w", err)
+			return Coverage{}, fmt.Errorf("create the metrics password secret: %w", err)
 		}
 	}
 	if obj.LogsSecret != "" {
 		if err := eng.SecretEnsure(ctx, obj.LogsSecret, []byte(s.Logs.Password), labels); err != nil {
-			return fmt.Errorf("create the logs password secret: %w", err)
+			return Coverage{}, fmt.Errorf("create the logs password secret: %w", err)
 		}
 	}
 	netCreated, err := eng.NetworkEnsure(ctx, network)
 	if err != nil {
-		return err
+		return Coverage{}, err
 	}
 	spec := NodeSpec(obj, network)
 	before, err := eng.ServiceProgress(ctx, NodeServiceName, nil)
 	if err != nil {
-		return fmt.Errorf("read the agent's tasks: %w", err)
+		return Coverage{}, fmt.Errorf("read the agent's tasks: %w", err)
 	}
 	// A matching label proves the spec was written, not that it finished
 	// rolling out; an unsettled update is deployed again. A network that was
@@ -72,7 +145,12 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string, node
 		if cur, found, err := eng.ServiceLabels(ctx, NodeServiceName); err == nil && found {
 			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
 				prune(ctx, eng, obj)
-				return nil
+				// Nothing was redeployed, so nothing is "stale" — any node
+				// currently missing its task has been missing since before
+				// this pass, and this is still the freshest look we get at
+				// it without an unrelated settings change to trigger a full
+				// deploy.
+				return coverage(ctx, eng, nodes, nil), nil
 			}
 		}
 	}
@@ -83,14 +161,14 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string, node
 	slog.Info("deploying the observability agent",
 		"metrics", s.Metrics.Configured(), "logs", s.Logs.Configured())
 	if err := eng.ServiceDeploy(ctx, spec); err != nil {
-		return fmt.Errorf("deploy the agent: %w", err)
+		return Coverage{}, fmt.Errorf("deploy the agent: %w", err)
 	}
 	if err := waitAgent(ctx, eng, baseline); err != nil {
-		return err
+		return Coverage{}, err
 	}
 	slog.Info("observability agent deployed")
 	prune(ctx, eng, obj)
-	return nil
+	return coverage(ctx, eng, nodes, baseline), nil
 }
 
 func teardown(ctx context.Context, eng Engine) error {

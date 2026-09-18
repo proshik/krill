@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"strings"
 	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -26,6 +27,13 @@ type ObservabilityView struct {
 	Desired            int
 	Failed             int
 	StateErr           string
+	// CoverageExpected/CoverageDeployed/CoverageMissing describe the last
+	// pass's node coverage (see observability.Coverage): CoverageExpected is
+	// 0 whenever there is nothing to report (agent off, or every ready node
+	// covered).
+	CoverageExpected int
+	CoverageDeployed int
+	CoverageMissing  []string
 }
 
 func observabilityPath(orgID int64) string {
@@ -76,7 +84,11 @@ templ observabilityTarget(name, title, hint, url, user string, hasPassword bool)
 			}
 		</div>
 	</div>
-	<p class="mb-4" style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "obs.password_clear_hint") }</p>
+	<p class="mb-2" style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "obs.password_clear_hint") }</p>
+	<label class="flex items-center gap-2 mb-4" style="color:var(--color-muted);font-size:13px" for={ name + "_clear" }>
+		<input type="checkbox" id={ name + "_clear" } name={ name + "_clear" }/>
+		{ i18n.T(ctx, "obs.clear_confirm") }
+	</label>
 }
 
 templ observabilityState(orgID int64, v ObservabilityView) {
@@ -103,6 +115,10 @@ templ observabilityState(orgID int64, v ObservabilityView) {
 		}
 		if v.LastErr != "" {
 			<p class="mb-2" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "obs.status.last_err", v.LastErr) }</p>
+		}
+		if len(v.CoverageMissing) > 0 {
+			<p class="mb-1" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "obs.coverage.partial", v.CoverageDeployed, v.CoverageExpected, strings.Join(v.CoverageMissing, ", ")) }</p>
+			<p class="mb-2" style="color:var(--color-muted);font-size:13px;max-width:720px">{ i18n.T(ctx, "obs.coverage.hint") }</p>
 		}
 		<p class="mb-2" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "obs.cost", v.MemoryLimit) }</p>
 		<p class="mb-2" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "obs.manual_alloy") }</p>

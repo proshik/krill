@@ -26,6 +26,7 @@ var (
 	ErrNothingConfigured = errors.New("observability: neither a metrics nor a logs address is set")
 	ErrNotSaved          = errors.New("observability: the settings have not been saved yet")
 	ErrPasswordRequired  = errors.New("observability: the address changed; enter the password again")
+	ErrClearNotConfirmed = errors.New("observability: the address is empty; tick the confirmation to remove these settings")
 )
 
 // Target is one destination the agent pushes to.
@@ -49,6 +50,12 @@ type Settings struct {
 type TargetInput struct {
 	URL, User string
 	Password  string // "" keeps the stored password
+	// Clear confirms an intentional wipe of an already-configured target
+	// whose URL field was submitted empty. Without it, mergeTarget refuses
+	// the save (ErrClearNotConfirmed): an address left blank by an
+	// unintentionally empty form submission must not silently erase a
+	// working configuration.
+	Clear bool
 }
 
 // Input is the settings form.
@@ -171,9 +178,17 @@ func Save(ctx context.Context, q Store, in Input) error {
 // an empty password keeps storedPassword (still encrypted), but only while
 // the address still points at the server storedURL did — a kept password must
 // never be sent to a different host.
+//
+// Emptying a URL that WAS configured requires in.Clear: an accidental blank
+// submission (a field the operator never meant to touch, cleared by the
+// browser or simply left untouched on a form that renders it blank) must
+// refuse rather than silently wipe a working target.
 func mergeTarget(in TargetInput, storedURL, storedPassword string) (u, user, password string, err error) {
 	if u, err = NormalizeURL(in.URL); err != nil {
 		return "", "", "", err
+	}
+	if u == "" && storedURL != "" && !in.Clear {
+		return "", "", "", ErrClearNotConfirmed
 	}
 	user = strings.TrimSpace(in.User)
 	if err = checkUser(user); err != nil {

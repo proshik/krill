@@ -58,6 +58,7 @@ func (s *Server) observabilityPage(w http.ResponseWriter, r *http.Request) {
 		st := s.obs.ctl.Status(r.Context())
 		v.Busy, v.LastRun, v.LastErr, v.StateErr = st.Busy, st.LastRun, st.LastErr, st.StateErr
 		v.Found, v.Running, v.Desired, v.Failed = st.Service.Found, st.Service.Running, st.Service.Desired, st.Service.Failed
+		v.CoverageExpected, v.CoverageDeployed, v.CoverageMissing = st.Coverage.Expected, st.Coverage.Deployed, st.Coverage.Missing
 	}
 	render(w, r, http.StatusOK, templates.Observability(o, role, v))
 }
@@ -78,6 +79,8 @@ func (s *Server) flashObsErr(w http.ResponseWriter, r *http.Request, op string, 
 		s.flashErrT(w, r, "flash.err.obs_not_saved")
 	case errors.Is(err, observability.ErrPasswordRequired):
 		s.flashErrT(w, r, "flash.err.obs_password_required")
+	case errors.Is(err, observability.ErrClearNotConfirmed):
+		s.flashErrT(w, r, "flash.err.obs_clear_confirm")
 	case errors.Is(err, secret.ErrUndecryptable):
 		s.flashErrT(w, r, "flash.err.obs_undecryptable")
 	default:
@@ -96,8 +99,8 @@ func (s *Server) saveObservability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := observability.Input{
-		Metrics: observability.TargetInput{URL: r.FormValue("metrics_url"), User: r.FormValue("metrics_user"), Password: r.FormValue("metrics_password")},
-		Logs:    observability.TargetInput{URL: r.FormValue("logs_url"), User: r.FormValue("logs_user"), Password: r.FormValue("logs_password")},
+		Metrics: observability.TargetInput{URL: r.FormValue("metrics_url"), User: r.FormValue("metrics_user"), Password: r.FormValue("metrics_password"), Clear: r.FormValue("metrics_clear") == "on"},
+		Logs:    observability.TargetInput{URL: r.FormValue("logs_url"), User: r.FormValue("logs_user"), Password: r.FormValue("logs_password"), Clear: r.FormValue("logs_clear") == "on"},
 	}
 	if err := observability.Save(r.Context(), s.q, in); err != nil {
 		s.flashObsErr(w, r, "saveObservability", err)

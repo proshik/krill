@@ -30,9 +30,28 @@ type pushTarget struct {
 // NodeName maps a Swarm node's hostname to the name Krill shows for it — the
 // same node_labels.label the Nodes page, Topology and the app page already
 // show, resolved fresh from the cluster on every reconcile pass (see
-// obsNodeNames in cmd/krill/main.go). A node with no label is left out of the
-// mapping entirely: it keeps showing its raw Swarm hostname.
-type NodeName struct{ Hostname, Name string }
+// obsNodeNames in cmd/krill/main.go). Name is "" for a node with no label:
+// RenderNodeConfig leaves it out of the krill_node mapping (it keeps showing
+// its raw Swarm hostname), but Reconcile still counts it — labelled or not —
+// for node coverage (see Ready).
+//
+// Ready reports whether Swarm considers the node available to run a task
+// right now (State == "ready" && Availability == "active"). Reconcile uses
+// it to know how many nodes the agent is expected to reach on this pass —
+// see Coverage in reconcile.go.
+type NodeName struct {
+	Hostname, Name string
+	Ready          bool
+}
+
+// DisplayName is the name Krill shows for this node: its Krill name when one
+// is set, its raw Swarm hostname otherwise.
+func (n NodeName) DisplayName() string {
+	if n.Name != "" {
+		return n.Name
+	}
+	return n.Hostname
+}
 
 // nodeRelabelRule is one NodeName rendered into the two Alloy string literals
 // a relabel rule needs: both already quoted, so the template embeds them

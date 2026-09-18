@@ -82,15 +82,67 @@ func TestSaveLoadRoundTripAndPasswordRules(t *testing.T) {
 		t.Errorf("password not kept: %+v", s)
 	}
 
-	// No user drops basic auth entirely; no URL drops the whole target.
+	// No user drops basic auth entirely; a blank URL alone (Clear not set)
+	// refuses rather than dropping the whole target (Task B).
 	in.Metrics.User = ""
 	in.Logs = observability.TargetInput{User: "loki", Password: "x"}
+	if err := observability.Save(ctx, q, in); !errors.Is(err, observability.ErrClearNotConfirmed) {
+		t.Fatalf("blank URL without Clear = %v, want ErrClearNotConfirmed", err)
+	}
+	if s, _ = observability.Load(ctx, q); s.Logs.URL == "" {
+		t.Error("a refused clear erased the logs target")
+	}
+	if s.Metrics.User != "tenant" {
+		t.Error("a refused save on the logs target also touched metrics")
+	}
+
+	// With Clear set, the whole target is dropped as before.
+	in.Logs.Clear = true
 	if err := observability.Save(ctx, q, in); err != nil {
 		t.Fatal(err)
 	}
 	s, _ = observability.Load(ctx, q)
 	if s.Metrics.User != "" || s.Metrics.Password != "" || s.Logs != (observability.Target{}) {
 		t.Errorf("after clearing = %+v", s)
+	}
+}
+
+// TestSaveClearRequiresConfirmation is Task B: an accidentally empty URL on
+// an already-configured target must not silently wipe it.
+func TestSaveClearRequiresConfirmation(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	ctx := context.Background()
+	q := newStore(t)
+
+	base := observability.Input{
+		Metrics: observability.TargetInput{URL: "https://m.example.com/api/v1/push", User: "tenant", Password: "mpw"},
+	}
+	if err := observability.Save(ctx, q, base); err != nil {
+		t.Fatal(err)
+	}
+
+	// An empty URL without Clear is refused, and nothing changes.
+	if err := observability.Save(ctx, q, observability.Input{Metrics: observability.TargetInput{}}); !errors.Is(err, observability.ErrClearNotConfirmed) {
+		t.Fatalf("Save with a blank URL = %v, want ErrClearNotConfirmed", err)
+	}
+	s, err := observability.Load(ctx, q)
+	if err != nil || s.Metrics.URL != base.Metrics.URL || s.Metrics.Password != "mpw" {
+		t.Errorf("a refused clear changed the row: %+v, %v", s, err)
+	}
+
+	// The same empty URL with Clear set wipes the target.
+	if err := observability.Save(ctx, q, observability.Input{Metrics: observability.TargetInput{Clear: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = observability.Load(ctx, q); s.Metrics != (observability.Target{}) {
+		t.Errorf("Clear did not wipe the target: %+v", s)
+	}
+
+	// Clear on a target that was never configured is a no-op, not an error:
+	// there is nothing to confirm clearing.
+	if err := observability.Save(ctx, q, observability.Input{Metrics: observability.TargetInput{Clear: true}}); err != nil {
+		t.Errorf("Clear on an already-empty target = %v, want nil", err)
 	}
 }
 
@@ -137,8 +189,15 @@ func TestSetEnabled(t *testing.T) {
 	if s, _ := observability.Load(ctx, q); !s.Enabled {
 		t.Error("not enabled")
 	}
-	// Clearing every address while enabled is refused.
-	if err := observability.Save(ctx, q, observability.Input{}); !errors.Is(err, observability.ErrNothingConfigured) {
+	// An empty submit is refused without a hint of what it would have done —
+	// the configured Logs target needs Clear before it gives up ErrNothingConfigured
+	// as the reason (Task B: this is the accidental-blank-form case).
+	if err := observability.Save(ctx, q, observability.Input{}); !errors.Is(err, observability.ErrClearNotConfirmed) {
+		t.Errorf("blank submit while enabled = %v, want ErrClearNotConfirmed", err)
+	}
+	// Confirming the clear reaches the real guard: clearing every address
+	// while enabled is refused.
+	if err := observability.Save(ctx, q, observability.Input{Logs: observability.TargetInput{Clear: true}}); !errors.Is(err, observability.ErrNothingConfigured) {
 		t.Errorf("clearing an enabled config = %v", err)
 	}
 	if err := observability.SetEnabled(ctx, q, false); err != nil {

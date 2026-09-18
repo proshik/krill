@@ -1068,7 +1068,7 @@ func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPla
 			nodeName = t.NodeID // fall back to the raw node ID; "" if not yet scheduled
 		}
 		out = append(out, TaskPlacement{
-			NodeID: t.NodeID, NodeName: nodeName,
+			ID: t.ID, NodeID: t.NodeID, NodeName: nodeName,
 			State: string(t.Status.State), Desired: string(t.DesiredState),
 		})
 	}

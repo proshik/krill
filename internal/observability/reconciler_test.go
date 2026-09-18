@@ -21,13 +21,13 @@ type countingApply struct {
 	done  chan struct{}
 }
 
-func (c *countingApply) apply(context.Context, Settings) error {
+func (c *countingApply) apply(context.Context, Settings) (Coverage, error) {
 	c.mu.Lock()
 	c.calls++
 	err := c.err
 	c.mu.Unlock()
 	c.done <- struct{}{}
-	return err
+	return Coverage{}, err
 }
 
 func noNodes(context.Context) ([]NodeName, error) { return nil, nil }

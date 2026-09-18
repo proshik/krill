@@ -89,8 +89,12 @@ type SwarmNode struct {
 	Leader                                        bool
 }
 
-// TaskPlacement is one task of a service and the node it runs on.
-type TaskPlacement struct{ NodeID, NodeName, State, Desired string }
+// TaskPlacement is one task of a service and the node it runs on. ID is the
+// task's own Swarm ID — callers that captured a pre-deploy baseline of task
+// IDs use it to tell a node still running its OLD task (before a rolling
+// update reached it) from one already running the new spec, which State
+// alone cannot: a stalled node's stale task still reports State "running".
+type TaskPlacement struct{ ID, NodeID, NodeName, State, Desired string }
 
 // TaskInfo is one Swarm task tagged with its owning service and node. Unlike
 // TaskPlacement (which is per-service and carries no service identity), Tasks()
