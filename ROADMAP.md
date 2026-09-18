@@ -52,7 +52,9 @@ Verified in code and tests, but not yet exercised on a real environment:
    covers the single-writer fix (stop-first updates + a portable directory lock, not
    `flock --no-fork` — busybox/alpine images don't support that flag — on Postgres/Redis/
    DragonFly instances — see [Nodes](architecture.md#nodes)), found live on 2026-09-18 when a
-   worker's return produced two Postgres postmasters on the same volume for ~0.5s. Live
+   worker's return produced two Postgres postmasters on the same volume (overlapping ~0.3s,
+   then the new one serving for ~60s on a directory the old one had already shut down, until
+   Postgres's once-a-minute lock-file recheck stopped it). Live
    acceptance on two nodes should specifically check: return a worker holding a database
    instance mid-reconciliation and confirm the second container's postmaster stays blocked
    (doesn't start) until the first is actually gone, and that its log then has NO "was not
