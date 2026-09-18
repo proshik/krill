@@ -257,7 +257,16 @@ func TestNodeAgentShipsMetricsAndLogs(t *testing.T) {
 
 	logs, _ := agent.Logs(ctx)
 	out, _ := io.ReadAll(logs)
-	if bytes.Contains(out, []byte("level=error")) {
-		t.Errorf("agent logged errors:\n%s", out)
+	// nonBenignErrorLines (errorlog_test.go) filters out the one error line
+	// this test tolerates: loki.source.docker's tailer racing container
+	// removal against its own discovery/inspect step, which fires here
+	// because make test-integration runs this package alongside
+	// internal/dbservice's and internal/docker's, which create and remove
+	// containers on the same Docker host while this agent is tailing all of
+	// them. It is benign — the same thing happens in production whenever a
+	// container exits — not a defect in the rendered config. Any other
+	// level=error line still fails the test.
+	if bad := nonBenignErrorLines(out); len(bad) > 0 {
+		t.Errorf("agent logged errors:\n%s", strings.Join(bad, "\n"))
 	}
 }
