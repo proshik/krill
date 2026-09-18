@@ -53,8 +53,8 @@ func (d minioDriver) BuildSpec(inst Instance, network string) docker.ServiceSpec
 		DNSRR:       true,
 		Constraints: []string{DBConstraint(inst.NodeHostname)},
 		// UpdateStopFirst: single-writer protection. Unlike postgres/redis/
-		// dragonfly, MinIO gets stop-first only — its image has no `sh`+`flock`,
-		// so it doesn't get the directory-lock half of the protection (accepted
+		// dragonfly, MinIO gets stop-first only — its image has no `flock`, so
+		// it doesn't get the directory-lock half of the protection (accepted
 		// gap, see CLAUDE.md §3 and docs/architecture.md's "Nodes" section).
 		UpdateStopFirst: true,
 	}

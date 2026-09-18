@@ -113,9 +113,9 @@ since the image is free text), has no `--no-fork` flag at all and would otherwis
 and crash-loop the instance. A second container placed on the same volume — by Swarm or by hand
 — blocks until the first one actually stops, and a clean stop still reaches the database
 process instead of turning into a `SIGKILL`. This sits on top of, not instead of, starting
-every database instance's Swarm updates stop-first. MinIO's image has neither `sh` nor `flock`,
-so it only gets the stop-first protection, not the directory lock — a known, accepted gap. A
-custom image missing either tool fails to start.
+every database instance's Swarm updates stop-first. MinIO's image has no `flock`, so it only
+gets the stop-first protection, not the directory lock — a known, accepted gap. A custom image
+missing `sh` or `flock` fails to start.
 
 A database instance has no Reload or Rebuild (those are app-only actions); its own actions are
 Deploy, Start, Stop, an image-version change, a node move, and delete. Only Deploy, a
