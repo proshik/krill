@@ -44,14 +44,20 @@ func TestUpdateOrderChangeAppliesInSameRollout(t *testing.T) {
 	const name = "krill-it-order-transition"
 	t.Cleanup(func() { _ = e.ServiceRemove(context.Background(), name) })
 
-	// Command (not Args) so the container's PID 1 is "sleep" itself (no shell
-	// in between) — "sleep" has no SIGTERM handler, so the default
-	// disposition (terminate immediately) applies and a stop is fast and
-	// unambiguous, the same way a real postmaster exits promptly on SIGTERM.
+	// Command runs a shell that traps SIGTERM and exits immediately, rather
+	// than a bare "sleep": Linux specially suppresses the default disposition
+	// (for SIGTERM, "terminate the process") for a process that is PID 1 of
+	// its own PID namespace UNLESS it has an explicit signal handler
+	// installed (signal(7)) — so a bare "sleep 3600" as PID 1 would actually
+	// IGNORE ContainerStop's SIGTERM, and the daemon would have to wait out
+	// the full stop grace period before falling back to SIGKILL (an earlier
+	// version of this test used a bare "sleep" and took ~17s per redeploy for
+	// exactly that reason). The trap gives PID 1 an explicit handler, so the
+	// shell exits the instant it's signaled, making the redeploy fast.
 	base := ServiceSpec{
 		Name:     name,
 		Image:    "busybox:latest",
-		Command:  []string{"sleep", "3600"},
+		Command:  []string{"sh", "-c", `trap 'exit 0' TERM; sleep 3600 & wait`},
 		Replicas: 1,
 		Network:  "krill-net",
 		// UpdateStopFirst left at its zero value: this is the start-first spec
@@ -65,7 +71,9 @@ func TestUpdateOrderChangeAppliesInSameRollout(t *testing.T) {
 	waitForContainerRunningState(t, e, ctx, oldID, 60*time.Second)
 
 	// The transition deploy: same spec, only UpdateStopFirst flips to true —
-	// exactly what an existing DB instance's next Deploy/Reload will submit.
+	// exactly what an existing DB instance's next Deploy, version change, or
+	// node move will submit (DB instances have no Reload; Start/Stop don't
+	// resubmit the spec at all).
 	next := base
 	next.UpdateStopFirst = true
 	if err := e.ServiceDeploy(ctx, next); err != nil {

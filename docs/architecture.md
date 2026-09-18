@@ -104,16 +104,26 @@ agent runs on the workers and no extra port is opened.
 A database instance's data directory is protected against ever running two writers at once —
 the failure mode that matters most for a node coming back into the cluster mid-reconciliation,
 which is not a service update Swarm's own rolling-update order can see. Every Postgres, Redis
-and DragonFly instance wraps its container's own entrypoint in `flock --no-fork` around the
+and DragonFly instance wraps its container's own entrypoint in a portable flock around the
 volume's mount-point directory (the volume itself, since for Postgres that directory is
-`PGDATA`), so a second container placed on the same volume — by Swarm or by hand — blocks until
-the first one actually stops, and `--no-fork` makes sure a clean stop still reaches the
-database process instead of turning into a `SIGKILL`. This is on top of, not instead of,
-starting every database instance's Swarm updates stop-first. MinIO's image has no `flock`, so
-it only gets the stop-first protection, not the lock — a known, accepted gap. A custom image
-without `flock` fails to start. An instance already running before this shipped is protected
-starting with its next deploy, Reload or Rebuild — Krill does not redeploy every database
-instance on upgrade.
+`PGDATA`): it opens the directory on a fixed file descriptor and locks that descriptor rather
+than a path, a form both GNU/util-linux's and busybox's `flock` understand — busybox, shipped
+by every alpine-tagged image (`postgres:16-alpine`, `redis:7-alpine`, and any other alpine tag,
+since the image is free text), has no `--no-fork` flag at all and would otherwise fail outright
+and crash-loop the instance. A second container placed on the same volume — by Swarm or by hand
+— blocks until the first one actually stops, and a clean stop still reaches the database
+process instead of turning into a `SIGKILL`. This sits on top of, not instead of, starting
+every database instance's Swarm updates stop-first. MinIO's image has neither `sh` nor `flock`,
+so it only gets the stop-first protection, not the directory lock — a known, accepted gap. A
+custom image missing either tool fails to start.
+
+A database instance has no Reload or Rebuild (those are app-only actions); its own actions are
+Deploy, Start, Stop, an image-version change, a node move, and delete. Only Deploy, a
+version change, or a node move actually redeploy the instance and pick up this protection —
+Start and Stop just scale the existing service and leave whatever spec is already running in
+place. An instance already running before this shipped stays exposed to a bad node return until
+one of those three happens; Krill does not redeploy every database instance automatically on
+upgrade, so redeploy the ones holding real data soon after upgrading.
 
 The optional cluster firewall (**Settings → Firewall**) closes inbound traffic on every node
 except SSH, ICMP and Swarm traffic from other cluster nodes; the control plane also keeps HTTP,

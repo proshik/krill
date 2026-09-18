@@ -58,9 +58,9 @@ func TestPostgresDriverSpecFull(t *testing.T) {
 	if !s.UpdateStopFirst {
 		t.Fatal("postgres spec must set UpdateStopFirst: true (single-writer protection)")
 	}
-	wantCommand := []string{"flock", "--no-fork", "/var/lib/postgresql/data", "docker-entrypoint.sh"}
+	wantCommand := []string{"sh", "-c", `exec 9<"$0" && flock 9 && exec docker-entrypoint.sh "$@"`, "/var/lib/postgresql/data"}
 	if !slices.Equal(s.Command, wantCommand) {
-		t.Fatalf("command = %v, want %v (directory lock around the entrypoint)", s.Command, wantCommand)
+		t.Fatalf("command = %v, want %v (portable directory lock — works with busybox flock too, unlike --no-fork)", s.Command, wantCommand)
 	}
 	if !slices.Equal(s.Args, []string{"postgres"}) {
 		t.Fatalf("args = %v, want [postgres] (Command overrides ENTRYPOINT, which resets the image CMD)", s.Args)
@@ -83,9 +83,9 @@ func TestRedisDriverSpecFull(t *testing.T) {
 	if !s.UpdateStopFirst {
 		t.Fatal("redis spec must set UpdateStopFirst: true (single-writer protection)")
 	}
-	wantCommand := []string{"flock", "--no-fork", "/data", "docker-entrypoint.sh"}
+	wantCommand := []string{"sh", "-c", `exec 9<"$0" && flock 9 && exec docker-entrypoint.sh "$@"`, "/data"}
 	if !slices.Equal(s.Command, wantCommand) {
-		t.Fatalf("command = %v, want %v (directory lock around the entrypoint)", s.Command, wantCommand)
+		t.Fatalf("command = %v, want %v (portable directory lock — works with busybox flock too, unlike --no-fork)", s.Command, wantCommand)
 	}
 }
 
@@ -156,9 +156,9 @@ func TestDragonflyDriverSpec(t *testing.T) {
 	if !spec.UpdateStopFirst {
 		t.Fatal("dragonfly spec must set UpdateStopFirst: true (single-writer protection)")
 	}
-	wantCommand := []string{"/usr/bin/tini", "--", "flock", "--no-fork", "/data", "entrypoint.sh"}
+	wantCommand := []string{"/usr/bin/tini", "--", "sh", "-c", `exec 9<"$0" && flock 9 && exec entrypoint.sh "$@"`, "/data"}
 	if !slices.Equal(spec.Command, wantCommand) {
-		t.Fatalf("command = %v, want %v (dragonfly's own ENTRYPOINT is tini, which must stay PID 1)", spec.Command, wantCommand)
+		t.Fatalf("command = %v, want %v (dragonfly's own ENTRYPOINT is tini, which must stay PID 1, ahead of the portable lock)", spec.Command, wantCommand)
 	}
 
 	targets := d.ExternalTargets(Instance{ExternalPort: p32(56501)})

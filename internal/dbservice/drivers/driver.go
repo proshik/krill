@@ -78,6 +78,32 @@ func DBConstraint(nodeHostname string) string {
 	return "node.role==manager"
 }
 
+// flockCommand wraps entrypoint in a portable single-writer lock on dir (the
+// volume's own mount-point directory — for postgres that IS PGDATA, so the
+// lock has to be the bare directory, never a file inside it, since initdb
+// needs it empty on first start). It deliberately does NOT use `flock
+// --no-fork`: GNU/util-linux's flock has that flag, but busybox's (every
+// alpine-tagged image — postgres:16-alpine, redis:7-alpine, and any other
+// alpine tag a user picks, since the image is free text at create time and on
+// a version change) does not support it at all ("flock: unrecognized option:
+// no-fork") and fails outright, putting the instance in a crash-loop.
+//
+// The idiom below is understood by both flock implementations: `exec N<dir`
+// opens the directory read-only on a fixed descriptor of the CURRENT shell
+// process (no fork, no subshell); `flock N` given a bare fd number (not a
+// path) locks it and, per flock(1), does NOT release the lock when it returns
+// because the fd was already open on the command line — so from that point
+// the lock is held by the shell process itself. It then survives every
+// subsequent `exec` in the same process (exec does not close a file
+// descriptor unless it is marked close-on-exec, which this one is not), all
+// the way through the image's own privilege drop (gosu/su-exec) and into the
+// final `exec <entrypoint>`. "$@" is the positional args the caller passed
+// after dir (sh -c 'script' dir arg1 arg2... sets $0=dir, so "$@" is
+// everything after it), i.e. the driver's own Args, unchanged.
+func flockCommand(dir, entrypoint string) []string {
+	return []string{"sh", "-c", `exec 9<"$0" && flock 9 && exec ` + entrypoint + ` "$@"`, dir}
+}
+
 // URLString builds a scheme://user:pass@host:port[/dbname] connection string —
 // the single place engine connection-string formatting lives.
 func URLString(scheme, user, pass, host, port, dbname string) string {

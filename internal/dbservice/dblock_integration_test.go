@@ -34,12 +34,24 @@ import (
 //     silent (no log output at all) and RUNNING (blocked inside flock, not
 //     crashed or exited).
 //  2. once the first container is stopped CLEANLY (its own log must show a
-//     clean shutdown, proving `--no-fork` really forwards the stop signal
-//     instead of leaving flock as PID 1 to swallow it), the second
-//     container's postmaster starts and its own log carries NO "was not
-//     properly shut down" line — i.e. it never raced the first one for the
-//     data directory.
+//     clean shutdown AFTER it last became ready, proving the lock's stop
+//     signal really reaches postgres instead of the wrapper eating it), the
+//     second container's postmaster starts and its own log carries NO "was
+//     not properly shut down" line — i.e. it never raced the first one for
+//     the data directory.
+//
+// Run against both the official image and an alpine tag: alpine's busybox
+// `flock` has no `--no-fork`, and an image tag is free text at instance
+// create/version-change time, so both have to work identically.
 func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
+	for _, image := range []string{"postgres:17", "postgres:16-alpine"} {
+		t.Run(image, func(t *testing.T) {
+			testDirectoryLockPreventsTwoPostmasters(t, image)
+		})
+	}
+}
+
+func testDirectoryLockPreventsTwoPostmasters(t *testing.T, image string) {
 	ctx := context.Background()
 	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 	if err != nil {
@@ -51,7 +63,7 @@ func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
 
 	d := drivers.Registry.MustGet("postgres")
 	spec := d.BuildSpec(drivers.Instance{
-		Engine: "postgres", AppName: "krill-it-lock", Image: "postgres:17",
+		Engine: "postgres", AppName: "krill-it-lock", Image: image,
 		Superuser: "postgres", SuperuserPassword: "pw",
 	}, "unused-network")
 	if len(spec.Command) == 0 {
@@ -64,7 +76,9 @@ func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
 
 	// A named volume (not a bind mount): Colima only shares $HOME into the VM,
 	// so a bind mount of a host temp dir would not be visible to the daemon.
-	const volName = "krill-it-lock-data"
+	// Suffixed with the image tag so the two subtests never collide.
+	suffix := sanitizeForDockerName(image)
+	volName := "krill-it-lock-data-" + suffix
 	ensureImagePresent(t, ctx, cli, spec.Image)
 	if _, err := cli.VolumeCreate(ctx, volume.CreateOptions{Name: volName}); err != nil {
 		t.Fatalf("volume create: %v", err)
@@ -87,20 +101,22 @@ func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
 		return resp.ID
 	}
 
+	const readyMarker = "database system is ready to accept connections"
+
 	// The first container initializes a fresh volume: postgres's own
 	// entrypoint logs "ready" twice — once for the temporary single-user-mode
 	// server it starts to run init tasks, again for the real server it execs
-	// afterward.
-	firstID := newLockedContainer("krill-it-lock-a")
-	waitForLogOccurrences(t, ctx, cli, firstID, "database system is ready to accept connections", 2, 60*time.Second)
+	// afterward. Confirmed identical on postgres:16-alpine as on postgres:17.
+	firstID := newLockedContainer("krill-it-lock-a-" + suffix)
+	waitForLogOccurrences(t, ctx, cli, firstID, readyMarker, 2, 60*time.Second)
 
-	secondID := newLockedContainer("krill-it-lock-b")
+	secondID := newLockedContainer("krill-it-lock-b-" + suffix)
 
 	// (a) While the first container holds the lock, the second's postmaster
-	// must NOT start: no log output at all (flock itself writes nothing, and
-	// nothing after it in the chain runs until flock returns), and the
+	// must NOT start: no log output at all (the lock's shell writes nothing,
+	// and nothing after it in the chain runs until flock returns), and the
 	// container must still be RUNNING — not exited, not crash-looping —
-	// because flock --no-fork is blocked as PID 1, not failing.
+	// because it's blocked inside flock, not failing.
 	time.Sleep(5 * time.Second)
 	if logs := fetchLogs(t, ctx, cli, secondID); logs != "" {
 		t.Fatalf("second container produced output while the first still holds the lock (its postmaster started concurrently with the first's):\n%s", logs)
@@ -122,10 +138,21 @@ func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
 	}
 	waitForContainerExited(t, ctx, cli, firstID, 30*time.Second)
 	firstLogs := fetchLogs(t, ctx, cli, firstID)
-	if !strings.Contains(firstLogs, "database system is shut down") {
-		t.Fatalf("first container did not shut down cleanly — no \"database system is shut down\" in its log; "+
-			"this means --no-fork did NOT forward the stop signal to postgres (flock stayed PID 1) and the daemon "+
-			"had to SIGKILL it instead:\n%s", firstLogs)
+	// "database system is shut down" already appears once during the
+	// init-time temp server's own teardown (part of normal first-time
+	// bootstrap, unrelated to the ContainerStop above), so a plain Contains
+	// check here would pass even if the REAL stop had been a SIGKILL. Only
+	// content AFTER the container's LAST "ready" line can have been produced
+	// by the stop we actually triggered.
+	lastReady := strings.LastIndex(firstLogs, readyMarker)
+	if lastReady < 0 {
+		t.Fatalf("first container log never contained %q:\n%s", readyMarker, firstLogs)
+	}
+	afterReady := firstLogs[lastReady+len(readyMarker):]
+	if !strings.Contains(afterReady, "database system is shut down") {
+		t.Fatalf("first container did not shut down cleanly after becoming ready — no \"database system is shut "+
+			"down\" AFTER its last %q line; this means the lock did NOT forward the stop signal to postgres and the "+
+			"daemon had to SIGKILL it instead:\n%s", readyMarker, firstLogs)
 	}
 
 	// (b) The volume is free now. The second container's postmaster must
@@ -134,13 +161,21 @@ func TestDirectoryLockPreventsTwoPostmasters(t *testing.T) {
 	// second acquired the lock. Unlike the first container, the volume is
 	// already initialized here, so postgres skips the init-task temp server
 	// entirely and logs "ready" only ONCE.
-	waitForLogOccurrences(t, ctx, cli, secondID, "database system is ready to accept connections", 1, 60*time.Second)
+	waitForLogOccurrences(t, ctx, cli, secondID, readyMarker, 1, 60*time.Second)
 	secondLogs := fetchLogs(t, ctx, cli, secondID)
 	if strings.Contains(secondLogs, "was not properly shut down") {
 		t.Fatalf("second container ran crash recovery on start — it saw a data directory the first container had not "+
 			"actually finished with when the lock was acquired:\n%s", secondLogs)
 	}
-	t.Logf("confirmed: the second container waited out the lock while the first held it, and started cleanly (no crash recovery) once the first released it")
+	t.Logf("confirmed on %s: the second container waited out the lock while the first held it, and started cleanly (no crash recovery) once the first released it", image)
+}
+
+// sanitizeForDockerName turns an image reference into something safe to
+// suffix a container/volume name with (docker names allow only
+// [a-zA-Z0-9][a-zA-Z0-9_.-]).
+func sanitizeForDockerName(s string) string {
+	r := strings.NewReplacer(":", "-", "/", "-", ".", "-")
+	return r.Replace(s)
 }
 
 func ensureImagePresent(t *testing.T, ctx context.Context, cli *dockerclient.Client, ref string) {
