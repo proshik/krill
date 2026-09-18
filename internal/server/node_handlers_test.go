@@ -147,6 +147,48 @@ func TestSetNodeLabel(t *testing.T) {
 	}
 }
 
+// TestRemoveNodeTriggersObservabilityReconcile proves removeNode asks the
+// observability reconciler for a pass on success: the krill_node config
+// content depends on the live cluster-node list (see
+// internal/observability.NodeName), so a node leaving the cluster must
+// redeploy the agent just like a settings change does.
+func TestRemoveNodeTriggersObservabilityReconcile(t *testing.T) {
+	h, q, orgSvc, obs := newNodeServer(t)
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "nodes-obs-remove@k.local", "OrgObsRemove")
+
+	// No live Swarm match (noopEngine.Nodes returns nil) and no DB instances or
+	// pinned apps on it, so removeNode runs the removal path (not the confirm
+	// page) even without force=1.
+	rec := postForm(t, h, base+"/nodes/unknown-swarm-id/remove", cookie, url.Values{})
+	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("remove node want 303 ok, got %d (err flash: %v)", rec.Code, hasErrFlash(rec))
+	}
+	if got := obs.count(); got != 1 {
+		t.Errorf("observability Trigger called %d times, want 1", got)
+	}
+}
+
+// TestNodesAdminGateDoesNotTriggerObservability proves a rejected (404) node
+// mutation by a non-operator never reaches the point of asking for a
+// reconcile pass.
+func TestNodesAdminGateDoesNotTriggerObservability(t *testing.T) {
+	h, q, orgSvc, obs := newNodeServer(t)
+	ctx := context.Background()
+	base, _, orgID := nodesOrg(t, q, orgSvc, "nodes-obs-gate-owner@k.local", "OrgObsGate")
+	memberID := mkUser(t, q, "nodes-obs-gate-member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: orgID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	mc := loginAs(t, q, "nodes-obs-gate-member@k.local")
+	rec := postForm(t, h, base+"/nodes/x/remove", mc, url.Values{})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("member remove want 404, got %d", rec.Code)
+	}
+	if got := obs.count(); got != 0 {
+		t.Errorf("observability Trigger called %d times, want 0", got)
+	}
+}
+
 func TestNodesAdminGate(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()

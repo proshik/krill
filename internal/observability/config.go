@@ -3,6 +3,8 @@ package observability
 import (
 	"bytes"
 	"errors"
+	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -23,10 +25,24 @@ type pushTarget struct {
 	PasswordFile string // "" when there is no password
 }
 
+// NodeName maps a Swarm node's hostname to the name Krill shows for it (the
+// manager's "control-plane", or a worker's cluster_nodes.name) — see
+// cmd/krill/main.go for how the mapping is resolved from the cluster.
+type NodeName struct{ Hostname, Name string }
+
+// nodeRelabelRule is one NodeName rendered into the two Alloy string literals
+// a relabel rule needs: both already quoted, so the template embeds them
+// as-is.
+type nodeRelabelRule struct {
+	Regex       string // hostname, regex-escaped and quoted
+	Replacement string // the Krill name, quoted
+}
+
 type nodeConfigData struct {
 	Metrics   *pushTarget
 	Logs      *pushTarget
 	LogLabels []struct{ Meta, Target string }
+	Nodes     []nodeRelabelRule
 }
 
 // alloyString quotes s as an Alloy string literal. RenderNodeConfig refuses
@@ -58,6 +74,15 @@ prometheus.relabel "node" {
     target_label = "krill_node"
     replacement  = constants.hostname
   }
+{{- range $.Nodes}}
+
+  rule {
+    source_labels = ["krill_node"]
+    regex         = {{.Regex}}
+    target_label  = "krill_node"
+    replacement   = {{.Replacement}}
+  }
+{{- end}}
   forward_to = [prometheus.remote_write.default.receiver]
 }
 
@@ -100,8 +125,23 @@ loki.source.docker "node" {
   targets       = discovery.docker.node.targets
   relabel_rules = discovery.relabel.containers.rules
   labels        = {krill_node = constants.hostname}
-  forward_to    = [loki.write.default.receiver]
+  forward_to    = [{{if $.Nodes}}loki.relabel.node.receiver{{else}}loki.write.default.receiver{{end}}]
 }
+{{- if $.Nodes}}
+
+loki.relabel "node" {
+  forward_to = [loki.write.default.receiver]
+{{- range $.Nodes}}
+
+  rule {
+    source_labels = ["krill_node"]
+    regex         = {{.Regex}}
+    target_label  = "krill_node"
+    replacement   = {{.Replacement}}
+  }
+{{- end}}
+}
+{{- end}}
 
 loki.write "default" {
   endpoint {
@@ -119,6 +159,42 @@ loki.write "default" {
 }
 {{- end}}
 `
+
+// alloyRegexLiteral quotes hostname as an Alloy string literal holding a
+// regex that matches it exactly. regexp.QuoteMeta escapes the regex
+// metacharacters; the extra backslash doubling is Alloy's own string-escape
+// rule, not the regex syntax — confirmed against the pinned agent image
+// (grafana/alloy:v1.19.2): a lone "\." in an Alloy string is rejected at load
+// with "unknown escape sequence", even though `alloy validate` accepts it
+// (see internal/observability/config_integration_test.go).
+func alloyRegexLiteral(hostname string) string {
+	return alloyString(strings.ReplaceAll(regexp.QuoteMeta(hostname), `\`, `\\`))
+}
+
+// nodeRules turns Krill's node name mapping into the per-node relabel rules
+// appended after the metrics/logs "krill_node = constants.hostname" rule.
+// Entries with an empty Hostname or Name are skipped — an unmapped node keeps
+// its raw hostname rather than get a bogus rule. Sorting by Hostname keeps
+// the rendered config, and so the object hash and the deploy it triggers,
+// stable regardless of the order the caller happened to resolve nodes in.
+func nodeRules(nodes []NodeName) ([]nodeRelabelRule, error) {
+	kept := make([]NodeName, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Hostname == "" || n.Name == "" {
+			continue
+		}
+		if !safeText(n.Hostname) || !safeText(n.Name) {
+			return nil, errUnsafeText
+		}
+		kept = append(kept, n)
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Hostname < kept[j].Hostname })
+	rules := make([]nodeRelabelRule, len(kept))
+	for i, n := range kept {
+		rules[i] = nodeRelabelRule{Regex: alloyRegexLiteral(n.Hostname), Replacement: alloyString(n.Name)}
+	}
+	return rules, nil
+}
 
 func toPushTarget(t Target, secretFile string) (*pushTarget, error) {
 	if !t.Configured() {
@@ -141,8 +217,11 @@ func nodeArgs() []string {
 }
 
 // RenderNodeConfig builds the node agent's configuration. Passwords are not
-// in it: the agent reads them from the Swarm secrets NodeSpec mounts.
-func RenderNodeConfig(s Settings) ([]byte, error) {
+// in it: the agent reads them from the Swarm secrets NodeSpec mounts. nodes
+// maps Swarm hostnames to the names Krill shows for them (empty/nil renders
+// the plain "krill_node = constants.hostname" label, as before this mapping
+// existed).
+func RenderNodeConfig(s Settings, nodes []NodeName) ([]byte, error) {
 	m, err := toPushTarget(s.Metrics, metricsSecretFile)
 	if err != nil {
 		return nil, err
@@ -154,8 +233,12 @@ func RenderNodeConfig(s Settings) ([]byte, error) {
 	if m == nil && l == nil {
 		return nil, ErrNothingConfigured
 	}
+	rules, err := nodeRules(nodes)
+	if err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
-	if err := nodeTemplate.Execute(&buf, nodeConfigData{Metrics: m, Logs: l, LogLabels: logLabels}); err != nil {
+	if err := nodeTemplate.Execute(&buf, nodeConfigData{Metrics: m, Logs: l, LogLabels: logLabels, Nodes: rules}); err != nil {
 		return nil, err
 	}
 	return []byte(strings.TrimLeft(buf.String(), "\n")), nil

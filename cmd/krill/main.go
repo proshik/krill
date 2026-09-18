@@ -476,9 +476,44 @@ func run() error {
 	// capability; anything else leaves the page unwired.
 	var obsRec *observability.Reconciler
 	if obsEngine, ok := engine.(observability.Engine); ok {
+		// obsNodes resolves the krill_node mapping fresh on every reconcile
+		// pass: the manager is labelled with the same friendly "control-plane"
+		// name as the monitoring page (localName above), a worker is labelled
+		// with its cluster_nodes.name matched by swarm_node_id, and a node that
+		// resolves to neither (an unregistered worker, say) is left out of the
+		// mapping — its log/metric lines keep their raw Swarm hostname until it
+		// is registered. Reading the list is required, not best-effort: a
+		// failure here fails the whole reconcile pass (see NewReconciler)
+		// rather than silently redeploying the agent without the mapping.
+		obsNodes := func(c context.Context) ([]observability.NodeName, error) {
+			swarmNodes, nerr := engine.Nodes(c)
+			if nerr != nil {
+				return nil, nerr
+			}
+			rows, rerr := q.ListClusterNodes(c)
+			if rerr != nil {
+				return nil, rerr
+			}
+			workerNames := make(map[string]string, len(rows))
+			for _, row := range rows {
+				if row.SwarmNodeID != "" {
+					workerNames[row.SwarmNodeID] = row.Name
+				}
+			}
+			names := make([]observability.NodeName, 0, len(swarmNodes))
+			for _, n := range swarmNodes {
+				switch {
+				case workerNames[n.ID] != "":
+					names = append(names, observability.NodeName{Hostname: n.Hostname, Name: workerNames[n.ID]})
+				case n.Role == "manager":
+					names = append(names, observability.NodeName{Hostname: n.Hostname, Name: localName})
+				}
+			}
+			return names, nil
+		}
 		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
 			return observability.LoadForReconcile(c, q)
-		}, cfg.Network)
+		}, obsNodes, cfg.Network)
 		instance, _ := os.Hostname()
 		checker := observability.Checker{AllowPrivate: cfg.AllowPrivateEgress, Instance: instance}
 		app.SetObservability(obsRec, checker.Check)

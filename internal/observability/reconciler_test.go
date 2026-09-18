@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,8 +30,10 @@ func (c *countingApply) apply(context.Context, Settings) error {
 	return err
 }
 
+func noNodes(context.Context) ([]NodeName, error) { return nil, nil }
+
 func newTestReconciler(load func(context.Context) (Settings, error), a *countingApply) *Reconciler {
-	r := NewReconciler(newFakeEngine(), load, "krill-net")
+	r := NewReconciler(newFakeEngine(), load, noNodes, "krill-net")
 	r.apply = a.apply
 	r.debounce = 20 * time.Millisecond
 	r.state = func(context.Context) (docker.ServiceState, error) {
@@ -125,7 +128,7 @@ func TestReconcilerReportsErrors(t *testing.T) {
 }
 
 func TestReconcilerStateError(t *testing.T) {
-	r := NewReconciler(newFakeEngine(), nil, "krill-net")
+	r := NewReconciler(newFakeEngine(), nil, noNodes, "krill-net")
 	r.state = func(context.Context) (docker.ServiceState, error) {
 		return docker.ServiceState{}, errors.New("daemon down")
 	}
@@ -171,9 +174,47 @@ func TestReconcilerTearsDownDisabledWithUndecryptablePassword(t *testing.T) {
 	secret.Init("new-key")
 	eng := newFakeEngine()
 	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
-	r := NewReconciler(eng, func(c context.Context) (Settings, error) { return LoadForReconcile(c, q) }, "krill-net")
+	r := NewReconciler(eng, func(c context.Context) (Settings, error) { return LoadForReconcile(c, q) }, noNodes, "krill-net")
 	r.pass(ctx)
 	if st := r.Status(ctx); st.LastErr != "" {
+		t.Errorf("pass failed: %s", st.LastErr)
+	}
+	if eng.removed != 1 {
+		t.Errorf("agent not removed: removed=%d", eng.removed)
+	}
+}
+
+// TestReconcilerFailsWhenNodeListingFails proves a broken node-name lookup
+// (e.g. ListClusterNodes erroring) fails the pass instead of silently
+// rendering the config without the node mapping — an intermittent failure
+// must not make the agent flap between the mapped and raw-hostname configs.
+func TestReconcilerFailsWhenNodeListingFails(t *testing.T) {
+	fastConverge(t)
+	nodesErr := errors.New("list cluster nodes: connection refused")
+	r := NewReconciler(newFakeEngine(),
+		func(context.Context) (Settings, error) { return fullSettings(), nil },
+		func(context.Context) ([]NodeName, error) { return nil, nodesErr },
+		"krill-net")
+	r.pass(context.Background())
+	st := r.Status(context.Background())
+	if st.LastErr == "" || !strings.Contains(st.LastErr, "connection refused") {
+		t.Errorf("LastErr = %q, want it to mention the node listing failure", st.LastErr)
+	}
+}
+
+// TestReconcilerTeardownIgnoresNodeListFailure proves turning the agent off
+// never depends on the node-name lookup succeeding: teardown needs no config,
+// so a broken cluster-node listing (or an unreachable docker daemon) must not
+// block disabling the agent.
+func TestReconcilerTeardownIgnoresNodeListFailure(t *testing.T) {
+	eng := newFakeEngine()
+	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
+	r := NewReconciler(eng,
+		func(context.Context) (Settings, error) { return Settings{}, nil }, // disabled
+		func(context.Context) ([]NodeName, error) { return nil, errors.New("boom") },
+		"krill-net")
+	r.pass(context.Background())
+	if st := r.Status(context.Background()); st.LastErr != "" {
 		t.Errorf("pass failed: %s", st.LastErr)
 	}
 	if eng.removed != 1 {

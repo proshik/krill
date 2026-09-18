@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -39,12 +40,25 @@ type Reconciler struct {
 	lastErr string
 }
 
-// NewReconciler wires a reconciler to the engine, the settings loader and the
-// base overlay network the agent attaches to.
-func NewReconciler(eng Engine, load func(context.Context) (Settings, error), network string) *Reconciler {
+// NewReconciler wires a reconciler to the engine, the settings loader, the
+// node-name resolver (see RenderNodeConfig) and the base overlay network the
+// agent attaches to. nodes is only consulted while the agent is enabled:
+// teardown needs no config, so a broken node lookup must never block turning
+// the agent off (see LoadForReconcile's own reasoning for the same shape).
+func NewReconciler(eng Engine, load func(context.Context) (Settings, error),
+	nodes func(context.Context) ([]NodeName, error), network string) *Reconciler {
 	return &Reconciler{
-		load:     load,
-		apply:    func(ctx context.Context, s Settings) error { return Reconcile(ctx, eng, s, network) },
+		load: load,
+		apply: func(ctx context.Context, s Settings) error {
+			if !s.Enabled {
+				return Reconcile(ctx, eng, s, network, nil)
+			}
+			ns, err := nodes(ctx)
+			if err != nil {
+				return fmt.Errorf("list cluster nodes: %w", err)
+			}
+			return Reconcile(ctx, eng, s, network, ns)
+		},
 		state:    func(ctx context.Context) (docker.ServiceState, error) { return eng.ServiceState(ctx, NodeServiceName) },
 		debounce: reconcileDebounce,
 		trigger:  make(chan struct{}, 1),

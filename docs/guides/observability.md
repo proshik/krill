@@ -96,7 +96,7 @@ and any error from the last reconcile pass.
 
 | Label | Source | Applies to |
 |-------|--------|------------|
-| `krill_node` | The node's hostname | Host metrics and every log line |
+| `krill_node` | The node's name in Krill — `control-plane` for the manager, or a worker's name from Nodes | Host metrics and every log line |
 | `krill_org` | Organization name | App log lines |
 | `krill_org_id` | Organization id | App log lines |
 | `krill_project` | Project name | App log lines |
@@ -108,6 +108,14 @@ and any error from the last reconcile pass.
 Names can be renamed; ids can't, so a query keyed on an id keeps returning the same series
 across a rename. The `_id` labels exist for that reason — prefer them for anything long-lived
 like an alert or a saved dashboard.
+
+`krill_node` used to be the node's raw Swarm hostname (e.g. `node-1.example.com`);
+it is now the same friendly name Krill shows elsewhere (the Monitoring page's node picker, the
+Nodes page). A node the agent hasn't resolved to a Krill name yet — it was just added and the
+agent hasn't redeployed since, or it isn't a manager and isn't (yet) a `cluster_nodes` row — keeps
+its raw hostname until the next reconcile pass. **If you have saved queries or dashboards keyed
+on the old raw-hostname value** (from before this change, or from running your own Alloy
+manually), update them to the Krill name — the label key is unchanged, only its value is.
 
 **An app's existing log lines get these labels only after its next deploy** — they come from
 container labels Krill sets when it creates or updates the service, so a container already

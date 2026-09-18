@@ -30,12 +30,13 @@ var (
 )
 
 // Reconcile converges the agent to s: deployed with this configuration when
-// enabled, absent otherwise.
-func Reconcile(ctx context.Context, eng Engine, s Settings, network string) error {
+// enabled, absent otherwise. nodes maps Swarm hostnames to the names Krill
+// shows for them (see RenderNodeConfig); it is unused when s is disabled.
+func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) error {
 	if !s.Enabled {
 		return teardown(ctx, eng)
 	}
-	cfg, err := RenderNodeConfig(s)
+	cfg, err := RenderNodeConfig(s, nodes)
 	if err != nil {
 		return err
 	}

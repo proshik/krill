@@ -25,8 +25,9 @@ import (
 const alloyImage = "grafana/alloy:v1.19.2"
 
 func TestNodeConfigValidates(t *testing.T) {
+	nodes := fullNodes()
 	for _, s := range []Settings{fullSettings(), {Metrics: Target{URL: "http://p:9090/api/v1/write"}}, {Logs: Target{URL: "http://l:3100/loki/api/v1/push", User: "u"}}} {
-		cfg, err := RenderNodeConfig(s)
+		cfg, err := RenderNodeConfig(s, nodes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,6 +47,50 @@ func TestNodeConfigValidates(t *testing.T) {
 		if st == nil || st.ExitCode != 0 {
 			t.Fatalf("alloy validate failed:\n%s\nconfig:\n%s", out, cfg)
 		}
+	}
+}
+
+// TestNodeConfigWithNodesLoads goes further than TestNodeConfigValidates: as
+// CLAUDE.md's Alloy gotcha notes, `alloy validate` does not catch every
+// class of error — confirmed here the hard way, since it accepts a
+// single-backslash regex (e.g. "node-1\.ru") that `alloy run` then rejects
+// at load with "unknown escape sequence" (verified manually against this same
+// pinned image before writing RenderNodeConfig's escaping). This test
+// actually loads the rendered config with the real per-node relabel rules and
+// waits for the agent to report itself running, so a regression that drops
+// the backslash-doubling in alloyRegexLiteral fails here even though it would
+// still pass `alloy validate`. Metrics-only avoids also needing the docker
+// socket mount TestNodeAgentShipsMetricsAndLogs uses, but prometheus.exporter.unix
+// still needs the host /proc, /sys and / binds regardless of the node mapping.
+func TestNodeConfigWithNodesLoads(t *testing.T) {
+	s := Settings{Enabled: true, Metrics: Target{URL: "http://p:9090/api/v1/write"}}
+	cfg, err := RenderNodeConfig(s, fullNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	c, err := testcontainers.Run(ctx, alloyImage,
+		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader(cfg), ContainerFilePath: configPath, FileMode: 0o644}),
+		testcontainers.WithCmd(nodeArgs()...),
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.Binds = append(hc.Binds, "/proc:/host/proc:ro", "/sys:/host/sys:ro", "/:/host/root:ro")
+		}),
+		testcontainers.WithWaitStrategy(wait.ForLog("now listening for http traffic").WithStartupTimeout(60*time.Second)),
+	)
+	if err != nil {
+		logsErr := "(no container)"
+		if c != nil {
+			logs, _ := c.Logs(ctx)
+			out, _ := io.ReadAll(logs)
+			logsErr = string(out)
+		}
+		t.Fatalf("agent did not start with the node relabel rules: %v\nconfig:\n%s\nlogs:\n%s", err, cfg, logsErr)
+	}
+	defer func() { _ = c.Terminate(ctx) }()
+	logs, _ := c.Logs(ctx)
+	out, _ := io.ReadAll(logs)
+	if bytes.Contains(out, []byte("unknown escape sequence")) || bytes.Contains(out, []byte("level=error")) {
+		t.Errorf("agent logged errors with the node relabel rules:\n%s", out)
 	}
 }
 
@@ -97,7 +142,7 @@ func TestNodeAgentShipsMetricsAndLogs(t *testing.T) {
 		Metrics: Target{URL: base + "/api/v1/push", User: "m", Password: "mpw"},
 		Logs:    Target{URL: base + "/loki/api/v1/push", User: "l", Password: "lpw"},
 	}
-	cfg, err := RenderNodeConfig(s)
+	cfg, err := RenderNodeConfig(s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

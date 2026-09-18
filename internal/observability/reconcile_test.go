@@ -108,7 +108,7 @@ func fastConverge(t *testing.T) {
 func TestReconcileDeploysAgent(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
-	if err := Reconcile(context.Background(), eng, fullSettings(), "krill-net"); err != nil {
+	if err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -165,10 +165,10 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -176,7 +176,7 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	}
 	first := eng.deploys[0]
 	s.Logs.Password = "rotated"
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -191,9 +191,9 @@ func TestReconcileRedeploysWhileUpdateUnsettled(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
 	s := fullSettings()
-	eng.labels = NodeSpec(objectsFor(t, s), "krill-net").Labels // same hash, but…
-	eng.update = "paused"                                       // …the update never finished
-	if err := Reconcile(context.Background(), eng, s, "krill-net"); err != nil {
+	eng.labels = NodeSpec(objectsFor(t, s, nil), "krill-net").Labels // same hash, but…
+	eng.update = "paused"                                            // …the update never finished
+	if err := Reconcile(context.Background(), eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -208,13 +208,13 @@ func TestReconcileRedeploysWhenNetworkRecreated(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	eng.mu.Lock()
 	eng.created = true
 	eng.mu.Unlock()
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -231,7 +231,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng := newFakeEngine()
 	eng.rollback = true
-	if err := Reconcile(ctx, eng, fullSettings(), "krill-net"); err == nil || !strings.Contains(err.Error(), "rolled back") {
+	if err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil); err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Errorf("rollback: %v", err)
 	}
 	if len(eng.pruned) != 0 {
@@ -240,7 +240,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng = newFakeEngine()
 	eng.neverRun = true
-	err := Reconcile(ctx, eng, fullSettings(), "krill-net")
+	err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil)
 	if err == nil || !strings.Contains(err.Error(), "docker service ps "+NodeServiceName) {
 		t.Errorf("timeout: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestReconcileFailures(t *testing.T) {
 	}
 
 	eng = newFakeEngine()
-	if err := Reconcile(ctx, eng, Settings{Enabled: true}, "krill-net"); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
+	if err := Reconcile(ctx, eng, Settings{Enabled: true}, "krill-net", nil); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
 		t.Errorf("nothing configured: %v, deploys %d", err, len(eng.deploys))
 	}
 }
@@ -257,7 +257,7 @@ func TestReconcileFailures(t *testing.T) {
 func TestReconcileDisabled(t *testing.T) {
 	ctx := context.Background()
 	eng := newFakeEngine()
-	if err := Reconcile(ctx, eng, Settings{}, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, Settings{}, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 0 || len(eng.pruned) != 1 || len(eng.pruned[0]) != 0 {
@@ -266,7 +266,7 @@ func TestReconcileDisabled(t *testing.T) {
 	eng.labels = map[string]string{specHashLabel: "x"}
 	s := fullSettings()
 	s.Enabled = false
-	if err := Reconcile(ctx, eng, s, "krill-net"); err != nil {
+	if err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 1 {
@@ -279,7 +279,7 @@ func TestReconcileDisabled(t *testing.T) {
 // a secret or reference one from the rendered configuration.
 func TestReconcileUserWithoutPasswordHasNoSecret(t *testing.T) {
 	s := Settings{Enabled: true, Metrics: Target{URL: "https://m.example.com/api/v1/push", User: "tenant"}}
-	cfg, err := RenderNodeConfig(s)
+	cfg, err := RenderNodeConfig(s, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,11 +296,42 @@ func TestReconcileUserWithoutPasswordHasNoSecret(t *testing.T) {
 	}
 }
 
-func objectsFor(t *testing.T, s Settings) Objects {
+func objectsFor(t *testing.T, s Settings, nodes []NodeName) Objects {
 	t.Helper()
-	cfg, err := RenderNodeConfig(s)
+	cfg, err := RenderNodeConfig(s, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return objectsOf(s, cfg)
+}
+
+// TestReconcileNodeListChangeRedeploys proves the node name mapping is part of
+// the content that names the config object: a node joining or leaving the
+// cluster must redeploy the agent, exactly like a changed push address would.
+func TestReconcileNodeListChangeRedeploys(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	ctx := context.Background()
+	s := fullSettings()
+	if err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.deploys) != 1 {
+		t.Fatalf("unchanged node list redeployed: %d deploys", len(eng.deploys))
+	}
+	first := eng.deploys[0]
+	// A worker joins.
+	nodes := []NodeName{{Hostname: "h1", Name: "control-plane"}, {Hostname: "h2", Name: "worker-1"}}
+	if err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.deploys) != 2 {
+		t.Fatalf("node list change not deployed: %d deploys", len(eng.deploys))
+	}
+	if eng.deploys[1].Labels[specHashLabel] == first.Labels[specHashLabel] {
+		t.Error("spec hash did not change with the node list")
+	}
 }

@@ -205,6 +205,13 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Warn("addNode: joined node not matched to a swarm ID (Addr/hostname mismatch?)", "host", host, "id", row.ID)
 	}
 	logFrom(r).Info("cluster node added", "name", name, "host", host) // no key/token
+	// A new node changes the observability agent's krill_node mapping (see
+	// internal/observability.NodeName): the config content changes, so the
+	// agent must redeploy to pick up the new node's name instead of showing
+	// its raw hostname until some unrelated reconcile happens to run.
+	if s.obsWired() {
+		s.obs.ctl.Trigger()
+	}
 	s.flashOK(w, r, "flash.ok.node_added")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
 }
@@ -300,6 +307,12 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	logFrom(r).Info("cluster node removed", "node", swarmID)
+	// A removed node changes the observability agent's krill_node mapping
+	// (see internal/observability.NodeName), so it must redeploy — same
+	// reasoning as the Trigger call in addNode.
+	if s.obsWired() {
+		s.obs.ctl.Trigger()
+	}
 	s.flashOK(w, r, "flash.ok.node_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
 }
