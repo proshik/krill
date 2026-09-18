@@ -331,6 +331,7 @@ var en = map[string]string{
 	"flash.ok.node_removed":                "Node removed",
 	"flash.ok.node_label_saved":            "Node name saved",
 	"flash.err.node_label_long":            "node name is too long (max 40 chars)",
+	"flash.err.node_label_invalid":         "The name must not contain quotes, backslashes or control characters.",
 	"flash.err.invalid_placement":          "invalid placement mode",
 	"flash.err.invalid_node":               "unknown node",
 	"flash.err.placement_no_nodes":         "select at least one node for pin/global placement",

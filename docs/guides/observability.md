@@ -96,7 +96,7 @@ and any error from the last reconcile pass.
 
 | Label | Source | Applies to |
 |-------|--------|------------|
-| `krill_node` | The node's name in Krill — `control-plane` for the manager, or a worker's name from Nodes | Host metrics and every log line |
+| `krill_node` | The node's display name from **Nodes** (the same label the Nodes page, Topology and the app page show) — the raw Swarm hostname for a node that hasn't been given a name | Host metrics and every log line |
 | `krill_org` | Organization name | App log lines |
 | `krill_org_id` | Organization id | App log lines |
 | `krill_project` | Project name | App log lines |
@@ -109,13 +109,21 @@ Names can be renamed; ids can't, so a query keyed on an id keeps returning the s
 across a rename. The `_id` labels exist for that reason — prefer them for anything long-lived
 like an alert or a saved dashboard.
 
-`krill_node` used to be the node's raw Swarm hostname (e.g. `node-1.example.com`);
-it is now the same friendly name Krill shows elsewhere (the Monitoring page's node picker, the
-Nodes page). A node the agent hasn't resolved to a Krill name yet — it was just added and the
-agent hasn't redeployed since, or it isn't a manager and isn't (yet) a `cluster_nodes` row — keeps
-its raw hostname until the next reconcile pass. **If you have saved queries or dashboards keyed
-on the old raw-hostname value** (from before this change, or from running your own Alloy
-manually), update them to the Krill name — the label key is unchanged, only its value is.
+`krill_node` used to always be the node's raw Swarm hostname (e.g.
+`node-1.example.com`). It now follows the same name you give a node on the **Nodes**
+page (Nodes → set a node's name), for both the manager and workers. **A node with no name set
+keeps showing its raw hostname** — this is not a fallback for an edge case, it's what every node
+on an install that has never named one looks like: upgrading to this feature changes nothing by
+itself, silently. Give a node a name and the change takes effect on the agent's next reconcile
+pass (a few seconds after saving); renaming or clearing a name does the same. A name is free text
+(spaces and non-Latin text are fine) except for a quote, a backslash or a control character,
+which the Nodes page itself refuses to save — but if you edit `node_labels` directly, or a name
+saved before this restriction existed doesn't meet it, that node is simply left out of the
+mapping (with a warning in the log), not allowed to break the agent's configuration. **If you
+have saved queries or dashboards keyed on the old raw-hostname value** (from before this change,
+or from running your own Alloy manually), either give the node the same value as a name on the
+Nodes page, or update the queries to whatever name you choose — the label key is unchanged, only
+its value is.
 
 **An app's existing log lines get these labels only after its next deploy** — they come from
 container labels Krill sets when it creates or updates the service, so a container already

@@ -104,12 +104,20 @@ func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer)
 // triggers a reconcile pass (see internal/server/node_handlers.go).
 func newNodeServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *fakeObsCtl) {
 	t.Helper()
+	return newNodeServerWithEngine(t, noopEngine{})
+}
+
+// newNodeServerWithEngine is newNodeServer with an injectable engine, for a
+// test that needs setNodeLabel/addNode/removeNode's engine.Nodes-backed
+// existence check to actually find the node being mutated (noopEngine.Nodes
+// always reports none).
+func newNodeServerWithEngine(t *testing.T, eng docker.Engine) (http.Handler, *db.Queries, *org.Service, *fakeObsCtl) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
-	eng := noopEngine{}
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})

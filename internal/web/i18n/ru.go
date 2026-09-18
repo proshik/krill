@@ -331,6 +331,7 @@ var ru = map[string]string{
 	"flash.ok.node_removed":                "Нода удалена",
 	"flash.ok.node_label_saved":            "Имя ноды сохранено",
 	"flash.err.node_label_long":            "имя ноды слишком длинное (макс. 40 символов)",
+	"flash.err.node_label_invalid":         "Имя не должно содержать кавычек, обратной косой черты и управляющих символов.",
 	"flash.err.invalid_placement":          "неверный режим placement",
 	"flash.err.invalid_node":               "неизвестная нода",
 	"flash.err.placement_no_nodes":         "выберите хотя бы одну ноду для режима pin/global",

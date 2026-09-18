@@ -21,14 +21,19 @@ prometheus.relabel "node" {
   }
 
   rule {
-    source_labels = ["krill_node"]
+    target_label = "__tmp_krill_node"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    source_labels = ["__tmp_krill_node"]
     regex         = "node-1\\.example\\.com"
     target_label  = "krill_node"
     replacement   = "control-plane"
   }
 
   rule {
-    source_labels = ["krill_node"]
+    source_labels = ["__tmp_krill_node"]
     regex         = "worker-1\\.internal"
     target_label  = "krill_node"
     replacement   = "worker-1"
@@ -104,14 +109,19 @@ loki.relabel "node" {
   forward_to = [loki.write.default.receiver]
 
   rule {
-    source_labels = ["krill_node"]
+    target_label = "__tmp_krill_node"
+    replacement  = constants.hostname
+  }
+
+  rule {
+    source_labels = ["__tmp_krill_node"]
     regex         = "node-1\\.example\\.com"
     target_label  = "krill_node"
     replacement   = "control-plane"
   }
 
   rule {
-    source_labels = ["krill_node"]
+    source_labels = ["__tmp_krill_node"]
     regex         = "worker-1\\.internal"
     target_label  = "krill_node"
     replacement   = "worker-1"

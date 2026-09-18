@@ -477,39 +477,19 @@ func run() error {
 	var obsRec *observability.Reconciler
 	if obsEngine, ok := engine.(observability.Engine); ok {
 		// obsNodes resolves the krill_node mapping fresh on every reconcile
-		// pass: the manager is labelled with the same friendly "control-plane"
-		// name as the monitoring page (localName above), a worker is labelled
-		// with its cluster_nodes.name matched by swarm_node_id, and a node that
-		// resolves to neither (an unregistered worker, say) is left out of the
-		// mapping — its log/metric lines keep their raw Swarm hostname until it
-		// is registered. Reading the list is required, not best-effort: a
-		// failure here fails the whole reconcile pass (see NewReconciler)
-		// rather than silently redeploying the agent without the mapping.
+		// pass. Reading both lists is required, not best-effort: a failure
+		// here fails the whole reconcile pass (see NewReconciler) rather than
+		// silently redeploying the agent without the mapping.
 		obsNodes := func(c context.Context) ([]observability.NodeName, error) {
 			swarmNodes, nerr := engine.Nodes(c)
 			if nerr != nil {
 				return nil, nerr
 			}
-			rows, rerr := q.ListClusterNodes(c)
+			rows, rerr := q.ListNodeLabels(c)
 			if rerr != nil {
 				return nil, rerr
 			}
-			workerNames := make(map[string]string, len(rows))
-			for _, row := range rows {
-				if row.SwarmNodeID != "" {
-					workerNames[row.SwarmNodeID] = row.Name
-				}
-			}
-			names := make([]observability.NodeName, 0, len(swarmNodes))
-			for _, n := range swarmNodes {
-				switch {
-				case workerNames[n.ID] != "":
-					names = append(names, observability.NodeName{Hostname: n.Hostname, Name: workerNames[n.ID]})
-				case n.Role == "manager":
-					names = append(names, observability.NodeName{Hostname: n.Hostname, Name: localName})
-				}
-			}
-			return names, nil
+			return obsNodeNames(swarmNodes, rows), nil
 		}
 		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
 			return observability.LoadForReconcile(c, q)
@@ -606,6 +586,30 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// obsNodeNames maps live Swarm nodes to the names Krill's observability agent
+// labels them with — the exact same node_labels the Nodes page, the
+// topology view and the app page already show (see (*server.Server).nodeLabelMap),
+// not cluster_nodes.name (cluster_nodes holds only workers, so a manager
+// would never get a name that way) and not a hardcoded name for the manager
+// (that would silently rename krill_node on every existing install the
+// moment it upgrades, before the operator ever names anything). A node with
+// no label is left out of the mapping entirely: its krill_node keeps showing
+// the raw Swarm hostname, exactly like an install that has never labelled
+// any node — nothing changes silently.
+func obsNodeNames(swarmNodes []docker.SwarmNode, labels []db.NodeLabel) []observability.NodeName {
+	labelByID := make(map[string]string, len(labels))
+	for _, l := range labels {
+		labelByID[l.SwarmNodeID] = l.Label
+	}
+	names := make([]observability.NodeName, 0, len(swarmNodes))
+	for _, n := range swarmNodes {
+		if label, ok := labelByID[n.ID]; ok {
+			names = append(names, observability.NodeName{Hostname: n.Hostname, Name: label})
+		}
+	}
+	return names
 }
 
 // orgNetworks is the overlay network of every organization, in id order. The

@@ -56,15 +56,17 @@ func TestNodeConfigValidates(t *testing.T) {
 // single-backslash regex (e.g. "node-1\.ru") that `alloy run` then rejects
 // at load with "unknown escape sequence" (verified manually against this same
 // pinned image before writing RenderNodeConfig's escaping). This test
-// actually loads the rendered config with the real per-node relabel rules and
-// waits for the agent to report itself running, so a regression that drops
-// the backslash-doubling in alloyRegexLiteral fails here even though it would
-// still pass `alloy validate`. Metrics-only avoids also needing the docker
-// socket mount TestNodeAgentShipsMetricsAndLogs uses, but prometheus.exporter.unix
-// still needs the host /proc, /sys and / binds regardless of the node mapping.
+// actually loads the rendered config with the real per-node relabel rules —
+// fullSettings() so BOTH pipelines are configured: metrics-only (an earlier
+// version of this test) never instantiates the "with .Logs" template branch
+// at all, so the new "loki.relabel \"node\"" component and its
+// "loki.relabel.node.receiver" reference were never actually evaluated by a
+// real agent — and waits for the agent to report itself running, so a
+// regression in either pipeline's node-relabel wiring (a bad escape, a
+// component reference typo `alloy validate` wouldn't catch either) fails
+// here.
 func TestNodeConfigWithNodesLoads(t *testing.T) {
-	s := Settings{Enabled: true, Metrics: Target{URL: "http://p:9090/api/v1/write"}}
-	cfg, err := RenderNodeConfig(s, fullNodes())
+	cfg, err := RenderNodeConfig(fullSettings(), fullNodes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,10 @@ func TestNodeConfigWithNodesLoads(t *testing.T) {
 		testcontainers.WithFiles(testcontainers.ContainerFile{Reader: bytes.NewReader(cfg), ContainerFilePath: configPath, FileMode: 0o644}),
 		testcontainers.WithCmd(nodeArgs()...),
 		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
-			hc.Binds = append(hc.Binds, "/proc:/host/proc:ro", "/sys:/host/sys:ro", "/:/host/root:ro")
+			hc.Binds = append(hc.Binds,
+				"/proc:/host/proc:ro", "/sys:/host/sys:ro", "/:/host/root:ro",
+				"/var/run/docker.sock:/var/run/docker.sock:ro", // needed for the logs pipeline's discovery.docker/loki.source.docker
+			)
 		}),
 		testcontainers.WithWaitStrategy(wait.ForLog("now listening for http traffic").WithStartupTimeout(60*time.Second)),
 	)
@@ -91,6 +96,14 @@ func TestNodeConfigWithNodesLoads(t *testing.T) {
 	out, _ := io.ReadAll(logs)
 	if bytes.Contains(out, []byte("unknown escape sequence")) || bytes.Contains(out, []byte("level=error")) {
 		t.Errorf("agent logged errors with the node relabel rules:\n%s", out)
+	}
+	// The metrics AND logs node-relabel components must both actually have
+	// loaded (not just the file having parsed) — confirms the fix in item 2
+	// of the review actually exercises the logs half.
+	for _, id := range []string{"prometheus.relabel.node", "loki.relabel.node"} {
+		if !bytes.Contains(out, []byte("node_id="+id+" ")) {
+			t.Errorf("component %q never evaluated:\n%s", id, out)
+		}
 	}
 }
 

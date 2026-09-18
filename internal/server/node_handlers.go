@@ -12,6 +12,7 @@ import (
 	"github.com/proshik/krill/internal/cluster"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -84,6 +85,17 @@ func (s *Server) setNodeLabel(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.node_label_long")
 		return
 	}
+	// This is also the observability agent's krill_node name for this node
+	// (see internal/observability.SafeNodeName / cmd/krill's obsNodeNames) —
+	// reject the same quote/backslash/control-character set here, at the
+	// point the operator actually types the name, instead of only ever
+	// finding out from a warning log the next time the agent reconciles.
+	// Existing rows saved before this check are unaffected; nodeRules still
+	// skips one of those with a warning rather than breaking the config.
+	if label != "" && !observability.SafeNodeName(label) {
+		s.flashErrT(w, r, "flash.err.node_label_invalid")
+		return
+	}
 	// When the cluster is reachable, only label nodes that actually exist.
 	if _, found := s.findSwarmNode(r.Context(), swarmID); s.engine != nil && !found {
 		s.flashErrT(w, r, "flash.err.invalid_node")
@@ -101,6 +113,14 @@ func (s *Server) setNodeLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("node label set", "node", swarmID, "has_label", label != "")
+	// The label IS the observability agent's krill_node name for this node
+	// (see internal/observability.NodeName / cmd/krill's obsNodeNames), so
+	// setting or clearing it changes the agent's rendered config — unlike
+	// addNode/removeNode, this is now the actual trigger point (a freshly
+	// joined node has no label yet, so joining alone changes nothing there).
+	if s.obsWired() {
+		s.obs.ctl.Trigger()
+	}
 	s.flashOK(w, r, "flash.ok.node_label_saved")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
 }
@@ -205,13 +225,10 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Warn("addNode: joined node not matched to a swarm ID (Addr/hostname mismatch?)", "host", host, "id", row.ID)
 	}
 	logFrom(r).Info("cluster node added", "name", name, "host", host) // no key/token
-	// A new node changes the observability agent's krill_node mapping (see
-	// internal/observability.NodeName): the config content changes, so the
-	// agent must redeploy to pick up the new node's name instead of showing
-	// its raw hostname until some unrelated reconcile happens to run.
-	if s.obsWired() {
-		s.obs.ctl.Trigger()
-	}
+	// No observability.Reconciler Trigger here: a freshly joined node has no
+	// node_labels row yet (that's a separate, later setNodeLabel call), so
+	// the agent's krill_node mapping is unchanged by adding it — it keeps
+	// showing the raw hostname until the operator names it.
 	s.flashOK(w, r, "flash.ok.node_added")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
 }
@@ -307,9 +324,11 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	logFrom(r).Info("cluster node removed", "node", swarmID)
-	// A removed node changes the observability agent's krill_node mapping
-	// (see internal/observability.NodeName), so it must redeploy — same
-	// reasoning as the Trigger call in addNode.
+	// A removed node drops out of engine.Nodes() and so out of the
+	// observability agent's krill_node mapping too (see cmd/krill's
+	// obsNodeNames) if it had a node_labels row — trigger unconditionally
+	// rather than looking that up: Reconcile is a no-op when nothing in the
+	// rendered config actually changed.
 	if s.obsWired() {
 		s.obs.ctl.Trigger()
 	}

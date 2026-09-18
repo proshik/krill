@@ -3,10 +3,12 @@ package observability
 import (
 	"bytes"
 	"errors"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 	"text/template"
+	"unicode"
 )
 
 const (
@@ -25,9 +27,11 @@ type pushTarget struct {
 	PasswordFile string // "" when there is no password
 }
 
-// NodeName maps a Swarm node's hostname to the name Krill shows for it (the
-// manager's "control-plane", or a worker's cluster_nodes.name) — see
-// cmd/krill/main.go for how the mapping is resolved from the cluster.
+// NodeName maps a Swarm node's hostname to the name Krill shows for it — the
+// same node_labels.label the Nodes page, Topology and the app page already
+// show, resolved fresh from the cluster on every reconcile pass (see
+// obsNodeNames in cmd/krill/main.go). A node with no label is left out of the
+// mapping entirely: it keeps showing its raw Swarm hostname.
 type NodeName struct{ Hostname, Name string }
 
 // nodeRelabelRule is one NodeName rendered into the two Alloy string literals
@@ -74,14 +78,21 @@ prometheus.relabel "node" {
     target_label = "krill_node"
     replacement  = constants.hostname
   }
+{{- if $.Nodes}}
+
+  rule {
+    target_label = "__tmp_krill_node"
+    replacement  = constants.hostname
+  }
 {{- range $.Nodes}}
 
   rule {
-    source_labels = ["krill_node"]
+    source_labels = ["__tmp_krill_node"]
     regex         = {{.Regex}}
     target_label  = "krill_node"
     replacement   = {{.Replacement}}
   }
+{{- end}}
 {{- end}}
   forward_to = [prometheus.remote_write.default.receiver]
 }
@@ -131,10 +142,15 @@ loki.source.docker "node" {
 
 loki.relabel "node" {
   forward_to = [loki.write.default.receiver]
+
+  rule {
+    target_label = "__tmp_krill_node"
+    replacement  = constants.hostname
+  }
 {{- range $.Nodes}}
 
   rule {
-    source_labels = ["krill_node"]
+    source_labels = ["__tmp_krill_node"]
     regex         = {{.Regex}}
     target_label  = "krill_node"
     replacement   = {{.Replacement}}
@@ -171,29 +187,87 @@ func alloyRegexLiteral(hostname string) string {
 	return alloyString(strings.ReplaceAll(regexp.QuoteMeta(hostname), `\`, `\\`))
 }
 
+// SafeNodeName reports whether name can go into the agent configuration as a
+// node's display name. Unlike safeText (written for URLs and logins, which
+// also rejects whitespace because those are meant to be single tokens), a
+// node's name only needs to avoid breaking out of a double-quoted Alloy
+// string or introducing a stray control character into the generated file: a
+// quote, a backslash, or a control character (including a newline). Spaces,
+// Cyrillic, dots and hyphens are all a normal, harmless part of a name
+// inside an Alloy string literal, and node_labels.label already allows them
+// — setNodeLabel (internal/server/node_handlers.go) rejects a new label with
+// this same function so the operator finds out at save time, not from a
+// warning log the next time the agent reconciles; a label saved before that
+// check existed is still caught here.
+func SafeNodeName(name string) bool {
+	for _, r := range name {
+		if unicode.IsControl(r) || r == '"' || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
+// alloyReplacementLiteral quotes name as an Alloy string literal safe to use
+// as a relabel rule's replacement. A relabel replacement is always expanded
+// via regexp's ExpandString (so "$1", "$name", etc. substitute capture
+// groups — this happens even though our regex has none), so a literal "$" in
+// the node's name must be doubled to "$$" or it is silently consumed as a
+// backreference: a name of "a$1" would otherwise render as just "a", since
+// capture group 1 doesn't exist and expands to "".
+func alloyReplacementLiteral(name string) string {
+	return alloyString(strings.ReplaceAll(name, "$", "$$"))
+}
+
 // nodeRules turns Krill's node name mapping into the per-node relabel rules
-// appended after the metrics/logs "krill_node = constants.hostname" rule.
-// Entries with an empty Hostname or Name are skipped — an unmapped node keeps
-// its raw hostname rather than get a bogus rule. Sorting by Hostname keeps
-// the rendered config, and so the object hash and the deploy it triggers,
-// stable regardless of the order the caller happened to resolve nodes in.
-func nodeRules(nodes []NodeName) ([]nodeRelabelRule, error) {
+// appended after the metrics/logs "krill_node = constants.hostname" rule (see
+// the template's "__tmp_krill_node" rule: every per-node rule below matches
+// against that immutable snapshot of the raw hostname, not against
+// "krill_node" itself — matching against "krill_node" would let one node's
+// rule see another's already-rewritten value when a node's chosen Name
+// happens to equal another node's raw hostname, silently relabeling the
+// wrong node). Entries with an empty Hostname or Name are skipped — an
+// unmapped node keeps its raw hostname rather than get a bogus rule.
+//
+// node_labels.label is close to free text (setNodeLabel only rejects a
+// quote, backslash or control character — see SafeNodeName — and an
+// over-length value; existing rows predate even that), so an entry whose
+// Name fails SafeNodeName, or whose Hostname fails the stricter safeText
+// (Swarm hostnames are trusted DNS-like strings; this should not trigger in
+// practice), is skipped with a warning rather than failing the whole render:
+// one badly-named node must not freeze the entire agent on a stale config or
+// leave it undeployed, and RenderNodeConfig has no way to report "which
+// node" through an error that ends up as the observability page's unrelated
+// settings-validation LastErr anyway.
+//
+// Sorting by Hostname (with Name as a tiebreak, for the pathological case of
+// two entries sharing a Hostname) keeps the rendered config, and so the
+// object hash and the deploy it triggers, stable regardless of the order the
+// caller happened to resolve nodes in.
+func nodeRules(nodes []NodeName) []nodeRelabelRule {
 	kept := make([]NodeName, 0, len(nodes))
 	for _, n := range nodes {
 		if n.Hostname == "" || n.Name == "" {
 			continue
 		}
-		if !safeText(n.Hostname) || !safeText(n.Name) {
-			return nil, errUnsafeText
+		if !safeText(n.Hostname) || !SafeNodeName(n.Name) {
+			slog.Warn("observability: a node's name cannot go into the agent configuration; it keeps its raw hostname label",
+				"name", n.Name, "hostname", n.Hostname)
+			continue
 		}
 		kept = append(kept, n)
 	}
-	sort.Slice(kept, func(i, j int) bool { return kept[i].Hostname < kept[j].Hostname })
+	sort.SliceStable(kept, func(i, j int) bool {
+		if kept[i].Hostname != kept[j].Hostname {
+			return kept[i].Hostname < kept[j].Hostname
+		}
+		return kept[i].Name < kept[j].Name
+	})
 	rules := make([]nodeRelabelRule, len(kept))
 	for i, n := range kept {
-		rules[i] = nodeRelabelRule{Regex: alloyRegexLiteral(n.Hostname), Replacement: alloyString(n.Name)}
+		rules[i] = nodeRelabelRule{Regex: alloyRegexLiteral(n.Hostname), Replacement: alloyReplacementLiteral(n.Name)}
 	}
-	return rules, nil
+	return rules
 }
 
 func toPushTarget(t Target, secretFile string) (*pushTarget, error) {
@@ -233,10 +307,7 @@ func RenderNodeConfig(s Settings, nodes []NodeName) ([]byte, error) {
 	if m == nil && l == nil {
 		return nil, ErrNothingConfigured
 	}
-	rules, err := nodeRules(nodes)
-	if err != nil {
-		return nil, err
-	}
+	rules := nodeRules(nodes)
 	var buf bytes.Buffer
 	if err := nodeTemplate.Execute(&buf, nodeConfigData{Metrics: m, Logs: l, LogLabels: logLabels, Nodes: rules}); err != nil {
 		return nil, err
