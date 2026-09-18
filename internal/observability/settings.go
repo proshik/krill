@@ -27,6 +27,7 @@ var (
 	ErrNotSaved          = errors.New("observability: the settings have not been saved yet")
 	ErrPasswordRequired  = errors.New("observability: the address changed; enter the password again")
 	ErrClearNotConfirmed = errors.New("observability: the address is empty; tick the confirmation to remove these settings")
+	ErrClearWithAddress  = errors.New("observability: the confirmation is ticked but the address is not empty; clear it to remove these settings")
 )
 
 // Target is one destination the agent pushes to.
@@ -182,10 +183,16 @@ func Save(ctx context.Context, q Store, in Input) error {
 // Emptying a URL that WAS configured requires in.Clear: an accidental blank
 // submission (a field the operator never meant to touch, cleared by the
 // browser or simply left untouched on a form that renders it blank) must
-// refuse rather than silently wipe a working target.
+// refuse rather than silently wipe a working target. Conversely, ticking
+// Clear without also clearing the URL field is refused too, rather than
+// silently ignored and the (unrelated) address saved as if Clear had never
+// been ticked — the operator's checked box must mean something.
 func mergeTarget(in TargetInput, storedURL, storedPassword string) (u, user, password string, err error) {
 	if u, err = NormalizeURL(in.URL); err != nil {
 		return "", "", "", err
+	}
+	if in.Clear && u != "" {
+		return "", "", "", ErrClearWithAddress
 	}
 	if u == "" && storedURL != "" && !in.Clear {
 		return "", "", "", ErrClearNotConfirmed

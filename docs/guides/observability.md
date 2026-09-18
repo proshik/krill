@@ -106,13 +106,21 @@ and any error from the last reconcile pass.
 **Node coverage.** A successful pass can still leave a node behind: Swarm's own node count for a
 global service only reflects the nodes it could actually schedule a fresh task on, so a node that
 was unreachable for this whole pass never shows up as missing from Swarm's side — it just quietly
-keeps running its previous task. When that happens the page adds a line naming the node(s) still
-on the **previous** settings (not merely "unreachable" — after rotating a push credential this is
-the difference between "done" and "half the cluster is still sending the old password"). This is
-not an error: the agent is deployed, and Swarm places the task itself once the node reconnects
-(a few tens of seconds on a live cluster). The note is only as fresh as the last pass — it clears
-the next time one runs, which is any settings save, or a node being added or removed; it does not
-refresh on its own between those.
+keeps running its previous task. Krill still expects a container on any node that is not
+**drained** — a node that is merely down, paused or otherwise unresponsive keeps whatever
+container Swarm last placed there, so it is exactly the case this check exists to catch; only
+draining a node actually removes its task, which is why a drained node is never named. When a
+still-expected node lags, the page adds a line naming it on the **previous** settings (not merely
+"unreachable" — after rotating a push credential this is the difference between "done" and "half
+the cluster is still sending the old password"). This is not an error: the agent is deployed, and
+Swarm places the task itself once the node reconnects (a few tens of seconds on a live cluster).
+The check only runs right after Krill actually redeploys the agent — a pass that finds nothing
+changed reports nothing new here (the existing "Agents running: X of Y" line already covers a node
+that isn't running at all). The note is only as fresh as the last such pass — it clears the next
+time one runs: saving settings, turning the agent on or off, renaming or removing a node on the
+**Nodes** page, or restarting Krill. It does not refresh on its own between those (adding a node
+does not by itself trigger a pass either — a freshly joined node has no label yet, so nothing about
+the agent's configuration changes until it is named).
 
 ## 4. Labels
 
@@ -168,13 +176,13 @@ container generations over nine hours, the agent's actual working set — `anon`
 positions from a previous generation both reach that same plateau in 3–4 minutes. What `docker
 stats` and `memory.current` report is a different, larger number: both count the page cache
 alongside that working set, and the cache does not shrink on its own while nothing on the node is
-under memory pressure — one observation on a live node reached **237 MiB** in `docker stats` with
-that same ~55 MiB working set underneath; the rest was page cache the kernel simply had not needed
-to reclaim yet (its composition was not measured). The kernel evicts that cache under real memory
-pressure well before the OOM killer would ever run, so it is headroom, not a leak — but if you are
-budgeting memory for a small server, watch `anon`, not `docker stats`. Either way, half a CPU core
-and up to 256 MiB per node is still a real share of the box — decide before turning it on,
-especially on a single 2 vCPU / 2 GB node.
+under memory pressure — one observation on a live node saw `docker stats` reach **237 MiB**; its
+composition was not measured (the breakdown above was taken later, on a container then at 65 MiB),
+and the figure was not reproduced. The kernel evicts page cache under real memory pressure well
+before the OOM killer would ever run, so a number like that is headroom, not necessarily a leak —
+but if you are budgeting memory for a small server, watch `anon`, not `docker stats`. Either way,
+half a CPU core and up to 256 MiB per node is still a real share of the box — decide before turning
+it on, especially on a single 2 vCPU / 2 GB node.
 
 ## 6. Security
 

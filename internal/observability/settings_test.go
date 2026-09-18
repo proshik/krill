@@ -144,6 +144,20 @@ func TestSaveClearRequiresConfirmation(t *testing.T) {
 	if err := observability.Save(ctx, q, observability.Input{Metrics: observability.TargetInput{Clear: true}}); err != nil {
 		t.Errorf("Clear on an already-empty target = %v, want nil", err)
 	}
+
+	// Ticking Clear while also submitting a non-empty address is refused
+	// (M2): the checkbox must not be silently ignored in favor of saving
+	// whatever address happens to be in the field.
+	if err := observability.Save(ctx, q, base); err != nil {
+		t.Fatal(err)
+	}
+	in := observability.Input{Metrics: observability.TargetInput{URL: base.Metrics.URL, User: "tenant", Clear: true}}
+	if err := observability.Save(ctx, q, in); !errors.Is(err, observability.ErrClearWithAddress) {
+		t.Fatalf("Save with Clear and a non-empty URL = %v, want ErrClearWithAddress", err)
+	}
+	if s, _ = observability.Load(ctx, q); s.Metrics.URL != base.Metrics.URL || s.Metrics.Password != "mpw" {
+		t.Errorf("a refused Clear-with-address changed the row: %+v", s)
+	}
 }
 
 func TestSaveRejectsBadInput(t *testing.T) {

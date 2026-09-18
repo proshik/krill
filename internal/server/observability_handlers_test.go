@@ -338,6 +338,34 @@ func TestObservabilitySaveClearRequiresConfirmation(t *testing.T) {
 	}
 }
 
+// TestObservabilitySaveClearWithAddressRejected is M2: ticking "Remove these
+// settings" while the address field still holds a value is refused, not
+// silently ignored in favor of saving the address as if the box were
+// unchecked.
+func TestObservabilitySaveClearWithAddressRejected(t *testing.T) {
+	secret.Init("test-key")
+	defer secret.Init("")
+	env := newObsEnv(t, true)
+
+	if rec := env.do(t, http.MethodPost, env.base, fullForm(), env.cookie); hasErrFlash(rec) {
+		t.Fatalf("save: %q", flashCookieValue(rec))
+	}
+
+	form := fullForm()
+	form.Set("metrics_clear", "on") // metrics_url is still set from fullForm()
+	rec := env.do(t, http.MethodPost, env.base, form, env.cookie)
+	if !hasErrFlash(rec) {
+		t.Fatal("Clear ticked with a non-empty address was accepted")
+	}
+	if msg := flashText(rec); !strings.Contains(msg, "clear it") {
+		t.Errorf("flash = %q", msg)
+	}
+	s, err := observability.Load(context.Background(), env.q)
+	if err != nil || s.Metrics.URL != "https://mimir.example.com/api/v1/push" || s.Metrics.Password != "s3cret-m" {
+		t.Errorf("a refused Clear-with-address changed the row: %+v, %v", s, err)
+	}
+}
+
 // A kept password must not follow the address to another server.
 func TestObservabilitySavePasswordNeedsSameServer(t *testing.T) {
 	secret.Init("test-key")

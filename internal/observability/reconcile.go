@@ -27,49 +27,79 @@ type Engine interface {
 	docker.SwarmObjects
 }
 
-// Coverage is how many of the ready-and-active nodes Reconcile expected the
-// agent to reach on this pass actually run its current configuration, once
-// the pass has confirmed the service itself converged. Partial coverage is
-// not a failure — the pass still succeeds — but an operator who just rotated
-// a push credential needs to know a missing node is still sending with the
-// PREVIOUS settings, not merely that it is unreachable.
+// Coverage is how many of the nodes Reconcile still expects a container on
+// (see NodeName.Expected) actually run its current configuration, once the
+// pass has confirmed the service itself converged. Partial coverage is not a
+// failure — the pass still succeeds — but an operator who just rotated a
+// push credential needs to know a node is still sending with the PREVIOUS
+// settings, not merely that it is unreachable.
 type Coverage struct {
 	Expected int
 	Deployed int
-	Missing  []string // Krill display names of ready nodes still on the previous configuration
+	Missing  []string // Krill display names of expected nodes still on the previous configuration
 }
 
-// readyNodes is the subset nodes Reconcile expects the global service to
-// reach on this pass: Swarm reports them State "ready" and Availability
-// "active". The rest (down, drained, paused) are not counted — Swarm itself
-// will not schedule a task there, so their absence is not news.
-func readyNodes(nodes []NodeName) []NodeName {
-	var ready []NodeName
+// expectedNodes is the subset of nodes Reconcile still expects a container on
+// this pass: NodeName.Expected (Availability != "drain"). A drained node has
+// had its task actively removed by Swarm, so its absence is not news; a down
+// or paused node has not — that is exactly the case Missing exists to name.
+func expectedNodes(nodes []NodeName) []NodeName {
+	var expected []NodeName
 	for _, n := range nodes {
-		if n.Ready {
-			ready = append(ready, n)
+		if n.Expected {
+			expected = append(expected, n)
 		}
 	}
-	return ready
+	return expected
 }
 
-// coverage reports, for each ready node, whether ServiceTasks currently shows
-// it running a task that is not in stale and is itself running. stale is the
-// pre-deploy baseline task IDs (nil when this call is not following a fresh
-// deploy — see Reconcile's two call sites): a node whose only task is still
+// anyHostnameKnown reports whether any task's NodeName matches one of nodes'
+// hostnames. docker.Engine.ServiceTasks falls back to raw Swarm node IDs
+// when it cannot resolve nodes to hostnames (a degraded/partial NodeList);
+// when that happens every task's "hostname" is a string that will never
+// match, and coverage must tell that apart from a cluster that is genuinely
+// all missing — see its use in coverage.
+func anyHostnameKnown(nodes []NodeName, tasks []docker.TaskPlacement) bool {
+	known := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if n.Hostname != "" {
+			known[n.Hostname] = true
+		}
+	}
+	for _, t := range tasks {
+		if known[t.NodeName] {
+			return true
+		}
+	}
+	return false
+}
+
+// coverage reports, for each expected node (see expectedNodes), whether
+// ServiceTasks currently shows it running a task that is not in stale and is
+// itself running. stale is the pre-deploy baseline task IDs this call's
+// caller just rolled the spec forward from: a node whose only task is still
 // in stale never received the update — its container just never got a new
 // assignment — even though its State still reports "running" (see
-// docker.TaskPlacement). ServiceTasks failing is logged and reported as full
-// coverage: the agent IS deployed, and a transient listing failure must not
-// turn a successful pass into a false alarm.
+// docker.TaskPlacement).
+//
+// Two conditions degrade to the zero Coverage rather than a real answer:
+// ServiceTasks erroring (the agent IS deployed; a transient listing failure
+// must not turn a successful pass into a false alarm), and ServiceTasks
+// returning tasks whose NodeName resolves to none of nodes' hostnames at all
+// (see anyHostnameKnown) — without real per-node data, calling every
+// expected node "missing" would be a louder false alarm than saying nothing.
 func coverage(ctx context.Context, eng Engine, nodes []NodeName, stale []string) Coverage {
-	ready := readyNodes(nodes)
-	if len(ready) == 0 {
+	expected := expectedNodes(nodes)
+	if len(expected) == 0 {
 		return Coverage{}
 	}
 	tasks, err := eng.ServiceTasks(ctx, NodeServiceName)
 	if err != nil {
 		slog.Warn("observability: could not check node coverage", "err", err)
+		return Coverage{}
+	}
+	if len(tasks) > 0 && !anyHostnameKnown(nodes, tasks) {
+		slog.Warn("observability: ServiceTasks did not resolve any node hostname; skipping node coverage for this pass")
 		return Coverage{}
 	}
 	old := make(map[string]bool, len(stale))
@@ -82,8 +112,8 @@ func coverage(ctx context.Context, eng Engine, nodes []NodeName, stale []string)
 			up[t.NodeName] = true
 		}
 	}
-	cov := Coverage{Expected: len(ready)}
-	for _, n := range ready {
+	cov := Coverage{Expected: len(expected)}
+	for _, n := range expected {
 		if up[n.Hostname] {
 			cov.Deployed++
 		} else {
@@ -101,10 +131,12 @@ var (
 
 // Reconcile converges the agent to s: deployed with this configuration when
 // enabled, absent otherwise. nodes maps Swarm hostnames to the names Krill
-// shows for them (see RenderNodeConfig) and marks which are currently ready
-// to run a task (see Coverage); both are unused when s is disabled. The
-// returned Coverage is only meaningful on a nil error — a real failure (the
-// deploy itself did not converge) is reported as the error, not as Coverage.
+// shows for them (see RenderNodeConfig) and marks which ones Reconcile still
+// expects a container on (see NodeName.Expected); both are unused when s is
+// disabled. The returned Coverage is only meaningful on a nil error, and is
+// only ever non-zero right after an actual deploy-and-converge on this pass
+// — the short-circuit "nothing changed" path always returns the zero
+// Coverage (see its own comment for why).
 func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) (Coverage, error) {
 	if !s.Enabled {
 		return Coverage{}, teardown(ctx, eng)
@@ -145,12 +177,15 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string, node
 		if cur, found, err := eng.ServiceLabels(ctx, NodeServiceName); err == nil && found {
 			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
 				prune(ctx, eng, obj)
-				// Nothing was redeployed, so nothing is "stale" — any node
-				// currently missing its task has been missing since before
-				// this pass, and this is still the freshest look we get at
-				// it without an unrelated settings change to trigger a full
-				// deploy.
-				return coverage(ctx, eng, nodes, nil), nil
+				// Nothing was redeployed on this pass, so there is no
+				// pre-deploy baseline to tell "still running this exact
+				// configuration" apart from "not running at all" (a
+				// restart, an image pull, a crash loop): reporting
+				// coverage here would risk calling a node that isn't
+				// running ANYTHING "still on the previous settings". The
+				// existing "Agents running: X of Y" line already covers
+				// the not-running case, so this path reports nothing.
+				return Coverage{}, nil
 			}
 		}
 	}

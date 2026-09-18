@@ -14,9 +14,9 @@ import (
 // topology and app page already show — not cluster_nodes (which holds only
 // workers) and not a hardcoded name for the manager. A node with no label
 // still comes back (Name ""), because Reconcile needs the FULL node list —
-// labelled or not — to know how many nodes the agent is expected to reach on
-// this pass (see observability.Coverage); only the rendered krill_node
-// mapping skips an unnamed node.
+// labelled or not — to know how many nodes it still expects a container on
+// (see observability.Coverage); only the rendered krill_node mapping skips
+// an unnamed node.
 func TestObsNodeNamesUsesNodeLabels(t *testing.T) {
 	swarmNodes := []docker.SwarmNode{
 		{ID: "mgr-1", Hostname: "node-1.example.com", Role: "manager", Leader: true, State: "ready", Availability: "active"},
@@ -30,9 +30,9 @@ func TestObsNodeNamesUsesNodeLabels(t *testing.T) {
 	}
 	got := obsNodeNames(swarmNodes, labels)
 	want := []observability.NodeName{
-		{Hostname: "node-1.example.com", Name: "control-plane", Ready: true},
-		{Hostname: "worker-host", Name: "worker-1", Ready: true},
-		{Hostname: "unlabelled-host", Name: "", Ready: true},
+		{Hostname: "node-1.example.com", Name: "control-plane", Expected: true},
+		{Hostname: "worker-host", Name: "worker-1", Expected: true},
+		{Hostname: "unlabelled-host", Name: "", Expected: true},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("obsNodeNames = %+v, want %+v", got, want)
@@ -42,8 +42,9 @@ func TestObsNodeNamesUsesNodeLabels(t *testing.T) {
 // TestObsNodeNamesKeepsUnlabelledNodesForCoverage proves a node without a
 // node_labels row is still returned (empty Name, so its krill_node rule is
 // still skipped — see RenderNodeConfig), rather than dropped from the list
-// entirely: dropping it would make Reconcile undercount how many nodes the
-// agent is expected to reach.
+// entirely: dropping it would make Reconcile undercount how many nodes it
+// still expects a container on. A DOWN node is still Expected: Swarm leaves
+// its last container running there until it is actually drained.
 func TestObsNodeNamesKeepsUnlabelledNodesForCoverage(t *testing.T) {
 	swarmNodes := []docker.SwarmNode{
 		{ID: "mgr-1", Hostname: "host-a", Role: "manager", Leader: true, State: "ready", Availability: "active"},
@@ -51,18 +52,22 @@ func TestObsNodeNamesKeepsUnlabelledNodesForCoverage(t *testing.T) {
 	}
 	got := obsNodeNames(swarmNodes, nil)
 	want := []observability.NodeName{
-		{Hostname: "host-a", Name: "", Ready: true},
-		{Hostname: "host-b", Name: "", Ready: false}, // down: not expected this pass
+		{Hostname: "host-a", Name: "", Expected: true},
+		{Hostname: "host-b", Name: "", Expected: true}, // down but not drained: still expected
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("obsNodeNames with no labels = %+v, want %+v", got, want)
 	}
 }
 
-// TestObsNodeNamesReadyRequiresReadyAndActive covers the exact Coverage
-// threshold: State must be "ready" AND Availability must be "active" — any
-// other combination (down, drained, paused) is not ready.
-func TestObsNodeNamesReadyRequiresReadyAndActive(t *testing.T) {
+// TestObsNodeNamesExpectedIgnoresStateOnlyAvailabilityDrain covers the exact
+// Coverage threshold (the live-acceptance fix): Expected depends only on
+// Availability != "drain" — State plays no part. A DOWN or an unresponsive
+// ("unknown" State) node is still Expected, because that is precisely the
+// case Coverage exists to catch: Swarm cannot reach it to update its task,
+// but the container it last placed there keeps running. Only draining
+// actively removes the task, which is why it is the sole exclusion.
+func TestObsNodeNamesExpectedIgnoresStateOnlyAvailabilityDrain(t *testing.T) {
 	swarmNodes := []docker.SwarmNode{
 		{ID: "a", Hostname: "ready-active", State: "ready", Availability: "active"},
 		{ID: "b", Hostname: "ready-drain", State: "ready", Availability: "drain"},
@@ -70,10 +75,15 @@ func TestObsNodeNamesReadyRequiresReadyAndActive(t *testing.T) {
 		{ID: "d", Hostname: "unknown-pause", State: "unknown", Availability: "pause"},
 	}
 	got := obsNodeNames(swarmNodes, nil)
-	wantReady := map[string]bool{"ready-active": true, "ready-drain": false, "down-active": false, "unknown-pause": false}
+	wantExpected := map[string]bool{
+		"ready-active":  true,
+		"ready-drain":   false, // the only exclusion
+		"down-active":   true,  // down, not drained: still expected
+		"unknown-pause": true,  // unresponsive, not drained: still expected
+	}
 	for _, n := range got {
-		if n.Ready != wantReady[n.Hostname] {
-			t.Errorf("node %s: Ready = %v, want %v", n.Hostname, n.Ready, wantReady[n.Hostname])
+		if n.Expected != wantExpected[n.Hostname] {
+			t.Errorf("node %s: Expected = %v, want %v", n.Hostname, n.Expected, wantExpected[n.Hostname])
 		}
 	}
 }

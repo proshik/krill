@@ -81,6 +81,8 @@ func (s *Server) flashObsErr(w http.ResponseWriter, r *http.Request, op string, 
 		s.flashErrT(w, r, "flash.err.obs_password_required")
 	case errors.Is(err, observability.ErrClearNotConfirmed):
 		s.flashErrT(w, r, "flash.err.obs_clear_confirm")
+	case errors.Is(err, observability.ErrClearWithAddress):
+		s.flashErrT(w, r, "flash.err.obs_clear_with_address")
 	case errors.Is(err, secret.ErrUndecryptable):
 		s.flashErrT(w, r, "flash.err.obs_undecryptable")
 	default:

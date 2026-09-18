@@ -382,18 +382,18 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	}
 }
 
-// twoReadyNodes is the two-node shape the coverage tests below drive: both
-// ready and active, so Reconcile expects the agent on both of them.
-func twoReadyNodes() []NodeName {
+// twoExpectedNodes is the two-node shape the coverage tests below drive:
+// neither is drained, so Reconcile still expects a container on both of them.
+func twoExpectedNodes() []NodeName {
 	return []NodeName{
-		{Hostname: "h1", Name: "control-plane", Ready: true},
-		{Hostname: "h2", Name: "worker-1", Ready: true},
+		{Hostname: "h1", Name: "control-plane", Expected: true},
+		{Hostname: "h2", Name: "worker-1", Expected: true},
 	}
 }
 
-// TestReconcileCoverageFull is the good case: both ready nodes end this pass
-// running a fresh (non-baseline) task, so Coverage reports full coverage and
-// no missing node.
+// TestReconcileCoverageFull is the good case: both expected nodes end this
+// pass running a fresh (non-baseline) task, so Coverage reports full
+// coverage and no missing node.
 func TestReconcileCoverageFull(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
@@ -401,7 +401,7 @@ func TestReconcileCoverageFull(t *testing.T) {
 		{ID: "t1", NodeName: "h1", State: "running"},
 		{ID: "t2", NodeName: "h2", State: "running"},
 	}
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoReadyNodes())
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestReconcileCoverageReportsLaggingNode(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	nodes := twoReadyNodes()
+	nodes := twoExpectedNodes()
 
 	// First pass: a clean deploy, both nodes converge.
 	eng.nextTasks = []docker.TaskPlacement{
@@ -454,17 +454,20 @@ func TestReconcileCoverageReportsLaggingNode(t *testing.T) {
 	}
 }
 
-// TestReconcileSkipsUnchangedButRefreshesCoverage proves the short-circuit
-// path (spec hash unchanged, so nothing is redeployed) still reports fresh
-// coverage: a node can go missing between two passes with no settings change
-// at all, and the operator needs to see that on the next trigger (a node
-// add/remove, another settings save), not only right after a redeploy.
-func TestReconcileSkipsUnchangedButRefreshesCoverage(t *testing.T) {
+// TestReconcileSkipUnchangedReportsNoCoverage proves the short-circuit path
+// (spec hash unchanged, so nothing is redeployed) never reports coverage,
+// even when a node has gone completely silent: with no pre-deploy baseline
+// from THIS pass, Reconcile cannot tell "still running the previous
+// configuration" apart from "not running at all" (a restart, a stuck image
+// pull, a crash loop) — the existing "Agents running: X of Y" line already
+// covers that, and calling a merely-down agent "on the previous settings"
+// would be actively misleading.
+func TestReconcileSkipUnchangedReportsNoCoverage(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	nodes := twoReadyNodes()
+	nodes := twoExpectedNodes()
 
 	eng.nextTasks = []docker.TaskPlacement{
 		{ID: "t1", NodeName: "h1", State: "running"},
@@ -474,8 +477,8 @@ func TestReconcileSkipsUnchangedButRefreshesCoverage(t *testing.T) {
 		t.Fatalf("first pass = %+v, %v", cov, err)
 	}
 
-	// h2 goes down between passes; nothing about the settings or node list
-	// changes.
+	// h2's task disappears between passes; nothing about the settings or
+	// node list changes, so the second pass takes the short-circuit path.
 	eng.mu.Lock()
 	eng.tasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
 	eng.mu.Unlock()
@@ -487,32 +490,86 @@ func TestReconcileSkipsUnchangedButRefreshesCoverage(t *testing.T) {
 	if len(eng.deploys) != 1 {
 		t.Fatalf("an unchanged spec redeployed: %d deploys", len(eng.deploys))
 	}
-	if cov.Expected != 2 || cov.Deployed != 1 || len(cov.Missing) != 1 || cov.Missing[0] != "worker-1" {
-		t.Errorf("coverage after the skip path = %+v", cov)
+	if cov.Expected != 0 || cov.Deployed != 0 || len(cov.Missing) != 0 {
+		t.Errorf("coverage after the skip path = %+v, want the zero value", cov)
 	}
 }
 
-// TestReconcileCoverageIgnoresNotReadyNodes proves a node Swarm itself
-// reports as down/drained/paused is never counted as "expected": Swarm will
-// not schedule a task there, so its absence is not news and must not show up
-// as a missing node.
-func TestReconcileCoverageIgnoresNotReadyNodes(t *testing.T) {
+// TestReconcileCoverageNamesDownNode is the acceptance scenario: a node
+// Swarm reports DOWN (unreachable) but not drained still counts as expected
+// — its last container keeps running there, unmanaged, so it belongs in
+// Missing when it hasn't received the current configuration. This is the
+// exact case the whole mechanism exists for; excluding it would silence the
+// one finding it was built to surface.
+func TestReconcileCoverageNamesDownNode(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
 	nodes := []NodeName{
-		{Hostname: "h1", Name: "control-plane", Ready: true},
-		{Hostname: "h2", Name: "worker-1", Ready: false}, // down/drained/paused
+		{Hostname: "h1", Name: "control-plane", Expected: true},
+		{Hostname: "h2", Name: "worker-1", Expected: true}, // down, but not drained
 	}
 	eng.nextTasks = []docker.TaskPlacement{
 		{ID: "t1", NodeName: "h1", State: "running"},
-		// h2 has no task at all — it is not ready, so this must not matter.
+		// h2 is unreachable: its old task is never replaced and never
+		// listed as freshly running here either (it may still be alive on
+		// the node itself, but ServiceTasks can only report what Swarm
+		// knows about it).
+	}
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Expected != 2 || cov.Deployed != 1 || len(cov.Missing) != 1 || cov.Missing[0] != "worker-1" {
+		t.Errorf("coverage = %+v, want the down node named in Missing", cov)
+	}
+}
+
+// TestReconcileCoverageIgnoresDrainedNode proves a DRAINED node is excluded
+// entirely: Swarm actively removes its task on drain, so it is not "still on
+// the previous settings" — it is correctly running nothing, and Missing must
+// not name it.
+func TestReconcileCoverageIgnoresDrainedNode(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	nodes := []NodeName{
+		{Hostname: "h1", Name: "control-plane", Expected: true},
+		{Hostname: "h2", Name: "worker-1", Expected: false}, // drained
+	}
+	eng.nextTasks = []docker.TaskPlacement{
+		{ID: "t1", NodeName: "h1", State: "running"},
+		// h2 has no task at all — it is drained, so this must not matter.
 	}
 	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cov.Expected != 1 || cov.Deployed != 1 || len(cov.Missing) != 0 {
-		t.Errorf("coverage = %+v, want the not-ready node excluded entirely", cov)
+		t.Errorf("coverage = %+v, want the drained node excluded entirely", cov)
+	}
+}
+
+// TestReconcileCoverageDegradedHostnamesSkipsCoverage covers M1: if
+// ServiceTasks degrades to raw Swarm node IDs (docker.Engine.ServiceTasks
+// falls back to them when it cannot resolve a NodeList), none of its
+// NodeName values will ever match a real hostname — every expected node
+// would wrongly show up in Missing. Reconcile must recognize "zero hostname
+// matches despite a non-empty task list" as "no usable data" and report
+// nothing, the same as a ServiceTasks error.
+func TestReconcileCoverageDegradedHostnamesSkipsCoverage(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	eng.nextTasks = []docker.TaskPlacement{
+		// Raw node IDs instead of hostnames — what a degraded ServiceTasks
+		// returns when it cannot list nodes to resolve them.
+		{ID: "t1", NodeName: "n1", State: "running"},
+		{ID: "t2", NodeName: "n2", State: "running"},
+	}
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov.Expected != 0 || cov.Deployed != 0 || len(cov.Missing) != 0 {
+		t.Errorf("coverage = %+v, want the zero value when no task resolves to a known hostname", cov)
 	}
 }
 
@@ -525,7 +582,7 @@ func TestReconcileCoverageListingFailureIsNotFatal(t *testing.T) {
 	eng := newFakeEngine()
 	eng.nextTasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
 	eng.tasksErr = errors.New("connection refused")
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoReadyNodes())
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatalf("a coverage-listing failure must not fail the pass: %v", err)
 	}
@@ -539,7 +596,7 @@ func TestReconcileCoverageListingFailureIsNotFatal(t *testing.T) {
 func TestReconcileTeardownReportsNoCoverage(t *testing.T) {
 	eng := newFakeEngine()
 	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
-	cov, err := Reconcile(context.Background(), eng, Settings{}, "krill-net", twoReadyNodes())
+	cov, err := Reconcile(context.Background(), eng, Settings{}, "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatal(err)
 	}

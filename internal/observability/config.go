@@ -33,15 +33,19 @@ type pushTarget struct {
 // obsNodeNames in cmd/krill/main.go). Name is "" for a node with no label:
 // RenderNodeConfig leaves it out of the krill_node mapping (it keeps showing
 // its raw Swarm hostname), but Reconcile still counts it — labelled or not —
-// for node coverage (see Ready).
+// for node coverage (see Expected).
 //
-// Ready reports whether Swarm considers the node available to run a task
-// right now (State == "ready" && Availability == "active"). Reconcile uses
-// it to know how many nodes the agent is expected to reach on this pass —
-// see Coverage in reconcile.go.
+// Expected reports whether Reconcile should still expect a container on this
+// node this pass: Availability != "drain" (docker.SwarmNode.Availability). A
+// DOWN or paused node is still expected — Swarm leaves whatever container it
+// last placed there running; only draining actively removes it. State is
+// deliberately not part of this: a down node is exactly the case Coverage
+// exists to catch (its container is alive and still on the PREVIOUS
+// configuration) — excluding it here would silence the one finding this
+// whole mechanism was built to surface. See Coverage in reconcile.go.
 type NodeName struct {
 	Hostname, Name string
-	Ready          bool
+	Expected       bool
 }
 
 // DisplayName is the name Krill shows for this node: its Krill name when one
