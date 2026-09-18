@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -54,6 +55,16 @@ func TestPostgresDriverSpecFull(t *testing.T) {
 	if len(s.Ports) != 0 {
 		t.Fatalf("DB service must not host-publish (external access goes via the proxy), got %+v", s.Ports)
 	}
+	if !s.UpdateStopFirst {
+		t.Fatal("postgres spec must set UpdateStopFirst: true (single-writer protection)")
+	}
+	wantCommand := []string{"sh", "-c", `exec 9<"$0" && flock 9 && exec docker-entrypoint.sh "$@"`, "/var/lib/postgresql/data"}
+	if !slices.Equal(s.Command, wantCommand) {
+		t.Fatalf("command = %v, want %v (portable directory lock — works with busybox flock too, unlike --no-fork)", s.Command, wantCommand)
+	}
+	if !slices.Equal(s.Args, []string{"postgres"}) {
+		t.Fatalf("args = %v, want [postgres] (Command overrides ENTRYPOINT, which resets the image CMD)", s.Args)
+	}
 }
 
 func TestRedisDriverSpecFull(t *testing.T) {
@@ -68,6 +79,13 @@ func TestRedisDriverSpecFull(t *testing.T) {
 	}
 	if s.Mounts[0].Target != "/data" {
 		t.Fatalf("mount wrong: %+v", s.Mounts)
+	}
+	if !s.UpdateStopFirst {
+		t.Fatal("redis spec must set UpdateStopFirst: true (single-writer protection)")
+	}
+	wantCommand := []string{"sh", "-c", `exec 9<"$0" && flock 9 && exec docker-entrypoint.sh "$@"`, "/data"}
+	if !slices.Equal(s.Command, wantCommand) {
+		t.Fatalf("command = %v, want %v (portable directory lock — works with busybox flock too, unlike --no-fork)", s.Command, wantCommand)
 	}
 }
 
@@ -134,6 +152,13 @@ func TestDragonflyDriverSpec(t *testing.T) {
 	}
 	if len(spec.Ports) != 0 {
 		t.Fatalf("DB service must not host-publish, got %+v", spec.Ports)
+	}
+	if !spec.UpdateStopFirst {
+		t.Fatal("dragonfly spec must set UpdateStopFirst: true (single-writer protection)")
+	}
+	wantCommand := []string{"/usr/bin/tini", "--", "sh", "-c", `exec 9<"$0" && flock 9 && exec entrypoint.sh "$@"`, "/data"}
+	if !slices.Equal(spec.Command, wantCommand) {
+		t.Fatalf("command = %v, want %v (dragonfly's own ENTRYPOINT is tini, which must stay PID 1, ahead of the portable lock)", spec.Command, wantCommand)
 	}
 
 	targets := d.ExternalTargets(Instance{ExternalPort: p32(56501)})
@@ -351,6 +376,12 @@ func TestMinioDriverSpec(t *testing.T) {
 	}
 	if spec.Healthcheck != nil {
 		t.Fatalf("healthcheck must be omitted in v1, got %+v", spec.Healthcheck)
+	}
+	if !spec.UpdateStopFirst {
+		t.Fatal("minio spec must set UpdateStopFirst: true (single-writer protection; minio has no flock, so this is its only protection)")
+	}
+	if len(spec.Command) != 0 {
+		t.Fatalf("minio spec must not set Command (its image has no flock, so it gets no directory lock), got %v", spec.Command)
 	}
 
 	targets := d.ExternalTargets(Instance{ExternalPort: p32(59000), ConsoleExternalPort: p32(59001)})

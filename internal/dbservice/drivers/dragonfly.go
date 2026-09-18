@@ -33,14 +33,24 @@ func (dragonflyDriver) SuperuserName() string { return "default" }
 // BuildSpec mirrors redisDriver.BuildSpec but with the DragonFly image's own
 // CMD shape: exec form (no shell) so the password is a discrete argv element,
 // same as redis-server.
+//
+// Command wraps the entrypoint in a portable flock (see flockCommand) on the
+// volume's mount-point directory — see the identical comment on
+// postgresDriver.BuildSpec for why the lock is on the directory. Unlike
+// postgres/redis, the DragonFly image's own ENTRYPOINT is
+// ["/usr/bin/tini", "--", "entrypoint.sh"]; tini has to stay PID 1 (it is
+// itself the thing reaping zombies and forwarding signals), so the lock's
+// shell goes AFTER it in the command, not in place of it.
 func (d dragonflyDriver) BuildSpec(inst Instance, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
-		Name:        inst.AppName,
-		Image:       inst.Image,
-		Replicas:    1,
-		Network:     network,
-		DNSRR:       true,
-		Constraints: []string{DBConstraint(inst.NodeHostname)},
+		Name:            inst.AppName,
+		Image:           inst.Image,
+		Command:         append([]string{"/usr/bin/tini", "--"}, flockCommand(d.MountTarget(), "entrypoint.sh")...),
+		Replicas:        1,
+		Network:         network,
+		DNSRR:           true,
+		Constraints:     []string{DBConstraint(inst.NodeHostname)},
+		UpdateStopFirst: true, // single-writer protection; see the Command comment above
 	}
 	spec.Args = []string{"dragonfly", "--requirepass", inst.SuperuserPassword}
 	spec.Mounts = []docker.MountSpec{{Type: "volume", Source: volumeName(inst.AppName), Target: d.MountTarget()}}

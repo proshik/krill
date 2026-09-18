@@ -47,14 +47,17 @@ type ServiceSpec struct {
 	// than one network sets it — today that is just the Traefik gateway, which
 	// must reach every organization's network while those stay isolated from
 	// each other.
-	Networks     []string
-	Ports        []PortSpec
-	Mounts       []MountSpec
-	Constraints  []string // e.g. node.role==manager
-	Global       bool     // true => Mode.Global (one task per matching node); Replicas ignored
-	SpreadNodeID bool     // add a spread-over-node.id placement preference (distribute replicas)
-	DNSRR        bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
-	RegistryAuth string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
+	Networks []string
+	Ports    []PortSpec
+	Mounts   []MountSpec
+	// UpdateStopFirst stops the old task before starting its replacement — for
+	// a task that holds something node-local, like an agent's WAL directory.
+	UpdateStopFirst bool
+	Constraints     []string // e.g. node.role==manager
+	Global          bool     // true => Mode.Global (one task per matching node); Replicas ignored
+	SpreadNodeID    bool     // add a spread-over-node.id placement preference (distribute replicas)
+	DNSRR           bool     // true => EndpointSpec.Mode=dnsrr (for databases), otherwise vip
+	RegistryAuth    string   // base64url(JSON) auth blob; goes into ServiceCreate/UpdateOptions, not the swarm spec
 
 	MemoryLimitBytes   int64  // 0 = no limit
 	NanoCPUs           int64  // 0 = no limit

@@ -24,14 +24,22 @@ func (redisDriver) MountTarget() string   { return "/data" }
 
 // BuildSpec mirrors the legacy instanceSpec "redis" case byte-for-byte: exec
 // form (no shell) so the password is a discrete argv element.
+//
+// Command wraps the official image's own entrypoint in a portable flock on
+// the volume's mount-point directory — see flockCommand and the identical
+// comment on postgresDriver.BuildSpec for why the lock is on the directory
+// (not a file inside it) and why it's not `flock --no-fork` (redis:7-alpine's
+// busybox flock doesn't support that flag).
 func (d redisDriver) BuildSpec(inst Instance, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
-		Name:        inst.AppName,
-		Image:       inst.Image,
-		Replicas:    1,
-		Network:     network,
-		DNSRR:       true,
-		Constraints: []string{DBConstraint(inst.NodeHostname)},
+		Name:            inst.AppName,
+		Image:           inst.Image,
+		Command:         flockCommand(d.MountTarget(), "docker-entrypoint.sh"),
+		Replicas:        1,
+		Network:         network,
+		DNSRR:           true,
+		Constraints:     []string{DBConstraint(inst.NodeHostname)},
+		UpdateStopFirst: true, // single-writer protection; see the Command comment above
 	}
 	spec.Args = []string{"redis-server", "--requirepass", inst.SuperuserPassword}
 	spec.Mounts = []docker.MountSpec{{Type: "volume", Source: volumeName(inst.AppName), Target: d.MountTarget()}}
