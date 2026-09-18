@@ -20,14 +20,33 @@ func (postgresDriver) MountTarget() string   { return "/var/lib/postgresql/data"
 // BuildSpec mirrors the legacy instanceSpec "postgres" case byte-for-byte: no
 // POSTGRES_DB (it only matters on first volume init; databases are created by
 // provisioning — converted instances have an initialized volume already).
+//
+// Command wraps the official image's own entrypoint in `flock --no-fork` on
+// the volume's mount-point directory (which IS PGDATA — never a file inside
+// it, since initdb needs an empty directory on first start): this is the
+// other half of the single-writer protection, closing the case a service-spec
+// update (UpdateStopFirst above) cannot see — a second container placed on
+// the same volume by something other than a Swarm rolling update (e.g. a
+// worker node returning mid-reconciliation). `--no-fork` is mandatory:
+// without it, flock itself stays PID 1 and never forwards the stop signal to
+// postgres, turning every clean stop into a SIGKILL and a crash recovery.
+// Overriding ENTRYPOINT resets the image's own CMD, so Args restates it
+// explicitly.
 func (d postgresDriver) BuildSpec(inst Instance, network string) docker.ServiceSpec {
 	spec := docker.ServiceSpec{
 		Name:        inst.AppName,
 		Image:       inst.Image,
+		Command:     []string{"flock", "--no-fork", d.MountTarget(), "docker-entrypoint.sh"},
+		Args:        []string{"postgres"},
 		Replicas:    1,
 		Network:     network,
 		DNSRR:       true,
 		Constraints: []string{DBConstraint(inst.NodeHostname)},
+		// UpdateStopFirst: two postmasters must never share one PGDATA — see
+		// the Command comment above for the other half of the single-writer
+		// protection (a service-spec update is not the only way a second
+		// container can appear on the same volume).
+		UpdateStopFirst: true,
 	}
 	spec.Env = map[string]string{
 		"POSTGRES_USER":     inst.Superuser,

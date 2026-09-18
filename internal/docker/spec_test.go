@@ -235,3 +235,12 @@ func TestSpecFallsBackToSingleNetwork(t *testing.T) {
 		t.Fatalf("want the single Network attached, got %+v", s.TaskTemplate.Networks)
 	}
 }
+
+func TestBuildSwarmSpecUpdateStopFirst(t *testing.T) {
+	if o := buildSwarmSpec(ServiceSpec{Name: "x", Network: "n"}).UpdateConfig.Order; o != swarm.UpdateOrderStartFirst {
+		t.Errorf("default order = %q, want start-first", o)
+	}
+	if o := buildSwarmSpec(ServiceSpec{Name: "x", Network: "n", UpdateStopFirst: true}).UpdateConfig.Order; o != swarm.UpdateOrderStopFirst {
+		t.Errorf("UpdateStopFirst order = %q, want stop-first", o)
+	}
+}

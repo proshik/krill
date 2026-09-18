@@ -43,7 +43,15 @@ describes them in detail.
 Verified in code and tests, but not yet exercised on a real environment:
 
 1. MinIO and DragonFly instances on a VPS, including S3 app-linking.
-2. Node-down reconciliation — a live drain/remove on a cluster.
+2. Node-down reconciliation — a live drain/remove on a cluster. This queue item now also
+   covers the single-writer fix (stop-first updates + a `flock --no-fork` directory lock on
+   Postgres/Redis/DragonFly instances — see [Nodes](architecture.md#nodes)), found live on
+   2026-09-18 when a worker's return produced two Postgres postmasters on the same volume for
+   ~0.5s. Live acceptance on two nodes should specifically check: return a worker holding a
+   database instance mid-reconciliation and confirm the second container's postmaster stays
+   blocked (doesn't start) until the first is actually gone, and that its log then has NO
+   "was not properly shut down" line once it does start — i.e. no crash recovery, meaning the
+   two never actually overlapped.
 3. Cluster-wide monitoring on two nodes (most likely already passed; to confirm).
 4. Moving a database instance's volume between nodes on a real cluster, including
    a node failing mid-transfer.
