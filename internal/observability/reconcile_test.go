@@ -548,6 +548,36 @@ func TestReconcileCoverageIgnoresDrainedNode(t *testing.T) {
 	}
 }
 
+// TestReconcileCoverageMissingSorted proves Missing is sorted regardless of
+// the order nodes happens to list them in — Swarm's NodeList (and so
+// engine.Nodes(), and so the nodes slice Reconcile receives) makes no
+// ordering guarantee, so an unsorted Missing could reorder the UI line
+// between two passes that found the exact same nodes missing.
+func TestReconcileCoverageMissingSorted(t *testing.T) {
+	fastConverge(t)
+	eng := newFakeEngine()
+	nodes := []NodeName{
+		{Hostname: "hz", Name: "zzz-worker", Expected: true},
+		{Hostname: "ha", Name: "aaa-worker", Expected: true},
+		{Hostname: "hm", Name: "mmm-worker", Expected: true},
+	}
+	eng.nextTasks = nil // none of them have a running task: all three are missing
+	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"aaa-worker", "mmm-worker", "zzz-worker"}
+	if len(cov.Missing) != len(want) {
+		t.Fatalf("Missing = %v, want %v", cov.Missing, want)
+	}
+	for i := range want {
+		if cov.Missing[i] != want[i] {
+			t.Errorf("Missing = %v, want %v (sorted)", cov.Missing, want)
+			break
+		}
+	}
+}
+
 // TestReconcileCoverageDegradedHostnamesSkipsCoverage covers M1: if
 // ServiceTasks degrades to raw Swarm node IDs (docker.Engine.ServiceTasks
 // falls back to them when it cannot resolve a NodeList), none of its

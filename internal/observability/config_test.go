@@ -229,6 +229,39 @@ func TestRenderNodeConfigNodesUseImmutableSnapshot(t *testing.T) {
 	}
 }
 
+// TestRenderNodeConfigDropsTempSnapshotLabel is the fix for the live-
+// acceptance finding: prometheus.relabel performs SAMPLE relabeling — the
+// resulting label set is exactly what gets exported — not the target
+// discovery kind of relabeling that automatically drops "__"-prefixed
+// labels. Without an explicit labeldrop, "__tmp_krill_node" (the raw
+// hostname snapshot the per-node rules match against) rode along on every
+// sample sent to remote_write, alongside the correct krill_node value —
+// confirmed against the real pinned agent image by decoding an actual
+// remote-write body (see TestNodeAgentShipsMetricsAndLogs, integration).
+// loki.relabel gets the identical rule purely so the two pipelines don't
+// diverge; Loki itself already drops "__"-prefixed stream labels on its own.
+func TestRenderNodeConfigDropsTempSnapshotLabel(t *testing.T) {
+	got, err := RenderNodeConfig(fullSettings(), fullNodes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := string(got)
+	metricsIdx := strings.Index(cfg, `prometheus.relabel "node"`)
+	forwardIdx := strings.Index(cfg, "forward_to = [prometheus.remote_write.default.receiver]")
+	if metricsIdx < 0 || forwardIdx < 0 || metricsIdx > forwardIdx {
+		t.Fatalf("could not locate prometheus.relabel \"node\" ... forward_to in:\n%s", cfg)
+	}
+	metricsBlock := cfg[metricsIdx:forwardIdx]
+	if !strings.Contains(metricsBlock, `action = "labeldrop"`) || !strings.Contains(metricsBlock, `regex  = "__tmp_krill_node"`) {
+		t.Errorf("prometheus.relabel \"node\" does not drop __tmp_krill_node before remote_write:\n%s", metricsBlock)
+	}
+	// Once for metrics, once for logs — not once per node: the drop rule is
+	// unconditional, outside the per-node range loop.
+	if got := strings.Count(cfg, `action = "labeldrop"`); got != 2 {
+		t.Errorf(`action = "labeldrop" appears %d times, want 2 (metrics and logs)`, got)
+	}
+}
+
 // TestRenderNodeConfigNodesSkipsIncomplete covers entries with an empty
 // Hostname or Name: an unmapped node must keep its raw hostname rather than
 // get a bogus rule, so it is simply omitted.

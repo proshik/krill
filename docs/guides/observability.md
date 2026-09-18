@@ -120,7 +120,9 @@ that isn't running at all). The note is only as fresh as the last such pass — 
 time one runs: saving settings, turning the agent on or off, renaming or removing a node on the
 **Nodes** page, or restarting Krill. It does not refresh on its own between those (adding a node
 does not by itself trigger a pass either — a freshly joined node has no label yet, so nothing about
-the agent's configuration changes until it is named).
+the agent's configuration changes until it is named). The Observability page itself does not
+auto-refresh either — reload it after triggering a pass to see the updated note once that pass has
+actually finished.
 
 ## 4. Labels
 

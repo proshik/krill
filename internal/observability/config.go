@@ -116,6 +116,11 @@ prometheus.relabel "node" {
     replacement   = {{.Replacement}}
   }
 {{- end}}
+
+  rule {
+    action = "labeldrop"
+    regex  = "__tmp_krill_node"
+  }
 {{- end}}
   forward_to = [prometheus.remote_write.default.receiver]
 }
@@ -179,6 +184,11 @@ loki.relabel "node" {
     replacement   = {{.Replacement}}
   }
 {{- end}}
+
+  rule {
+    action = "labeldrop"
+    regex  = "__tmp_krill_node"
+  }
 }
 {{- end}}
 
@@ -205,7 +215,8 @@ loki.write "default" {
 // rule, not the regex syntax — confirmed against the pinned agent image
 // (grafana/alloy:v1.19.2): a lone "\." in an Alloy string is rejected at load
 // with "unknown escape sequence", even though `alloy validate` accepts it
-// (see internal/observability/config_integration_test.go).
+// (see internal/observability/config_integration_test.go). Safe only because
+// callers must have validated hostname with safeText first (see nodeRules).
 func alloyRegexLiteral(hostname string) string {
 	return alloyString(strings.ReplaceAll(regexp.QuoteMeta(hostname), `\`, `\\`))
 }
@@ -237,7 +248,8 @@ func SafeNodeName(name string) bool {
 // groups — this happens even though our regex has none), so a literal "$" in
 // the node's name must be doubled to "$$" or it is silently consumed as a
 // backreference: a name of "a$1" would otherwise render as just "a", since
-// capture group 1 doesn't exist and expands to "".
+// capture group 1 doesn't exist and expands to "". Safe only because callers
+// must have validated name with SafeNodeName first (see nodeRules).
 func alloyReplacementLiteral(name string) string {
 	return alloyString(strings.ReplaceAll(name, "$", "$$"))
 }

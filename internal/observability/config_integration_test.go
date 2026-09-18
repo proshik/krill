@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/snappy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -123,15 +124,33 @@ func (f *fakeReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// seen searches the SNAPPY-DECODED body for needle. Both Prometheus
+// remote_write and Loki's protobuf push endpoint compress the request body
+// with Snappy's block format; decoding it exposes the protobuf's string
+// fields (label names/values) as literal UTF-8 bytes with no further
+// encoding, so a plain substring search is enough — no protobuf parsing
+// needed. An empty needle (the "did anything arrive at all" checks) matches
+// unconditionally, decode failure or not.
 func (f *fakeReceiver) seen(path string, needle string) (bool, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, b := range f.bodies[path] {
-		if bytes.Contains(b, []byte(needle)) {
+		if bytes.Contains(decodeSnappyBestEffort(b), []byte(needle)) {
 			return true, f.auth[path]
 		}
 	}
 	return false, f.auth[path]
+}
+
+// decodeSnappyBestEffort falls back to the raw bytes on a decode error so a
+// malformed/non-Snappy body (or an empty needle check) never panics or
+// spuriously fails the delivery check the way decoding might.
+func decodeSnappyBestEffort(b []byte) []byte {
+	d, err := snappy.Decode(nil, b)
+	if err != nil {
+		return b
+	}
+	return d
 }
 
 func basic(user, pass string) string {
@@ -155,7 +174,13 @@ func TestNodeAgentShipsMetricsAndLogs(t *testing.T) {
 		Metrics: Target{URL: base + "/api/v1/push", User: "m", Password: "mpw"},
 		Logs:    Target{URL: base + "/loki/api/v1/push", User: "l", Password: "lpw"},
 	}
-	cfg, err := RenderNodeConfig(s, nil)
+	// A node mapping matching the agent container's own hostname (set below
+	// via WithConfigModifier) — this is what exercises the actual
+	// __tmp_krill_node relabel/labeldrop rules end to end; RenderNodeConfig(s,
+	// nil) never instantiated them at all, which is exactly how the leaked
+	// label survived undetected.
+	nodes := []NodeName{{Hostname: "probe-node", Name: "friendly-name"}}
+	cfg, err := RenderNodeConfig(s, nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,8 +219,10 @@ func TestNodeAgentShipsMetricsAndLogs(t *testing.T) {
 	wantAuthL := "Basic " + basic("l", "lpw")
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		// Both bodies are compressed protobuf, so this proves delivery and
-		// credentials; the labels are checked against a real Loki in Task 13.
+		// seen decodes the Snappy-compressed protobuf body, so this proves
+		// delivery and credentials; the actual relabelled content (the
+		// mapped node name present, the internal __tmp_krill_node snapshot
+		// label gone) is checked below once both have arrived at least once.
 		mSeen, mAuth := rec.seen("/api/v1/push", "")
 		lSeen, lAuth := rec.seen("/loki/api/v1/push", "")
 		if mSeen && lSeen {
@@ -211,6 +238,23 @@ func TestNodeAgentShipsMetricsAndLogs(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+
+	// The live-acceptance finding this test guards against: krill_node must
+	// carry the mapped name, and the internal __tmp_krill_node snapshot label
+	// the per-node rules match against must NOT ride along to the receiver.
+	if ok, _ := rec.seen("/api/v1/push", "friendly-name"); !ok {
+		t.Error("remote-write body does not contain the mapped node name — krill_node relabel not applied")
+	}
+	if ok, _ := rec.seen("/api/v1/push", "__tmp_krill_node"); ok {
+		t.Error("remote-write body leaks the internal __tmp_krill_node label — labeldrop rule missing or not applied")
+	}
+	if ok, _ := rec.seen("/loki/api/v1/push", "friendly-name"); !ok {
+		t.Error("loki push body does not contain the mapped node name — krill_node relabel not applied")
+	}
+	if ok, _ := rec.seen("/loki/api/v1/push", "__tmp_krill_node"); ok {
+		t.Error("loki push body leaks the internal __tmp_krill_node label")
+	}
+
 	logs, _ := agent.Logs(ctx)
 	out, _ := io.ReadAll(logs)
 	if bytes.Contains(out, []byte("level=error")) {

@@ -38,6 +38,11 @@ prometheus.relabel "node" {
     target_label  = "krill_node"
     replacement   = "worker-1"
   }
+
+  rule {
+    action = "labeldrop"
+    regex  = "__tmp_krill_node"
+  }
   forward_to = [prometheus.remote_write.default.receiver]
 }
 
@@ -125,6 +130,11 @@ loki.relabel "node" {
     regex         = "worker-1\\.internal"
     target_label  = "krill_node"
     replacement   = "worker-1"
+  }
+
+  rule {
+    action = "labeldrop"
+    regex  = "__tmp_krill_node"
   }
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,6 +107,10 @@ func coverage(ctx context.Context, eng Engine, nodes []NodeName, stale []string)
 	for _, id := range stale {
 		old[id] = true
 	}
+	// Keyed by hostname: two nodes sharing a hostname (not possible on a real
+	// Swarm cluster, where it's the node identity) would collapse into one
+	// entry here — an accepted, unlikely edge case, not a bug to guard
+	// against.
 	up := make(map[string]bool, len(tasks))
 	for _, t := range tasks {
 		if t.State == "running" && !old[t.ID] {
@@ -120,6 +125,11 @@ func coverage(ctx context.Context, eng Engine, nodes []NodeName, stale []string)
 			cov.Missing = append(cov.Missing, n.DisplayName())
 		}
 	}
+	// Missing is built in the order expected() (and so nodes, and so
+	// engine.Nodes()) happens to return, which Swarm does not guarantee —
+	// without this, the names in the UI line could reorder between two
+	// passes that found the exact same nodes missing.
+	sort.Strings(cov.Missing)
 	return cov
 }
 
