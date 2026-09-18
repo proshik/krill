@@ -16,6 +16,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
@@ -96,6 +97,34 @@ func (noopEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error
 type noopBuilder struct{}
 
 func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer) error { return nil }
+
+// newNodeServer is like newServer but wires a noopEngine (so addNode/removeNode
+// can reach their success paths without a real docker daemon) and a fake
+// observability controller, so a test can assert a cluster-node change
+// triggers a reconcile pass (see internal/server/node_handlers.go).
+func newNodeServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *fakeObsCtl) {
+	t.Helper()
+	return newNodeServerWithEngine(t, noopEngine{})
+}
+
+// newNodeServerWithEngine is newNodeServer with an injectable engine, for a
+// test that needs setNodeLabel/addNode/removeNode's engine.Nodes-backed
+// existence check to actually find the node being mutated (noopEngine.Nodes
+// always reports none).
+func newNodeServerWithEngine(t *testing.T, eng docker.Engine) (http.Handler, *db.Queries, *org.Service, *fakeObsCtl) {
+	t.Helper()
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
+	hub := deploy.NewLogHub()
+	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
+	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
+	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
+	obs := &fakeObsCtl{}
+	srv.SetObservability(obs, func(context.Context, observability.Settings) observability.Report { return observability.Report{} })
+	return srv.Router(), q, orgSvc, obs
+}
 
 // newDeployServer is like newServer but wires a real deployer with a no-op
 // engine/builder, so the deploy/reload/rebuild success paths are exercisable.

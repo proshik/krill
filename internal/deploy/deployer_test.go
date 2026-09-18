@@ -982,3 +982,16 @@ func TestEnqueueRefusesASecondDeployForTheSameApp(t *testing.T) {
 		t.Fatal("app could not deploy again after its in-flight deploy finished")
 	}
 }
+
+func TestBuildSpecContainerLabels(t *testing.T) {
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	app := imageApp()
+	app.ContainerLabels = map[string]string{"krill.app": "web"}
+	spec := d.buildSpec(app, "nginx:alpine")
+	if spec.ContainerLabels["krill.app"] != "web" {
+		t.Errorf("container labels = %v", spec.ContainerLabels)
+	}
+	if spec.Labels["krill.app"] != "" {
+		t.Error("container labels must not become service labels")
+	}
+}

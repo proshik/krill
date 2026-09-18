@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"io"
+	"os"
 	"strconv"
 	"time"
 )
@@ -32,6 +33,16 @@ type MountSpec struct {
 	Owner    string // "uid:gid" to chown the volume to before deploy; "" => skip
 }
 
+// FileRef mounts a Swarm config or secret into the service's containers as a
+// file. Swarm references an object by ID, which ServiceDeploy looks up from
+// Name, so callers leave ID empty.
+type FileRef struct {
+	Name   string
+	Target string      // configs: absolute path; secrets: file name under /run/secrets
+	Mode   os.FileMode // 0 => 0444
+	ID     string      `json:"-"`
+}
+
 // ServiceSpec — our neutral description of a Swarm service.
 type ServiceSpec struct {
 	Name     string
@@ -50,6 +61,12 @@ type ServiceSpec struct {
 	Networks []string
 	Ports    []PortSpec
 	Mounts   []MountSpec
+	Configs  []FileRef // Swarm configs mounted as files
+	Secrets  []FileRef // Swarm secrets mounted under /run/secrets
+	// ContainerLabels land on the containers, unlike Labels (service level):
+	// a log collector reading the docker socket sees only these.
+	ContainerLabels map[string]string
+	Hostname        string // container hostname; Swarm templates allowed, e.g. {{.Node.Hostname}}
 	// UpdateStopFirst stops the old task before starting its replacement — for
 	// a task that holds something node-local, like an agent's WAL directory.
 	UpdateStopFirst bool
@@ -72,8 +89,12 @@ type SwarmNode struct {
 	Leader                                        bool
 }
 
-// TaskPlacement is one task of a service and the node it runs on.
-type TaskPlacement struct{ NodeID, NodeName, State, Desired string }
+// TaskPlacement is one task of a service and the node it runs on. ID is the
+// task's own Swarm ID — callers that captured a pre-deploy baseline of task
+// IDs use it to tell a node still running its OLD task (before a rolling
+// update reached it) from one already running the new spec, which State
+// alone cannot: a stalled node's stale task still reports State "running".
+type TaskPlacement struct{ ID, NodeID, NodeName, State, Desired string }
 
 // TaskInfo is one Swarm task tagged with its owning service and node. Unlike
 // TaskPlacement (which is per-service and carries no service identity), Tasks()
@@ -119,6 +140,16 @@ type ServiceProgress struct {
 	Failed      int      // non-excluded tasks failed/rejected
 	UpdateState string   // swarm UpdateStatus.State; "" when never updated
 	TaskIDs     []string // IDs of the desired-state=running tasks seen (the baseline for the next deploy)
+}
+
+// UpdateSettled reports whether a service's last rolling update has come to
+// rest. "" means the service was never updated.
+func UpdateSettled(state string) bool {
+	switch state {
+	case "updating", "paused", "rollback_started", "rollback_paused":
+		return false
+	}
+	return true
 }
 
 // ContainerStat is a one-shot CPU/memory sample for a running container.
@@ -190,6 +221,21 @@ type Engine interface {
 type RemoteExecConfigurable interface {
 	SetRemoteClientProvider(p RemoteClientProvider)
 }
+
+// SwarmObjects is the optional capability to manage Swarm configs and secrets.
+// Only the real *dockerEngine implements it; callers type-assert, so the Engine
+// interface and its test fakes stay unchanged.
+type SwarmObjects interface {
+	// ConfigEnsure creates the config unless one with that name exists.
+	ConfigEnsure(ctx context.Context, name string, data []byte, labels map[string]string) error
+	// SecretEnsure creates the secret unless one with that name exists.
+	SecretEnsure(ctx context.Context, name string, data []byte, labels map[string]string) error
+	// PruneObjects removes the configs and secrets labelled key=value whose
+	// names are not in keep, skipping any a service still uses.
+	PruneObjects(ctx context.Context, labelKey, labelValue string, keep []string) error
+}
+
+var _ SwarmObjects = (*dockerEngine)(nil)
 
 // ServiceName builds the Swarm service name for an application from its id.
 func ServiceName(appID int64) string {

@@ -236,6 +236,48 @@ func TestSpecFallsBackToSingleNetwork(t *testing.T) {
 	}
 }
 
+func TestBuildSwarmSpecFilesLabelsHostname(t *testing.T) {
+	sw := buildSwarmSpec(ServiceSpec{
+		Name: "krill-alloy-node", Image: "grafana/alloy", Network: "krill-net", Global: true,
+		Hostname:        "{{.Node.Hostname}}",
+		ContainerLabels: map[string]string{"krill.app": "web"},
+		Configs:         []FileRef{{Name: "cfg-1", ID: "cid", Target: "/etc/alloy/config.alloy"}},
+		Secrets:         []FileRef{{Name: "sec-1", ID: "sid", Target: "pw", Mode: 0o400}},
+	})
+	cs := sw.TaskTemplate.ContainerSpec
+	if cs.Hostname != "{{.Node.Hostname}}" {
+		t.Errorf("hostname = %q", cs.Hostname)
+	}
+	if cs.Labels["krill.app"] != "web" {
+		t.Errorf("container labels = %v", cs.Labels)
+	}
+	if sw.Annotations.Labels["krill.app"] != "" {
+		t.Error("container labels leaked into service labels")
+	}
+	if len(cs.Configs) != 1 {
+		t.Fatalf("configs = %d, want 1", len(cs.Configs))
+	}
+	c := cs.Configs[0]
+	if c.ConfigID != "cid" || c.ConfigName != "cfg-1" || c.File == nil ||
+		c.File.Name != "/etc/alloy/config.alloy" || c.File.Mode != 0o444 || c.File.UID != "0" || c.File.GID != "0" {
+		t.Errorf("config ref = %+v file=%+v", c, c.File)
+	}
+	if len(cs.Secrets) != 1 {
+		t.Fatalf("secrets = %d, want 1", len(cs.Secrets))
+	}
+	s := cs.Secrets[0]
+	if s.SecretID != "sid" || s.SecretName != "sec-1" || s.File == nil || s.File.Name != "pw" || s.File.Mode != 0o400 {
+		t.Errorf("secret ref = %+v file=%+v", s, s.File)
+	}
+}
+
+func TestBuildSwarmSpecNoFilesByDefault(t *testing.T) {
+	cs := buildSwarmSpec(ServiceSpec{Name: "x", Image: "nginx", Network: "krill-net"}).TaskTemplate.ContainerSpec
+	if cs.Hostname != "" || cs.Labels != nil || cs.Configs != nil || cs.Secrets != nil {
+		t.Errorf("unexpected container spec fields: %+v", cs)
+	}
+}
+
 func TestBuildSwarmSpecUpdateStopFirst(t *testing.T) {
 	if o := buildSwarmSpec(ServiceSpec{Name: "x", Network: "n"}).UpdateConfig.Order; o != swarm.UpdateOrderStartFirst {
 		t.Errorf("default order = %q, want start-first", o)

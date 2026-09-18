@@ -1,0 +1,136 @@
+package templates
+
+import (
+	"strings"
+	"time"
+
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// ObservabilityView is the Observability settings page.
+type ObservabilityView struct {
+	Wired              bool
+	Enabled            bool
+	MemoryLimit        string // human text, e.g. "256 MiB"
+	MetricsURL         string
+	MetricsUser        string
+	MetricsHasPassword bool
+	LogsURL            string
+	LogsUser           string
+	LogsHasPassword    bool
+	Busy               bool
+	LastRun            time.Time
+	LastErr            string
+	Found              bool
+	Running            int
+	Desired            int
+	Failed             int
+	StateErr           string
+	// CoverageExpected/CoverageDeployed/CoverageMissing describe the last
+	// pass's node coverage (see observability.Coverage): CoverageExpected is
+	// 0 whenever there is nothing to report (agent off, or every ready node
+	// covered).
+	CoverageExpected int
+	CoverageDeployed int
+	CoverageMissing  []string
+}
+
+func observabilityPath(orgID int64) string {
+	return "/orgs/" + itoa(orgID) + "/observability"
+}
+
+templ Observability(org db.Organization, role string, v ObservabilityView) {
+	@Layout(i18n.T(ctx, "obs.title"), org, role) {
+		@settingsNav(org.ID)
+		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "obs.desc") }</p>
+		if !v.Wired {
+			<div class="k-card mb-4">
+				<p style="max-width:720px">{ i18n.T(ctx, "obs.unwired") }</p>
+			</div>
+		} else {
+			@observabilityState(org.ID, v)
+			<form method="post" action={ templ.SafeURL(observabilityPath(org.ID)) } class="k-card mb-4" autocomplete="off">
+				@observabilityTarget("metrics", i18n.T(ctx, "obs.metrics"), i18n.T(ctx, "obs.url_hint_metrics"), v.MetricsURL, v.MetricsUser, v.MetricsHasPassword)
+				@observabilityTarget("logs", i18n.T(ctx, "obs.logs"), i18n.T(ctx, "obs.url_hint_logs"), v.LogsURL, v.LogsUser, v.LogsHasPassword)
+				<button class="k-btn k-btn-primary">{ i18n.T(ctx, "obs.save") }</button>
+			</form>
+			<div class="k-card mb-4">
+				<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "obs.check_hint") }</p>
+				<form method="post" action={ templ.SafeURL(observabilityPath(org.ID) + "/check") }>
+					<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "obs.check") }</button>
+				</form>
+			</div>
+		}
+	}
+}
+
+templ observabilityTarget(name, title, hint, url, user string, hasPassword bool) {
+	<h3 class="text-lg mb-2">{ title }</h3>
+	<label class="k-label" for={ name + "_url" }>{ i18n.T(ctx, "obs.url") }</label>
+	<input class="k-input mb-1" id={ name + "_url" } name={ name + "_url" } type="url" value={ url }/>
+	<p class="mb-3" style="color:var(--color-muted);font-size:13px">{ hint }</p>
+	<div class="flex gap-3 mb-1">
+		<div class="flex-1">
+			<label class="k-label" for={ name + "_user" }>{ i18n.T(ctx, "obs.user") }</label>
+			<input class="k-input" id={ name + "_user" } name={ name + "_user" } value={ user }/>
+		</div>
+		<div class="flex-1">
+			<label class="k-label" for={ name + "_password" }>{ i18n.T(ctx, "obs.password") }</label>
+			if hasPassword {
+				<input class="k-input" id={ name + "_password" } name={ name + "_password" } type="password" autocomplete="new-password" placeholder={ i18n.T(ctx, "obs.password_keep") }/>
+			} else {
+				<input class="k-input" id={ name + "_password" } name={ name + "_password" } type="password" autocomplete="new-password"/>
+			}
+		</div>
+	</div>
+	<p class="mb-2" style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "obs.password_clear_hint") }</p>
+	<label class="flex items-center gap-2 mb-4" style="color:var(--color-muted);font-size:13px" for={ name + "_clear" }>
+		<input type="checkbox" id={ name + "_clear" } name={ name + "_clear" }/>
+		{ i18n.T(ctx, "obs.clear_confirm") }
+	</label>
+}
+
+templ observabilityState(orgID int64, v ObservabilityView) {
+	<div class="k-card mb-4">
+		<div class="flex items-center gap-2 mb-3">
+			if v.Enabled {
+				<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "obs.state.on") }</span>
+			} else {
+				<span class="k-badge"><span class="k-dot"></span>{ i18n.T(ctx, "obs.state.off") }</span>
+			}
+			if v.Busy {
+				<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "obs.status.busy") }</span>
+			}
+		</div>
+		if v.StateErr != "" {
+			<p class="mb-2" style="color:var(--color-err);font-size:13px">{ i18n.Tf(ctx, "obs.status.state_err", v.StateErr) }</p>
+		} else if v.Found {
+			<p class="mb-2">{ i18n.Tf(ctx, "obs.status.agents", v.Running, v.Desired) }</p>
+			if v.Failed > 0 {
+				<p class="mb-2" style="color:var(--color-err)">{ i18n.Tf(ctx, "obs.status.failed", v.Failed) }</p>
+			}
+		} else if v.Enabled {
+			<p class="mb-2" style="color:var(--color-muted)">{ i18n.T(ctx, "obs.status.none") }</p>
+		}
+		if v.LastErr != "" {
+			<p class="mb-2" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "obs.status.last_err", v.LastErr) }</p>
+		}
+		if len(v.CoverageMissing) > 0 {
+			<p class="mb-1" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "obs.coverage.partial", v.CoverageDeployed, v.CoverageExpected, strings.Join(v.CoverageMissing, ", ")) }</p>
+			<p class="mb-2" style="color:var(--color-muted);font-size:13px;max-width:720px">{ i18n.T(ctx, "obs.coverage.hint") }</p>
+		}
+		<p class="mb-2" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "obs.cost", v.MemoryLimit) }</p>
+		<p class="mb-2" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "obs.manual_alloy") }</p>
+		<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "obs.labels_note") }</p>
+		if v.Enabled {
+			<form method="post" hx-boost="false" action={ templ.SafeURL(observabilityPath(orgID) + "/disable") } data-confirm={ i18n.T(ctx, "obs.confirm.disable") } data-confirm-label={ i18n.T(ctx, "obs.disable") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel)">
+				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "obs.disable") }</button>
+			</form>
+		} else {
+			<form method="post" hx-boost="false" action={ templ.SafeURL(observabilityPath(orgID) + "/enable") } data-confirm={ i18n.T(ctx, "obs.confirm.enable") } data-confirm-label={ i18n.T(ctx, "obs.enable") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel, 'primary')">
+				<button class="k-btn k-btn-primary">{ i18n.T(ctx, "obs.enable") }</button>
+			</form>
+		}
+	</div>
+}

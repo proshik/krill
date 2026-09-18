@@ -13,3 +13,14 @@ func TestBuildImageTag(t *testing.T) {
 		t.Errorf("BuildImageTag(7,42) = %q, want krill-7:42", got)
 	}
 }
+
+func TestUpdateSettled(t *testing.T) {
+	for state, want := range map[string]bool{
+		"": true, "completed": true, "rollback_completed": true,
+		"updating": false, "paused": false, "rollback_started": false, "rollback_paused": false,
+	} {
+		if got := UpdateSettled(state); got != want {
+			t.Errorf("UpdateSettled(%q) = %v, want %v", state, got, want)
+		}
+	}
+}

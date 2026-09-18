@@ -37,6 +37,11 @@ describes them in detail.
   firewall close of the direct UI port. Self-update from the UI (Settings → Updates)
   installs a newer release with a dead-man rollback to the previous binary, offered to
   release builds on `install.sh` installs.
+- **Observability, stage 1 (node agent):** an opt-in Grafana Alloy agent, one global Swarm
+  service task per node, ships host metrics (Prometheus remote write) and every container's
+  logs (Loki) to storage you provide; Krill keeps none of it. Configured from
+  **Settings → Observability**, with a check of the saved addresses that never blocks turning
+  the agent on. See [Observability](docs/guides/observability.md).
 
 ## Live-acceptance queue
 
@@ -77,6 +82,12 @@ Verified in code and tests, but not yet exercised on a real environment:
     during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
     the documented recovery from a failed migration. Still open: the starting page through the panel domain
     (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
+12. The observability agent on a real two-node cluster: the agent appears on a node added
+    later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
+    and Loki, memory of the agent under load, Check against Mimir with authentication, a worker
+    down or drained during a settings change (global update with parallelism 1), an authenticated
+    receiver (the 0400 root-owned secret is readable by Alloy), and memory over a long window (it
+    was still rising at 14 minutes).
 
 ## Open
 
@@ -105,6 +116,10 @@ Verified in code and tests, but not yet exercised on a real environment:
   Decide between an actively maintained S3-compatible engine and building MinIO from source.
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
+- **Observability, stage 2 (app metrics):** a manager-side collector on every organization's
+  network scraping per-app metrics endpoints, gated by a scrape token — the node agent (stage
+  1) only covers host metrics and logs.
+- **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
 
 ## Later
 

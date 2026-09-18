@@ -286,6 +286,13 @@ func (e *dockerEngine) findService(ctx context.Context, name string) (swarm.Serv
 }
 
 func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) error {
+	var err error
+	if spec.Configs, err = resolveRefs(ctx, spec.Configs, e.configID); err != nil {
+		return err
+	}
+	if spec.Secrets, err = resolveRefs(ctx, spec.Secrets, e.secretID); err != nil {
+		return err
+	}
 	sw := buildSwarmSpec(spec)
 	cur, found, err := e.findService(ctx, spec.Name)
 	if err != nil {
@@ -1061,7 +1068,7 @@ func (e *dockerEngine) ServiceTasks(ctx context.Context, name string) ([]TaskPla
 			nodeName = t.NodeID // fall back to the raw node ID; "" if not yet scheduled
 		}
 		out = append(out, TaskPlacement{
-			NodeID: t.NodeID, NodeName: nodeName,
+			ID: t.ID, NodeID: t.NodeID, NodeName: nodeName,
 			State: string(t.Status.State), Desired: string(t.DesiredState),
 		})
 	}

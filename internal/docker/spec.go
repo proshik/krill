@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"os"
 	"sort"
 
 	container "github.com/docker/docker/api/types/container"
@@ -35,6 +36,25 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 			Source:   m.Source,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
+		})
+	}
+
+	cs.Hostname = s.Hostname
+	if len(s.ContainerLabels) > 0 {
+		cs.Labels = s.ContainerLabels
+	}
+	for _, c := range s.Configs {
+		cs.Configs = append(cs.Configs, &swarm.ConfigReference{
+			File:       &swarm.ConfigReferenceFileTarget{Name: c.Target, UID: "0", GID: "0", Mode: fileMode(c.Mode)},
+			ConfigID:   c.ID,
+			ConfigName: c.Name,
+		})
+	}
+	for _, sc := range s.Secrets {
+		cs.Secrets = append(cs.Secrets, &swarm.SecretReference{
+			File:       &swarm.SecretReferenceFileTarget{Name: sc.Target, UID: "0", GID: "0", Mode: fileMode(sc.Mode)},
+			SecretID:   sc.ID,
+			SecretName: sc.Name,
 		})
 	}
 
@@ -150,6 +170,14 @@ func updateOrder(s ServiceSpec) string {
 		}
 	}
 	return swarm.UpdateOrderStartFirst
+}
+
+// fileMode defaults an unset mode to world-readable, Swarm's own default.
+func fileMode(m os.FileMode) os.FileMode {
+	if m == 0 {
+		return 0o444
+	}
+	return m
 }
 
 // restartCondition maps a human restart condition to the Swarm enum.

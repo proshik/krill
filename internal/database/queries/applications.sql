@@ -84,3 +84,12 @@ JOIN environments e ON e.id = a.environment_id
 JOIN projects p ON p.id = e.project_id
 WHERE p.organization_id = $1
 ORDER BY a.id;
+
+-- name: GetApplicationIdentity :one
+-- The names and ids an app's containers are labelled with for log collection.
+SELECT o.id AS org_id, o.name AS org_name, p.name AS project_name, e.name AS env_name
+FROM applications a
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN organizations o ON o.id = p.organization_id
+WHERE a.id = $1;

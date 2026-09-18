@@ -21,6 +21,7 @@ import (
 	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/volume"
@@ -81,6 +82,14 @@ type Server struct {
 	// update_handlers.go). Zero until wired: the Updates page says so and
 	// every action is refused.
 	updates selfUpdate
+
+	// obs runs Krill's own observability agent (see SetObservability and
+	// observability_handlers.go). Zero until wired: the page says so and
+	// every action is refused.
+	obs struct {
+		ctl   observabilityCtl
+		check func(context.Context, observability.Settings) observability.Report
+	}
 
 	// selfComponentFn returns the control-plane component key (supplied by the
 	// metrics sampler, which learns it while sampling — no per-request docker scan).
@@ -400,6 +409,11 @@ func (s *Server) Router() http.Handler {
 				r.Post("/updates/install", s.installUpdate)
 				r.Post("/updates/rollback", s.rollbackUpdate)
 				r.Get("/updates/status", s.updateStatus)
+				r.Get("/observability", s.observabilityPage)
+				r.Post("/observability", s.saveObservability)
+				r.Post("/observability/check", s.checkObservability)
+				r.Post("/observability/enable", s.enableObservability)
+				r.Post("/observability/disable", s.disableObservability)
 			})
 
 			r.Group(func(r chi.Router) {

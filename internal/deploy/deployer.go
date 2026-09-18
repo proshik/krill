@@ -37,6 +37,10 @@ type App struct {
 	// configured network.
 	Network string
 
+	// ContainerLabels identify the app to the observability agent's log
+	// collector (see observability.ContainerLabels).
+	ContainerLabels map[string]string
+
 	Replicas           uint64
 	MemoryLimitBytes   int64
 	NanoCPUs           int64
@@ -563,6 +567,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		Args:               app.Args,
 		Env:                app.Env,
 		Labels:             traefik.AppLabels(name, domains, app.Port, net),
+		ContainerLabels:    app.ContainerLabels,
 		Replicas:           replicas,
 		Network:            net,
 		RegistryAuth:       app.RegistryAuth,

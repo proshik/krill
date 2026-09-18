@@ -32,6 +32,7 @@ import (
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/panel"
@@ -470,6 +471,36 @@ func run() error {
 		}.reason)
 	app.SetSelfUpdate(updateChecker, updater)
 
+	// Observability: Krill's own Alloy agent on every node (Settings →
+	// Observability). The real engine implements the Swarm config/secret
+	// capability; anything else leaves the page unwired.
+	var obsRec *observability.Reconciler
+	if obsEngine, ok := engine.(observability.Engine); ok {
+		// obsNodes resolves the krill_node mapping fresh on every reconcile
+		// pass. Reading both lists is required, not best-effort: a failure
+		// here fails the whole reconcile pass (see NewReconciler) rather than
+		// silently redeploying the agent without the mapping.
+		obsNodes := func(c context.Context) ([]observability.NodeName, error) {
+			swarmNodes, nerr := engine.Nodes(c)
+			if nerr != nil {
+				return nil, nerr
+			}
+			rows, rerr := q.ListNodeLabels(c)
+			if rerr != nil {
+				return nil, rerr
+			}
+			return obsNodeNames(swarmNodes, rows), nil
+		}
+		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
+			return observability.LoadForReconcile(c, q)
+		}, obsNodes, cfg.Network)
+		instance, _ := os.Hostname()
+		checker := observability.Checker{AllowPrivate: cfg.AllowPrivateEgress, Instance: instance}
+		app.SetObservability(obsRec, checker.Check)
+	} else {
+		slog.Warn("observability unavailable: the docker engine cannot manage swarm configs and secrets")
+	}
+
 	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
 	// operations, the same bearer tokens and the same tenancy checks in
 	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
@@ -512,6 +543,14 @@ func run() error {
 		slog.Info("background update check disabled (KRILL_UPDATE_CHECK_INTERVAL <= 0)")
 	}
 
+	// Converge the agent to the stored settings once per start: deploy it if
+	// it is on, remove it (and its leftover configs and secrets) if it is off.
+	// In the background — pulling the image can take minutes.
+	if obsRec != nil {
+		go obsRec.Run(ctx)
+		obsRec.Trigger()
+	}
+
 	// An install that predates per-organization networks has every service —
 	// every tenant's — on the single shared overlay, where any container can
 	// resolve and reach any other by name. Nothing but a redeploy moves a Swarm
@@ -547,6 +586,40 @@ func run() error {
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}
+}
+
+// obsNodeNames maps live Swarm nodes to the names Krill's observability agent
+// labels them with — the exact same node_labels the Nodes page, the
+// topology view and the app page already show (see (*server.Server).nodeLabelMap),
+// not cluster_nodes.name (cluster_nodes holds only workers, so a manager
+// would never get a name that way) and not a hardcoded name for the manager
+// (that would silently rename krill_node on every existing install the
+// moment it upgrades, before the operator ever names anything). A node with
+// no label gets an empty Name: RenderNodeConfig leaves it out of the
+// krill_node mapping (its krill_node keeps showing the raw Swarm hostname,
+// exactly like an install that has never labelled any node — nothing changes
+// silently), but Reconcile still needs it in the list, Expected flag and
+// all, to know how many nodes the agent is still expected to reach on this
+// pass (see Coverage) — a label is a display choice, not a reason to stop
+// counting a node.
+func obsNodeNames(swarmNodes []docker.SwarmNode, labels []db.NodeLabel) []observability.NodeName {
+	labelByID := make(map[string]string, len(labels))
+	for _, l := range labels {
+		labelByID[l.SwarmNodeID] = l.Label
+	}
+	names := make([]observability.NodeName, 0, len(swarmNodes))
+	for _, n := range swarmNodes {
+		names = append(names, observability.NodeName{
+			Hostname: n.Hostname,
+			Name:     labelByID[n.ID],
+			// A down or paused node still counts: Swarm leaves its last
+			// container running there, so it's exactly the case Coverage
+			// exists to name. Only a drained node has had its task actively
+			// removed — see NodeName.Expected.
+			Expected: n.Availability != "drain",
+		})
+	}
+	return names
 }
 
 // orgNetworks is the overlay network of every organization, in id order. The
