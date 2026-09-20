@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice/drivers"
@@ -200,6 +201,9 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 			slog.Warn("db-link: target database missing, skipping injection", "app", a.ID, "link_id", l.ID, "var", l.VarName)
 		}
 	}
+	if err := s.applyMetrics(ctx, a.ID, a.Port, &out); err != nil {
+		return App{}, err
+	}
 	return out, nil
 }
 
@@ -369,4 +373,49 @@ func buildHealthcheck(a db.Application) *docker.HealthcheckSpec {
 		hc.Retries = int(*a.HealthcheckRetries)
 	}
 	return hc
+}
+
+// applyMetrics injects the app's metrics bearer token under its configured
+// variable name — over env_text and database links alike: the collector sends
+// exactly this token, so any other value would make every scrape a 401. A
+// clash can only exist in data written before the save-time checks existed
+// (or edited in the database directly); it is logged by name, never by value.
+// The token's fingerprint goes onto the containers so the Metrics tab can
+// tell whether the running deployment already has the current token.
+func (s *DBStore) applyMetrics(ctx context.Context, appID int64, appPort int32, out *App) error {
+	m, err := s.q.GetApplicationMetrics(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if !m.MetricsEnabled {
+		return nil
+	}
+	eps, err := s.q.ListMetricsEndpointsByApplication(ctx, appID)
+	if err != nil {
+		return err
+	}
+	in := make([]appmetrics.Endpoint, 0, len(eps))
+	for _, e := range eps {
+		in = append(in, appmetrics.Endpoint{Port: e.Port, Path: e.Path})
+	}
+	out.MetricsHiddenPaths = appmetrics.HiddenPaths(appPort, in)
+	if m.MetricsToken == nil {
+		return nil
+	}
+	tok, err := secret.Dec(*m.MetricsToken)
+	if err != nil {
+		return fmt.Errorf("app %d metrics token: %w", appID, err)
+	}
+	if _, clash := out.Env[m.MetricsTokenEnv]; clash {
+		slog.Warn("metrics token overrides a variable of the same name", "app", appID, "var", m.MetricsTokenEnv)
+	}
+	if out.Env == nil {
+		out.Env = map[string]string{}
+	}
+	out.Env[m.MetricsTokenEnv] = tok
+	if out.ContainerLabels == nil {
+		out.ContainerLabels = map[string]string{}
+	}
+	out.ContainerLabels[appmetrics.ContainerLabelTokenHash] = appmetrics.TokenHash(m.MetricsTokenEnv, tok)
+	return nil
 }
