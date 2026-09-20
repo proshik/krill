@@ -142,3 +142,9 @@ Verified in code and tests, but not yet exercised on a real environment:
 
 Docker Compose, MySQL / MariaDB / MongoDB, buildpacks, preview deployments, custom
 RBAC, 2FA and SSO.
+
+## Application metrics (observability stage 2)
+
+Implemented in code: per-app endpoints and encrypted bearer tokens, deployment-time injection, protection of metrics paths on public domains, an organization-network Alloy collector, and live scrape status on the Metrics tab. See [Application metrics](docs/guides/metrics.md).
+
+Disposable two-node live acceptance passed with four application replicas, per-node labels, token rotation and recovery, public metrics-path protection, network cooldown, and firewall isolation. Production rollout and Moscow acceptance were not performed by this implementation task.

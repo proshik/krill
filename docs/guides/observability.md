@@ -239,3 +239,9 @@ shows as `Pending` or keeps restarting there while the rest of the cluster is fi
 **If you already run your own Alloy (or another agent) on the nodes**, remove it before turning
 this one on. Two agents scraping the same host and tailing the same containers means duplicate
 series and duplicate log lines in your storage, not a conflict Krill can detect.
+
+## Application metrics
+
+With a metrics destination enabled, Krill also runs `krill-alloy-apps`: one stop-first task on a manager, attached to every organization network, with its own persistent WAL volume. Its configured limits are 64 MiB and 0.25 CPU, in addition to the node agents. It has no host filesystem or Docker socket mounts, and its API listens only on container loopback.
+
+Organization administrators configure endpoints and tokens on each application's **Metrics** tab. See [Application metrics](metrics.md) for setup, authentication, public-path protection, status, and failure behavior. The Settings page reports the app collector separately from the node agents. Removing the metrics destination removes the app collector; log-only node collection continues. Disabling observability removes both services and retains their data volumes.
