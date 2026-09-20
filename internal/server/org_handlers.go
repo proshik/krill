@@ -105,6 +105,9 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	if s.reconcileGateway != nil {
 		s.reconcileGateway()
 	}
+	if s.obs.ctl != nil {
+		s.obs.ctl.TriggerNetworks()
+	}
 
 	s.flashOK(w, r, "flash.ok.org_created")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)

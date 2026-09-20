@@ -1,0 +1,311 @@
+{
+  "name": "prometheus.scrape",
+  "type": "block",
+  "localID": "prometheus.scrape.app_7_3",
+  "moduleID": "apps.targets.default",
+  "label": "app_7_3",
+  "referencesTo": [
+    "discovery.relabel.app_7_3"
+  ],
+  "referencedBy": [],
+  "dataFlowEdgesTo": [],
+  "health": {
+    "state": "healthy",
+    "message": "component evaluated",
+    "updatedTime": "2026-09-20T07:30:46.245939558Z"
+  },
+  "original": "",
+  "arguments": [
+    {
+      "name": "targets",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "object",
+            "value": [
+              {
+                "key": "__address__",
+                "value": {
+                  "type": "string",
+                  "value": "172.24.0.2:80"
+                }
+              },
+              {
+                "key": "__meta_dns_name",
+                "value": {
+                  "type": "string",
+                  "value": "tasks.krill-7"
+                }
+              },
+              {
+                "key": "krill_app",
+                "value": {
+                  "type": "string",
+                  "value": "base13"
+                }
+              },
+              {
+                "key": "krill_app_id",
+                "value": {
+                  "type": "string",
+                  "value": "7"
+                }
+              },
+              {
+                "key": "krill_env",
+                "value": {
+                  "type": "string",
+                  "value": "prod"
+                }
+              },
+              {
+                "key": "krill_node",
+                "value": {
+                  "type": "string",
+                  "value": "krill-cp-msk"
+                }
+              },
+              {
+                "key": "krill_org",
+                "value": {
+                  "type": "string",
+                  "value": "Acme"
+                }
+              },
+              {
+                "key": "krill_org_id",
+                "value": {
+                  "type": "string",
+                  "value": "1"
+                }
+              },
+              {
+                "key": "krill_project",
+                "value": {
+                  "type": "string",
+                  "value": "bots"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "forward_to",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "capsule",
+            "value": "prometheus.remote_write.default.receiver"
+          }
+        ]
+      }
+    },
+    {
+      "name": "job_name",
+      "type": "attr",
+      "value": {
+        "type": "string",
+        "value": "relay"
+      }
+    },
+    {
+      "name": "scrape_interval",
+      "type": "attr",
+      "value": {
+        "type": "string",
+        "value": "30s"
+      }
+    },
+    {
+      "name": "scrape_protocols",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "string",
+            "value": "OpenMetricsText1.0.0"
+          },
+          {
+            "type": "string",
+            "value": "OpenMetricsText0.0.1"
+          },
+          {
+            "type": "string",
+            "value": "PrometheusText1.0.0"
+          },
+          {
+            "type": "string",
+            "value": "PrometheusText0.0.4"
+          }
+        ]
+      }
+    },
+    {
+      "name": "authorization",
+      "type": "block",
+      "body": [
+        {
+          "name": "type",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "Bearer"
+          }
+        },
+        {
+          "name": "credentials",
+          "type": "attr",
+          "value": {
+            "type": "capsule",
+            "value": "(secret)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "metric_name_escaping_scheme",
+      "type": "attr",
+      "value": {
+        "type": "string",
+        "value": "underscores"
+      }
+    }
+  ],
+  "exports": [],
+  "debugInfo": [
+    {
+      "name": "target",
+      "type": "block",
+      "body": [
+        {
+          "name": "job",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "relay"
+          }
+        },
+        {
+          "name": "url",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "http://172.24.0.2:80/metrics"
+          }
+        },
+        {
+          "name": "health",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "down"
+          }
+        },
+        {
+          "name": "labels",
+          "type": "attr",
+          "value": {
+            "type": "object",
+            "value": [
+              {
+                "key": "instance",
+                "value": {
+                  "type": "string",
+                  "value": "172.24.0.2:80"
+                }
+              },
+              {
+                "key": "job",
+                "value": {
+                  "type": "string",
+                  "value": "relay"
+                }
+              },
+              {
+                "key": "krill_app",
+                "value": {
+                  "type": "string",
+                  "value": "base13"
+                }
+              },
+              {
+                "key": "krill_app_id",
+                "value": {
+                  "type": "string",
+                  "value": "7"
+                }
+              },
+              {
+                "key": "krill_env",
+                "value": {
+                  "type": "string",
+                  "value": "prod"
+                }
+              },
+              {
+                "key": "krill_node",
+                "value": {
+                  "type": "string",
+                  "value": "krill-cp-msk"
+                }
+              },
+              {
+                "key": "krill_org",
+                "value": {
+                  "type": "string",
+                  "value": "Acme"
+                }
+              },
+              {
+                "key": "krill_org_id",
+                "value": {
+                  "type": "string",
+                  "value": "1"
+                }
+              },
+              {
+                "key": "krill_project",
+                "value": {
+                  "type": "string",
+                  "value": "bots"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "last_error",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "server returned HTTP status 401 Unauthorized"
+          }
+        },
+        {
+          "name": "last_scrape",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "2026-09-20T07:34:19.07293494Z"
+          }
+        },
+        {
+          "name": "last_scrape_duration",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "360.968\u00b5s"
+          }
+        }
+      ]
+    }
+  ],
+  "liveDebuggingEnabled": true
+}

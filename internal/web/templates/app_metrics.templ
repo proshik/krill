@@ -1,0 +1,114 @@
+package templates
+
+import ("github.com/proshik/krill/internal/web/i18n"; "github.com/proshik/krill/internal/observability"; "time")
+
+templ metricsTab(c AppCtx) {
+ <div class="k-card mb-4">
+ <h3 class="k-card-title">{ i18n.T(ctx,"metrics.status.title") }</h3>
+ <div id="metrics-status" hx-get={ c.base()+"/metrics/status" } hx-trigger="load" hx-swap="innerHTML">{ i18n.T(ctx,"metrics.status.loading") }</div>
+ <button type="button" class="k-btn k-btn-ghost mt-2" hx-get={ c.base()+"/metrics/status" } hx-target="#metrics-status">{ i18n.T(ctx,"metrics.status.refresh") }</button>
+ </div>
+ <div class="k-card mb-4">
+ <p class="mb-3">{ i18n.T(ctx,"metrics.enable_hint") }</p>
+ if c.Role == "admin" || c.Role == "owner" {
+ if c.MetricsEnabled {
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/disable") } hx-boost="false" data-confirm={ i18n.T(ctx,"metrics.disable_confirm") }>
+ <button class="k-btn k-btn-ghost">{ i18n.T(ctx,"metrics.disable") }</button>
+ </form>
+ } else {
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/enable") }>
+ <button class="k-btn k-btn-primary">{ i18n.T(ctx,"metrics.enable") }</button>
+ </form>
+ }
+ }
+ </div>
+ <div class="k-card mb-4">
+ <h3 class="k-card-title">{ i18n.T(ctx,"metrics.endpoints") }</h3>
+ <table class="k-table"><thead><tr><th>{ i18n.T(ctx,"metrics.port") }</th><th>{ i18n.T(ctx,"metrics.path") }</th><th>{ i18n.T(ctx,"metrics.job") }</th><th></th></tr></thead><tbody>
+ for _, ep := range c.MetricsEndpoints {
+ <tr><td>{ itoa(int64(ep.Port)) }</td><td>{ ep.Path }</td><td>
+ if ep.Job == "" {
+ { i18n.T(ctx,"metrics.job_default") }
+ } else {
+ { ep.Job }
+ }
+ </td><td>
+ if c.MetricsEnabled && ep.Port == c.App.Port {
+ <span>{ i18n.T(ctx,"metrics.hidden_on_domains") }</span>
+ }
+ if c.Role == "admin" || c.Role == "owner" {
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/endpoints/"+itoa(ep.ID)+"/delete") } hx-boost="false" data-confirm={ i18n.T(ctx,"metrics.remove_confirm") }>
+ <button class="k-btn k-btn-ghost">{ i18n.T(ctx,"common.delete") }</button>
+ </form>
+ }
+ </td></tr>
+ }
+ </tbody></table>
+ if c.Role == "admin" || c.Role == "owner" {
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/endpoints") } class="flex flex-wrap gap-2 mt-3">
+ <label class="k-label">{ i18n.T(ctx,"metrics.port") }<input class="k-input" type="number" name="port" min="1" max="65535" required value={ itoa(int64(c.App.Port)) }/></label>
+ <label class="k-label">{ i18n.T(ctx,"metrics.path") }<input class="k-input" name="path" value="/metrics" required maxlength="129"/></label>
+ <label class="k-label">{ i18n.T(ctx,"metrics.job") }<input class="k-input" name="job" maxlength="64"/></label>
+ <button class="k-btn k-btn-primary">{ i18n.T(ctx,"metrics.add_endpoint") }</button>
+ </form>
+ }
+ </div>
+ if c.Role == "admin" || c.Role == "owner" {
+ <div class="k-card mb-4">
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/token-env") } class="flex gap-2 mb-3">
+ <label class="k-label">{ i18n.T(ctx,"metrics.token_env") }<input class="k-input" name="name" value={ c.MetricsTokenEnv } required maxlength="64"/></label>
+ <button class="k-btn k-btn-primary">{ i18n.T(ctx,"common.save") }</button>
+ </form>
+ <label class="k-label">{ i18n.T(ctx,"metrics.token") }</label>
+ if c.MetricsTokenUnreadable {
+ <p>{ i18n.T(ctx,"metrics.token_unreadable") }</p>
+ } else {
+ <div class="flex items-center gap-2">
+ <input class="k-input k-mono" type="password" readonly value={ c.MetricsToken }/>
+ <button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx,"common.reveal") }>👁</button>
+ </div>
+ }
+ <form method="post" action={ templ.SafeURL(c.base()+"/metrics/token/rotate") } hx-boost="false" data-confirm={ i18n.T(ctx,"metrics.rotate_confirm") } class="mt-3">
+ <button class="k-btn k-btn-ghost">{ i18n.T(ctx,"metrics.rotate") }</button>
+ </form>
+ </div>
+ }
+ <p>{ i18n.T(ctx,"metrics.redeploy_hint") }</p>
+ <a class="underline" href="https://github.com/proshik/krill/blob/master/docs/guides/metrics.md" target="_blank" rel="noopener noreferrer">{ i18n.T(ctx,"metrics.guide_link") }</a>
+}
+
+type MetricsStatus struct {
+ Problem string
+ Endpoints []observability.EndpointStatus
+}
+
+templ AppMetricsStatus(v MetricsStatus) {
+ if v.Problem != "" {
+ <p>{ v.Problem }</p>
+ } else {
+ for _, ep := range v.Endpoints {
+ <div class="mb-3">
+ <p>{ i18n.T(ctx,"metrics.endpoints") + " #" + itoa(ep.EndpointID) }</p>
+ if !ep.Found {
+ <p>{ i18n.T(ctx,"metrics.status.not_in_module") }</p>
+ } else if ep.Resolved == 0 {
+ <p>{ i18n.T(ctx,"metrics.status.no_replicas_dns") }</p>
+ } else if ep.Kept == 0 {
+ <p>{ i18n.T(ctx,"metrics.status.no_replicas_node") }</p>
+ } else {
+ <table class="k-table"><tbody>
+ for _, target := range ep.Targets {
+ <tr><td>{ target.Instance }</td><td>{ target.Node }</td><td>{ target.Health }</td><td>
+ if target.LastScrape.IsZero() {
+ { i18n.T(ctx,"metrics.status.never") }
+ } else {
+ { i18n.Tf(ctx,"metrics.status.ago",time.Since(target.LastScrape).Round(time.Second).String()) }
+ }
+ </td><td>{ target.LastError }</td></tr>
+ }
+ </tbody></table>
+ }
+ </div>
+ }
+ }
+}

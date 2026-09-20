@@ -1,0 +1,41 @@
+{
+  "name": "apps.targets",
+  "type": "block",
+  "localID": "apps.targets.default",
+  "moduleID": "",
+  "label": "default",
+  "referencesTo": [
+    "prometheus.remote_write.default"
+  ],
+  "referencedBy": [],
+  "dataFlowEdgesTo": [
+    "prometheus.remote_write.default"
+  ],
+  "health": {
+    "state": "healthy",
+    "message": "started custom component",
+    "updatedTime": "2026-09-20T07:30:41.244651426Z"
+  },
+  "original": "",
+  "arguments": [
+    {
+      "name": "forward_to",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "capsule",
+            "value": "capsule(\"prometheus.Interceptor\")"
+          }
+        ]
+      }
+    }
+  ],
+  "exports": [],
+  "debugInfo": [],
+  "createdModuleIDs": [
+    "apps.targets.default"
+  ],
+  "liveDebuggingEnabled": false
+}

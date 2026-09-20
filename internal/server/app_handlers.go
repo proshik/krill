@@ -369,7 +369,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "volumes" && tab != "terminal" {
+	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "volumes" && tab != "terminal" && tab != "metrics" {
 		tab = "general"
 	}
 	// Env values are secrets. Members are read-only viewers and must never see
@@ -377,6 +377,25 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	// silently falls back to General for non-admins.
 	if (tab == "env" || tab == "volumes") && c.Role != "owner" && c.Role != "admin" {
 		tab = "general"
+	}
+	if tab == "metrics" {
+		c.MetricsEnabled, c.MetricsTokenEnv = c.App.MetricsEnabled, c.App.MetricsTokenEnv
+		eps, err := s.q.ListMetricsEndpointsByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: read metrics endpoints failed", "err", err)
+			http.Error(w, "internal error", 500)
+			return
+		}
+		c.MetricsEndpoints = eps
+		if (c.Role == "admin" || c.Role == "owner") && c.App.MetricsToken != nil {
+			token, err := secret.Dec(*c.App.MetricsToken)
+			if err != nil {
+				logFrom(r).Warn("appDetail: metrics token unreadable", "app_id", c.App.ID)
+				c.MetricsTokenUnreadable = true
+			} else {
+				c.MetricsToken = token
+			}
+		}
 	}
 	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list registries", "err", err, "org_id", c.Org.ID)
@@ -670,6 +689,10 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 	raw := r.FormValue("env")
 	if _, dups := parseEnv(raw); len(dups) > 0 {
 		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.duplicate_var", dups[0]))
+		return
+	}
+	if c.App.MetricsEnabled && deploy.EnvNameInUse(raw, nil, c.App.MetricsTokenEnv) {
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.metrics_env_taken", c.App.MetricsTokenEnv))
 		return
 	}
 	if err := s.q.UpdateApplicationEnv(r.Context(), db.UpdateApplicationEnvParams{

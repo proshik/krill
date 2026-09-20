@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/panel"
 )
 
@@ -36,7 +37,7 @@ func requestLogger(next http.Handler) http.Handler {
 				attrs = append(attrs, "user_id", uid)
 			}
 			level := slog.LevelInfo
-			if r.URL.Path == panel.ProviderPath && status < 400 {
+			if (r.URL.Path == panel.ProviderPath || r.URL.Path == observability.AppsProviderPath) && status < 400 {
 				// The gateway polls this every few seconds, forever.
 				level = slog.LevelDebug
 			}

@@ -247,3 +247,10 @@ func TestHSTS(t *testing.T) {
 		}
 	}
 }
+
+func TestAppsProviderToken(t *testing.T) {
+	a, b := DeriveTokens("secret-a"), DeriveTokens("secret-b")
+	if a.AlloyApps == "" || a.AlloyApps == a.Provider || a.AlloyApps == a.Forwarded || a.AlloyApps == b.AlloyApps || a.AlloyApps != DeriveTokens("secret-a").AlloyApps {
+		t.Fatal("apps provider token must be independent and deterministic")
+	}
+}

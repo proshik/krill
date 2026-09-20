@@ -1,0 +1,111 @@
+{
+  "name": "discovery.dns",
+  "type": "block",
+  "localID": "discovery.dns.app_7_3",
+  "moduleID": "apps.targets.default",
+  "label": "app_7_3",
+  "referencesTo": [],
+  "referencedBy": [
+    "discovery.relabel.app_7_3"
+  ],
+  "dataFlowEdgesTo": [
+    "discovery.relabel.app_7_3"
+  ],
+  "health": {
+    "state": "healthy",
+    "message": "started component",
+    "updatedTime": "2026-09-20T07:30:41.244723932Z"
+  },
+  "original": "",
+  "arguments": [
+    {
+      "name": "names",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "string",
+            "value": "tasks.krill-7"
+          }
+        ]
+      }
+    },
+    {
+      "name": "type",
+      "type": "attr",
+      "value": {
+        "type": "string",
+        "value": "A"
+      }
+    },
+    {
+      "name": "port",
+      "type": "attr",
+      "value": {
+        "type": "number",
+        "value": 80
+      }
+    }
+  ],
+  "exports": [
+    {
+      "name": "targets",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "object",
+            "value": [
+              {
+                "key": "__address__",
+                "value": {
+                  "type": "string",
+                  "value": "172.24.0.2:80"
+                }
+              },
+              {
+                "key": "__meta_dns_mx_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_name",
+                "value": {
+                  "type": "string",
+                  "value": "tasks.krill-7"
+                }
+              },
+              {
+                "key": "__meta_dns_ns_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_srv_record_port",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_srv_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "debugInfo": [],
+  "liveDebuggingEnabled": true
+}

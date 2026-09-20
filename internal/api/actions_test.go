@@ -595,3 +595,28 @@ func TestSetEnvCrossOrgIsNotFound(t *testing.T) {
 		t.Fatalf("want not_found, got %v", err)
 	}
 }
+
+func TestSetEnvMetricsTokenCollision(t *testing.T) {
+	f := newAPIFixture(t)
+	appID, err := strconv.ParseInt(f.appIDString, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetApplicationMetricsEnabled(t.Context(), db.SetApplicationMetricsEnabledParams{ID: appID, MetricsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	err = f.svc.SetEnv(t.Context(), f.ident, f.appIDString, "KRILL_METRICS_TOKEN", "x", false)
+	var apiErr *api.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != api.CodeConflict {
+		t.Fatalf("expected conflict: %v", err)
+	}
+	if err := f.svc.SetEnv(t.Context(), f.ident, f.appIDString, "KRILL_METRICS_TOKEN", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetApplicationMetricsEnabled(t.Context(), db.SetApplicationMetricsEnabledParams{ID: appID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetEnv(t.Context(), f.ident, f.appIDString, "KRILL_METRICS_TOKEN", "x", false); err != nil {
+		t.Fatal(err)
+	}
+}
