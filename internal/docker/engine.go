@@ -246,3 +246,30 @@ func ServiceName(appID int64) string {
 func BuildImageTag(appID, deployID int64) string {
 	return "krill-" + strconv.FormatInt(appID, 10) + ":" + strconv.FormatInt(deployID, 10)
 }
+
+// TaskAddress is one IP a running task holds on one overlay network.
+type TaskAddress struct {
+	ServiceName  string
+	NodeID       string
+	NodeHostname string // "" when the node could not be resolved
+	Network      string
+	IP           string // without the prefix length
+}
+
+// TaskAddresser is the optional capability to list the overlay addresses of
+// every running task. Only *dockerEngine implements it.
+type TaskAddresser interface {
+	TaskAddresses(ctx context.Context) ([]TaskAddress, error)
+}
+
+// ServiceInspector is the optional capability to read the container labels a
+// service's CURRENT spec starts tasks with (not the service-level labels
+// ServiceLabels returns).
+type ServiceInspector interface {
+	ServiceContainerLabels(ctx context.Context, name string) (map[string]string, bool, error)
+}
+
+var (
+	_ TaskAddresser    = (*dockerEngine)(nil)
+	_ ServiceInspector = (*dockerEngine)(nil)
+)

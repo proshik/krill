@@ -1183,3 +1183,57 @@ func statsOneShot(ctx context.Context, cli *client.Client, id string) (container
 func (e *dockerEngine) ListContainerStats(ctx context.Context) ([]ContainerStat, error) {
 	return e.collector.listContainerStats(ctx)
 }
+
+func (e *dockerEngine) TaskAddresses(ctx context.Context) ([]TaskAddress, error) {
+	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	id2svc := make(map[string]string, len(svcs))
+	for _, s := range svcs {
+		id2svc[s.ID] = s.Spec.Name
+	}
+	id2node := map[string]string{}
+	if nodes, nerr := e.Nodes(ctx); nerr == nil {
+		for _, n := range nodes {
+			id2node[n.ID] = n.Hostname
+		}
+	}
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
+		Filters: filters.NewArgs(filters.Arg("desired-state", "running")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out []TaskAddress
+	for _, t := range tasks {
+		name, ok := id2svc[t.ServiceID]
+		if !ok || t.Status.State != swarm.TaskStateRunning {
+			continue
+		}
+		for _, att := range t.NetworksAttachments {
+			for _, cidr := range att.Addresses {
+				ip, _, perr := net.ParseCIDR(cidr)
+				if perr != nil {
+					continue
+				}
+				out = append(out, TaskAddress{
+					ServiceName: name, NodeID: t.NodeID, NodeHostname: id2node[t.NodeID],
+					Network: att.Network.Spec.Name, IP: ip.String(),
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+func (e *dockerEngine) ServiceContainerLabels(ctx context.Context, name string) (map[string]string, bool, error) {
+	svc, found, err := e.findService(ctx, name)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	if svc.Spec.TaskTemplate.ContainerSpec == nil {
+		return map[string]string{}, true, nil
+	}
+	return svc.Spec.TaskTemplate.ContainerSpec.Labels, true, nil
+}
