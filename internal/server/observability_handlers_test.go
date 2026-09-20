@@ -470,3 +470,5 @@ func TestObservabilityStatusHidesCoverageWhenFull(t *testing.T) {
 		t.Error("page shows a coverage note with nothing missing")
 	}
 }
+
+func (f *fakeObsCtl) TriggerNetworks() { f.Trigger() }
