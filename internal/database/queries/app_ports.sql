@@ -16,3 +16,6 @@ DELETE FROM app_ports WHERE id = $1 AND application_id = $2;
 
 -- name: CountAppPortsByHostPort :one
 SELECT count(*) FROM app_ports WHERE host_port = $1 AND protocol = $2;
+
+-- name: CountTCPAppPortsByContainerPort :one
+SELECT count(*) FROM app_ports WHERE application_id = $1 AND container_port = $2 AND protocol = 'tcp';

@@ -34,6 +34,15 @@ type AppDbLink struct {
 	Field             string    `json:"field"`
 }
 
+type AppMetricsEndpoint struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	Port          int32     `json:"port"`
+	Path          string    `json:"path"`
+	Job           string    `json:"job"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AppPort struct {
 	ID            int64  `json:"id"`
 	ApplicationID int64  `json:"application_id"`
@@ -86,6 +95,9 @@ type Application struct {
 	PlacementNodes         string    `json:"placement_nodes"`
 	AutoDeploy             bool      `json:"auto_deploy"`
 	WebhookSecret          string    `json:"webhook_secret"`
+	MetricsEnabled         bool      `json:"metrics_enabled"`
+	MetricsToken           *string   `json:"metrics_token"`
+	MetricsTokenEnv        string    `json:"metrics_token_env"`
 }
 
 type Backup struct {
