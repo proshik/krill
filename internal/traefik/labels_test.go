@@ -124,12 +124,12 @@ func TestAppLabelsNoneExposed(t *testing.T) {
 
 func TestDomainRuleHidesMetricsPaths(t *testing.T) {
 	got := domainRule("a.example", nil, []string{"/metrics", "/q/metrics"})
-	want := "Host(`a.example`) && !(Path(`/metrics`) || PathPrefix(`/metrics/`) || Path(`/q/metrics`) || PathPrefix(`/q/metrics/`))"
+	want := "Host(`a.example`) && !(PathRegexp(`(?i)^/metrics(?:[/;].*)?$`) || PathRegexp(`(?i)^/q/metrics(?:[/;].*)?$`))"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 	got = domainRule("a.example", []string{"/api"}, []string{"/metrics"})
-	want = "Host(`a.example`) && (PathPrefix(`/api`)) && !(Path(`/metrics`) || PathPrefix(`/metrics/`))"
+	want = "Host(`a.example`) && (PathPrefix(`/api`)) && !(PathRegexp(`(?i)^/metrics(?:[/;].*)?$`))"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -141,7 +141,7 @@ func TestDomainRuleHidesMetricsPaths(t *testing.T) {
 func TestAppLabelsHidesOnEveryServingRouter(t *testing.T) {
 	l := AppLabels("krill-7", []Domain{{Host: "a.example", TLS: true, Exposed: true}, {Host: "b.example", Exposed: true}}, 8080, "net", []string{"/metrics"})
 	for _, k := range []string{"traefik.http.routers.krill-7-d0s.rule", "traefik.http.routers.krill-7-d0.rule", "traefik.http.routers.krill-7-d1.rule"} {
-		if !strings.Contains(l[k], "!(Path(`/metrics`)") {
+		if !strings.Contains(l[k], "!(PathRegexp(`(?i)^/metrics(?:") {
 			t.Errorf("%s = %q: metrics path not excluded", k, l[k])
 		}
 	}

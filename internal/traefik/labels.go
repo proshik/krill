@@ -2,6 +2,7 @@ package traefik
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -29,9 +30,11 @@ func SplitPaths(s string) []string {
 }
 
 // domainRule builds the Traefik router rule for a host with an optional
-// path allow-list (prefix match) and an optional deny-list of exact metrics
-// paths (the path itself and everything under it). Both lists must be
-// pre-validated (no backticks).
+// path allow-list (prefix match) and an optional deny-list of metrics paths.
+// Both lists must be pre-validated (no backticks). A hidden path is matched
+// case-insensitively, together with everything under it and any ";" path
+// parameter: backends that ignore case (ASP.NET) or strip ";..." (servlet
+// containers) would otherwise serve /METRICS or /metrics;x from the domain.
 func domainRule(host string, paths, hidden []string) string {
 	rule := fmt.Sprintf("Host(`%s`)", host)
 	if len(paths) > 0 {
@@ -42,9 +45,9 @@ func domainRule(host string, paths, hidden []string) string {
 		rule += " && (" + strings.Join(parts, " || ") + ")"
 	}
 	if len(hidden) > 0 {
-		parts := make([]string, 0, 2*len(hidden))
+		parts := make([]string, 0, len(hidden))
 		for _, p := range hidden {
-			parts = append(parts, fmt.Sprintf("Path(`%s`)", p), fmt.Sprintf("PathPrefix(`%s/`)", p))
+			parts = append(parts, fmt.Sprintf("PathRegexp(`(?i)^%s(?:[/;].*)?$`)", regexp.QuoteMeta(p)))
 		}
 		rule += " && !(" + strings.Join(parts, " || ") + ")"
 	}
