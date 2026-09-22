@@ -85,23 +85,70 @@ func keyFor(prefix, appName, dbName string, now time.Time) string {
 	return prefixDir(prefix, appName, dbName) + now.UTC().Format("2006-01-02T15-04-05Z") + ".sql.gz"
 }
 
+// claim reserves backupID for one backup or restore. It returns false when
+// one is already running; otherwise release must be called when it ends.
+func (s *Service) claim(backupID int64) (release func(), ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight[backupID] {
+		return nil, false
+	}
+	s.inFlight[backupID] = true
+	return func() {
+		s.mu.Lock()
+		delete(s.inFlight, backupID)
+		s.mu.Unlock()
+	}, true
+}
+
+// start claims backupID and runs op in the background on a detached context
+// bounded by timeout, so the caller learns right away whether it started —
+// a request that reported "started" and then lost the claim inside the
+// goroutine would leave the operator believing a second run was under way.
+func (s *Service) start(backupID int64, timeout time.Duration, what string, op func(context.Context) error) error {
+	release, ok := s.claim(backupID)
+	if !ok {
+		return ErrBackupRunning
+	}
+	go func() {
+		defer release()
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := op(ctx); err != nil {
+			slog.Error(what+" failed", "err", err, "backup_id", backupID)
+		}
+	}()
+	return nil
+}
+
+// StartBackup is RunBackup in the background: ErrBackupRunning when a backup
+// or restore of backupID is already running, nil once this one has started.
+func (s *Service) StartBackup(backupID int64, now time.Time, timeout time.Duration) error {
+	return s.start(backupID, timeout, "backup", func(ctx context.Context) error {
+		return s.runBackup(ctx, backupID, now)
+	})
+}
+
+// StartRestore is RestoreByID in the background, with StartBackup's contract.
+func (s *Service) StartRestore(backupID int64, key string, timeout time.Duration) error {
+	return s.start(backupID, timeout, "restore", func(ctx context.Context) error {
+		return s.restoreByID(ctx, backupID, key)
+	})
+}
+
 // RunBackup dumps the DB, uploads it, then enforces count-based retention.
 // Overlapping runs of the same backup are rejected with ErrBackupRunning (two
 // concurrent pg_dumps + uploads of one DB racing retention deletes).
 func (s *Service) RunBackup(ctx context.Context, backupID int64, now time.Time) error {
-	s.mu.Lock()
-	if s.inFlight[backupID] {
-		s.mu.Unlock()
+	release, ok := s.claim(backupID)
+	if !ok {
 		return ErrBackupRunning
 	}
-	s.inFlight[backupID] = true
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.inFlight, backupID)
-		s.mu.Unlock()
-	}()
+	defer release()
+	return s.runBackup(ctx, backupID, now)
+}
 
+func (s *Service) runBackup(ctx context.Context, backupID int64, now time.Time) error {
 	b, err := s.store.GetBackup(ctx, backupID)
 	if err != nil {
 		return err
@@ -203,19 +250,15 @@ func (s *Service) ListObjects(ctx context.Context, backupID int64) ([]Object, er
 func (s *Service) RestoreByID(ctx context.Context, backupID int64, key string) error {
 	// Share the backup's in-flight guard: restoring into a database while a
 	// pg_dump of it is streaming produces a dump of a half-restored database.
-	s.mu.Lock()
-	if s.inFlight[backupID] {
-		s.mu.Unlock()
+	release, ok := s.claim(backupID)
+	if !ok {
 		return ErrBackupRunning
 	}
-	s.inFlight[backupID] = true
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.inFlight, backupID)
-		s.mu.Unlock()
-	}()
+	defer release()
+	return s.restoreByID(ctx, backupID, key)
+}
 
+func (s *Service) restoreByID(ctx context.Context, backupID int64, key string) error {
 	b, err := s.store.GetBackup(ctx, backupID)
 	if err != nil {
 		return err

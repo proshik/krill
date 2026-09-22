@@ -691,8 +691,10 @@ func runOrgNetworkMigration(ctx context.Context, q *db.Queries, engine docker.En
 		}),
 		ParkInstance: dbSvc.ParkInstance,
 		RedeployInstance: func(_ context.Context, id int64) error {
-			dbSvc.DeployInstance(id) // asynchronous; WaitInstances below is what orders it
-			return nil
+			// Asynchronous; WaitInstances below is what orders it. A deploy
+			// already in flight may predate the network move, so it fails the
+			// pass and the organization is retried on the next boot.
+			return dbSvc.DeployInstance(id)
 		},
 		WaitInstances: func(c context.Context, ids []int64) error {
 			names := make([]string, 0, len(ids))

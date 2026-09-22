@@ -114,6 +114,23 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A double-submitted form would mint two tokens and show only one; the
+	// other would live on unseen. Names are what the list tells tokens apart by.
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	existing, err := s.q.ListAPITokensByUserAndOrg(r.Context(), db.ListAPITokensByUserAndOrgParams{UserID: uid, OrgID: o.ID})
+	if err != nil {
+		logFrom(r).Error("createAPIToken: list tokens failed", "err", err, "user_id", uid, "org_id", o.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	for _, t := range existing {
+		if t.Name == name {
+			s.flashErrT(w, r, "flash.err.api_token_name_taken")
+			return
+		}
+	}
+
 	plain, prefix, hash, err := api.GenerateToken()
 	if err != nil {
 		logFrom(r).Error("createAPIToken: failed to generate token", "err", err, "user_id", uid, "org_id", o.ID)

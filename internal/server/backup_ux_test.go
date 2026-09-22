@@ -66,8 +66,9 @@ func TestAddBackupPreset(t *testing.T) {
 		t.Fatalf("daily backup schedule wrong: %+v", bks)
 	}
 
-	// off -> "" (on-demand), does not error
-	rec = postForm(t, h, base, cookie, url.Values{"destination_id": {i64(dsID)}, "schedule_preset": {"off"}, "retention": {"7"}})
+	// off -> "" (on-demand), does not error. Its own prefix: a second config on
+	// the same storage and prefix is refused (it would share the directory).
+	rec = postForm(t, h, base, cookie, url.Values{"destination_id": {i64(dsID)}, "schedule_preset": {"off"}, "retention": {"7"}, "prefix": {"manual"}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("off: want 303, got %d", rec.Code)
 	}
@@ -84,7 +85,7 @@ func TestAddBackupPreset(t *testing.T) {
 
 	// custom + bad cron -> no new backup (flash error)
 	before := len(bks)
-	postForm(t, h, base, cookie, url.Values{"destination_id": {i64(dsID)}, "schedule_preset": {"custom"}, "schedule_custom": {"not a cron"}, "retention": {"7"}})
+	postForm(t, h, base, cookie, url.Values{"destination_id": {i64(dsID)}, "schedule_preset": {"custom"}, "schedule_custom": {"not a cron"}, "retention": {"7"}, "prefix": {"custom"}})
 	bks, _ = q.ListBackupsByLogicalDB(context.Background(), dbID)
 	if len(bks) != before {
 		t.Errorf("bad custom cron must not create a backup")

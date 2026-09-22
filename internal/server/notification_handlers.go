@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/secret"
@@ -88,6 +89,10 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.secret_undecryptable")
 		return
 	}
+	if !s.claimTestNotification(o.ID, time.Now()) {
+		s.flashErrT(w, r, "flash.err.notif_test_cooldown")
+		return
+	}
 	if err := s.notify.SendTest(r.Context(), botToken, ch.ChatID, "Krill: test message"); err != nil {
 		logFrom(r).Info("testNotification: send failed", "org_id", o.ID) // never log the token
 		s.flashErr(w, r, i18n.T(r.Context(), "notif.test_fail"))
@@ -95,4 +100,25 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setFlash(w, r, "ok", i18n.T(r.Context(), "notif.test_ok"))
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/notifications", http.StatusSeeOther)
+}
+
+// testNotificationCooldown is how long an organization waits between test
+// messages: long enough to swallow a double click, short enough not to be
+// noticed otherwise.
+const testNotificationCooldown = 10 * time.Second
+
+// claimTestNotification reports whether orgID may send a test message now,
+// recording it when so. Claimed before sending, so two overlapping requests
+// can't both pass.
+func (s *Server) claimTestNotification(orgID int64, now time.Time) bool {
+	s.testNotifyMu.Lock()
+	defer s.testNotifyMu.Unlock()
+	if last, ok := s.testNotifyAt[orgID]; ok && now.Sub(last) < testNotificationCooldown {
+		return false
+	}
+	if s.testNotifyAt == nil {
+		s.testNotifyAt = map[int64]time.Time{}
+	}
+	s.testNotifyAt[orgID] = now
+	return true
 }

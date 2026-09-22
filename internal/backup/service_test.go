@@ -111,3 +111,23 @@ func TestInFlight(t *testing.T) {
 		t.Fatalf("InFlight after the backup finished = %d, want 0", got)
 	}
 }
+
+// A "Backup now" or restore that loses to a running one is refused to its
+// caller, instead of being reported as started and then dropped.
+func TestStartRefusesWhileRunning(t *testing.T) {
+	svc := New(failExecer{}, leakStore{}, false)
+	release, ok := svc.claim(1)
+	if !ok {
+		t.Fatal("setup: claim")
+	}
+	defer release()
+	if err := svc.StartBackup(1, time.Now(), time.Minute); !errors.Is(err, ErrBackupRunning) {
+		t.Fatalf("StartBackup: want ErrBackupRunning, got %v", err)
+	}
+	if err := svc.StartRestore(1, "k", time.Minute); !errors.Is(err, ErrBackupRunning) {
+		t.Fatalf("StartRestore: want ErrBackupRunning, got %v", err)
+	}
+	if n := svc.InFlight(); n != 1 {
+		t.Fatalf("a refused start must not claim anything, in flight = %d", n)
+	}
+}

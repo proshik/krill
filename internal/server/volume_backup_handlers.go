@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"io"
-	"log/slog"
 	"net/http"
 	"path"
 	"strconv"
@@ -74,6 +72,22 @@ func (s *Server) addVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_destination")
 		return
 	}
+	// Same destination and prefix = the same S3 directory, where each config's
+	// retention would delete the other's archives (see addBackup).
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	existing, err := s.q.ListVolumeBackupsByVolume(r.Context(), v.ID)
+	if err != nil {
+		logFrom(r).Error("addVolumeBackup: list backups failed", "err", err, "volume_id", v.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	for _, e := range existing {
+		if e.DestinationID == destID && e.Prefix == prefix {
+			s.flashErrT(w, r, "flash.err.backup_duplicate")
+			return
+		}
+	}
 	vb, err := s.q.CreateVolumeBackup(r.Context(), db.CreateVolumeBackupParams{
 		AppVolumeID: v.ID, DestinationID: destID, Schedule: schedule, Prefix: prefix, Retention: int32(retention), Enabled: true,
 	})
@@ -139,14 +153,12 @@ func (s *Server) runVolumeBackupNow(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
+	if err := s.volumeSvc.StartVolumeBackup(vb.ID, time.Now(), 30*time.Minute); err != nil {
+		logFrom(r).Info("volume backup run refused", "err", err, "vb_id", vb.ID)
+		s.flashErrT(w, r, "flash.err.backup_running")
+		return
+	}
 	logFrom(r).Info("volume backup run started", "vb_id", vb.ID)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		if err := s.volumeSvc.RunVolumeBackup(ctx, vb.ID, time.Now()); err != nil {
-			slog.Error("runVolumeBackupNow: failed", "err", err, "vb_id", vb.ID)
-		}
-	}()
 	s.flashOK(w, r, "flash.ok.backup_started")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }
@@ -167,14 +179,12 @@ func (s *Server) restoreVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
+	if err := s.volumeSvc.StartRestore(vb.ID, key, 30*time.Minute); err != nil {
+		logFrom(r).Info("volume backup restore refused", "err", err, "vb_id", vb.ID)
+		s.flashErrT(w, r, "flash.err.backup_running")
+		return
+	}
 	logFrom(r).Info("volume backup restore started", "vb_id", vb.ID, "key", key)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		if err := s.volumeSvc.RestoreByID(ctx, vb.ID, key); err != nil {
-			slog.Error("restoreVolumeBackup: failed", "err", err, "vb_id", vb.ID, "key", key)
-		}
-	}()
 	s.flashOK(w, r, "flash.ok.restore_started")
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }

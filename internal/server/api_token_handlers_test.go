@@ -312,3 +312,23 @@ func TestListAPITokensScopedToOrg(t *testing.T) {
 		t.Error("org B's page must not show org A's token")
 	}
 }
+
+// A double-submitted form used to mint two tokens and show only one of them.
+func TestCreateTokenRefusesADuplicateName(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	cookie, orgID := loginAsOwner(t, h, q, orgSvc)
+	form := url.Values{"name": {"ci"}, "level": {"read"}, "expires": {"never"}}
+	for i := 0; i < 2; i++ {
+		rec := postForm(t, h, fmt.Sprintf("/orgs/%d/api-tokens", orgID), cookie, form)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("create #%d: want 303, got %d", i+1, rec.Code)
+		}
+		if i == 1 && !hasErrFlash(rec) {
+			t.Fatal("a second token with the same name must be refused")
+		}
+	}
+	toks, err := q.ListAPITokensByUserAndOrg(context.Background(), db.ListAPITokensByUserAndOrgParams{UserID: userIDFrom(t, q), OrgID: orgID})
+	if err != nil || len(toks) != 1 {
+		t.Fatalf("want one token, got %d (%v)", len(toks), err)
+	}
+}

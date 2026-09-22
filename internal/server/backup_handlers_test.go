@@ -239,3 +239,26 @@ func TestBackupCrossTenantIsolation(t *testing.T) {
 		t.Fatalf("SECURITY FINDING: org-A backup row (id=%d) was mutated/deleted by cross-tenant request: %v", aBackupID, err)
 	}
 }
+
+// Two configs on the same storage and prefix share one S3 directory, and each
+// one's retention deletes the other's dumps; a double-submitted form is how
+// the second usually appears.
+func TestAddBackupRefusesSameStorageAndPrefix(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	o, projID, envID, ldbID, destID, cookie := backupFixture(t, q, orgSvc)
+	base := backupsBase(o.ID, projID, envID, ldbID)
+	form := url.Values{"destination_id": {i64(destID)}, "schedule_preset": {"daily"}, "retention": {"7"}, "prefix": {"daily"}}
+	if rec := postForm(t, h, base, cookie, form); hasErrFlash(rec) {
+		t.Fatalf("first add: %q", flashCookieValue(rec))
+	}
+	if rec := postForm(t, h, base, cookie, form); !hasErrFlash(rec) {
+		t.Fatal("a second config on the same storage and prefix must be refused")
+	}
+	form.Set("prefix", "weekly")
+	if rec := postForm(t, h, base, cookie, form); hasErrFlash(rec) {
+		t.Fatalf("another prefix is a separate directory and must be allowed: %q", flashCookieValue(rec))
+	}
+	if bks, _ := q.ListBackupsByLogicalDB(context.Background(), ldbID); len(bks) != 2 {
+		t.Fatalf("want 2 backup configs, got %d", len(bks))
+	}
+}

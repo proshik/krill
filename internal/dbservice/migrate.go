@@ -32,21 +32,36 @@ const (
 // → restore on the target node → repoint metadata → redeploy. Async like
 // DeployInstance; progress goes to the instance's log feed. deleteSource
 // removes the source volume after a successful migration.
-func (s *Service) MigrateInstanceNode(id int64, targetHostname string, deleteSource bool) {
+//
+// The instance's lock is taken before returning: ErrInstanceBusy while another
+// migration holds it, so a duplicate request is refused to its caller instead
+// of failing inside the goroutine and alerting "migration failed" about a
+// migration that is in fact still running.
+func (s *Service) MigrateInstanceNode(id int64, targetHostname string, deleteSource bool) error {
+	inst, err := s.store.GetInstance(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	lock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(lock) {
+		return ErrInstanceBusy
+	}
 	go func() {
+		defer oplock.Release(lock)
 		t := s.migrateTimeout
 		if t == 0 {
 			t = defaultMigrateTimeout
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), t)
 		defer cancel()
-		if err := s.migrateInstanceNode(ctx, id, targetHostname, deleteSource); err != nil {
+		if err := s.migrateLocked(ctx, id, targetHostname, deleteSource); err != nil {
 			slog.Error("db instance migration failed", "err", err, "instance_id", id, "target", targetHostname)
 			if s.notifier != nil {
 				s.notifier.MigrateFailed(ctx, id, err.Error())
 			}
 		}
 	}()
+	return nil
 }
 
 // hostOrManager renders a node hostname for logs ("" = the control-plane).
@@ -95,6 +110,16 @@ func (s *Service) migrateInstanceNode(ctx context.Context, id int64, target stri
 		return ErrInstanceBusy
 	}
 	defer oplock.Release(lock)
+	return s.migrateLocked(ctx, id, target, deleteSource)
+}
+
+// migrateLocked is migrateInstanceNode's body, run with the instance's lock
+// already held.
+func (s *Service) migrateLocked(ctx context.Context, id int64, target string, deleteSource bool) error {
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		return err
+	}
 
 	feed := InstanceFeedID(id)
 	var out interface{ Write([]byte) (int, error) } = nopWriter{}

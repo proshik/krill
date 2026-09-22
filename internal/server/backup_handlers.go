@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"io"
-	"log/slog"
 	"net/http"
 	"path"
 	"strconv"
@@ -85,6 +83,24 @@ func (s *Server) addBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Two configs writing to the same destination and prefix share one S3
+	// directory: their dumps land side by side and each one's retention deletes
+	// the other's. A double-submitted form is the usual way to get a second.
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	existing, err := s.q.ListBackupsByLogicalDB(r.Context(), dbID)
+	if err != nil {
+		logFrom(r).Error("addBackup: list backups failed", "err", err, "db_id", dbID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	for _, e := range existing {
+		if e.DestinationID == destID && e.Prefix == prefix {
+			s.flashErrT(w, r, "flash.err.backup_duplicate")
+			return
+		}
+	}
+
 	b, err := s.q.CreateBackup(r.Context(), db.CreateBackupParams{
 		LogicalDatabaseID: dbID,
 		DestinationID:     destID,
@@ -155,17 +171,15 @@ func (s *Server) runBackupNow(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
-	// Run asynchronously with a detached context: a backup can take minutes, so
-	// it must not tie up the request and must finish even if the client
-	// disconnects. RunBackup records the outcome on the row's last_status.
+	// Runs in the background on a detached context: a backup can take minutes,
+	// so it must not tie up the request and must finish even if the client
+	// disconnects. The outcome is recorded on the row's last_status.
+	if err := s.backupSvc.StartBackup(b.ID, time.Now(), 30*time.Minute); err != nil {
+		logFrom(r).Info("backup run refused", "err", err, "backup_id", b.ID)
+		s.flashErrT(w, r, "flash.err.backup_running")
+		return
+	}
 	logFrom(r).Info("backup run started", "backup_id", b.ID, "db_id", b.LogicalDatabaseID)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		if err := s.backupSvc.RunBackup(ctx, b.ID, time.Now()); err != nil {
-			slog.Error("runBackupNow: backup failed", "err", err, "backup_id", b.ID)
-		}
-	}()
 	s.flashOK(w, r, "flash.ok.backup_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
@@ -185,16 +199,14 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.backups_unavailable")
 		return
 	}
-	// Run asynchronously with a detached context: the S3→psql restore can take
-	// minutes, so a client disconnect must not abort a half-done restore.
+	// Runs in the background on a detached context: the S3→psql restore can
+	// take minutes, so a client disconnect must not abort a half-done restore.
+	if err := s.backupSvc.StartRestore(b.ID, key, 30*time.Minute); err != nil {
+		logFrom(r).Info("backup restore refused", "err", err, "backup_id", b.ID)
+		s.flashErrT(w, r, "flash.err.backup_running")
+		return
+	}
 	logFrom(r).Info("backup restore started", "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "key", key)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		if err := s.backupSvc.RestoreByID(ctx, b.ID, key); err != nil {
-			slog.Error("restoreBackup: restore failed", "err", err, "backup_id", b.ID, "key", key)
-		}
-	}()
 	s.flashOK(w, r, "flash.ok.restore_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }

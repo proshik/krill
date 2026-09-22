@@ -84,18 +84,64 @@ func objectsToDelete(objs []backup.Object, keep int) []backup.Object {
 	return objs[keep:]
 }
 
+// claim reserves volBackupID for one backup or restore. It returns false when
+// one is already running; otherwise release must be called when it ends.
+func (s *VolumeService) claim(volBackupID int64) (release func(), ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight[volBackupID] {
+		return nil, false
+	}
+	s.inFlight[volBackupID] = true
+	return func() { s.mu.Lock(); delete(s.inFlight, volBackupID); s.mu.Unlock() }, true
+}
+
+// start claims volBackupID and runs op in the background on a detached
+// context bounded by timeout, so the caller learns right away whether it
+// started instead of reporting "started" for a run that then lost the claim.
+func (s *VolumeService) start(volBackupID int64, timeout time.Duration, what string, op func(context.Context) error) error {
+	release, ok := s.claim(volBackupID)
+	if !ok {
+		return ErrVolumeBackupRunning
+	}
+	go func() {
+		defer release()
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := op(ctx); err != nil {
+			slog.Error("volume "+what+" failed", "err", err, "vb_id", volBackupID)
+		}
+	}()
+	return nil
+}
+
+// StartVolumeBackup is RunVolumeBackup in the background: ErrVolumeBackupRunning
+// when a backup or restore of volBackupID is already running.
+func (s *VolumeService) StartVolumeBackup(volBackupID int64, now time.Time, timeout time.Duration) error {
+	return s.start(volBackupID, timeout, "backup", func(ctx context.Context) error {
+		return s.runVolumeBackup(ctx, volBackupID, now)
+	})
+}
+
+// StartRestore is RestoreByID in the background, with StartVolumeBackup's contract.
+func (s *VolumeService) StartRestore(volBackupID int64, key string, timeout time.Duration) error {
+	return s.start(volBackupID, timeout, "restore", func(ctx context.Context) error {
+		return s.restoreByID(ctx, volBackupID, key)
+	})
+}
+
 // RunVolumeBackup archives the volume (hot, read-only mount), uploads it, then
 // enforces count-based retention. Overlapping runs of the same backup are rejected.
 func (s *VolumeService) RunVolumeBackup(ctx context.Context, volBackupID int64, now time.Time) error {
-	s.mu.Lock()
-	if s.inFlight[volBackupID] {
-		s.mu.Unlock()
+	release, ok := s.claim(volBackupID)
+	if !ok {
 		return ErrVolumeBackupRunning
 	}
-	s.inFlight[volBackupID] = true
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.inFlight, volBackupID); s.mu.Unlock() }()
+	defer release()
+	return s.runVolumeBackup(ctx, volBackupID, now)
+}
 
+func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, now time.Time) error {
 	b, err := s.store.GetVolumeBackup(ctx, volBackupID)
 	if err != nil {
 		return err
@@ -171,15 +217,15 @@ func (s *VolumeService) RestoreByID(ctx context.Context, volBackupID int64, key 
 	// Share the backup's in-flight guard: a restore unpacks into the very volume
 	// a running backup streams out of, so letting them overlap archives a
 	// half-restored volume and writes under a reader that assumes a quiesced app.
-	s.mu.Lock()
-	if s.inFlight[volBackupID] {
-		s.mu.Unlock()
+	release, ok := s.claim(volBackupID)
+	if !ok {
 		return ErrVolumeBackupRunning
 	}
-	s.inFlight[volBackupID] = true
-	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.inFlight, volBackupID); s.mu.Unlock() }()
+	defer release()
+	return s.restoreByID(ctx, volBackupID, key)
+}
 
+func (s *VolumeService) restoreByID(ctx context.Context, volBackupID int64, key string) error {
 	b, t, dst, err := s.resolve(ctx, volBackupID)
 	if err != nil {
 		return err

@@ -86,17 +86,24 @@ func RedisExternalURL(inst Instance, host string) string {
 	return drivers.URLString("redis", "default", inst.SuperuserPassword, host, p, "")
 }
 
+// ErrDeployInProgress is returned by DeployInstance while a deploy of the same
+// instance is still running.
+var ErrDeployInProgress = errors.New("a deploy of this instance is already in progress")
+
 // DeployInstance: pull → deploy, in a goroutine, detached from the triggering
 // HTTP request (which returns immediately with a redirect) so the deploy
-// outlives it.
-func (s *Service) DeployInstance(id int64) {
+// outlives it. It returns ErrDeployInProgress, and starts nothing, while
+// another deploy of the instance runs.
+func (s *Service) DeployInstance(id int64) error {
 	// One deploy per instance at a time: a double-clicked Deploy button would
 	// otherwise race two ServiceDeploy calls and two status writes, and the
-	// loser's outcome would overwrite the winner's.
+	// loser's outcome would overwrite the winner's. The caller hears about it:
+	// a version or port change saved just before would otherwise be reported
+	// as deploying while the running deploy ships the old spec.
 	lock := oplock.DBInstanceDeploy(id)
 	if !oplock.TryAcquire(lock) {
-		slog.Warn("db instance deploy already in progress, ignoring duplicate trigger", "instance_id", id)
-		return
+		slog.Warn("db instance deploy already in progress, refusing a second one", "instance_id", id)
+		return ErrDeployInProgress
 	}
 	go func() {
 		defer oplock.Release(lock)
@@ -104,6 +111,7 @@ func (s *Service) DeployInstance(id int64) {
 		defer cancel()
 		s.deployInstance(ctx, id)
 	}()
+	return nil
 }
 
 func (s *Service) deployInstance(ctx context.Context, id int64) {

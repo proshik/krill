@@ -421,3 +421,19 @@ func TestInFlight(t *testing.T) {
 		t.Fatalf("InFlight after the backup finished = %d, want 0", got)
 	}
 }
+
+// See the backup package's TestStartRefusesWhileRunning.
+func TestStartRefusesWhileRunning(t *testing.T) {
+	svc := New(nil, nil, false)
+	release, ok := svc.claim(1)
+	if !ok {
+		t.Fatal("setup: claim")
+	}
+	defer release()
+	if err := svc.StartVolumeBackup(1, time.Now(), time.Minute); !errors.Is(err, ErrVolumeBackupRunning) {
+		t.Fatalf("StartVolumeBackup: want ErrVolumeBackupRunning, got %v", err)
+	}
+	if err := svc.StartRestore(1, "k", time.Minute); !errors.Is(err, ErrVolumeBackupRunning) {
+		t.Fatalf("StartRestore: want ErrVolumeBackupRunning, got %v", err)
+	}
+}

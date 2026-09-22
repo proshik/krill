@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -293,7 +294,10 @@ func (s *Server) deployDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.migrate_in_progress")
 		return
 	}
-	s.dbsvc.DeployInstance(inst.ID)
+	if err := s.dbsvc.DeployInstance(inst.ID); err != nil {
+		s.flashErrT(w, r, "flash.err.db_deploy_busy")
+		return
+	}
 	logFrom(r).Info("db instance deploy requested", "instance_id", inst.ID)
 	s.flashOK(w, r, "flash.ok.deploy_queued")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
@@ -361,7 +365,10 @@ func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 		}
 		logFrom(r).Info("db instance version updated", "instance_id", inst.ID, "image", image)
 	}
-	s.dbsvc.DeployInstance(inst.ID)
+	if err := s.dbsvc.DeployInstance(inst.ID); err != nil {
+		s.flashErrT(w, r, "flash.err.db_deploy_busy_saved")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.version_queued")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
@@ -439,8 +446,11 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	s.dbsvc.DeployInstance(inst.ID)
 	logFrom(r).Info("db instance external port set", "instance_id", inst.ID, "external", ext != nil, "console", console != nil)
+	if err := s.dbsvc.DeployInstance(inst.ID); err != nil {
+		s.flashErrT(w, r, "flash.err.db_deploy_busy_saved")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.external_access_updated")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
@@ -515,7 +525,15 @@ func (s *Server) migrateDBInstanceNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	deleteSource := r.FormValue("delete_source") == "on"
-	s.dbsvc.MigrateInstanceNode(inst.ID, node, deleteSource)
+	if err := s.dbsvc.MigrateInstanceNode(inst.ID, node, deleteSource); err != nil {
+		if errors.Is(err, dbservice.ErrInstanceBusy) {
+			s.flashErrT(w, r, "flash.err.migrate_in_progress")
+			return
+		}
+		logFrom(r).Error("migrateDBInstanceNode: start failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
 	logFrom(r).Info("db instance migration started", "instance_id", inst.ID, "target", node, "delete_source", deleteSource)
 	s.flashOK(w, r, "flash.ok.db_migration_started")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
