@@ -131,21 +131,32 @@ func registerTools(srv *mcp.Server, svc *api.Service) {
 
 // --- Identity + error mapping ------------------------------------------
 
-// callerIdentity reads the Identity RequireAPIToken (internal/server) stashed
-// on the request context via api.WithIdentity before handing off to the
-// streamable-HTTP handler — see the package doc for why ctx is trusted to
-// carry it this far into a tool handler. A miss should never happen in
-// practice, since /mcp is always mounted behind RequireAPIToken; treating it
-// as an internal error rather than silently zero-valuing the caller matches
-// errAPIIdentityMissing's posture in the REST adapter.
-func callerIdentity(ctx context.Context) (api.Identity, *mcp.CallToolResult) {
-	id, ok := api.IdentityFrom(ctx)
-	if ok {
-		return id, nil
+// callerIdentity returns the Identity of the HTTP request that carried THIS
+// tools/call, taken from req.Extra.TokenInfo (see bindSession in server.go),
+// plus ctx with that identity and that request's id stamped on it.
+//
+// It must not read the identity from ctx: in a stateful session the SDK runs
+// every handler on the context of the request that opened the session
+// (initialize), so ctx still carries the identity and request id resolved
+// back then — a later demotion would never be seen, and neither would a
+// different token presented with the same Mcp-Session-Id.
+//
+// A miss should never happen in practice, since /mcp is always mounted behind
+// RequireAPIToken; treating it as an internal error rather than silently
+// zero-valuing the caller matches errAPIIdentityMissing's posture in the REST
+// adapter.
+func callerIdentity(ctx context.Context, req *mcp.CallToolRequest) (context.Context, api.Identity, *mcp.CallToolResult) {
+	if req != nil && req.Extra != nil && req.Extra.TokenInfo != nil {
+		ti := req.Extra.TokenInfo
+		if id, ok := ti.Extra[extraIdentity].(api.Identity); ok {
+			reqID, _ := ti.Extra[extraRequestID].(string)
+			ctx = context.WithValue(api.WithIdentity(ctx, id), middleware.RequestIDKey, reqID)
+			return ctx, id, nil
+		}
 	}
 	reqID := middleware.GetReqID(ctx)
-	slog.Error("mcp: identity missing from context; a tool ran outside RequireAPIToken", "request_id", reqID)
-	return api.Identity{}, errorResult(fmt.Sprintf("internal error, see server logs (request_id=%s)", reqID))
+	slog.Error("mcp: identity missing from the request; a tool ran outside RequireAPIToken", "request_id", reqID)
+	return ctx, api.Identity{}, errorResult(fmt.Sprintf("internal error, see server logs (request_id=%s)", reqID))
 }
 
 // errorResult builds an isError CallToolResult carrying msg as its only
@@ -213,8 +224,8 @@ func registerWhoami(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolWhoami,
 		Description: "Report the caller's own resolved identity: user, organization, and access level.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -230,8 +241,8 @@ func registerListApps(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolListApps,
 		Description: "List every application in the caller's organization: path, id, status, image/source type, domains.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -247,8 +258,8 @@ func registerAppStatus(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppStatus,
 		Description: "Report one application's live status: running/desired replicas, node, image, domains, and its most recent deployment.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -264,8 +275,8 @@ func registerAppLogs(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppLogs,
 		Description: "Tail an application's live runtime log, parsed into structured lines and optionally filtered to a minimum severity.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in logsArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in logsArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -281,8 +292,8 @@ func registerListEnv(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolListEnv,
 		Description: "List an application's environment variable names and source (literal or db-link) — values are never returned.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -298,8 +309,8 @@ func registerDeployments(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolDeployments,
 		Description: "List an application's deployment history, most recent first.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deploymentsArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in deploymentsArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -316,8 +327,8 @@ func registerDeploymentStatus(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolDeploymentStatus,
 		Description: "Report one deployment's status and its bounded build log tail.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deploymentArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in deploymentArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -333,8 +344,8 @@ func registerDeploy(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolDeploy,
 		Description: "Trigger a new deployment. Optionally retags an image app first (image apps only). Asynchronous: enqueues and returns immediately with a deployment id — poll krill_deployment_status.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in deployArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in deployArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -351,8 +362,8 @@ func registerRebuild(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolRebuild,
 		Description: "Force a from-scratch build (--no-cache) of a dockerfile app. Asynchronous: enqueues and returns immediately with a deployment id — poll krill_deployment_status.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -369,8 +380,8 @@ func registerReload(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolReload,
 		Description: "Force-restart the application's current tasks in place — same image, same config, no rebuild and no pull. A stopped app is deployed instead (action \"deploy\", with a deployment id — poll krill_deployment_status).",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -387,8 +398,8 @@ func registerStop(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStop,
 		Description: "Scale the application's service to zero replicas. krill_deploy brings it back up.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
@@ -404,8 +415,8 @@ func registerSetEnv(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolSetEnv,
 		Description: "Set (or add) one environment variable's value, or remove it, without touching any other line of the app's env file. The change is saved but NOT applied to the running container: call krill_deploy afterwards for it to take effect. Values must be a single line.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in setEnvArgs) (*mcp.CallToolResult, any, error) {
-		id, errRes := callerIdentity(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in setEnvArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
