@@ -63,10 +63,10 @@ func TestTraefikSpecPanelProvider(t *testing.T) {
 			t.Fatalf("no endpoint must leave the HTTP provider out, got %q", a)
 		}
 	}
-	p := PanelProvider{Endpoint: "http://195.2.75.130:8080/_krill/gateway/config", Header: "X-Krill-Gateway-Provider", Token: "tok"}
+	p := PanelProvider{Endpoint: "http://198.51.100.10:8080/_krill/gateway/config", Header: "X-Krill-Gateway-Provider", Token: "tok"}
 	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, p)
 	for _, want := range []string{
-		"--providers.http.endpoint=http://195.2.75.130:8080/_krill/gateway/config",
+		"--providers.http.endpoint=http://198.51.100.10:8080/_krill/gateway/config",
 		"--providers.http.pollInterval=5s",
 		"--providers.http.headers.X-Krill-Gateway-Provider=tok",
 		"--providers.swarm.endpoint=unix:///var/run/docker.sock",

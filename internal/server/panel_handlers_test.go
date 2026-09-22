@@ -99,7 +99,7 @@ func (e *panelEnv) config(t *testing.T, header, value string) *httptest.Response
 
 // The gateway's poll is the only thing that may read the panel's routes.
 func TestGatewayConfigAuth(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	if rec := e.config(t, "", ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("no token: want 404, got %d", rec.Code)
 	}
@@ -130,10 +130,10 @@ func TestGatewayConfigAuth(t *testing.T) {
 // address keeps signing in with ordinary cookies, and only a request through
 // the domain over HTTPS with a trusted certificate confirms it.
 func TestPanelDomainPendingThenConfirm(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-admin@k.local", "OrgPanel")
 
-	for _, bad := range []string{"", "195.2.75.130", "https://krill.example.com", "krill.example.com:443"} {
+	for _, bad := range []string{"", "198.51.100.10", "https://krill.example.com", "krill.example.com:443"} {
 		if rec := e.post(t, base+"/panel-domain", cookie, url.Values{"host": {bad}}, false); !hasErrFlash(rec) {
 			t.Fatalf("host %q must be rejected, got %q", bad, flashCookieValue(rec))
 		}
@@ -151,7 +151,7 @@ func TestPanelDomainPendingThenConfirm(t *testing.T) {
 	if err := json.Unmarshal(cfg.Body.Bytes(), &parsed); err != nil || !strings.Contains(cfg.Body.String(), "Host(`krill.example.com`)") {
 		t.Fatalf("pending domain must be routed: %v %s", err, cfg.Body.String())
 	}
-	if !strings.Contains(cfg.Body.String(), "http://195.2.75.130:8080") {
+	if !strings.Contains(cfg.Body.String(), "http://198.51.100.10:8080") {
 		t.Fatalf("the route must point at the advertise address: %s", cfg.Body.String())
 	}
 
@@ -219,7 +219,7 @@ func TestPanelDomainUnavailableWithoutAdvertise(t *testing.T) {
 
 // The panel page is global infrastructure: an ordinary org owner gets a 404.
 func TestPanelDomainRequiresInstanceAdmin(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	ownerID := mkUser(t, e.q, "panel-owner@k.local")
 	o, err := e.orgSvc.CreateOrg(context.Background(), ownerID, "OrgPanelOwner")
 	if err != nil {
@@ -234,7 +234,7 @@ func TestPanelDomainRequiresInstanceAdmin(t *testing.T) {
 // An app must not be able to claim the panel's domain, and the panel must not
 // take a domain an app already has.
 func TestPanelDomainAppCollision(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	base, cookie, orgID := nodesOrg(t, e.q, e.orgSvc, "panel-coll@k.local", "OrgPanelColl")
 	p, _ := e.orgSvc.CreateProject(context.Background(), orgID, "Proj", "")
 	env, _ := e.orgSvc.CreateEnvironment(context.Background(), p.ID, "production")
@@ -268,7 +268,7 @@ func TestPanelDomainAppCollision(t *testing.T) {
 // This per-request decision replaced a global KRILL_COOKIE_SECURE flip; if it
 // broke, nothing would fail visibly — sessions would just travel unprotected.
 func TestPanelCookiesSecureOnlyViaGateway(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	mkUser(t, e.q, "panel-cookie@k.local")
 	type path struct {
 		name    string
@@ -374,7 +374,7 @@ func TestCookieSecureConfigForcesSecure(t *testing.T) {
 // is off (max-age=0) until set, cannot be set before the domain is confirmed,
 // never reaches subdomains, and is reset whenever the domain changes.
 func TestPanelHSTS(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-hsts@k.local", "OrgPanelHSTS")
 	hsts := func(host, forward, proto string) (string, bool) {
 		req := httptest.NewRequest(http.MethodGet, "/login", nil)
@@ -430,7 +430,7 @@ func TestPanelHSTS(t *testing.T) {
 	// Never on the direct address, over plain HTTP, with a forged token, or for
 	// another host the gateway might hand over.
 	for name, got := range map[string]func() (string, bool){
-		"direct":        func() (string, bool) { return hsts("195.2.75.130:8080", "", "") },
+		"direct":        func() (string, bool) { return hsts("198.51.100.10:8080", "", "") },
 		"direct claims": func() (string, bool) { return hsts(panelHost, "", "https") },
 		"gateway http":  func() (string, bool) { return hsts(panelHost, e.tokens.Forwarded, "http") },
 		"forged":        func() (string, bool) { return hsts(panelHost, "forged", "https") },
@@ -456,7 +456,7 @@ func TestPanelHSTS(t *testing.T) {
 // limiter has to key on the client address Traefik appended instead. Straight
 // at the UI port, the same header is ignored.
 func TestPanelLoginRateLimitKeysOnGatewayClient(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	attempt := func(onDomain bool, xff string) int {
 		form := url.Values{"email": {"nobody@k.local"}, "password": {"x"}}
 		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
@@ -491,7 +491,7 @@ func TestPanelLoginRateLimitKeysOnGatewayClient(t *testing.T) {
 
 // An operator on the domain cannot save an allowlist that excludes them.
 func TestPanelAllowlistRefusesSelfLockout(t *testing.T) {
-	e := newPanelServer(t, "195.2.75.130")
+	e := newPanelServer(t, "198.51.100.10")
 	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-allow@k.local", "OrgPanelAllow")
 	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {panelHost}}, false)
 

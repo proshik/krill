@@ -15,7 +15,7 @@ declare "targets" {
       source_labels = ["__address__"]
       regex         = "10\\.0\\.1\\.5:27015"
       target_label  = "__tmp_krill_node"
-      replacement   = "krill-cp-msk"
+      replacement   = "cp-node-1"
     }
 
     rule {
@@ -51,7 +51,7 @@ declare "targets" {
 
     rule {
       target_label = "krill_app"
-      replacement  = "base13"
+      replacement  = "orders-api"
     }
 
     rule {

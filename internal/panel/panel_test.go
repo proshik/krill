@@ -22,7 +22,7 @@ func TestNormalizeHost(t *testing.T) {
 		}
 	}
 	bad := []string{
-		"", "localhost", "195.2.75.130", "::1", "https://krill.example.com",
+		"", "localhost", "198.51.100.10", "::1", "https://krill.example.com",
 		"krill.example.com:443", "krill.example.com/path", "*.example.com",
 		"-krill.example.com", "krill_.example.com", "krill.example.123",
 		"a`) || Host(`b.example.com", "krill example.com",
@@ -39,14 +39,14 @@ func TestUpstream(t *testing.T) {
 		adv, listen, want string
 		err               error
 	}{
-		{"195.2.75.130", ":8080", "http://195.2.75.130:8080", nil},
-		{"195.2.75.130", "0.0.0.0:9000", "http://195.2.75.130:9000", nil},
+		{"198.51.100.10", ":8080", "http://198.51.100.10:8080", nil},
+		{"198.51.100.10", "0.0.0.0:9000", "http://198.51.100.10:9000", nil},
 		{"2001:db8::1", "[::]:8080", "http://[2001:db8::1]:8080", nil},
 		{"", ":8080", "", ErrAdvertiseUnset},
 		{"  ", ":8080", "", ErrAdvertiseUnset},
-		{"195.2.75.130", "127.0.0.1:8080", "", ErrListenLoopback},
-		{"195.2.75.130", "localhost:8080", "", ErrListenLoopback},
-		{"195.2.75.130", "[::1]:8080", "", ErrListenLoopback},
+		{"198.51.100.10", "127.0.0.1:8080", "", ErrListenLoopback},
+		{"198.51.100.10", "localhost:8080", "", ErrListenLoopback},
+		{"198.51.100.10", "[::1]:8080", "", ErrListenLoopback},
 	}
 	for _, c := range cases {
 		got, err := Upstream(c.adv, c.listen)
@@ -61,7 +61,7 @@ func TestUpstream(t *testing.T) {
 		}
 	}
 	for _, listen := range []string{"8080", ":http-alt", ":0", ":70000"} {
-		if _, err := Upstream("195.2.75.130", listen); err == nil {
+		if _, err := Upstream("198.51.100.10", listen); err == nil {
 			t.Errorf("Upstream with listen %q: want an error", listen)
 		}
 	}
@@ -132,7 +132,7 @@ func dig(t *testing.T, m map[string]any, path ...string) any {
 
 func TestDynamicConfigRoutes(t *testing.T) {
 	for _, state := range []string{StatePending, StateActive} {
-		cfg := decode(t, DynamicConfig(Settings{Host: "krill.example.com", State: state}, "http://195.2.75.130:8080", "fwd-token"))
+		cfg := decode(t, DynamicConfig(Settings{Host: "krill.example.com", State: state}, "http://198.51.100.10:8080", "fwd-token"))
 		https := dig(t, cfg, "http", "routers", "krill-panel-https").(map[string]any)
 		if https["rule"] != "Host(`krill.example.com`)" {
 			t.Errorf("%s: https rule = %v", state, https["rule"])
@@ -157,7 +157,7 @@ func TestDynamicConfigRoutes(t *testing.T) {
 			t.Errorf("%s: the gateway must stamp proxied requests with the forwarded token", state)
 		}
 		servers := dig(t, cfg, "http", "services", "krill-panel", "loadBalancer", "servers").([]any)
-		if len(servers) != 1 || servers[0].(map[string]any)["url"] != "http://195.2.75.130:8080" {
+		if len(servers) != 1 || servers[0].(map[string]any)["url"] != "http://198.51.100.10:8080" {
 			t.Errorf("%s: servers = %v", state, servers)
 		}
 		routers := dig(t, cfg, "http", "routers").(map[string]any)
@@ -170,7 +170,7 @@ func TestDynamicConfigRoutes(t *testing.T) {
 func TestDynamicConfigAllowlist(t *testing.T) {
 	cfg := decode(t, DynamicConfig(Settings{
 		Host: "krill.example.com", State: StateActive, AllowedIPs: []string{"203.0.113.4/32", "10.0.0.0/8"},
-	}, "http://195.2.75.130:8080", "fwd-token"))
+	}, "http://198.51.100.10:8080", "fwd-token"))
 	rng := dig(t, cfg, "http", "middlewares", "krill-panel-ipallow", "ipAllowList", "sourceRange").([]any)
 	if len(rng) != 2 || rng[0] != "203.0.113.4/32" {
 		t.Fatalf("sourceRange = %v", rng)

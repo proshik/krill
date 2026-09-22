@@ -7,7 +7,7 @@ import (
 
 func sampleTargets() []AppTarget {
 	return []AppTarget{
-		{OrgID: 1, AppID: 7, EndpointID: 3, Org: "Acme", Project: "bots", Env: "prod", App: "base13",
+		{OrgID: 1, AppID: 7, EndpointID: 3, Org: "Acme", Project: "bots", Env: "prod", App: "orders-api",
 			Token: "t0k", Port: 27015, Path: "/metrics", Job: "relay"},
 		{OrgID: 2, AppID: 9, EndpointID: 4, Org: "Org $1", Project: "p", Env: "e", App: "gitea",
 			Token: "t1k", Port: 3000, Path: "/metrics", Job: ""},
@@ -16,7 +16,7 @@ func sampleTargets() []AppTarget {
 
 func TestRenderAppsModuleGolden(t *testing.T) {
 	out, err := RenderAppsModule(sampleTargets(), map[int64][]TaskNode{
-		7: {{IP: "10.0.1.5", Node: "krill-cp-msk"}},
+		7: {{IP: "10.0.1.5", Node: "cp-node-1"}},
 		9: {{IP: "10.0.2.7", Node: "db узел"}, {IP: "10.0.2.8", Node: "worker.1"}},
 	})
 	if err != nil {
