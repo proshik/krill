@@ -87,12 +87,19 @@ func (s *Server) appMetricsStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if c.App.Status == "stopped" {
-		problem("metrics.status.app_stopped")
-		return
-	}
 	if s.engine == nil {
 		problem("metrics.status.unavailable", "Docker engine is unavailable")
+		return
+	}
+	// Stop scales the service to zero and records the app as idle, so only the
+	// live service can tell a stopped app apart from one that is still starting.
+	state, err := s.engine.ServiceState(r.Context(), docker.ServiceName(c.App.ID))
+	if err != nil {
+		problem("metrics.status.unavailable", err.Error())
+		return
+	}
+	if state.Found && state.Desired == 0 && state.Running == 0 {
+		problem("metrics.status.app_stopped")
 		return
 	}
 	eps, err := s.q.ListMetricsEndpointsByApplication(r.Context(), c.App.ID)

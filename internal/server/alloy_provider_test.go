@@ -30,6 +30,14 @@ type metricsEngine struct {
 	found           bool
 	synced          map[string]string
 	execErr         error
+	state           *docker.ServiceState
+}
+
+func (e *metricsEngine) ServiceState(ctx context.Context, name string) (docker.ServiceState, error) {
+	if e.state != nil {
+		return *e.state, nil
+	}
+	return e.noopEngine.ServiceState(ctx, name)
 }
 
 func (e *metricsEngine) TaskAddresses(context.Context) ([]docker.TaskAddress, error) {
@@ -98,7 +106,7 @@ func TestAlloyAppsProviderAndStatus(t *testing.T) {
 	// Traefik labels must immediately hide the default metrics path.
 	hidden := false
 	for _, value := range engine.synced {
-		if strings.Contains(value, "!(Path(`/metrics`)") {
+		if strings.Contains(value, "!(PathRegexp(`(?i)^/metrics(?:") {
 			hidden = true
 		}
 	}
@@ -128,6 +136,9 @@ func TestAlloyAppsProviderAndStatus(t *testing.T) {
 	m, _ := q.GetApplicationMetrics(ctx, appID)
 	// newServer uses plaintext secret configuration in this test.
 	engine.containerLabels = map[string]string{appmetrics.ContainerLabelTokenHash: appmetrics.TokenHash(m.MetricsTokenEnv, *m.MetricsToken)}
+	engine.state = &docker.ServiceState{Found: true}
+	status("The app is stopped")
+	engine.state = nil
 	status("test exec unavailable")
 	engine.addrErr = errors.New("task listing failed")
 	rec = request(tokens.AlloyApps, false)
