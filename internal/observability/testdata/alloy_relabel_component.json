@@ -114,7 +114,7 @@
           "type": "attr",
           "value": {
             "type": "string",
-            "value": "krill-cp-msk"
+            "value": "cp-node-1"
           }
         }
       ]
@@ -334,7 +334,7 @@
           "type": "attr",
           "value": {
             "type": "string",
-            "value": "base13"
+            "value": "orders-api"
           }
         }
       ]
@@ -420,7 +420,7 @@
                 "key": "krill_app",
                 "value": {
                   "type": "string",
-                  "value": "base13"
+                  "value": "orders-api"
                 }
               },
               {
@@ -441,7 +441,7 @@
                 "key": "krill_node",
                 "value": {
                   "type": "string",
-                  "value": "krill-cp-msk"
+                  "value": "cp-node-1"
                 }
               },
               {

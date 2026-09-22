@@ -80,6 +80,16 @@ type Server struct {
 	// the panel page (see directURL). Nil means net.InterfaceAddrs.
 	interfaceAddrs func() ([]net.Addr, error)
 
+	// createMu makes a create handler's duplicate check and insert one step
+	// (backup configs, API tokens), so two overlapping requests can't both pass
+	// the check.
+	createMu sync.Mutex
+
+	// testNotifyAt is when each organization last sent a test notification
+	// (see testNotification), guarded by testNotifyMu.
+	testNotifyMu sync.Mutex
+	testNotifyAt map[int64]time.Time
+
 	// panel routes the Krill UI itself through the gateway on a domain (see
 	// SetPanelGateway and panel_handlers.go). Zero until wired: the panel page
 	// then reports the feature unavailable and no request counts as proxied.

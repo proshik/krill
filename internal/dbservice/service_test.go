@@ -416,7 +416,10 @@ func TestDeployInstanceIgnoresDuplicateTrigger(t *testing.T) {
 	svc.DeployInstance(1)
 	<-started // the first deploy is inside ImagePull
 
-	svc.DeployInstance(1) // must be ignored while the first is in flight
+	// Refused while the first is in flight, and the caller is told.
+	if err := svc.DeployInstance(1); !errors.Is(err, ErrDeployInProgress) {
+		t.Fatalf("second deploy: want ErrDeployInProgress, got %v", err)
+	}
 
 	close(eng.pullGate)
 	waitFor(t, func() bool { return store.st(1) == "running" })

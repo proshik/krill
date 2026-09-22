@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/oplock"
@@ -264,4 +266,30 @@ func last(s []string) string {
 		return ""
 	}
 	return s[len(s)-1]
+}
+
+type countingNotifier struct{ failed atomic.Int32 }
+
+func (n *countingNotifier) MigrateFailed(context.Context, int64, string) { n.failed.Add(1) }
+
+// A second migration request while one runs is refused to its caller — not
+// accepted and then reported through a "migration failed" alert about a
+// migration that is in fact still running.
+func TestMigrateInstanceNodeRefusesWhileBusy(t *testing.T) {
+	s, _, _ := migFixture("")
+	n := &countingNotifier{}
+	s.SetNotifier(n)
+	lock := oplock.DBInstance("krill-pg-a")
+	if !oplock.TryAcquire(lock) {
+		t.Fatal("setup: lock already held")
+	}
+	defer oplock.Release(lock)
+
+	if err := s.MigrateInstanceNode(7, "worker-1", false); !errors.Is(err, ErrInstanceBusy) {
+		t.Fatalf("want ErrInstanceBusy, got %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := n.failed.Load(); got != 0 {
+		t.Fatalf("a refused migration must not alert, got %d MigrateFailed", got)
+	}
 }

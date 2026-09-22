@@ -50,7 +50,7 @@ func TestReadAppsStatusFixtures(t *testing.T) {
 		if down {
 			want = "down"
 		}
-		if target.Health != want || target.Node != "krill-cp-msk" || target.LastScrape.IsZero() {
+		if target.Health != want || target.Node != "cp-node-1" || target.LastScrape.IsZero() {
 			t.Fatalf("target=%+v", target)
 		}
 		if down && target.LastError != "server returned HTTP status 401 Unauthorized" {
