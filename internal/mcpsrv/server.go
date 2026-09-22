@@ -69,9 +69,20 @@ func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 	// session table and the shared *mcp.Server's session list, for the life
 	// of the process. Krill runs for months as a systemd unit on a small VPS,
 	// so that is a slow leak, not a rounding error.
+	//
+	// DisableLocalhostProtection turns off the SDK's DNS rebinding guard,
+	// which 403s any request that arrives on a loopback address with a
+	// non-loopback Host header. A reverse proxy on the same host forwarding a
+	// domain to 127.0.0.1 sends exactly that, and the guard protects nothing
+	// here: every request to /mcp must already carry a bearer token
+	// (RequireAPIToken), which a rebound browser page does not have.
 	s.handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
-	}, &mcp.StreamableHTTPOptions{JSONResponse: true, SessionTimeout: sessionTimeout})
+	}, &mcp.StreamableHTTPOptions{
+		JSONResponse:               true,
+		SessionTimeout:             sessionTimeout,
+		DisableLocalhostProtection: true,
+	})
 	return s
 }
 

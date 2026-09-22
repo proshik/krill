@@ -583,3 +583,40 @@ func TestAbandonedSessionsDoNotLeakGoroutines(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// TestProxiedRequestWithDomainHostIsAccepted pins the handler's
+// DisableLocalhostProtection. Since go-sdk v1.4.0 a streamable-HTTP handler
+// rejects with 403 any request that arrives on a loopback address but
+// carries a non-loopback Host header — its DNS rebinding guard. That is
+// exactly what a reverse proxy on the same host sends (nginx or Caddy
+// forwarding https://krill.example.com to 127.0.0.1:8080, the setup
+// KRILL_TRUST_PROXY exists for), so without the opt-out every MCP call
+// through such a proxy would fail. httptest listens on loopback, so this
+// request looks to the handler exactly like the proxied one.
+func TestProxiedRequestWithDomainHostIsAccepted(t *testing.T) {
+	f := newSmokeFixture(t)
+	ts := httptest.NewServer(withBearerAuth(f.authn, mcpsrv.New(f.svc, noIdleTimeout).Handler()))
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL, strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"proxied","version":"v0"}}}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Host = "krill.example.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("initialize with Host %q over loopback: want 200, got %d: %s", req.Host, resp.StatusCode, body)
+	}
+	if resp.Header.Get("Mcp-Session-Id") == "" {
+		t.Fatal("initialize: no Mcp-Session-Id returned")
+	}
+}
