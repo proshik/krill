@@ -147,9 +147,9 @@ var (
 // only ever non-zero right after an actual deploy-and-converge on this pass
 // — the short-circuit "nothing changed" path always returns the zero
 // Coverage (see its own comment for why).
-func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) (Coverage, error) {
+func reconcileNode(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName) (Coverage, error) {
 	if !s.Enabled {
-		return Coverage{}, teardown(ctx, eng)
+		return Coverage{}, teardownService(ctx, eng, NodeServiceName, ObjectLabelValue)
 	}
 	cfg, err := RenderNodeConfig(s, nodes)
 	if err != nil {
@@ -186,7 +186,7 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string, node
 	if before.Found && !netCreated && docker.UpdateSettled(before.UpdateState) {
 		if cur, found, err := eng.ServiceLabels(ctx, NodeServiceName); err == nil && found {
 			if h := spec.Labels[specHashLabel]; h != "" && cur[specHashLabel] == h {
-				prune(ctx, eng, obj)
+				pruneObjects(ctx, eng, ObjectLabelValue, []string{obj.Config, obj.MetricsSecret, obj.LogsSecret})
 				// Nothing was redeployed on this pass, so there is no
 				// pre-deploy baseline to tell "still running this exact
 				// configuration" apart from "not running at all" (a
@@ -208,59 +208,56 @@ func Reconcile(ctx context.Context, eng Engine, s Settings, network string, node
 	if err := eng.ServiceDeploy(ctx, spec); err != nil {
 		return Coverage{}, fmt.Errorf("deploy the agent: %w", err)
 	}
-	if err := waitAgent(ctx, eng, baseline); err != nil {
+	if err := waitService(ctx, eng, NodeServiceName, baseline); err != nil {
 		return Coverage{}, err
 	}
 	slog.Info("observability agent deployed")
-	prune(ctx, eng, obj)
+	pruneObjects(ctx, eng, ObjectLabelValue, []string{obj.Config, obj.MetricsSecret, obj.LogsSecret})
 	return coverage(ctx, eng, nodes, baseline), nil
 }
 
-func teardown(ctx context.Context, eng Engine) error {
-	_, found, err := eng.ServiceLabels(ctx, NodeServiceName)
+func teardownService(ctx context.Context, eng Engine, name, labelValue string) error {
+	_, found, err := eng.ServiceLabels(ctx, name)
 	if err != nil {
-		return fmt.Errorf("read the agent service: %w", err)
+		return fmt.Errorf("read %s service: %w", name, err)
 	}
 	if found {
-		if err := eng.ServiceRemove(ctx, NodeServiceName); err != nil {
-			return fmt.Errorf("remove the agent: %w", err)
+		if err := eng.ServiceRemove(ctx, name); err != nil {
+			return fmt.Errorf("remove %s: %w", name, err)
 		}
-		slog.Info("observability agent removed")
+		slog.Info("observability service removed", "service", name)
 	}
-	// Objects the stopping tasks still mount are skipped now and removed by
-	// the next pass — at the latest on the next start.
-	prune(ctx, eng, Objects{})
+	pruneObjects(ctx, eng, labelValue, nil)
 	return nil
 }
 
-// prune drops the objects of earlier specs. A failure only leaves garbage
-// behind, so it is logged, not returned.
-func prune(ctx context.Context, eng Engine, obj Objects) {
+// pruneObjects removes only obsolete objects owned by one collector.
+func pruneObjects(ctx context.Context, eng Engine, labelValue string, names []string) {
 	var keep []string
-	for _, n := range []string{obj.Config, obj.MetricsSecret, obj.LogsSecret} {
-		if n != "" {
-			keep = append(keep, n)
+	for _, name := range names {
+		if name != "" {
+			keep = append(keep, name)
 		}
 	}
-	if err := eng.PruneObjects(ctx, ObjectLabel, ObjectLabelValue, keep); err != nil {
-		slog.Warn("observability: could not remove old agent configs and secrets", "err", err)
+	if err := eng.PruneObjects(ctx, ObjectLabel, labelValue, keep); err != nil {
+		slog.Warn("observability: could not remove old configs and secrets", "collector", labelValue, "err", err)
 	}
 }
 
-// waitAgent polls until the agent's new tasks run on every node and Swarm has
+// waitService polls until the service's new tasks run and Swarm has
 // completed the update. A node that is down keeps its task pending, so the
 // pass fails with a pointer to where the reason is.
-func waitAgent(ctx context.Context, eng Engine, baseline []string) error {
+func waitService(ctx context.Context, eng Engine, name string, baseline []string) error {
 	cctx, cancel := context.WithTimeout(ctx, convergeTimeout)
 	defer cancel()
 	var lastErr error
 	for first := true; ; first = false {
-		p, err := eng.ServiceProgress(cctx, NodeServiceName, baseline)
+		p, err := eng.ServiceProgress(cctx, name, baseline)
 		switch {
 		case err != nil:
 			lastErr = err
 		case p.Found && !first && strings.HasPrefix(p.UpdateState, "rollback"):
-			return errors.New("agent update rolled back: Swarm restored the previous agent spec")
+			return fmt.Errorf("%s update rolled back: Swarm restored the previous spec", name)
 		case p.Found && p.Desired > 0 && p.Running >= p.Desired && docker.UpdateSettled(p.UpdateState):
 			return nil
 		}
@@ -270,10 +267,90 @@ func waitAgent(ctx context.Context, eng Engine, baseline []string) error {
 				return ctx.Err()
 			}
 			if lastErr != nil {
-				return fmt.Errorf("the agent did not start within %s: %w", convergeTimeout, lastErr)
+				return fmt.Errorf("%s did not start within %s: %w", name, convergeTimeout, lastErr)
 			}
-			return fmt.Errorf("the agent is not running on every node after %s (see docker service ps %s)", convergeTimeout, NodeServiceName)
+			return fmt.Errorf("%s is not running everywhere it should after %s (see docker service ps %s)", name, convergeTimeout, name)
 		case <-time.After(convergePoll):
 		}
 	}
+}
+
+func Reconcile(ctx context.Context, eng Engine, s Settings, network string, nodes []NodeName, apps AppsInput) (Coverage, error) {
+	if !s.Enabled {
+		return Coverage{}, errors.Join(
+			teardownService(ctx, eng, NodeServiceName, ObjectLabelValue),
+			teardownService(ctx, eng, AppsServiceName, ObjectLabelAppsValue))
+	}
+	cov, nodeErr := reconcileNode(ctx, eng, s, network, nodes)
+	appsErr := reconcileApps(ctx, eng, s, network, apps)
+	return cov, errors.Join(nodeErr, appsErr)
+}
+
+// reconcileApps converges the apps collector: present while metrics have a
+// target (it ships nothing else), absent otherwise. When Krill cannot be
+// reached by it (no advertise address), whatever runs is left alone — tearing
+// a working collector down because the control plane's own config regressed
+// would silence every app — and the pass reports why.
+func reconcileApps(ctx context.Context, eng Engine, s Settings, network string, apps AppsInput) error {
+	if !s.Metrics.Configured() {
+		return teardownService(ctx, eng, AppsServiceName, ObjectLabelAppsValue)
+	}
+	if apps.Unavailable != nil {
+		return fmt.Errorf("the apps collector cannot reach Krill: %w", apps.Unavailable)
+	}
+	if apps.ProviderToken == "" || !safeText(apps.ProviderToken) {
+		return errors.New("the apps collector provider credential is unavailable")
+	}
+	cfg, err := RenderAppsConfig(s, apps.ProviderURL)
+	if err != nil {
+		return err
+	}
+	obj := appsObjectsOf(s, cfg, apps.ProviderToken)
+	labels := map[string]string{ObjectLabel: ObjectLabelAppsValue}
+	if err := eng.ConfigEnsure(ctx, obj.Config, cfg, labels); err != nil {
+		return fmt.Errorf("create the collector configuration: %w", err)
+	}
+	if err := eng.SecretEnsure(ctx, obj.ProviderSecret, []byte(apps.ProviderToken), labels); err != nil {
+		return fmt.Errorf("create the collector provider secret: %w", err)
+	}
+	if obj.MetricsSecret != "" {
+		if err := eng.SecretEnsure(ctx, obj.MetricsSecret, []byte(s.Metrics.Password), labels); err != nil {
+			return fmt.Errorf("create the collector metrics password secret: %w", err)
+		}
+	}
+	created := false
+	for _, n := range append([]string{network}, apps.Networks...) {
+		c, err := eng.NetworkEnsure(ctx, n)
+		if err != nil {
+			return err
+		}
+		created = created || c
+	}
+	spec := AppsSpec(obj, network, apps.Networks)
+	keep := []string{obj.Config, obj.ProviderSecret, obj.MetricsSecret}
+	before, err := eng.ServiceProgress(ctx, AppsServiceName, nil)
+	if err != nil {
+		return fmt.Errorf("read the collector's tasks: %w", err)
+	}
+	if before.Found && !created && docker.UpdateSettled(before.UpdateState) {
+		if cur, found, err := eng.ServiceLabels(ctx, AppsServiceName); err == nil && found &&
+			spec.Labels[specHashLabel] != "" && cur[specHashLabel] == spec.Labels[specHashLabel] {
+			pruneObjects(ctx, eng, ObjectLabelAppsValue, keep)
+			return nil
+		}
+	}
+	var baseline []string
+	if before.Found {
+		baseline = before.TaskIDs
+	}
+	slog.Info("deploying the apps metrics collector", "networks", len(apps.Networks)+1)
+	if err := eng.ServiceDeploy(ctx, spec); err != nil {
+		return fmt.Errorf("deploy the collector: %w", err)
+	}
+	if err := waitService(ctx, eng, AppsServiceName, baseline); err != nil {
+		return err
+	}
+	slog.Info("apps metrics collector deployed")
+	pruneObjects(ctx, eng, ObjectLabelAppsValue, keep)
+	return nil
 }

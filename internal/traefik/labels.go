@@ -2,6 +2,7 @@ package traefik
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -29,25 +30,37 @@ func SplitPaths(s string) []string {
 }
 
 // domainRule builds the Traefik router rule for a host with an optional
-// path allow-list (prefix match). Paths must be pre-validated (no backticks).
-func domainRule(host string, paths []string) string {
+// path allow-list (prefix match) and an optional deny-list of metrics paths.
+// Both lists must be pre-validated (no backticks). A hidden path is matched
+// case-insensitively, together with everything under it and any ";" path
+// parameter: backends that ignore case (ASP.NET) or strip ";..." (servlet
+// containers) would otherwise serve /METRICS or /metrics;x from the domain.
+func domainRule(host string, paths, hidden []string) string {
 	rule := fmt.Sprintf("Host(`%s`)", host)
-	if len(paths) == 0 {
-		return rule
+	if len(paths) > 0 {
+		parts := make([]string, 0, len(paths))
+		for _, p := range paths {
+			parts = append(parts, fmt.Sprintf("PathPrefix(`%s`)", p))
+		}
+		rule += " && (" + strings.Join(parts, " || ") + ")"
 	}
-	parts := make([]string, 0, len(paths))
-	for _, p := range paths {
-		parts = append(parts, fmt.Sprintf("PathPrefix(`%s`)", p))
+	if len(hidden) > 0 {
+		parts := make([]string, 0, len(hidden))
+		for _, p := range hidden {
+			parts = append(parts, fmt.Sprintf("PathRegexp(`(?i)^%s(?:[/;].*)?$`)", regexp.QuoteMeta(p)))
+		}
+		rule += " && !(" + strings.Join(parts, " || ") + ")"
 	}
-	return rule + " && (" + strings.Join(parts, " || ") + ")"
+	return rule
 }
 
+// hiddenPaths excludes metrics paths on the app HTTP port from every domain.
 // AppLabels builds the service-level Traefik labels for an application's domains.
 // serviceName is the Swarm service name (and the Traefik loadbalancer-service id).
 // Non-TLS domains get a plain router on the web entrypoint. TLS domains get a
 // secure router on websecure (cert via the "le" resolver) plus a web router that
 // redirects to HTTPS. There is no global redirect, so plain-HTTP domains keep working.
-func AppLabels(serviceName string, domains []Domain, port int32, network string) map[string]string {
+func AppLabels(serviceName string, domains []Domain, port int32, network string, hiddenPaths []string) map[string]string {
 	exposed := 0
 	for _, d := range domains {
 		if d.Exposed {
@@ -69,7 +82,7 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string)
 			continue
 		}
 		base := fmt.Sprintf("%s-d%d", serviceName, i)
-		rule := domainRule(d.Host, d.Paths)
+		rule := domainRule(d.Host, d.Paths, hiddenPaths)
 		var servePrefix string // router prefix that actually serves traffic
 		if !d.TLS {
 			servePrefix = "traefik.http.routers." + base + "."

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 // addAppPort publishes a raw host port into the app container (host mode),
@@ -29,6 +30,17 @@ func (s *Server) addAppPort(w http.ResponseWriter, r *http.Request) {
 	if protocol != "tcp" && protocol != "udp" {
 		s.flashErrT(w, r, "flash.err.invalid_protocol")
 		return
+	}
+	if protocol == "tcp" {
+		n, err := s.q.CountMetricsEndpointsByPort(r.Context(), db.CountMetricsEndpointsByPortParams{ApplicationID: c.App.ID, Port: int32(containerPort)})
+		if err != nil {
+			s.metricsFailure(w, r, err)
+			return
+		}
+		if n > 0 {
+			s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.metrics_port_published", containerPort))
+			return
+		}
 	}
 	// Conflict: another app already publishes this host port on the same protocol.
 	if n, err := s.q.CountAppPortsByHostPort(r.Context(), db.CountAppPortsByHostPortParams{

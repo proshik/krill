@@ -93,6 +93,10 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.var_in_env", varName))
 		return
 	}
+	if c.App.MetricsEnabled && varName == c.App.MetricsTokenEnv {
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.metrics_env_taken", varName))
+		return
+	}
 	if _, err := s.q.CreateDBLink(r.Context(), db.CreateDBLinkParams{
 		ApplicationID: c.App.ID, LogicalDatabaseID: ldbID, InstanceID: instID, VarName: varName, Scheme: scheme, Field: field,
 	}); err != nil {

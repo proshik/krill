@@ -189,7 +189,8 @@ databases.
 | `internal/metrics` | CPU/memory sampling across nodes. |
 | `internal/notify` | Telegram notifications and the health watcher. |
 | `internal/topology` | Graph builder for the Topology page. |
-| `internal/observability` | The node observability agent: configuration, reconcile against Swarm, and the settings-page check. |
+| `internal/observability` | Node and application Alloy collectors: configuration, module rendering, Swarm reconcile, live status, and destination checks. |
+| `internal/appmetrics` | Application token fingerprints, endpoint validation, and hidden HTTP paths. |
 | `internal/api` | The agent-facing operations and token authentication. |
 | `internal/mcpsrv` | MCP server over `internal/api`. |
 | `internal/webhook` | GitHub signature verification and payload parsing. |
@@ -216,3 +217,7 @@ databases.
 - **Backups:** AWS SDK for Go v2 (S3 and compatible), robfig/cron.
 - **Agent API:** the official MCP Go SDK.
 - **Tests:** testcontainers-go.
+
+### Application metrics collector
+
+`krill-alloy-apps` is a replicated, manager-constrained service in the base network and each organization overlay. It fetches an authenticated module from `/_krill/alloy/apps` every 30 seconds, discovers task addresses with DNS, attaches Krill identity and node labels, and sends samples to the configured metrics remote-write destination. Its provider credential is derived from the panel gateway secret and mounted as a Swarm secret. Per-application tokens are stored in `applications.metrics_token`; endpoints live in `app_metrics_endpoints` (migration 000048). The collector has neither host mounts nor the Docker socket. Krill reads its loopback API through Docker exec to report actual scrape status.

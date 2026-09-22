@@ -17,20 +17,22 @@ import (
 
 // App — application representation for deployment.
 type App struct {
-	ID             int64
-	Name           string
-	Image          string
-	Tag            string
-	Domain         string
-	Port           int32
-	Env            map[string]string
-	SourceType     string // "image" | "dockerfile"
-	GitURL         string
-	GitBranch      string
-	DockerfilePath string
-	Domains        []traefik.Domain
-	RegistryAuth   string
-	Args           []string // container command override (CMD), e.g. ["start-dev"]
+	// MetricsHiddenPaths are metrics paths excluded from every domain.
+	MetricsHiddenPaths []string
+	ID                 int64
+	Name               string
+	Image              string
+	Tag                string
+	Domain             string
+	Port               int32
+	Env                map[string]string
+	SourceType         string // "image" | "dockerfile"
+	GitURL             string
+	GitBranch          string
+	DockerfilePath     string
+	Domains            []traefik.Domain
+	RegistryAuth       string
+	Args               []string // container command override (CMD), e.g. ["start-dev"]
 
 	// Network is the app's organization's overlay network. Empty means the
 	// organization has not been migrated yet — the deployer falls back to its
@@ -566,7 +568,7 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		Image:              imageTag,
 		Args:               app.Args,
 		Env:                app.Env,
-		Labels:             traefik.AppLabels(name, domains, app.Port, net),
+		Labels:             traefik.AppLabels(name, domains, app.Port, net, app.MetricsHiddenPaths),
 		ContainerLabels:    app.ContainerLabels,
 		Replicas:           replicas,
 		Network:            net,

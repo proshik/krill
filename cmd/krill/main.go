@@ -493,10 +493,20 @@ func run() error {
 		}
 		obsRec = observability.NewReconciler(obsEngine, func(c context.Context) (observability.Settings, error) {
 			return observability.LoadForReconcile(c, q)
-		}, obsNodes, cfg.Network)
+		}, obsNodes, func(c context.Context) (observability.AppsInput, error) {
+			if panelUpstreamErr != nil {
+				return observability.AppsInput{Unavailable: panelUpstreamErr}, nil
+			}
+			nets, err := orgNetworks(c, q)
+			if err != nil {
+				return observability.AppsInput{}, err
+			}
+			return observability.AppsInput{ProviderURL: panelUpstream + observability.AppsProviderPath, ProviderToken: gatewayTokens.AlloyApps, Networks: nets}, nil
+		}, cfg.Network)
 		instance, _ := os.Hostname()
 		checker := observability.Checker{AllowPrivate: cfg.AllowPrivateEgress, Instance: instance}
 		app.SetObservability(obsRec, checker.Check)
+		app.SetAppsProvider(gatewayTokens.AlloyApps)
 	} else {
 		slog.Warn("observability unavailable: the docker engine cannot manage swarm configs and secrets")
 	}

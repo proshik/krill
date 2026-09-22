@@ -17,6 +17,7 @@ import (
 
 // observabilityCtl is the part of *observability.Reconciler the page needs.
 type observabilityCtl interface {
+	TriggerNetworks()
 	Trigger()
 	Status(ctx context.Context) observability.Status
 }
@@ -56,6 +57,7 @@ func (s *Server) observabilityPage(w http.ResponseWriter, r *http.Request) {
 		v.MetricsURL, v.MetricsUser, v.MetricsHasPassword = row.MetricsUrl, row.MetricsUser, row.MetricsPassword != ""
 		v.LogsURL, v.LogsUser, v.LogsHasPassword = row.LogsUrl, row.LogsUser, row.LogsPassword != ""
 		st := s.obs.ctl.Status(r.Context())
+		v.AppsWanted, v.AppsRunning, v.AppsDesired, v.AppsErr = st.AppsWanted, st.Apps.Running, st.Apps.Desired, st.AppsErr
 		v.Busy, v.LastRun, v.LastErr, v.StateErr = st.Busy, st.LastRun, st.LastErr, st.StateErr
 		v.Found, v.Running, v.Desired, v.Failed = st.Service.Found, st.Service.Running, st.Service.Desired, st.Service.Failed
 		v.CoverageExpected, v.CoverageDeployed, v.CoverageMissing = st.Coverage.Expected, st.Coverage.Deployed, st.Coverage.Missing

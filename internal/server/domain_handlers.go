@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
@@ -251,7 +253,12 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 	if !ok {
 		return // the network is unknown; a wrong label is worse than a stale one
 	}
-	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net)
+	hidden, err := s.appHiddenMetricsPaths(r.Context(), appID, port)
+	if err != nil {
+		logFrom(r).Error("syncAppLabels: read metrics paths failed", "err", err, "app_id", appID)
+		return
+	}
+	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net, hidden)
 	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {
 		logFrom(r).Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
 	}
@@ -374,4 +381,25 @@ func (s *Server) setDomainAllowedIPs(w http.ResponseWriter, r *http.Request) {
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
 	s.flashOK(w, r, "flash.ok.allowed_ips_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
+}
+
+// appHiddenMetricsPaths are the metrics paths the app's domains must not
+// serve: its endpoints on its own port, while metrics collection is on.
+func (s *Server) appHiddenMetricsPaths(ctx context.Context, appID int64, appPort int32) ([]string, error) {
+	m, err := s.q.GetApplicationMetrics(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if !m.MetricsEnabled {
+		return nil, nil
+	}
+	eps, err := s.q.ListMetricsEndpointsByApplication(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	in := make([]appmetrics.Endpoint, 0, len(eps))
+	for _, e := range eps {
+		in = append(in, appmetrics.Endpoint{Port: e.Port, Path: e.Path})
+	}
+	return appmetrics.HiddenPaths(appPort, in), nil
 }

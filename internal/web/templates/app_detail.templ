@@ -40,6 +40,12 @@ type AppCtx struct {
 	AutoDeploy    bool
 	WebhookSecret string // decrypted; set for admins only
 	WebhookURL    string // full external webhook/deploy-hook URL
+
+	MetricsEnabled         bool
+	MetricsTokenEnv        string
+	MetricsToken           string // decrypted; set for admins only
+	MetricsTokenUnreadable bool
+	MetricsEndpoints       []db.AppMetricsEndpoint
 }
 
 // DBLinkView is a linked DB row for the Environment tab. Collides is true when
@@ -76,6 +82,7 @@ templ AppDetail(c AppCtx, tab string) {
 			<a href={ templ.SafeURL(c.base() + "?tab=logs") } class={ "k-tab", templ.KV("k-tab-active", tab == "logs") }>{ i18n.T(ctx, "tab.logs") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=domains") } class={ "k-tab", templ.KV("k-tab-active", tab == "domains") }>{ i18n.T(ctx, "domains.tab") }</a>
 			<a href={ templ.SafeURL(c.base() + "?tab=advanced") } class={ "k-tab", templ.KV("k-tab-active", tab == "advanced") }>{ i18n.T(ctx, "tab.advanced") }</a>
+			<a href={ templ.SafeURL(c.base() + "?tab=metrics") } class={ "k-tab", templ.KV("k-tab-active", tab == "metrics") }>{ i18n.T(ctx, "tab.metrics") }</a>
 			if c.Role == "owner" || c.Role == "admin" {
 				<a href={ templ.SafeURL(c.base() + "?tab=volumes") } class={ "k-tab", templ.KV("k-tab-active", tab == "volumes") }>{ i18n.T(ctx, "volumes.tab") }</a>
 			}
@@ -98,6 +105,8 @@ templ AppDetail(c AppCtx, tab string) {
 				@logsTab(c)
 			case "domains":
 				@domainsTab(c)
+			case "metrics":
+				@metricsTab(c)
 			case "advanced":
 				@advancedTab(c)
 			case "volumes":

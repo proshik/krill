@@ -77,6 +77,7 @@ type Server struct {
 	// SetPanelGateway and panel_handlers.go). Zero until wired: the panel page
 	// then reports the feature unavailable and no request counts as proxied.
 	panel panelGateway
+	apps  appsProvider
 
 	// updates installs newer Krill releases from the UI (see SetSelfUpdate and
 	// update_handlers.go). Zero until wired: the Updates page says so and
@@ -295,6 +296,7 @@ func (s *Server) Router() http.Handler {
 	// The gateway's poll for the panel's routes, authenticated by the provider
 	// token rather than a session.
 	r.Get(panel.ProviderPath, s.gatewayConfig)
+	r.Get(observability.AppsProviderPath, s.alloyAppsModule)
 
 	// Public, unauthenticated auto-deploy webhooks (verified by a per-app secret).
 	r.Route("/webhooks", func(r chi.Router) {
@@ -476,6 +478,7 @@ func (s *Server) Router() http.Handler {
 
 			r.Route("/projects/{projID}/environments/{envID}/apps/{appID}", func(r chi.Router) {
 				r.Get("/", s.appDetail)
+				r.Get("/metrics/status", s.appMetricsStatus)
 				r.Get("/status", s.appStatus)
 				r.Get("/tags", s.appTags)
 				r.Get("/logs", s.appLogs)
@@ -503,6 +506,12 @@ func (s *Server) Router() http.Handler {
 					r.Get("/volumes/backups/{vbID}/objects", s.volumeBackupObjects)
 					r.Get("/volumes/backups/{vbID}/download", s.downloadVolumeBackup)
 					r.Post("/ports", s.addAppPort)
+					r.Post("/metrics/enable", s.enableAppMetrics)
+					r.Post("/metrics/disable", s.disableAppMetrics)
+					r.Post("/metrics/endpoints", s.addAppMetricsEndpoint)
+					r.Post("/metrics/endpoints/{epID}/delete", s.deleteAppMetricsEndpoint)
+					r.Post("/metrics/token-env", s.setAppMetricsTokenEnv)
+					r.Post("/metrics/token/rotate", s.rotateAppMetricsToken)
 					r.Post("/ports/{portID}/delete", s.deleteAppPort)
 					r.Post("/autodeploy/enable", s.enableAutoDeploy)
 					r.Post("/autodeploy/disable", s.disableAutoDeploy)

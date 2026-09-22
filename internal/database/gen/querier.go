@@ -34,6 +34,8 @@ type Querier interface {
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
+	CountMetricsEndpointsByApplication(ctx context.Context, applicationID int64) (int64, error)
+	CountMetricsEndpointsByPort(ctx context.Context, arg CountMetricsEndpointsByPortParams) (int64, error)
 	// Database instances whose volume is being moved to another node. Restarting
 	// Krill mid-move would abort it.
 	CountMigratingDBInstances(ctx context.Context) (int64, error)
@@ -57,6 +59,7 @@ type Querier interface {
 	// In-flight deployments across the whole organization that owns $1. One tenant
 	// must not be able to fill the single build worker's queue for everyone else.
 	CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error)
+	CountTCPAppPortsByContainerPort(ctx context.Context, arg CountTCPAppPortsByContainerPortParams) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
@@ -76,6 +79,7 @@ type Querier interface {
 	CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error)
 	CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDatabaseParams) (LogicalDatabase, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
+	CreateMetricsEndpoint(ctx context.Context, arg CreateMetricsEndpointParams) (AppMetricsEndpoint, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
@@ -97,6 +101,7 @@ type Querier interface {
 	DeleteGitCredential(ctx context.Context, id int64) error
 	DeleteLogicalDatabase(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
+	DeleteMetricsEndpoint(ctx context.Context, arg DeleteMetricsEndpointParams) error
 	DeleteNodeLabel(ctx context.Context, swarmNodeID string) error
 	DeleteOrganization(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
@@ -123,6 +128,7 @@ type Querier interface {
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
 	// The names and ids an app's containers are labelled with for log collection.
 	GetApplicationIdentity(ctx context.Context, id int64) (GetApplicationIdentityRow, error)
+	GetApplicationMetrics(ctx context.Context, id int64) (GetApplicationMetricsRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
 	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
 	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
@@ -136,6 +142,7 @@ type Querier interface {
 	GetLogicalDatabase(ctx context.Context, id int64) (LogicalDatabase, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
+	GetMetricsEndpoint(ctx context.Context, id int64) (AppMetricsEndpoint, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetObservabilitySettings(ctx context.Context) (ObservabilitySetting, error)
 	GetOrganization(ctx context.Context, id int64) (Organization, error)
@@ -192,6 +199,10 @@ type Querier interface {
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
+	ListMetricsEndpointsByApplication(ctx context.Context, applicationID int64) ([]AppMetricsEndpoint, error)
+	// Every endpoint of every app with metrics on and a token, with the names and
+	// ids its series are labelled with. Ordered so the rendered module is stable.
+	ListMetricsScrapeTargets(ctx context.Context) ([]ListMetricsScrapeTargetsRow, error)
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
@@ -219,6 +230,9 @@ type Querier interface {
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
+	SetApplicationMetricsEnabled(ctx context.Context, arg SetApplicationMetricsEnabledParams) error
+	SetApplicationMetricsToken(ctx context.Context, arg SetApplicationMetricsTokenParams) error
+	SetApplicationMetricsTokenEnv(ctx context.Context, arg SetApplicationMetricsTokenEnvParams) error
 	SetApplicationPlacement(ctx context.Context, arg SetApplicationPlacementParams) error
 	SetApplicationRegistry(ctx context.Context, arg SetApplicationRegistryParams) error
 	SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error

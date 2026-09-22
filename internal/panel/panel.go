@@ -8,15 +8,16 @@
 // lives in the database, survives restarts and gateway reconciliation, and
 // changes without redeploying Traefik.
 //
-// Two secrets keep that channel honest, both derived from one stored random
-// value (see Tokens). The provider token authenticates Traefik's poll. The
-// forwarded token is a request header the gateway adds to every request it
-// proxies to the panel; it is how Krill tells a request that came through
-// Traefik over HTTPS (whose X-Forwarded-For and X-Forwarded-Proto Traefik set
-// itself) from one sent straight to the UI port, which may carry anything.
+// Three secrets keep the gateway and apps-collector channels honest, all
+// derived from one stored random value (see Tokens). The provider token
+// authenticates Traefik's poll. The forwarded token is a request header the
+// gateway adds to every request it proxies to the panel; it is how Krill tells
+// a request that came through Traefik over HTTPS (whose X-Forwarded-For and
+// X-Forwarded-Proto Traefik set itself) from one sent straight to the UI port,
+// which may carry anything. The apps token authenticates Alloy's module poll.
 // They must differ: the forwarded token rides on every proxied request, so a
-// single shared token would let anyone fetch the gateway's configuration
-// through the gateway.
+// shared token would let anyone fetch protected configuration through the
+// gateway.
 package panel
 
 import (
@@ -60,16 +61,18 @@ const (
 // admin's login form. The ACME challenge router sits higher still.
 const routerPriority = 1_000_000
 
-// Tokens are the two secrets derived from the stored gateway secret.
+// Tokens are the three secrets derived from the stored gateway secret.
 type Tokens struct {
+	// AlloyApps authenticates the apps collector; rotates with the gateway secret.
+	AlloyApps string
 	Provider  string
 	Forwarded string
 }
 
-// DeriveTokens derives both tokens from the stored secret. Deriving rather than
+// DeriveTokens derives all tokens from the stored secret. Deriving rather than
 // storing them keeps one value to rotate and guarantees they never coincide.
 func DeriveTokens(secret string) Tokens {
-	return Tokens{Provider: derive(secret, "provider"), Forwarded: derive(secret, "forwarded")}
+	return Tokens{AlloyApps: derive(secret, "alloy-apps"), Provider: derive(secret, "provider"), Forwarded: derive(secret, "forwarded")}
 }
 
 func derive(secret, label string) string {

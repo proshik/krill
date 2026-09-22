@@ -25,6 +25,22 @@ func (q *Queries) CountAppPortsByHostPort(ctx context.Context, arg CountAppPorts
 	return count, err
 }
 
+const countTCPAppPortsByContainerPort = `-- name: CountTCPAppPortsByContainerPort :one
+SELECT count(*) FROM app_ports WHERE application_id = $1 AND container_port = $2 AND protocol = 'tcp'
+`
+
+type CountTCPAppPortsByContainerPortParams struct {
+	ApplicationID int64 `json:"application_id"`
+	ContainerPort int32 `json:"container_port"`
+}
+
+func (q *Queries) CountTCPAppPortsByContainerPort(ctx context.Context, arg CountTCPAppPortsByContainerPortParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTCPAppPortsByContainerPort, arg.ApplicationID, arg.ContainerPort)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAppPort = `-- name: CreateAppPort :one
 INSERT INTO app_ports (application_id, host_port, container_port, protocol)
 VALUES ($1, $2, $3, $4)

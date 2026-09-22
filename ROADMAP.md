@@ -90,6 +90,12 @@ Verified in code and tests, but not yet exercised on a real environment:
     down or drained during a settings change (global update with parallelism 1), an authenticated
     receiver (the 0400 root-owned secret is readable by Alloy), and memory over a long window (it
     was still rising at 14 minutes).
+13. Hiding an application's metrics path on its public domain, on a real install with an app
+    whose metrics are served on the same port as its domain. The production rollout of 2026-09-22
+    returned 404 for `/metrics`, `/METRICS` and `/metrics;x`, but that app serves metrics on a
+    separate port, so the 404 would have come without the rule. The case-insensitive and
+    `;`-parameter matching is covered by `TestHiddenMetricsPathsOnRealTraefik` against the pinned
+    Traefik only.
 
 ## Open
 
@@ -142,3 +148,9 @@ Verified in code and tests, but not yet exercised on a real environment:
 
 Docker Compose, MySQL / MariaDB / MongoDB, buildpacks, preview deployments, custom
 RBAC, 2FA and SSO.
+
+## Application metrics (observability stage 2)
+
+Implemented in code: per-app endpoints and encrypted bearer tokens, deployment-time injection, protection of metrics paths on public domains, an organization-network Alloy collector, and live scrape status on the Metrics tab. See [Application metrics](docs/guides/metrics.md).
+
+Disposable two-node live acceptance passed with four application replicas, per-node labels, token rotation and recovery, public metrics-path protection, network cooldown, and firewall isolation. Rolled out to a production install on 2026-09-22: one application collected (`up`), the token enforced (401 without it), the collector's own memory measured by `anon`. Hiding the metrics path on a domain that serves the metrics port is still open (live-acceptance queue, item 13).

@@ -1,0 +1,484 @@
+{
+  "name": "discovery.relabel",
+  "type": "block",
+  "localID": "discovery.relabel.app_7_3",
+  "moduleID": "apps.targets.default",
+  "label": "app_7_3",
+  "referencesTo": [
+    "discovery.dns.app_7_3"
+  ],
+  "referencedBy": [
+    "prometheus.scrape.app_7_3"
+  ],
+  "dataFlowEdgesTo": [
+    "prometheus.scrape.app_7_3"
+  ],
+  "health": {
+    "state": "healthy",
+    "message": "component evaluated",
+    "updatedTime": "2026-09-20T07:30:46.245584343Z"
+  },
+  "original": "",
+  "arguments": [
+    {
+      "name": "targets",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "object",
+            "value": [
+              {
+                "key": "__address__",
+                "value": {
+                  "type": "string",
+                  "value": "172.24.0.2:80"
+                }
+              },
+              {
+                "key": "__meta_dns_mx_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_name",
+                "value": {
+                  "type": "string",
+                  "value": "tasks.krill-7"
+                }
+              },
+              {
+                "key": "__meta_dns_ns_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_srv_record_port",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              },
+              {
+                "key": "__meta_dns_srv_record_target",
+                "value": {
+                  "type": "string",
+                  "value": ""
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "source_labels",
+          "type": "attr",
+          "value": {
+            "type": "array",
+            "value": [
+              {
+                "type": "string",
+                "value": "__address__"
+              }
+            ]
+          }
+        },
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "172\\.24\\.0\\.2:80"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "__tmp_krill_node"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill-cp-msk"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "source_labels",
+          "type": "attr",
+          "value": {
+            "type": "array",
+            "value": [
+              {
+                "type": "string",
+                "value": "__tmp_krill_node"
+              }
+            ]
+          }
+        },
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": ".+"
+          }
+        },
+        {
+          "name": "action",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "keep"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "source_labels",
+          "type": "attr",
+          "value": {
+            "type": "array",
+            "value": [
+              {
+                "type": "string",
+                "value": "__tmp_krill_node"
+              }
+            ]
+          }
+        },
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_node"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_org"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "Acme"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_org_id"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_project"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "bots"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_env"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "prod"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_app"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "base13"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "(.*)"
+          }
+        },
+        {
+          "name": "target_label",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "krill_app_id"
+          }
+        },
+        {
+          "name": "replacement",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "7"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rule",
+      "type": "block",
+      "body": [
+        {
+          "name": "regex",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "__tmp_krill_node"
+          }
+        },
+        {
+          "name": "action",
+          "type": "attr",
+          "value": {
+            "type": "string",
+            "value": "labeldrop"
+          }
+        }
+      ]
+    }
+  ],
+  "exports": [
+    {
+      "name": "output",
+      "type": "attr",
+      "value": {
+        "type": "array",
+        "value": [
+          {
+            "type": "object",
+            "value": [
+              {
+                "key": "__address__",
+                "value": {
+                  "type": "string",
+                  "value": "172.24.0.2:80"
+                }
+              },
+              {
+                "key": "__meta_dns_name",
+                "value": {
+                  "type": "string",
+                  "value": "tasks.krill-7"
+                }
+              },
+              {
+                "key": "krill_app",
+                "value": {
+                  "type": "string",
+                  "value": "base13"
+                }
+              },
+              {
+                "key": "krill_app_id",
+                "value": {
+                  "type": "string",
+                  "value": "7"
+                }
+              },
+              {
+                "key": "krill_env",
+                "value": {
+                  "type": "string",
+                  "value": "prod"
+                }
+              },
+              {
+                "key": "krill_node",
+                "value": {
+                  "type": "string",
+                  "value": "krill-cp-msk"
+                }
+              },
+              {
+                "key": "krill_org",
+                "value": {
+                  "type": "string",
+                  "value": "Acme"
+                }
+              },
+              {
+                "key": "krill_org_id",
+                "value": {
+                  "type": "string",
+                  "value": "1"
+                }
+              },
+              {
+                "key": "krill_project",
+                "value": {
+                  "type": "string",
+                  "value": "bots"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "rules",
+      "type": "attr",
+      "value": {
+        "type": "capsule",
+        "value": "capsule(\"relabel.Rules\")"
+      }
+    }
+  ],
+  "debugInfo": [],
+  "liveDebuggingEnabled": true
+}

@@ -309,6 +309,9 @@ func (s *Service) SetEnv(ctx context.Context, id Identity, ref, key, value strin
 		return Invalid(fmt.Sprintf("invalid value for env key %q: must be a single line (no newline or carriage return) — this operation changes exactly one KEY=VALUE line; for a multi-line value such as a PEM key, store it encoded (e.g. base64) on one line", key))
 	}
 
+	if !remove && app.MetricsEnabled && key == app.MetricsTokenEnv {
+		return Conflict(fmt.Sprintf("%s is the app's metrics token variable; rename it on the Metrics tab or pick another key", key))
+	}
 	newText, err := editEnvLine(app.EnvText, key, value, remove)
 	if err != nil {
 		return err

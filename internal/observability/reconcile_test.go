@@ -154,7 +154,7 @@ func fastConverge(t *testing.T) {
 func TestReconcileDeploysAgent(t *testing.T) {
 	fastConverge(t)
 	eng := newFakeEngine()
-	if _, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nil); err != nil {
+	if _, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -211,10 +211,10 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -222,7 +222,7 @@ func TestReconcileSkipsUnchangedAndRedeploysChanged(t *testing.T) {
 	}
 	first := eng.deploys[0]
 	s.Logs.Password = "rotated"
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -239,7 +239,7 @@ func TestReconcileRedeploysWhileUpdateUnsettled(t *testing.T) {
 	s := fullSettings()
 	eng.labels = NodeSpec(objectsFor(t, s, nil), "krill-net").Labels // same hash, but…
 	eng.update = "paused"                                            // …the update never finished
-	if _, err := Reconcile(context.Background(), eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(context.Background(), eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -254,13 +254,13 @@ func TestReconcileRedeploysWhenNetworkRecreated(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	eng.mu.Lock()
 	eng.created = true
 	eng.mu.Unlock()
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -277,7 +277,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng := newFakeEngine()
 	eng.rollback = true
-	if _, err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil); err == nil || !strings.Contains(err.Error(), "rolled back") {
+	if _, err := reconcileNode(ctx, eng, fullSettings(), "krill-net", nil); err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Errorf("rollback: %v", err)
 	}
 	if len(eng.pruned) != 0 {
@@ -286,7 +286,7 @@ func TestReconcileFailures(t *testing.T) {
 
 	eng = newFakeEngine()
 	eng.neverRun = true
-	_, err := Reconcile(ctx, eng, fullSettings(), "krill-net", nil)
+	_, err := reconcileNode(ctx, eng, fullSettings(), "krill-net", nil)
 	if err == nil || !strings.Contains(err.Error(), "docker service ps "+NodeServiceName) {
 		t.Errorf("timeout: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestReconcileFailures(t *testing.T) {
 	}
 
 	eng = newFakeEngine()
-	if _, err := Reconcile(ctx, eng, Settings{Enabled: true}, "krill-net", nil); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
+	if _, err := reconcileNode(ctx, eng, Settings{Enabled: true}, "krill-net", nil); !errors.Is(err, ErrNothingConfigured) || len(eng.deploys) != 0 {
 		t.Errorf("nothing configured: %v, deploys %d", err, len(eng.deploys))
 	}
 }
@@ -303,7 +303,7 @@ func TestReconcileFailures(t *testing.T) {
 func TestReconcileDisabled(t *testing.T) {
 	ctx := context.Background()
 	eng := newFakeEngine()
-	if _, err := Reconcile(ctx, eng, Settings{}, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, Settings{}, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 0 || len(eng.pruned) != 1 || len(eng.pruned[0]) != 0 {
@@ -312,7 +312,7 @@ func TestReconcileDisabled(t *testing.T) {
 	eng.labels = map[string]string{specHashLabel: "x"}
 	s := fullSettings()
 	s.Enabled = false
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nil); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nil); err != nil {
 		t.Fatal(err)
 	}
 	if eng.removed != 1 {
@@ -359,10 +359,10 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	eng := newFakeEngine()
 	ctx := context.Background()
 	s := fullSettings()
-	if _, err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Reconcile(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", []NodeName{{Hostname: "h1", Name: "control-plane"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 1 {
@@ -371,7 +371,7 @@ func TestReconcileNodeListChangeRedeploys(t *testing.T) {
 	first := eng.deploys[0]
 	// A worker joins.
 	nodes := []NodeName{{Hostname: "h1", Name: "control-plane"}, {Hostname: "h2", Name: "worker-1"}}
-	if _, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil {
+	if _, err := reconcileNode(ctx, eng, s, "krill-net", nodes); err != nil {
 		t.Fatal(err)
 	}
 	if len(eng.deploys) != 2 {
@@ -401,7 +401,7 @@ func TestReconcileCoverageFull(t *testing.T) {
 		{ID: "t1", NodeName: "h1", State: "running"},
 		{ID: "t2", NodeName: "h2", State: "running"},
 	}
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestReconcileCoverageReportsLaggingNode(t *testing.T) {
 		{ID: "t1", NodeName: "h1", State: "running"},
 		{ID: "t2", NodeName: "h2", State: "running"},
 	}
-	if cov, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil || cov.Expected != 2 || cov.Deployed != 2 {
+	if cov, err := reconcileNode(ctx, eng, s, "krill-net", nodes); err != nil || cov.Expected != 2 || cov.Deployed != 2 {
 		t.Fatalf("first pass = %+v, %v", cov, err)
 	}
 
@@ -442,7 +442,7 @@ func TestReconcileCoverageReportsLaggingNode(t *testing.T) {
 		{ID: "t1-new", NodeName: "h1", State: "running"},
 		{ID: "t2", NodeName: "h2", State: "running"}, // unchanged: still the pre-deploy task
 	}
-	cov, err := Reconcile(ctx, eng, s, "krill-net", nodes)
+	cov, err := reconcileNode(ctx, eng, s, "krill-net", nodes)
 	if err != nil {
 		t.Fatalf("second pass failed instead of succeeding with partial coverage: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestReconcileSkipUnchangedReportsNoCoverage(t *testing.T) {
 		{ID: "t1", NodeName: "h1", State: "running"},
 		{ID: "t2", NodeName: "h2", State: "running"},
 	}
-	if cov, err := Reconcile(ctx, eng, s, "krill-net", nodes); err != nil || cov.Deployed != 2 {
+	if cov, err := reconcileNode(ctx, eng, s, "krill-net", nodes); err != nil || cov.Deployed != 2 {
 		t.Fatalf("first pass = %+v, %v", cov, err)
 	}
 
@@ -483,7 +483,7 @@ func TestReconcileSkipUnchangedReportsNoCoverage(t *testing.T) {
 	eng.tasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
 	eng.mu.Unlock()
 
-	cov, err := Reconcile(ctx, eng, s, "krill-net", nodes)
+	cov, err := reconcileNode(ctx, eng, s, "krill-net", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestReconcileCoverageNamesDownNode(t *testing.T) {
 		// the node itself, but ServiceTasks can only report what Swarm
 		// knows about it).
 	}
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +539,7 @@ func TestReconcileCoverageIgnoresDrainedNode(t *testing.T) {
 		{ID: "t1", NodeName: "h1", State: "running"},
 		// h2 has no task at all — it is drained, so this must not matter.
 	}
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestReconcileCoverageMissingSorted(t *testing.T) {
 		{Hostname: "hm", Name: "mmm-worker", Expected: true},
 	}
 	eng.nextTasks = nil // none of them have a running task: all three are missing
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", nodes)
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestReconcileCoverageDegradedHostnamesSkipsCoverage(t *testing.T) {
 		{ID: "t1", NodeName: "n1", State: "running"},
 		{ID: "t2", NodeName: "n2", State: "running"},
 	}
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +612,7 @@ func TestReconcileCoverageListingFailureIsNotFatal(t *testing.T) {
 	eng := newFakeEngine()
 	eng.nextTasks = []docker.TaskPlacement{{ID: "t1", NodeName: "h1", State: "running"}}
 	eng.tasksErr = errors.New("connection refused")
-	cov, err := Reconcile(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
+	cov, err := reconcileNode(context.Background(), eng, fullSettings(), "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatalf("a coverage-listing failure must not fail the pass: %v", err)
 	}
@@ -626,7 +626,7 @@ func TestReconcileCoverageListingFailureIsNotFatal(t *testing.T) {
 func TestReconcileTeardownReportsNoCoverage(t *testing.T) {
 	eng := newFakeEngine()
 	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
-	cov, err := Reconcile(context.Background(), eng, Settings{}, "krill-net", twoExpectedNodes())
+	cov, err := reconcileNode(context.Background(), eng, Settings{}, "krill-net", twoExpectedNodes())
 	if err != nil {
 		t.Fatal(err)
 	}

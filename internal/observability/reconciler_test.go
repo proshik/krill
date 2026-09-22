@@ -33,10 +33,10 @@ func (c *countingApply) apply(context.Context, Settings) (Coverage, error) {
 func noNodes(context.Context) ([]NodeName, error) { return nil, nil }
 
 func newTestReconciler(load func(context.Context) (Settings, error), a *countingApply) *Reconciler {
-	r := NewReconciler(newFakeEngine(), load, noNodes, "krill-net")
+	r := NewReconciler(newFakeEngine(), load, noNodes, noApps, "krill-net")
 	r.apply = a.apply
 	r.debounce = 20 * time.Millisecond
-	r.state = func(context.Context) (docker.ServiceState, error) {
+	r.state = func(context.Context, string) (docker.ServiceState, error) {
 		return docker.ServiceState{Found: true, Running: 2, Desired: 3, Failed: 1}, nil
 	}
 	return r
@@ -128,8 +128,8 @@ func TestReconcilerReportsErrors(t *testing.T) {
 }
 
 func TestReconcilerStateError(t *testing.T) {
-	r := NewReconciler(newFakeEngine(), nil, noNodes, "krill-net")
-	r.state = func(context.Context) (docker.ServiceState, error) {
+	r := NewReconciler(newFakeEngine(), nil, noNodes, noApps, "krill-net")
+	r.state = func(context.Context, string) (docker.ServiceState, error) {
 		return docker.ServiceState{}, errors.New("daemon down")
 	}
 	if st := r.Status(context.Background()); st.StateErr != "daemon down" {
@@ -174,7 +174,7 @@ func TestReconcilerTearsDownDisabledWithUndecryptablePassword(t *testing.T) {
 	secret.Init("new-key")
 	eng := newFakeEngine()
 	eng.labels = map[string]string{specHashLabel: "x"} // an agent is running
-	r := NewReconciler(eng, func(c context.Context) (Settings, error) { return LoadForReconcile(c, q) }, noNodes, "krill-net")
+	r := NewReconciler(eng, func(c context.Context) (Settings, error) { return LoadForReconcile(c, q) }, noNodes, noApps, "krill-net")
 	r.pass(ctx)
 	if st := r.Status(ctx); st.LastErr != "" {
 		t.Errorf("pass failed: %s", st.LastErr)
@@ -194,7 +194,7 @@ func TestReconcilerFailsWhenNodeListingFails(t *testing.T) {
 	r := NewReconciler(newFakeEngine(),
 		func(context.Context) (Settings, error) { return fullSettings(), nil },
 		func(context.Context) ([]NodeName, error) { return nil, nodesErr },
-		"krill-net")
+		noApps, "krill-net")
 	r.pass(context.Background())
 	st := r.Status(context.Background())
 	if st.LastErr == "" || !strings.Contains(st.LastErr, "connection refused") {
@@ -212,7 +212,7 @@ func TestReconcilerTeardownIgnoresNodeListFailure(t *testing.T) {
 	r := NewReconciler(eng,
 		func(context.Context) (Settings, error) { return Settings{}, nil }, // disabled
 		func(context.Context) ([]NodeName, error) { return nil, errors.New("boom") },
-		"krill-net")
+		noApps, "krill-net")
 	r.pass(context.Background())
 	if st := r.Status(context.Background()); st.LastErr != "" {
 		t.Errorf("pass failed: %s", st.LastErr)
@@ -220,4 +220,8 @@ func TestReconcilerTeardownIgnoresNodeListFailure(t *testing.T) {
 	if eng.removed != 1 {
 		t.Errorf("agent not removed: removed=%d", eng.removed)
 	}
+}
+
+func noApps(context.Context) (AppsInput, error) {
+	return AppsInput{Unavailable: errors.New("test collector unavailable")}, nil
 }
