@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,36 +19,122 @@ const (
 	revertDelaySec = 120
 )
 
+// RevertDelay is how long after Apply the dead-man switch fires unless
+// Confirm cancels it.
+const RevertDelay = revertDelaySec * time.Second
+
+// snapshotPrologue opens every snapshot, so that restoring one replaces the
+// table instead of adding its rules to whatever the table holds by then — the
+// same full-replace preamble buildRuleset writes. A node with no table yet
+// snapshots as the prologue alone, which restores "no table".
+const snapshotPrologue = "table inet krill { }\ndelete table inet krill\n"
+
 // ErrNftMissing is returned by Status when the node has no `nft` binary: the
 // lockdown cannot be applied there, and reporting the table as merely absent
 // ("open") would hide that.
 var ErrNftMissing = errors.New("firewall: nft is not installed on the node")
+
+// RevertArmedError is returned by Apply when an earlier change on the node is
+// still awaiting confirmation, i.e. its dead-man switch is armed. Apply then
+// changes nothing: taking a new snapshot would overwrite the one the armed
+// switch restores with the unconfirmed ruleset, and the switch would put the
+// unconfirmed state back instead of the last good one.
+type RevertArmedError struct {
+	// At is when the armed switch fires; zero if the node did not say.
+	At time.Time
+}
+
+func (e *RevertArmedError) Error() string {
+	if e.At.IsZero() {
+		return "firewall: an earlier change is still awaiting confirmation"
+	}
+	return "firewall: an earlier change is still awaiting confirmation; it reverts at " + e.At.UTC().Format(time.RFC3339)
+}
 
 // Runner runs a command on one node, feeding stdin, returning stdout+stderr.
 type Runner interface {
 	Run(ctx context.Context, stdin, cmd string) (string, error)
 }
 
+// armScript refuses while a switch is armed (the timer is waiting, or it fired
+// and its `nft -f` is still running), and otherwise snapshots the current
+// table and schedules its restore. It prints "armed <epoch>" or
+// "pending <epoch>" — the epoch being when the switch fires, or "-" if unknown.
+//
+// The check, the snapshot and the arming run under an flock, so two Applies
+// cannot both pass the check: the second then snapshots after the first has
+// already applied its ruleset, and would save that over the good snapshot.
+// The lock is taken on a fixed fd, which busybox's flock understands as well
+// as util-linux's; a node without flock at all still gets the rest.
+func armScript(savePath string) string {
+	return fmt.Sprintf(`set -e
+unit=%[1]s
+prev=%[2]s
+at="$prev.at"
+exec 9>"$prev.lock"
+if command -v flock >/dev/null 2>&1; then flock 9; fi
+if systemctl is-active --quiet "$unit.timer" "$unit.service"; then
+	echo "pending $(cat "$at" 2>/dev/null || echo -)"
+	exit 0
+fi
+# A fired switch whose nft failed leaves the unit behind in "failed", and
+# systemd-run refuses to reuse the name until it is reset.
+systemctl reset-failed "$unit.timer" "$unit.service" >/dev/null 2>&1 || true
+{ printf '%[3]s'; nft list table inet krill 2>/dev/null || true; } > "$prev.tmp"
+mv "$prev.tmp" "$prev"
+echo $(( $(date +%%s) + %[4]d )) > "$at"
+systemd-run --on-active=%[4]d --unit="$unit" nft -f "$prev"
+echo "armed $(cat "$at")"
+`, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec)
+}
+
 // Apply installs the ruleset with a dead-man switch: it first snapshots the
 // current table and schedules an auto-revert in revertDelaySec, THEN applies the
 // new ruleset. If the caller cannot reach the node afterwards, the revert fires
 // and restores access. On success the caller must invoke Confirm to cancel it.
+//
+// While an earlier Apply on the node is unconfirmed, Apply returns a
+// *RevertArmedError and touches nothing.
 func Apply(ctx context.Context, r Runner, ruleset string) error {
-	// Snapshot current table (or a delete stub if it doesn't exist yet).
-	save := fmt.Sprintf("nft list table inet krill > %s 2>/dev/null || echo 'delete table inet krill' > %s", revertSavePath, revertSavePath)
-	if _, err := r.Run(ctx, "", save); err != nil {
-		return fmt.Errorf("snapshot ruleset: %w", err)
+	out, err := r.Run(ctx, "", armScript(revertSavePath))
+	if err != nil {
+		return fmt.Errorf("schedule revert: %w: %s", err, strings.TrimSpace(out))
 	}
-	// Schedule the auto-revert.
-	sched := fmt.Sprintf("systemd-run --on-active=%d --unit=%s nft -f %s", revertDelaySec, revertUnit, revertSavePath)
-	if _, err := r.Run(ctx, "", sched); err != nil {
-		return fmt.Errorf("schedule revert: %w", err)
+	state, at := parseArmOutput(out)
+	switch state {
+	case "pending":
+		return &RevertArmedError{At: at}
+	case "armed":
+	default:
+		return fmt.Errorf("schedule revert: unexpected output %q", strings.TrimSpace(out))
 	}
 	// Apply the new ruleset via stdin.
 	if _, err := r.Run(ctx, ruleset, "nft -f -"); err != nil {
+		// `nft -f` is one transaction: a rejected ruleset changed nothing, so
+		// the armed switch would only block the next attempt for its full delay.
+		if cerr := Confirm(ctx, r); cerr != nil {
+			return fmt.Errorf("apply ruleset: %w (disarming the revert also failed: %v)", err, cerr)
+		}
 		return fmt.Errorf("apply ruleset: %w", err)
 	}
 	return nil
+}
+
+// parseArmOutput reads armScript's last line: its state word and, when the
+// node reported one, the time the switch fires.
+func parseArmOutput(out string) (string, time.Time) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) == 0 {
+		return "", time.Time{}
+	}
+	var at time.Time
+	if len(fields) > 1 {
+		if sec, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
+			at = time.Unix(sec, 0)
+		}
+	}
+	return fields[0], at
 }
 
 // Confirm cancels the pending auto-revert after the caller has verified the node
@@ -73,6 +160,19 @@ func Status(ctx context.Context, r Runner) (bool, error) {
 		return false, ErrNftMissing
 	}
 	return strings.Contains(out, "yes"), nil
+}
+
+// GatewayOnly reports whether the node's live table admits some port only from
+// GatewayInterface — the rule BuildManagerRuleset writes for gatewayPorts, i.e.
+// the control plane's UI port closed to the world. A node with no table
+// reports false. It reads the host, not what Krill last stored, so callers can
+// notice the two disagreeing.
+func GatewayOnly(ctx context.Context, r Runner) (bool, error) {
+	out, err := r.Run(ctx, "", "nft list table inet krill 2>/dev/null || true")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, fmt.Sprintf("iifname %q", GatewayInterface)), nil
 }
 
 // RevertPending reports whether an Apply is still awaiting Confirm, i.e. the

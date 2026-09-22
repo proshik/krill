@@ -163,12 +163,16 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.q.SetDomainTLS(r.Context(), db.SetDomainTLSParams{ID: d.ID, Tls: !d.Tls}); err != nil {
+	tls, ok := s.desiredState(w, r, "tls")
+	if !ok {
+		return
+	}
+	if err := s.q.SetDomainTLS(r.Context(), db.SetDomainTLSParams{ID: d.ID, Tls: tls}); err != nil {
 		logFrom(r).Error("toggleDomainTLS: update failed", "err", err, "domain_id", d.ID)
 		s.flashErrT(w, r, "flash.err.update_domain")
 		return
 	}
-	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", !d.Tls)
+	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
 	s.flashOK(w, r, "flash.ok.tls_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)

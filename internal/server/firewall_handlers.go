@@ -12,6 +12,7 @@ import (
 
 	"github.com/proshik/krill/internal/cluster"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -264,6 +265,10 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	back := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/firewall"
 	ips, err := s.clusterIPs(r)
 	if err != nil {
@@ -328,7 +333,7 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		// just got cut off. Verify the node is still swarm-Ready before
 		// cancelling the auto-revert — if it isn't, leave the dead-man
 		// switch armed so the node reverts itself.
-		if !s.nodesSwarmReady(r.Context(), []string{n.SwarmNodeID}) {
+		if !s.nodesSwarmReady(r.Context(), logFrom(r), []string{n.SwarmNodeID}) {
 			logFrom(r).Warn("firewall lockdown: node not swarm-ready after apply; skipping confirm, auto-revert will fire", "node", n.Name)
 			continue
 		}
@@ -352,8 +357,8 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("lockdownWorkers: clear superseded panel close failed", "err", err)
 		}
 	}
-	if key := s.lockdownControlPlane(r, cpRuleset); key != "" {
-		s.setFlash(w, r, "err", i18n.T(r.Context(), key))
+	if res := s.lockdownControlPlane(r, cpRuleset); res.Err != "" {
+		s.setFlash(w, r, "err", res.message(r.Context(), ""))
 	} else {
 		s.flashOK(w, r, "flash.ok.firewall_cp_pending")
 	}
@@ -363,34 +368,90 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
-// lockdownControlPlane applies ruleset to the control-plane host and returns an
-// i18n error key, or "" when the ruleset is in place awaiting the operator's
-// confirmation. It never confirms: see confirmControlPlaneFirewall.
-func (s *Server) lockdownControlPlane(r *http.Request, ruleset string) string {
+// lockFirewall takes the lock every firewall-changing handler holds for its
+// whole run, or answers "busy" and returns false. The dead-man switch guards
+// one change at a time, and these handlers read state, change the host and
+// record the result in steps another request could interleave with: two
+// overlapping closes, or a confirmation racing its own duplicate, would each
+// act on what the other was about to change. Refusing is right for a
+// duplicate click and harmless for anything else — the operator retries.
+func (s *Server) lockFirewall(w http.ResponseWriter, r *http.Request) bool {
+	if !s.fwMu.TryLock() {
+		logFrom(r).Warn("firewall change refused: another one is still running")
+		s.flashErrT(w, r, "flash.err.firewall_busy")
+		return false
+	}
+	return true
+}
+
+// cpApply is the outcome of lockdownControlPlane.
+type cpApply struct {
+	// Applied: the ruleset is on the host and the dead-man switch is armed,
+	// whether or not the swarm check afterwards passed.
+	Applied bool
+	// Err is an i18n key; "" when the ruleset is in place and the swarm stayed
+	// healthy. With Applied it is the swarm-check failure: the operator can
+	// still confirm, and otherwise the switch reverts at RevertAt.
+	Err string
+	// RevertAt is when the armed switch fires: this apply's own, or the
+	// earlier unconfirmed one that refused it (Err = firewall_cp_armed).
+	RevertAt time.Time
+}
+
+// lockdownControlPlane applies ruleset to the control-plane host. It never
+// confirms: see confirmControlPlaneFirewall.
+func (s *Server) lockdownControlPlane(r *http.Request, ruleset string) cpApply {
+	log := logFrom(r)
 	// Snapshot which nodes are healthy BEFORE applying: a node that was already
 	// down must not make the check fail, and one that goes down right after the
 	// apply is the manager dropping its swarm traffic.
 	healthy, err := s.readySwarmNodeIDs(r.Context())
 	if err != nil {
-		logFrom(r).Error("control-plane firewall: list swarm nodes failed", "err", err)
-		return "flash.err.internal"
+		log.Error("control-plane firewall: list swarm nodes failed", "err", err)
+		return cpApply{Err: "flash.err.internal"}
 	}
 	if err := firewall.Apply(r.Context(), s.cpFirewall, ruleset); err != nil {
-		logFrom(r).Warn("control-plane firewall apply failed", "err", err)
-		return "flash.err.firewall_cp_apply"
+		var armed *firewall.RevertArmedError
+		if errors.As(err, &armed) {
+			// An earlier change is unconfirmed; applying on top would replace
+			// the snapshot its switch restores.
+			log.Warn("control-plane firewall: an earlier change is still armed; nothing applied", "revert_at", armed.At)
+			return cpApply{Err: "flash.err.firewall_cp_armed", RevertAt: armed.At}
+		}
+		log.Warn("control-plane firewall apply failed", "err", err)
+		return cpApply{Err: "flash.err.firewall_cp_apply"}
 	}
+	res := cpApply{Applied: true, RevertAt: time.Now().Add(firewall.RevertDelay)}
 	// Established connections pass any ruleset, so a keep-alive connection
 	// opened before the apply could carry the confirmation past a rule that
 	// admits nothing new. Drop the idle ones; the caller closes its own.
 	if s.panel.closeIdleConns != nil {
 		s.panel.closeIdleConns()
 	}
-	if !s.nodesSwarmReady(r.Context(), healthy) {
-		logFrom(r).Warn("control-plane firewall: swarm nodes dropped after apply; leaving the auto-revert armed")
-		return "flash.err.firewall_cp_cluster"
+	if !s.nodesSwarmReady(r.Context(), log, healthy) {
+		log.Warn("control-plane firewall: swarm nodes dropped after apply; leaving the auto-revert armed", "revert_at", res.RevertAt)
+		res.Err = "flash.err.firewall_cp_cluster"
+		return res
 	}
-	logFrom(r).Info("control-plane firewall applied; awaiting operator confirmation")
-	return ""
+	log.Info("control-plane firewall applied; awaiting operator confirmation")
+	return res
+}
+
+// message renders res.Err for a flash; key overrides it (a caller with its own
+// wording for the same outcome). The keys for an armed switch take its time.
+func (res cpApply) message(ctx context.Context, key string) string {
+	if key == "" {
+		key = res.Err
+	}
+	switch res.Err {
+	case "flash.err.firewall_cp_armed", "flash.err.firewall_cp_cluster":
+		at := "?"
+		if !res.RevertAt.IsZero() {
+			at = res.RevertAt.Local().Format("15:04:05")
+		}
+		return i18n.Tf(ctx, key, at)
+	}
+	return i18n.T(ctx, key)
 }
 
 // confirmControlPlaneFirewall cancels the control plane's dead-man switch.
@@ -409,6 +470,10 @@ func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.cpFirewall == nil {
 		http.NotFound(w, r)
 		return
@@ -469,34 +534,52 @@ func (s *Server) readySwarmNodeIDs(ctx context.Context) ([]string, error) {
 // by a firewall change, so a single snapshot right after Apply isn't
 // trustworthy. s.engine == nil (unit tests, or a single-node deployment with no
 // cluster to check) or an empty ids returns true: there's no swarm to inspect.
-func (s *Server) nodesSwarmReady(ctx context.Context, ids []string) bool {
+//
+// Only a node seen not Ready/Active fails the check. A failed node listing is
+// the local daemon's answer, not evidence about the firewall, so it is logged
+// and the next poll decides; it fails the check only if no poll succeeds.
+func (s *Server) nodesSwarmReady(ctx context.Context, log *slog.Logger, ids []string) bool {
 	if s.engine == nil || len(ids) == 0 {
 		return true
 	}
 	const checks = 3
+	seen := false
 	for i := 0; i < checks; i++ {
 		if i > 0 {
 			select {
 			case <-ctx.Done():
+				log.Warn("swarm readiness check: request ended before the check finished", "err", ctx.Err(), "poll", i+1)
 				return false
 			case <-time.After(4 * time.Second):
 			}
 		}
 		nodes, err := s.engine.Nodes(ctx)
 		if err != nil {
-			return false
+			log.Warn("swarm readiness check: listing nodes failed", "err", err, "poll", i+1)
+			continue
 		}
-		ready := make(map[string]bool, len(nodes))
+		seen = true
+		byID := make(map[string]docker.SwarmNode, len(nodes))
 		for _, n := range nodes {
-			ready[n.ID] = n.State == "ready" && n.Availability == "active"
+			byID[n.ID] = n
 		}
 		for _, id := range ids {
-			if !ready[id] {
+			n, ok := byID[id]
+			if !ok {
+				log.Warn("swarm readiness check: node missing from the swarm", "node_id", id, "poll", i+1)
+				return false
+			}
+			if n.State != "ready" || n.Availability != "active" {
+				log.Warn("swarm readiness check: node not ready", "node_id", id, "hostname", n.Hostname,
+					"state", n.State, "availability", n.Availability, "poll", i+1)
 				return false
 			}
 		}
 	}
-	return true
+	if !seen {
+		log.Warn("swarm readiness check: no poll could list the nodes")
+	}
+	return seen
 }
 
 // openWorkers removes the lockdown table on every worker node and on the
@@ -506,6 +589,10 @@ func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	rows, err := s.q.ListClusterNodes(r.Context())
 	if err != nil {
 		logFrom(r).Error("openWorkers: list cluster nodes failed", "err", err)

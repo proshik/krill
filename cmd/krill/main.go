@@ -521,10 +521,12 @@ func run() error {
 		// An API token is a bearer credential: whoever reads one off the wire can
 		// replay it until it is revoked. Over plain HTTP a single interception —
 		// any hop between the agent and this process — is enough, so say so at
-		// startup rather than serving tokens in clear text silently.
-		if !strings.HasPrefix(cfg.BaseURL(), "https://") {
+		// startup rather than serving tokens in clear text silently. The same
+		// address the UI and the webhook URLs show is checked, so an active panel
+		// domain counts as https; one confirmed later is not re-checked.
+		if u := app.BaseURL(ctx); !strings.HasPrefix(u, "https://") {
 			slog.Warn("agent API enabled but the public URL is not https; bearer tokens will cross the network in clear text",
-				"base_url", cfg.BaseURL())
+				"base_url", u)
 		}
 	} else {
 		slog.Info("agent API disabled (KRILL_AGENT_API_ENABLED=false)")

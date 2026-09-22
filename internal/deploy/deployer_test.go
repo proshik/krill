@@ -1015,3 +1015,32 @@ func TestBuildSpecContainerLabels(t *testing.T) {
 		t.Error("container labels must not become service labels")
 	}
 }
+
+// slowCountStore widens the window between enqueue's in-flight count and its
+// create, where two overlapping requests used to both count zero.
+type slowCountStore struct{ *fakeStore }
+
+func (s slowCountStore) CountRunningDeployments(ctx context.Context, appID int64) (int64, error) {
+	n, err := s.fakeStore.CountRunningDeployments(ctx, appID)
+	time.Sleep(50 * time.Millisecond) // the answer is already stale when it arrives
+	return n, err
+}
+
+// A double click on Deploy sends two overlapping requests; only one may queue.
+func TestEnqueueConcurrentRequestsQueueOneDeploy(t *testing.T) {
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, slowCountStore{st})
+	ids := make(chan int64, 2)
+	for i := 0; i < 2; i++ {
+		go func() { ids <- d.Enqueue(1, "manual") }()
+	}
+	queued := 0
+	for i := 0; i < 2; i++ {
+		if <-ids != 0 {
+			queued++
+		}
+	}
+	if queued != 1 {
+		t.Fatalf("overlapping deploys of one app queued %d, want 1", queued)
+	}
+}

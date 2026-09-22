@@ -113,6 +113,13 @@ internet. Only the gateway can reach it after that: its traffic to the host arri
 through the domain. It works like the lockdown: the change reverts on its own within two
 minutes unless you press **Keep direct access closed** on the same page, through the domain.
 The confirmation arriving is the proof that the gateway can still reach Krill.
+Until you confirm or the change reverts, any other change to the control-plane firewall,
+including a second **Close direct access**, is refused, and the message says when the
+automatic revert fires. Applying on top would replace the saved state the revert restores.
+**Open cluster** on the Firewall page is the only thing that does not wait.
+If the ruleset on the host ever disagrees with what Krill has recorded (the port closed on
+the host while Krill says it is open, or the reverse), the page says so and offers
+**Reopen direct access**, which rewrites the ruleset from the recorded state.
 
 While direct access is closed, the domain can't be changed or removed. Reopen direct access
 first. **Open cluster** on the Firewall page reopens it too, and a lockdown started afterwards

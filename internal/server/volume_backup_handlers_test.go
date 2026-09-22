@@ -104,7 +104,11 @@ func TestAddVolumeBackupHappyPath(t *testing.T) {
 	// Regression guard: a flat management sub-route must work for the legit
 	// owner (the dead-route bug made every such route 404 unconditionally).
 	vb := bks[0]
-	toggleRec := postForm(t, h, base+"/volumes/backups/"+i64(vb.ID)+"/toggle", cookie, url.Values{})
+	want := "1"
+	if vb.Enabled {
+		want = "0"
+	}
+	toggleRec := postForm(t, h, base+"/volumes/backups/"+i64(vb.ID)+"/toggle", cookie, url.Values{"enabled": {want}})
 	if toggleRec.Code != http.StatusSeeOther {
 		t.Fatalf("toggle volume backup want 303, got %d (%s)", toggleRec.Code, toggleRec.Body.String())
 	}

@@ -241,13 +241,19 @@ func TestToggleDomainTLS(t *testing.T) {
 	}
 	before := target.Tls
 
-	rec := postForm(t, h, base+"/domains/"+i64(target.ID)+"/tls", cookie, url.Values{})
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("toggle tls want 303, got %d", rec.Code)
+	want := "1"
+	if before {
+		want = "0"
 	}
-	after, _ := q.GetDomain(ctx, target.ID)
-	if after.Tls == before {
-		t.Errorf("Tls did not flip: before=%v after=%v", before, after.Tls)
+	// Posted twice, as a double click would: the second must not undo the first.
+	for i := 0; i < 2; i++ {
+		rec := postForm(t, h, base+"/domains/"+i64(target.ID)+"/tls", cookie, url.Values{"tls": {want}})
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("toggle tls want 303, got %d", rec.Code)
+		}
+		if after, _ := q.GetDomain(ctx, target.ID); after.Tls == before {
+			t.Errorf("Tls did not change after post #%d: before=%v after=%v", i+1, before, after.Tls)
+		}
 	}
 }
 

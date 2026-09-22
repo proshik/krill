@@ -112,6 +112,13 @@
   .k-spin { display:none; width:13px; height:13px; border:2px solid currentColor; border-right-color:transparent;
             border-radius:50%; animation:k-spin .7s linear infinite; }
   .htmx-request .k-spin, .k-spin.htmx-request { display:inline-block; }
+  /* A submit button whose request is running (see the double-submit guard in
+     app.js): a spinner in front of the label says something is happening. */
+  .k-btn[data-disabled-by-htmx], .k-btn[data-k-busy-btn] { cursor:progress; }
+  .k-btn[data-disabled-by-htmx]::before, .k-btn[data-k-busy-btn]::before {
+    content:""; display:inline-block; width:12px; height:12px; margin-right:6px; vertical-align:-2px;
+    border:2px solid currentColor; border-right-color:transparent; border-radius:50%;
+    animation:k-spin .7s linear infinite; }
   .k-label-required::after { content:" *"; color:var(--color-err); }
   /* section divider label inside a card/panel */
   .k-section { font-family:var(--font-mono); font-size:11px; text-transform:uppercase; letter-spacing:.06em;

@@ -209,3 +209,11 @@ func humanSize(n int64) string {
 	}
 	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGTPE"[exp]) + "iB"
 }
+
+// onOff is the form value of a toggle's desired state: "1" on, "0" off.
+func onOff(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
+}

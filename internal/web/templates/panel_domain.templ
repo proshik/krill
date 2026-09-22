@@ -16,7 +16,10 @@ type PanelDomainView struct {
 	HSTSPresets      []int32
 	OnDomain         bool   // this page was loaded through the domain over HTTPS
 	DomainURL        string // this page on the domain
-	DirectURL        string // this page's origin on the UI port, e.g. http://203.0.113.10:8080
+	DirectURL        string // a public address of the UI port, e.g. http://203.0.113.10:8080; "" if unknown
+	DirectPort       string // the UI port, for when no address is known
+	HostDirectClosed bool   // the host's live ruleset closes the UI port to the world
+	DirectDrift      bool   // ... and that disagrees with DirectPortClosed
 	DirectPortClosed bool
 	ClosePending     bool // a close is applied and awaits confirmation
 	CloseReverted    bool // a close was not confirmed in time and reverted
@@ -115,6 +118,15 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 					if v.CloseReverted {
 						<div class="k-toast k-toast-err mb-3">{ i18n.T(ctx, "panel.direct_reverted") }</div>
 					}
+					if v.DirectDrift {
+						<div class="k-toast k-toast-err mb-3" style="max-width:720px">
+							if v.HostDirectClosed {
+								{ i18n.T(ctx, "panel.direct_drift_host_closed") }
+							} else {
+								{ i18n.T(ctx, "panel.direct_drift_host_open") }
+							}
+						</div>
+					}
 					if v.ClosePending {
 						<p class="mb-3" style="max-width:720px">{ i18n.T(ctx, "panel.direct_pending") }</p>
 						if v.OnDomain {
@@ -128,7 +140,19 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 							<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "panel.direct_open") }</button>
 						</form>
 					} else {
-						<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "panel.direct_open_desc", v.DirectURL) }</p>
+						// With drift the warning above already says what the host does.
+						if !v.DirectDrift && v.DirectURL != "" {
+							<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "panel.direct_open_desc", v.DirectURL) }</p>
+						} else if !v.DirectDrift {
+							<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "panel.direct_open_desc_port", v.DirectPort) }</p>
+						}
+						if v.DirectDrift {
+							// The host already closes the port the stored state calls open:
+							// reopening rewrites the ruleset from the stored state.
+							<form method="post" hx-boost="false" class="mb-3" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/panel-domain/direct-port/open") }>
+								<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "panel.direct_open") }</button>
+							</form>
+						}
 						if !v.FirewallLocked {
 							<p style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "panel.direct_needs_lockdown") }</p>
 						} else if !v.OnDomain {

@@ -432,6 +432,7 @@ function mountTopology(el) {
 // krillEnhance wires up content present on the page or just swapped in: it mounts
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
+  krillGuardForms();
   document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
   document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
   document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
@@ -610,7 +611,11 @@ window.krillConfirm = function (form, message, confirmLabel, kind) {
     okEl.textContent = confirmLabel || "Delete";
     okEl.className = "k-btn " + (kind === "primary" ? "k-btn-primary" : "k-btn-danger");
   }
-  window.__krillConfirmAction = function () { form.submit(); };
+  window.__krillConfirmAction = function () {
+    // form.submit() fires no submit event, so the double-submit guard below
+    // would not see it: mark the form busy here, and refuse a second run.
+    if (krillFormBusy(form)) form.submit();
+  };
   dlg.showModal();
   return false;
 };
@@ -628,6 +633,85 @@ if (!window.__krillConfirmInit) {
   document.addEventListener("close", function (e) {
     if (e.target && e.target.id === "k-confirm") window.__krillConfirmAction = null;
   }, true);
+}
+
+// ── Double-submit guard ─────────────────────────────────────────────────────
+// A slow POST (closing the panel's direct port, a lockdown, a deploy) used to
+// leave its button live, and a second click sent the request again. Boosted
+// forms get htmx's own guards, set per form by krillGuardForms: hx-sync drops a
+// submit while the form's request is in flight (htmx's default would queue it
+// and send it afterwards), and hx-disabled-elt disables the form's submit
+// buttons — including ones outside it, tied by form= — until the response,
+// error or not. Forms submitted natively (hx-boost="false", and the confirm
+// dialog's form.submit()) navigate away, so they are marked busy once and
+// stay that way; a page restored from the back/forward cache is reset.
+
+// The form's submit buttons, wherever they sit in the document.
+function krillSubmitButtons(form) {
+  return Array.prototype.filter.call(form.elements, function (el) {
+    return (el.tagName === "BUTTON" && el.type === "submit") || (el.tagName === "INPUT" && el.type === "submit");
+  });
+}
+
+// Marks a natively submitted form busy and disables its submit buttons.
+// Returns false when it was already busy: the caller must not submit again.
+window.krillFormBusy = function (form) {
+  if (form.hasAttribute("data-k-busy")) return false;
+  form.setAttribute("data-k-busy", "");
+  // Disabled after the event, not during it: a disabled submitter is left out
+  // of the form data, and its name/value may be what the server reads.
+  setTimeout(function () {
+    krillSubmitButtons(form).forEach(function (b) {
+      if (b.disabled) return;
+      b.disabled = true;
+      b.setAttribute("data-k-busy-btn", "");
+    });
+  }, 0);
+  return true;
+};
+
+var krillFormSeq = 0;
+function krillGuardForms() {
+  document.querySelectorAll("form").forEach(function (form) {
+    if (form.hasAttribute("data-k-guarded")) return;
+    form.setAttribute("data-k-guarded", "");
+    if (form.closest('[hx-boost="false"]')) return; // native: see the submit listener
+    if (!form.hasAttribute("hx-sync")) form.setAttribute("hx-sync", "this:drop");
+    // A form with no submit button has nothing to disable, and htmx would
+    // log an error for a selector list that matches nothing.
+    if (!form.hasAttribute("hx-disabled-elt") && krillSubmitButtons(form).length > 0) {
+      // A plain selector: htmx's "find" would only reach the first button and
+      // none of the ones tied to the form from outside it.
+      // htmx splits the list on top-level commas, so none may sit inside a
+      // selector (no :is(a, b)).
+      if (!form.id) form.id = "k-form-" + (++krillFormSeq);
+      const id = form.id;
+      form.setAttribute("hx-disabled-elt", [
+        "#" + id + ' button:not([type="button"]):not([type="reset"])',
+        "#" + id + ' input[type="submit"]',
+        'button[form="' + id + '"]:not([type="button"]):not([type="reset"])',
+        'input[type="submit"][form="' + id + '"]',
+      ].join(", "));
+    }
+  });
+}
+
+if (!window.__krillSubmitGuardInit) {
+  window.__krillSubmitGuardInit = true;
+  // Bubble phase: htmx (boosted forms) and krillConfirm (dialog forms) have
+  // already called preventDefault on the submits they take over.
+  document.addEventListener("submit", function (e) {
+    if (e.defaultPrevented) return;
+    if (!krillFormBusy(e.target)) e.preventDefault();
+  });
+  window.addEventListener("pageshow", function (e) {
+    if (!e.persisted) return;
+    document.querySelectorAll("form[data-k-busy]").forEach(function (f) { f.removeAttribute("data-k-busy"); });
+    document.querySelectorAll("[data-k-busy-btn]").forEach(function (b) {
+      b.disabled = false;
+      b.removeAttribute("data-k-busy-btn");
+    });
+  });
 }
 
 // Copy text to the clipboard and show a confirmation toast.

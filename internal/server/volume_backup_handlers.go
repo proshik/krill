@@ -109,18 +109,22 @@ func (s *Server) deleteVolumeBackup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=volumes", http.StatusSeeOther)
 }
 
-// toggleVolumeBackup flips the enabled flag of a backup config (admin-only).
+// toggleVolumeBackup pauses or resumes a backup config (admin-only).
 func (s *Server) toggleVolumeBackup(w http.ResponseWriter, r *http.Request) {
 	c, vb, ok := s.loadVolumeBackupChain(w, r)
 	if !ok {
 		return
 	}
-	if err := s.q.SetVolumeBackupEnabled(r.Context(), db.SetVolumeBackupEnabledParams{ID: vb.ID, Enabled: !vb.Enabled}); err != nil {
+	enabled, ok := s.desiredState(w, r, "enabled")
+	if !ok {
+		return
+	}
+	if err := s.q.SetVolumeBackupEnabled(r.Context(), db.SetVolumeBackupEnabledParams{ID: vb.ID, Enabled: enabled}); err != nil {
 		logFrom(r).Error("toggleVolumeBackup: update failed", "err", err, "vb_id", vb.ID)
 		s.flashErrT(w, r, "flash.err.update_backup")
 		return
 	}
-	logFrom(r).Info("volume backup toggled", "vb_id", vb.ID, "enabled", !vb.Enabled)
+	logFrom(r).Info("volume backup toggled", "vb_id", vb.ID, "enabled", enabled)
 	if s.reloadVolumeBackups != nil {
 		s.reloadVolumeBackups()
 	}

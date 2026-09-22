@@ -83,12 +83,19 @@ Verified in code and tests, but not yet exercised on a real environment:
 10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
     advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
+    The first attempt (2026-09-22, two-node cluster, v0.3.1) found that a repeated close
+    overwrote the dead-man snapshot and that the snapshot added its rules to the table instead
+    of replacing it; both are fixed on `fix/firewall-deadman`. Why the swarm check reported
+    dropped nodes that stayed Ready is still unexplained: the check now logs its reason.
 11. Self-update on a real VPS from a real `proshik/krill` release. Everything else in the flow was accepted on
     2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
     (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
     during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
-    the documented recovery from a failed migration. Still open: the starting page through the panel domain
-    (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
+    the documented recovery from a failed migration. The update itself passed on a real two-node cluster on
+    2026-09-22: v0.3.0 → v0.3.1 from Settings → Updates, confirmed within seconds of the restart, `krill.prev`
+    kept, schema 48 → 49 applied cleanly. Still open: **Roll back** on a real server, the starting page
+    through the panel domain (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute
+    rollback window.
 12. The observability agent on a real two-node cluster: the agent appears on a node added
     later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
     and Loki, memory of the agent under load, Check against Mimir with authentication, a worker

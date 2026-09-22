@@ -125,18 +125,22 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
 
-// toggleBackup flips the enabled flag of a backup config (admin-only).
+// toggleBackup pauses or resumes a backup config (admin-only).
 func (s *Server) toggleBackup(w http.ResponseWriter, r *http.Request) {
 	b, _, ok := s.loadBackupChain(w, r)
 	if !ok {
 		return
 	}
-	if err := s.q.SetBackupEnabled(r.Context(), db.SetBackupEnabledParams{ID: b.ID, Enabled: !b.Enabled}); err != nil {
+	enabled, ok := s.desiredState(w, r, "enabled")
+	if !ok {
+		return
+	}
+	if err := s.q.SetBackupEnabled(r.Context(), db.SetBackupEnabledParams{ID: b.ID, Enabled: enabled}); err != nil {
 		logFrom(r).Error("toggleBackup: update failed", "err", err, "backup_id", b.ID)
 		s.flashErrT(w, r, "flash.err.update_backup")
 		return
 	}
-	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "enabled", !b.Enabled)
+	logFrom(r).Info("backup toggled", "backup_id", b.ID, "db_id", b.LogicalDatabaseID, "enabled", enabled)
 	if s.reloadBackups != nil {
 		s.reloadBackups()
 	}

@@ -598,6 +598,91 @@ func TestPanelDirectPortCloseConfirmOpen(t *testing.T) {
 	}
 }
 
+// The production incident: pressing Close again while the first close was
+// unconfirmed rewrote the dead-man snapshot with the closed ruleset, so the
+// revert restored the very change it guarded. A repeat must change nothing.
+func TestPanelDirectPortCloseTwiceKeepsFirstSwitch(t *testing.T) {
+	e := newPanelServer(t, "localhost")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-twice@k.local", "OrgPanelTwice")
+	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {panelHost}}, false)
+	e.post(t, base+"/panel-domain/confirm", cookie, url.Values{}, true)
+	postForm(t, e.h, base+"/firewall/lockdown", cookie, url.Values{})
+	postForm(t, e.h, base+"/firewall/confirm", cookie, url.Values{})
+
+	if rec := e.post(t, base+"/panel-domain/direct-port/close", cookie, url.Values{}, true); hasErrFlash(rec) {
+		t.Fatalf("first close: %q", flashCookieValue(rec))
+	}
+	applied := len(e.fw.rulesets)
+	rec := e.post(t, base+"/panel-domain/direct-port/close", cookie, url.Values{}, true)
+	if !hasErrFlash(rec) || e.fw.refused != 1 || len(e.fw.rulesets) != applied {
+		t.Fatalf("a repeated close must be refused untouched: flash=%q refused=%d rulesets=%d->%d",
+			flashCookieValue(rec), e.fw.refused, applied, len(e.fw.rulesets))
+	}
+	if row := e.row(t); row.DirectPortClosed || !row.DirectPortClosePending {
+		t.Fatalf("the first close must still be the pending one, got %+v", row)
+	}
+	// Open waits for the switch too; it would otherwise replace the snapshot.
+	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{}, true); !hasErrFlash(rec) || len(e.fw.rulesets) != applied {
+		t.Fatalf("open while armed must be refused untouched: flash=%q", flashCookieValue(rec))
+	}
+	// And the first close can still be confirmed.
+	if rec := e.post(t, base+"/panel-domain/direct-port/confirm", cookie, url.Values{}, true); hasErrFlash(rec) || e.fw.pending {
+		t.Fatalf("confirm: %q pending=%v", flashCookieValue(rec), e.fw.pending)
+	}
+}
+
+// The stand after the double close: the host closed the UI port but the stored
+// state said open, and the page offered only "Close". It must name the drift
+// and offer the way back.
+func TestPanelDirectPortDriftShown(t *testing.T) {
+	e := newPanelServer(t, "localhost")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-drift@k.local", "OrgPanelDrift")
+	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {panelHost}}, false)
+	e.post(t, base+"/panel-domain/confirm", cookie, url.Values{}, true)
+	postForm(t, e.h, base+"/firewall/lockdown", cookie, url.Values{})
+	postForm(t, e.h, base+"/firewall/confirm", cookie, url.Values{})
+
+	page := func() string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, base+"/panel-domain", nil)
+		req.AddCookie(cookie)
+		e.viaDomain(req, "203.0.113.7")
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page: %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	if body := page(); strings.Contains(body, "never recorded") {
+		t.Fatal("no drift while host and stored state agree")
+	}
+
+	// The host closes the port behind the stored state's back.
+	e.fw.rulesets = append(e.fw.rulesets, `table inet krill { chain input { iifname "docker_gwbridge" tcp dport 8080 accept } }`)
+	body := page()
+	if !strings.Contains(body, "never recorded") || !strings.Contains(body, "/panel-domain/direct-port/open") {
+		t.Fatalf("drift must be shown with a reopen action:\n%s", body)
+	}
+	if strings.Contains(body, "is open to the world") {
+		t.Fatal("the page must not claim the port is open while the host closes it")
+	}
+	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{}, true); hasErrFlash(rec) {
+		t.Fatalf("reopen: %q", flashCookieValue(rec))
+	}
+	if body := page(); strings.Contains(body, "never recorded") {
+		t.Fatal("reopening rewrites the ruleset; the drift must be gone")
+	}
+
+	// The opposite: stored closed, host open.
+	if err := e.q.SetPanelDirectPort(context.Background(), db.SetPanelDirectPortParams{DirectPortClosed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if body := page(); !strings.Contains(body, "lets it in from everywhere") {
+		t.Fatal("a closed stored state over an open host must be shown")
+	}
+}
+
 // A close that nobody confirmed reverts on the host; the page notices and the
 // stored state follows, so the domain can be managed again.
 func TestPanelDirectPortRevertDetected(t *testing.T) {

@@ -137,6 +137,11 @@ type Deployer struct {
 	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
 
 	maxBuildsPerOrg int // cap on in-flight deploys per organization, 0 = no cap
+
+	// admitMu makes enqueue's count-then-create one step: without it two
+	// overlapping requests for one app (a double click, a retrying agent) both
+	// count zero in flight and both queue a deploy.
+	admitMu sync.Mutex
 }
 
 // SetMaxBuildsPerOrg wires the per-organization in-flight-deploy cap (wired
@@ -313,6 +318,8 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
 		return 0
 	default:
 	}
+	d.admitMu.Lock()
+	defer d.admitMu.Unlock()
 	// Refuse a second deploy for an app that already has one in flight. The
 	// queue is 64 deep, drained by a single worker and shared by every tenant,
 	// so a caller retrying the same app — an agent in a retry loop is the

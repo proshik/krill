@@ -141,13 +141,23 @@ func TestToggleBackupFlipsEnabled(t *testing.T) {
 	}
 
 	base := backupsBase(o.ID, projID, envID, ldbID)
-	rec := postForm(t, h, base+"/"+i64(b.ID)+"/toggle", cookie, url.Values{})
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("toggle want 303, got %d (%s)", rec.Code, rec.Body.String())
+	// A pause posted twice — a double click — stays paused: the form carries
+	// the state it wants, not "flip".
+	for i := 0; i < 2; i++ {
+		rec := postForm(t, h, base+"/"+i64(b.ID)+"/toggle", cookie, url.Values{"enabled": {"0"}})
+		if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+			t.Fatalf("toggle want 303, got %d %q", rec.Code, flashCookieValue(rec))
+		}
+		if got, _ := q.GetBackup(ctx, b.ID); got.Enabled {
+			t.Fatalf("expected enabled=false after pause #%d, got true", i+1)
+		}
 	}
-	got, _ := q.GetBackup(ctx, b.ID)
-	if got.Enabled {
-		t.Fatalf("expected enabled=false after toggle, got true")
+	// A form without the state (a page from before) changes nothing.
+	if rec := postForm(t, h, base+"/"+i64(b.ID)+"/toggle", cookie, url.Values{}); !hasErrFlash(rec) {
+		t.Fatal("a toggle without its desired state must be refused")
+	}
+	if got, _ := q.GetBackup(ctx, b.ID); got.Enabled {
+		t.Fatal("a refused toggle must not flip the backup")
 	}
 }
 
