@@ -7,22 +7,29 @@
 // identity, decodes arguments, calls the service, and maps the result or the
 // error (see tools.go).
 //
-// Architecture note (why one shared *mcp.Server, identity from ctx): a spike
-// run before this package was written verified that the Identity RequireAPIToken
-// (internal/server) stashes on the *http.Request's context via
-// api.WithIdentity DOES reach a tool handler's ctx.Value(...) — confirmed
-// across three independent runs, using a single shared *mcp.Server rather
-// than one rebuilt per request. So Server builds exactly one *mcp.Server at
-// construction time (New) and every tool handler reads the caller's Identity
-// from ctx via api.IdentityFrom, the same pattern the REST adapter uses via
-// api_middleware.go. There is no per-request factory baking identity into
-// tool closures.
+// Architecture note (one shared *mcp.Server, identity per request): Server
+// builds exactly one *mcp.Server at construction time (New). RequireAPIToken
+// (internal/server) authenticates every HTTP request and stashes the resolved
+// Identity on its context via api.WithIdentity, but a tool handler cannot read
+// it from its own ctx: in a stateful session the SDK runs every handler on the
+// context of the request that OPENED the session (initialize), so ctx.Value
+// would return the identity of that first request for the session's whole
+// life. Instead Handler lifts each request's Identity into an SDK
+// auth.TokenInfo (bindSession), which the SDK hands to the handler of that very
+// request as req.Extra.TokenInfo — that is where callerIdentity (tools.go)
+// reads it. The same TokenInfo's UserID binds the session to the token that
+// opened it, so a request presenting another token with a known
+// Mcp-Session-Id is refused by the SDK ("session user mismatch", 403).
 package mcpsrv
 
 import (
+	"context"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/proshik/krill/internal/api"
@@ -54,8 +61,8 @@ func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 	s := &Server{mcpServer: srv}
 	// getServer always returns the same *mcp.Server regardless of the
 	// request: there is nothing request-specific to bake in at this layer —
-	// the caller's Identity travels through ctx instead (see the package
-	// doc). JSONResponse:true keeps every tools/call response a single JSON
+	// the caller's Identity reaches each tool through the per-request
+	// TokenInfo instead (see the package doc). JSONResponse:true keeps every tools/call response a single JSON
 	// body rather than a text/event-stream of one event; both are
 	// spec-compliant streamable-HTTP response shapes ($2.1.5 of the MCP
 	// spec), and JSON is simpler for a caller (and for this package's own
@@ -76,14 +83,55 @@ func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 	// domain to 127.0.0.1 sends exactly that, and the guard protects nothing
 	// here: every request to /mcp must already carry a bearer token
 	// (RequireAPIToken), which a rebound browser page does not have.
-	s.handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+	sdk := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return srv
 	}, &mcp.StreamableHTTPOptions{
 		JSONResponse:               true,
 		SessionTimeout:             sessionTimeout,
 		DisableLocalhostProtection: true,
 	})
+	// auth.RequireBearerToken is the only way to put a TokenInfo where the
+	// SDK looks for it (its context key is unexported). It does not verify
+	// anything here: RequireAPIToken already did, and bindSession only
+	// repackages the Identity it resolved. A request with no Identity (a bare
+	// handler in tests) goes straight to the SDK and every tool refuses it.
+	bound := auth.RequireBearerToken(bindSession, &auth.RequireBearerTokenOptions{
+		AllowMissingExpiration: true,
+	})(sdk)
+	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := api.IdentityFrom(r.Context()); ok {
+			bound.ServeHTTP(w, r)
+			return
+		}
+		sdk.ServeHTTP(w, r)
+	})
 	return s
+}
+
+// Keys of the auth.TokenInfo.Extra map bindSession fills in.
+const (
+	extraIdentity  = "krill.identity"
+	extraRequestID = "krill.request_id"
+)
+
+// bindSession turns the Identity RequireAPIToken resolved for this request
+// into the SDK's per-request TokenInfo. UserID is the token id, so a session
+// belongs to the one token that initialized it: the SDK compares it on every
+// later request of the session and answers 403 on a mismatch. Binding to the
+// token rather than to the user is the stricter choice — a user's read token
+// cannot ride the session their write token opened either.
+func bindSession(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
+	id, ok := api.IdentityFrom(ctx)
+	if !ok {
+		return nil, auth.ErrInvalidToken
+	}
+	return &auth.TokenInfo{
+		UserID: "token:" + strconv.FormatInt(id.TokenID, 10),
+		Extra: map[string]any{
+			extraIdentity:  id,
+			extraRequestID: middleware.GetReqID(ctx),
+		},
+	}, nil
 }
 
 // Handler returns the streamable-HTTP handler serving MCP sessions. It is
