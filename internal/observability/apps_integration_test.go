@@ -29,8 +29,13 @@ func TestAppsCollectorEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = nw.Remove(context.Background()) })
 	nginx := `events {} 
-http { server { listen 80; location /metrics { if ($http_authorization != "Bearer apptok") { return 401; } default_type text/plain; return 200 "probe_metric 1\n"; } } }`
-	target, err := testcontainers.Run(ctx, "nginx:alpine", network.WithNetwork([]string{"tasks.krill-7"}, nw), testcontainers.WithFiles(testcontainers.ContainerFile{Reader: strings.NewReader(nginx), ContainerFilePath: "/etc/nginx/nginx.conf", FileMode: 0644}), testcontainers.WithWaitStrategy(wait.ForLog("Configuration complete")))
+http { server { listen 80; location /metrics { if ($http_authorization != "Bearer apptok") { return 401; } default_type text/plain; return 200 "probe_metric 1\n"; } location = /big { if ($http_authorization != "Bearer apptok") { return 401; } default_type text/plain; alias /srv/big.txt; } } }`
+	// One sample over the module's per-target sample_limit.
+	var big strings.Builder
+	for i := 0; i <= 5000; i++ {
+		fmt.Fprintf(&big, "big_metric{i=\"%d\"} 1\n", i)
+	}
+	target, err := testcontainers.Run(ctx, "nginx:alpine", network.WithNetwork([]string{"tasks.krill-7"}, nw), testcontainers.WithFiles(testcontainers.ContainerFile{Reader: strings.NewReader(nginx), ContainerFilePath: "/etc/nginx/nginx.conf", FileMode: 0644}, testcontainers.ContainerFile{Reader: strings.NewReader(big.String()), ContainerFilePath: "/srv/big.txt", FileMode: 0644}), testcontainers.WithWaitStrategy(wait.ForLog("Configuration complete")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +70,10 @@ http { server { listen 80; location /metrics { if ($http_authorization != "Beare
 		if wrong {
 			token = "wrong"
 		}
-		module, err := RenderAppsModule([]AppTarget{{OrgID: 1, AppID: 7, EndpointID: 3, Org: "Acme", Project: "p", Env: "prod", App: "app", Port: 80, Path: "/metrics", Job: "relay", Token: token}}, map[int64][]TaskNode{7: {{IP: ip, Node: "node-a"}}})
+		module, err := RenderAppsModule([]AppTarget{
+			{OrgID: 1, AppID: 7, EndpointID: 3, Org: "Acme", Project: "p", Env: "prod", App: "app", Port: 80, Path: "/metrics", Job: "relay", Token: token},
+			{OrgID: 1, AppID: 7, EndpointID: 4, Org: "Acme", Project: "p", Env: "prod", App: "app", Port: 80, Path: "/big", Job: "big", Token: token},
+		}, map[int64][]TaskNode{7: {{IP: ip, Node: "node-a"}}})
 		if err != nil {
 			http.Error(w, "module error", 500)
 			return
@@ -135,6 +143,14 @@ http { server { listen 80; location /metrics { if ($http_authorization != "Beare
 		h, eps, err := ReadAppsStatus(ctx, exec, 7, []int64{3})
 		return err == nil && h.Healthy && len(eps) == 1 && len(eps[0].Targets) == 1 && eps[0].Targets[0].Health == "up" && eps[0].Targets[0].Node == "node-a"
 	})
+	// The oversized endpoint fails on its own and says why; the other keeps working.
+	until(45*time.Second, func() bool {
+		_, eps, err := ReadAppsStatus(ctx, exec, 7, []int64{4})
+		return err == nil && len(eps) == 1 && len(eps[0].Targets) == 1 && eps[0].Targets[0].Health == "down" && strings.Contains(eps[0].Targets[0].LastError, "sample limit")
+	})
+	if ok, _ := rec.seen("/api/v1/push", "big_metric"); ok {
+		t.Error("samples over sample_limit reached remote_write")
+	}
 	mu.Lock()
 	providerDown = true
 	beforePolls := polls

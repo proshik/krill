@@ -269,7 +269,7 @@ func waitService(ctx context.Context, eng Engine, name string, baseline []string
 			if lastErr != nil {
 				return fmt.Errorf("%s did not start within %s: %w", name, convergeTimeout, lastErr)
 			}
-			return fmt.Errorf("the agent is not running on every node after %s (see docker service ps %s)", convergeTimeout, name)
+			return fmt.Errorf("%s is not running everywhere it should after %s (see docker service ps %s)", name, convergeTimeout, name)
 		case <-time.After(convergePoll):
 		}
 	}

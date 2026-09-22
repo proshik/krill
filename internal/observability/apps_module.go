@@ -105,6 +105,14 @@ declare "targets" {
     scrape_timeout  = "10s"
     honor_labels    = false
 
+    // One collector serves every tenant: a target over these limits fails
+    // alone (up=0, visible on its Metrics tab) instead of exhausting the
+    // collector's memory for everyone.
+    sample_limit             = 5000
+    body_size_limit          = "5MiB"
+    label_limit              = 40
+    label_value_length_limit = 2048
+
     authorization {
       type        = "Bearer"
       credentials = {{.Token}}
