@@ -15,7 +15,7 @@ Collection can be disabled without deleting its endpoints or token. Up to ten en
 
 ## Application contract
 
-Serve Prometheus text format and accept `Authorization: Bearer <token>`. Krill supplies the token through `KRILL_METRICS_TOKEN`; the variable can be renamed on the Metrics tab. Krill always sends this header, although an application may choose not to authenticate it.
+Serve Prometheus text format and accept `Authorization: Bearer <token>`. Krill supplies the token through `KRILL_METRICS_TOKEN`; the variable can be renamed on the Metrics tab. Krill always sends this header. An application may choose not to check it, but then hiding the path on the domain (below) is its only protection, and that is best effort: check the token wherever you can.
 
 The variable name cannot conflict with the Environment tab or an injected database link. The token is encrypted using the existing `KRILL_SECRET_KEY` mechanism. Only organization administrators can reveal it; members can inspect endpoints and collection status.
 
@@ -45,7 +45,7 @@ The example uses `crypto/subtle`, `net/http`, `os`, and `github.com/prometheus/c
 
 ## Why the public path returns 404
 
-While collection is enabled, endpoints on the application's HTTP port are excluded from every domain router, including HTTP redirects and HTTPS routes. Both the exact path and its descendants are excluded: `/metrics` and `/metrics/…`, for example. Other paths continue to use the domain's normal exposure and access rules.
+While collection is enabled, endpoints on the application's HTTP port are excluded from every domain router, including HTTP redirects and HTTPS routes. The match ignores case and covers the path's descendants and `;` path parameters: for `/metrics`, the domain also refuses `/METRICS`, `/metrics/…` and `/metrics;…`, spellings that some backends (ASP.NET, servlet containers) still route to the same handler. Other paths, such as `/metricsfoo`, continue to use the domain's normal exposure and access rules. The rule can only anticipate how common backends normalize paths, so treat it as a second line behind the token check, not a replacement for it.
 
 An endpoint cannot use a container port that is published over TCP directly to the host. Conversely, adding such a published port is refused while an endpoint references it, even when collection is disabled. An endpoint on a separate internal port is accessible to the collector through the overlay network.
 
@@ -68,4 +68,6 @@ Endpoint and label changes normally reach the collector within 30 seconds. A new
 
 If Krill becomes unavailable, an already running collector keeps its last rules and continues scraping. If the collector restarts while Krill is unavailable, its initial module load fails and Swarm retries until Krill returns. The node collector is independent.
 
-Creating an organization adds another overlay network to the collector. This requires a stop-first rollout and briefly interrupts application collection; network-triggered passes are limited to one per minute. The collector uses its own persistent WAL volume, `krill-alloy-apps-data`, which is retained when collection is disabled. It has a 64 MiB memory limit and a 0.25 CPU limit. The memory limit was sized from a 15-minute two-node run with two applications and four replicas: peak anonymous memory was 36.8 MiB, then a 50% margin was rounded up to the next 32 MiB boundary.
+Creating an organization adds another overlay network to the collector. This requires a stop-first rollout and briefly interrupts application collection; network-triggered passes are limited to one per minute. The collector uses its own persistent WAL volume, `krill-alloy-apps-data`, which is retained when collection is disabled. It has a 64 MiB memory limit and a 0.25 CPU limit. The memory limit was sized from a 15-minute two-node run with two applications and four replicas: peak anonymous memory was 36.8 MiB, then a 50% margin was rounded up to the next 32 MiB boundary. Memory grows with the total number of series across all applications, so a larger installation may need a higher limit.
+
+Each endpoint is limited per scrape to 5,000 samples, a 5 MiB response body, 40 labels per series and 2,048 characters per label value. An endpoint over a limit fails on its own — the Metrics tab shows it `down` with the reason in its last error — and none of that scrape's samples are written; other endpoints and applications are unaffected.
