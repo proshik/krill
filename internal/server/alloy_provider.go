@@ -3,16 +3,17 @@ package server
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
-	"github.com/proshik/krill/internal/docker"
-	"github.com/proshik/krill/internal/observability"
-	"github.com/proshik/krill/internal/panel"
-	"github.com/proshik/krill/internal/secret"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/observability"
+	"github.com/proshik/krill/internal/panel"
+	"github.com/proshik/krill/internal/secret"
 )
 
 // appsProvider serves the apps collector's scrape module (see

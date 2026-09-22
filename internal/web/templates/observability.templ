@@ -10,9 +10,6 @@ import (
 
 // ObservabilityView is the Observability settings page.
 type ObservabilityView struct {
- AppsWanted bool
- AppsRunning, AppsDesired int
- AppsErr string
 	Wired              bool
 	Enabled            bool
 	MemoryLimit        string // human text, e.g. "256 MiB"
@@ -37,6 +34,11 @@ type ObservabilityView struct {
 	CoverageExpected int
 	CoverageDeployed int
 	CoverageMissing  []string
+
+	AppsWanted  bool
+	AppsRunning int
+	AppsDesired int
+	AppsErr     string
 }
 
 func observabilityPath(orgID int64) string {
@@ -53,12 +55,12 @@ templ Observability(org db.Organization, role string, v ObservabilityView) {
 			</div>
 		} else {
 			@observabilityState(org.ID, v)
- if v.AppsWanted {
- <p class="mb-4">{ i18n.Tf(ctx, "obs.apps.running", v.AppsRunning, v.AppsDesired) }</p>
- if v.AppsErr != "" {
- <p>{ v.AppsErr }</p>
- }
- }
+			if v.AppsWanted {
+				<p class="mb-4">{ i18n.Tf(ctx, "obs.apps.running", v.AppsRunning, v.AppsDesired) }</p>
+				if v.AppsErr != "" {
+					<p>{ v.AppsErr }</p>
+				}
+			}
 			<form method="post" action={ templ.SafeURL(observabilityPath(org.ID)) } class="k-card mb-4" autocomplete="off">
 				@observabilityTarget("metrics", i18n.T(ctx, "obs.metrics"), i18n.T(ctx, "obs.url_hint_metrics"), v.MetricsURL, v.MetricsUser, v.MetricsHasPassword)
 				@observabilityTarget("logs", i18n.T(ctx, "obs.logs"), i18n.T(ctx, "obs.url_hint_logs"), v.LogsURL, v.LogsUser, v.LogsHasPassword)

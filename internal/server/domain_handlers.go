@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/proshik/krill/internal/appmetrics"
 	"net"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
