@@ -70,8 +70,14 @@ Verified in code and tests, but not yet exercised on a real environment:
 3. Cluster-wide monitoring on two nodes (most likely already passed; to confirm).
 4. Moving a database instance's volume between nodes on a real cluster, including
    a node failing mid-transfer.
-5. The agent API with a real MCP client and a real CI job.
-6. `krill-cli` end to end against a real Krill and a real registry.
+5. The agent API with a real MCP client and a real CI job. The MCP half passed on 2026-09-23 on a
+   real two-node cluster (v0.3.2): all twelve tools, against a live app. The per-request identity and
+   session-to-token binding of v0.3.2 is covered by `TestMCPSessionSeesDemotion` and
+   `TestMCPSessionRejectsAnotherToken` only; that install has a single member and no client that can
+   swap the token inside a session. Still open: a real CI job calling the REST deploy hook.
+6. `krill-cli` end to end against a real Krill and a real registry. Everything except `deploy` with a
+   local image build (and `context rm`) passed on 2026-09-23 against a real install; that install's
+   app is built by CI, so there was nothing for the CLI to build.
 7. A full `install.sh` run from a published release on a fresh VM. `v0.1.0` exists, and
    downloading its binary the way the installer does was verified against `checksums.txt`,
    but the whole install from it has not been run.
@@ -85,18 +91,23 @@ Verified in code and tests, but not yet exercised on a real environment:
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
     The first attempt (2026-09-22, two-node cluster, v0.3.1) found that a repeated close
     overwrote the dead-man snapshot and that the snapshot added its rules to the table instead
-    of replacing it; both are fixed on `fix/firewall-deadman`. Why the swarm check reported
-    dropped nodes that stayed Ready is still unexplained: the check now logs its reason.
+    of replacing it; both were fixed in v0.3.2. A single close + confirmation then passed on the same
+    cluster, and on v0.3.2 the page shows the closed state correctly with no drift warning. Accepted.
+    Why the first attempt's swarm check reported dropped nodes that stayed Ready is still
+    unexplained; since v0.3.2 the check logs its reason, so a recurrence will say.
 11. Self-update on a real VPS from a real `proshik/krill` release. Everything else in the flow was accepted on
     2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
     (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
     during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
     the documented recovery from a failed migration. The update itself passed on a real two-node cluster on
     2026-09-22: v0.3.0 → v0.3.1 from Settings → Updates, confirmed within seconds of the restart, `krill.prev`
-    kept, schema 48 → 49 applied cleanly. Still open: **Roll back** on a real server, the starting page
+    kept, schema 48 → 49 applied cleanly; again on 2026-09-23, v0.3.1 → v0.3.2 (no migrations).
+    Still open: **Roll back** on a real server, the starting page
     through the panel domain (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute
     rollback window.
-12. The observability agent on a real two-node cluster: the agent appears on a node added
+12. The observability agent on a real two-node cluster. Per the 2026-09-23 acceptance report everything
+    below passed except the agent appearing on a node added later (no new node is planned on that
+    cluster): the agent appears on a node added
     later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
     and Loki, memory of the agent under load, Check against Mimir with authentication, a worker
     down or drained during a settings change (global update with parallelism 1), an authenticated
