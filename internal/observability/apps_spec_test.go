@@ -29,7 +29,7 @@ func TestAppsConfigAndSpec(t *testing.T) {
 	if !reflect.DeepEqual(s, other) {
 		t.Fatal("network order affects spec")
 	}
-	if s.Name != AppsServiceName || s.Image != Image || s.Global || s.Replicas != 1 || !s.UpdateStopFirst || s.MemoryLimitBytes != 64<<20 || s.NanoCPUs != 250000000 || !reflect.DeepEqual(s.Constraints, []string{"node.role==manager"}) || !reflect.DeepEqual(s.Args, nodeArgs()) {
+	if s.Name != AppsServiceName || s.Image != Image || s.Global || s.Replicas != 1 || !s.UpdateStopFirst || s.MemoryLimitBytes != 256<<20 || s.NanoCPUs != 250000000 || !reflect.DeepEqual(s.Constraints, []string{"node.role==manager"}) || !reflect.DeepEqual(s.Args, nodeArgs()) {
 		t.Fatalf("collector spec: %+v", s)
 	}
 	if len(s.Mounts) != 1 || s.Mounts[0].Source != appsVolume || s.Mounts[0].Target != storagePath || len(s.Configs) != 1 || s.Configs[0].Target != configPath || len(s.Secrets) != 2 {

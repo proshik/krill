@@ -15,7 +15,7 @@ const (
 	ObjectLabelAppsValue = "apps-collector"
 	appsProviderFile     = "krill_apps_provider"
 	AppsProviderPath     = "/_krill/alloy/apps"
-	AppsMemoryLimit      = 64 << 20
+	AppsMemoryLimit      = 256 << 20
 	AppsNanoCPUs         = 250_000_000
 )
 

@@ -905,7 +905,7 @@ var en = map[string]string{
 	"obs.title":                        "Observability",
 	"obs.desc":                         "Krill runs Grafana Alloy on every node and ships host metrics and container logs to your own Prometheus-compatible and Loki storage. Krill keeps no data itself.",
 	"obs.unwired":                      "Observability is not available: this Docker engine cannot manage Swarm configs and secrets.",
-	"obs.cost":                         "The node agent may use up to %s and half a CPU core on each node. With a metrics destination, an additional app collector runs on a manager with limits of 64 MiB and 0.25 CPU.",
+	"obs.cost":                         "The node agent may use up to %s and half a CPU core on each node. With a metrics destination, an additional app collector runs on a manager with limits of 256 MiB and 0.25 CPU.",
 	"obs.manual_alloy":                 "If you installed Alloy on the nodes yourself, remove it before turning this on: otherwise host metrics and logs arrive twice.",
 	"obs.labels_note":                  "Log lines of an app carry the krill_org, krill_project, krill_env and krill_app labels after its next deploy.",
 	"obs.metrics":                      "Metrics — Prometheus remote write",

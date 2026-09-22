@@ -68,6 +68,19 @@ Endpoint and label changes normally reach the collector within 30 seconds. A new
 
 If Krill becomes unavailable, an already running collector keeps its last rules and continues scraping. If the collector restarts while Krill is unavailable, its initial module load fails and Swarm retries until Krill returns. The node collector is independent.
 
-Creating an organization adds another overlay network to the collector. This requires a stop-first rollout and briefly interrupts application collection; network-triggered passes are limited to one per minute. The collector uses its own persistent WAL volume, `krill-alloy-apps-data`, which is retained when collection is disabled. It has a 64 MiB memory limit and a 0.25 CPU limit. The memory limit was sized from a 15-minute two-node run with two applications and four replicas: peak anonymous memory was 36.8 MiB, then a 50% margin was rounded up to the next 32 MiB boundary. Memory grows with the total number of series across all applications, so a larger installation may need a higher limit.
+Creating an organization adds another overlay network to the collector. This requires a stop-first rollout and briefly interrupts application collection; network-triggered passes are limited to one per minute. The collector uses its own persistent WAL volume, `krill-alloy-apps-data`, which is retained when collection is disabled. It has a 256 MiB memory limit and a 0.25 CPU limit. It is a limit, not a reservation: the collector uses only what the series it holds need.
+
+Memory grows with the total number of series across all collected applications. Measured on Alloy v1.19.2 by anonymous memory (`anon` in the container's `memory.stat`, not `docker stats`), three minutes per step, one target per application:
+
+| Series in total | Anonymous memory |
+|---|---|
+| none | 37 MiB |
+| 1,000 | 44 MiB |
+| 5,000 | 62 MiB |
+| 10,000 | 80 MiB |
+| 25,000 | 116 MiB |
+| 50,000 | 157 MiB |
+
+A typical service exposes a few hundred to a few thousand series; count yours with `count({krill_app="..."})` in Grafana. The limit leaves room for roughly 50,000 series with a margin. Beyond that, raise `AppsMemoryLimit`. An earlier 64 MiB limit, sized from four targets with one series each, would have run out at about 5,000 series.
 
 Each endpoint is limited per scrape to 5,000 samples, a 5 MiB response body, 40 labels per series and 2,048 characters per label value. An endpoint over a limit fails on its own — the Metrics tab shows it `down` with the reason in its last error — and none of that scrape's samples are written; other endpoints and applications are unaffected.
