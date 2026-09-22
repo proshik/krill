@@ -201,6 +201,13 @@ func TestDeploySuccessEnqueuesAndReturnsRunning(t *testing.T) {
 	if got.Status != "running" {
 		t.Fatalf("want status running, got %q", got.Status)
 	}
+	dep, err := f.q.GetDeployment(t.Context(), got.DeploymentID)
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if dep.Trigger != "api" {
+		t.Fatalf("an agent-API deploy must be recorded as trigger api, got %q", dep.Trigger)
+	}
 }
 
 func TestDeployWithTagUpdatesImageOnImageApp(t *testing.T) {

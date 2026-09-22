@@ -604,18 +604,20 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	} else {
-		image := strings.TrimSpace(r.FormValue("image"))
-		tag := strings.TrimSpace(r.FormValue("tag"))
-		if image != "" && tag != "" {
-			if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: c.App.ID, Image: image, Tag: tag}); err != nil {
-				logFrom(r).Error("deployApp: failed to update application image", "err", err, "app_id", c.App.ID, "image", image)
-				s.flashErrT(w, r, "flash.err.update_image")
-				return
-			}
-		}
 	}
-	if s.deployer.Enqueue(c.App.ID, "manual") == 0 {
+	// An image app's new reference travels with the deploy job and reaches the
+	// application row only once the job is accepted: written here first, a
+	// refused deploy would leave a tag nobody deployed, and a deploy already in
+	// flight could pick it up.
+	var deployID int64
+	image := strings.TrimSpace(r.FormValue("image"))
+	tag := strings.TrimSpace(r.FormValue("tag"))
+	if c.App.SourceType != "dockerfile" && image != "" && tag != "" {
+		deployID = s.deployer.EnqueueImage(c.App.ID, deploy.TriggerManual, image, tag)
+	} else {
+		deployID = s.deployer.Enqueue(c.App.ID, deploy.TriggerManual)
+	}
+	if deployID == 0 {
 		logFrom(r).Error("deployApp: deployment not accepted (queue full or shutting down)", "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.queue_deploy")
 		return
@@ -632,7 +634,7 @@ func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.deployer.EnqueueRebuild(c.App.ID, "manual") == 0 {
+	if s.deployer.EnqueueRebuild(c.App.ID, deploy.TriggerManual) == 0 {
 		logFrom(r).Error("rebuildApp: rebuild not accepted (queue full or shutting down)", "app_id", c.App.ID)
 		s.flashErrT(w, r, "flash.err.queue_rebuild")
 		return

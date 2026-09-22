@@ -625,6 +625,60 @@ func TestGetApplicationRejectsMismatchedRegistryHost(t *testing.T) {
 	}
 }
 
+// The image reference a deploy job carries replaces the row's before the
+// registry-host check, not after it: otherwise a job naming another host would
+// be checked against the row's (matching) image and ship the registry password
+// to whatever host the job names.
+func TestGetDeploymentAppChecksRegistryHostOfTheJobImage(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "jobref@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-jobref", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "Proj", Slug: "proj-jobref", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "production", Slug: "production"})
+
+	reg, err := q.CreateRegistry(ctx, db.CreateRegistryParams{
+		OrganizationID: o.ID, Name: "ghcr", RegistryUrl: "ghcr.io", Username: "me", Password: secret.Enc("registry-pw"),
+	})
+	if err != nil {
+		t.Fatalf("create registry: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "web", Image: "ghcr.io/me/app", Tag: "v1",
+		Domain: "web.jobref", Port: 80, EnvText: "",
+		SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if err := q.SetApplicationRegistry(ctx, db.SetApplicationRegistryParams{ID: app.ID, RegistryID: &reg.ID}); err != nil {
+		t.Fatalf("set registry: %v", err)
+	}
+	dep, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: TriggerManual})
+	if err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	store := NewDBStore(q)
+
+	got, err := store.GetDeploymentApp(ctx, dep.ID, ImageRef{Image: "ghcr.io/me/app", Tag: "v2"})
+	if err != nil {
+		t.Fatalf("a job image on the registry's host must pass: %v", err)
+	}
+	if got.Tag != "v2" || got.RegistryAuth == "" {
+		t.Fatalf("want the job's tag with registry auth, got tag %q auth %q", got.Tag, got.RegistryAuth)
+	}
+
+	got, err = store.GetDeploymentApp(ctx, dep.ID, ImageRef{Image: "evil.example/me/app", Tag: "v2"})
+	if err == nil {
+		t.Fatalf("expected the deploy to fail, got RegistryAuth=%q", got.RegistryAuth)
+	}
+	if !errors.Is(err, ErrCredentialHostMismatch) {
+		t.Errorf("got err %v, want ErrCredentialHostMismatch", err)
+	}
+}
+
 // A git credential must never be handed to a host it wasn't registered for:
 // the app's git_url points at a different host than the stored credential, so
 // GetApplication must fail with ErrCredentialHostMismatch instead of returning

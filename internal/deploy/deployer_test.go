@@ -276,14 +276,30 @@ type fakeStore struct {
 
 	runningByOrg int64 // stubbed CountRunningDeploymentsByOrg result
 	orgCountErr  error // stubbed CountRunningDeploymentsByOrg error
+
+	triggers  map[int64]string // deployID -> trigger
+	setImages []ImageRef       // SetApplicationImage calls, in order
 }
 
 func newFakeStore(a App) *fakeStore {
 	return &fakeStore{app: a, status: map[int64]string{}, deploys: map[int64]string{}, depApp: map[int64]int64{}, nextID: 100}
 }
 func (f *fakeStore) GetApplication(_ context.Context, id int64) (App, error) { return f.app, nil }
-func (f *fakeStore) GetDeploymentApp(_ context.Context, deployID int64) (App, error) {
-	return f.app, nil
+func (f *fakeStore) GetDeploymentApp(_ context.Context, deployID int64, ref ImageRef) (App, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.app
+	if ref.Tag != "" && a.SourceType != "dockerfile" {
+		a.Image, a.Tag = ref.Image, ref.Tag
+	}
+	return a, nil
+}
+func (f *fakeStore) SetApplicationImage(_ context.Context, _ int64, image, tag string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setImages = append(f.setImages, ImageRef{Image: image, Tag: tag})
+	f.app.Image, f.app.Tag = image, tag
+	return nil
 }
 func (f *fakeStore) SetStatus(_ context.Context, id int64, status string) error {
 	f.mu.Lock()
@@ -296,6 +312,10 @@ func (f *fakeStore) CreateDeployment(_ context.Context, appID int64, trigger str
 	defer f.mu.Unlock()
 	f.nextID++
 	f.depApp[f.nextID] = appID
+	if f.triggers == nil {
+		f.triggers = map[int64]string{}
+	}
+	f.triggers[f.nextID] = trigger
 	return f.nextID, nil
 }
 
