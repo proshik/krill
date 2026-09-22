@@ -72,7 +72,7 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `GET /api/v1/whoami` | read | User, organization, token level, live role, `can_write`. |
 | `GET /api/v1/apps` | read | Every app in the organization: path, id, status, source type, image and tag, domains. |
 | `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment. |
-| `GET /api/v1/apps/{app}/logs` | read | Runtime log tail. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`). |
+| `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`, e.g. unstructured output) is always kept. |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
 | `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. |
 | `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link`) — never values. |
