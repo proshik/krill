@@ -91,8 +91,11 @@ Verified in code and tests, but not yet exercised on a real environment:
     2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
     (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
     during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
-    the documented recovery from a failed migration. Still open: the starting page through the panel domain
-    (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute rollback window.
+    the documented recovery from a failed migration. The update itself passed on a real two-node cluster on
+    2026-09-22: v0.3.0 → v0.3.1 from Settings → Updates, confirmed within seconds of the restart, `krill.prev`
+    kept, schema 48 → 49 applied cleanly. Still open: **Roll back** on a real server, the starting page
+    through the panel domain (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute
+    rollback window.
 12. The observability agent on a real two-node cluster: the agent appears on a node added
     later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
     and Loki, memory of the agent under load, Check against Mimir with authentication, a worker
