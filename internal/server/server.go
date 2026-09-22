@@ -342,8 +342,9 @@ func (s *Server) Router() http.Handler {
 
 		// MCP adapter: the same twelve operations over streamable HTTP, behind
 		// the same bearer-token middleware as the REST surface — the caller's
-		// Identity travels from RequireAPIToken into every tool handler through
-		// the request context (api.WithIdentity / api.IdentityFrom). Both
+		// Identity travels from RequireAPIToken (api.WithIdentity) into every
+		// tool handler through the SDK's per-request TokenInfo, never through
+		// the session's own context (see internal/mcpsrv's package doc). Both
 		// patterns are served by the ONE handler built in SetAPI, so a client's
 		// session survives whichever of the two it addresses; chi's Handle
 		// covers every method, which streamable HTTP needs (POST for messages,

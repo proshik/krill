@@ -117,11 +117,12 @@ func TestMCPDisabledIsNotMounted(t *testing.T) {
 // TestMCPIdentityReachesToolsCall is the load-bearing test for the production
 // mount: it drives initialize → tools/call through the real router, and asserts
 // the tools/call — a LATER request in the session, not the one that created it —
-// comes back with THIS test's own seeded org id. The identity a tool sees can
-// only have arrived via RequireAPIToken → api.WithIdentity → the request context
-// → api.IdentityFrom inside the tool handler, so a passing assertion here is
-// direct evidence that context propagation survives past initialize with a
-// single shared *mcp.Server (the premise the whole adapter design rests on).
+// comes back with THIS test's own seeded org id: RequireAPIToken's Identity
+// reaches the tool handler through the SDK's per-request TokenInfo (see
+// internal/mcpsrv's package doc). Initialize and tools/call carry the same
+// token here, so this test alone cannot tell a per-request identity from one
+// captured at initialize — TestMCPSessionSeesDemotion and
+// TestMCPSessionRejectsAnotherToken below do.
 //
 // It also sends the follow-up to /mcp/sub rather than /mcp, proving the two
 // mount points share one handler (and therefore one session table): a second,
@@ -331,7 +332,6 @@ func TestMCPSessionRejectsAnotherToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create org A: %v", err)
 	}
-	appA := seedMCPApp(t, q, orgSvc, orgA.ID)
 	tokenA := issueAPIToken(t, q, uidA, orgA.ID, api.LevelWrite)
 
 	uidB := mkUser(t, q, "mcp-owner-b@k.local")
@@ -343,26 +343,22 @@ func TestMCPSessionRejectsAnotherToken(t *testing.T) {
 
 	sid := mcpInit(t, h, tokenA)
 
-	code, res := mcpCall(t, h, tokenB, sid, mcpWhoamiBody)
-	if code == http.StatusOK {
-		if who := mcpWhoami(t, res); who.UserID != uidB || who.OrgID != orgB.ID {
-			t.Fatalf("token B in A's session ran as user %d org %d, want B (%d/%d) or a refusal", who.UserID, who.OrgID, uidB, orgB.ID)
-		}
-	} else if code != http.StatusForbidden && code != http.StatusNotFound {
-		t.Fatalf("token B in A's session: want 403/404 or B's own identity, got %d", code)
+	// The SDK must refuse the request outright ("session user mismatch"),
+	// before any tool runs: a 200 carrying B's own identity would still mean
+	// the session is not bound to the token that opened it.
+	if code, _ := mcpCall(t, h, tokenB, sid, mcpWhoamiBody); code != http.StatusForbidden {
+		t.Fatalf("token B in A's session: want 403, got %d", code)
 	}
 
-	mcpCall(t, h, tokenB, sid, fmt.Sprintf(mcpSetEnvFmt, appA, "HIJACK"))
-	app, err := q.GetApplication(ctx, appA)
-	if err != nil {
-		t.Fatalf("get application: %v", err)
-	}
-	if strings.Contains(app.EnvText, "HIJACK=") {
-		t.Fatalf("token B wrote A's env_text through A's session: %q", app.EnvText)
+	// The binding is per token, not per user: A's own read token cannot ride
+	// the session A's write token opened either.
+	tokenARead := issueAPIToken(t, q, uidA, orgA.ID, api.LevelRead)
+	if code, _ := mcpCall(t, h, tokenARead, sid, mcpWhoamiBody); code != http.StatusForbidden {
+		t.Fatalf("A's read token in A's write session: want 403, got %d", code)
 	}
 
-	// The owner's own session keeps working after the refused attempt.
-	code, res = mcpCall(t, h, tokenA, sid, mcpWhoamiBody)
+	// The owner's own session keeps working after the refused attempts.
+	code, res := mcpCall(t, h, tokenA, sid, mcpWhoamiBody)
 	if code != http.StatusOK {
 		t.Fatalf("owner's whoami after the attempt: want 200, got %d", code)
 	}

@@ -61,8 +61,8 @@ func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 	s := &Server{mcpServer: srv}
 	// getServer always returns the same *mcp.Server regardless of the
 	// request: there is nothing request-specific to bake in at this layer —
-	// the caller's Identity travels through ctx instead (see the package
-	// doc). JSONResponse:true keeps every tools/call response a single JSON
+	// the caller's Identity reaches each tool through the per-request
+	// TokenInfo instead (see the package doc). JSONResponse:true keeps every tools/call response a single JSON
 	// body rather than a text/event-stream of one event; both are
 	// spec-compliant streamable-HTTP response shapes ($2.1.5 of the MCP
 	// spec), and JSON is simpler for a caller (and for this package's own
