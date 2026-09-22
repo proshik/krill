@@ -148,7 +148,7 @@ func TestWriteOpsRejectReadToken(t *testing.T) {
 	ops := map[string]func(api.Identity) error{
 		"deploy":  func(id api.Identity) error { _, err := f.svc.Deploy(t.Context(), id, f.appIDString, ""); return err },
 		"rebuild": func(id api.Identity) error { _, err := f.svc.Rebuild(t.Context(), id, f.appIDString); return err },
-		"reload":  func(id api.Identity) error { return f.svc.Reload(t.Context(), id, f.appIDString) },
+		"reload":  func(id api.Identity) error { _, err := f.svc.Reload(t.Context(), id, f.appIDString); return err },
 		"stop":    func(id api.Identity) error { return f.svc.Stop(t.Context(), id, f.appIDString) },
 		"set_env": func(id api.Identity) error { return f.svc.SetEnv(t.Context(), id, f.appIDString, "K", "V", false) },
 	}
@@ -174,7 +174,7 @@ func TestWriteOpsRejectReadTokenEvenForUnknownApp(t *testing.T) {
 	ops := map[string]func(api.Identity) error{
 		"deploy":  func(id api.Identity) error { _, err := f.svc.Deploy(t.Context(), id, bogus, ""); return err },
 		"rebuild": func(id api.Identity) error { _, err := f.svc.Rebuild(t.Context(), id, bogus); return err },
-		"reload":  func(id api.Identity) error { return f.svc.Reload(t.Context(), id, bogus) },
+		"reload":  func(id api.Identity) error { _, err := f.svc.Reload(t.Context(), id, bogus); return err },
 		"stop":    func(id api.Identity) error { return f.svc.Stop(t.Context(), id, bogus) },
 		"set_env": func(id api.Identity) error { return f.svc.SetEnv(t.Context(), id, bogus, "K", "V", false) },
 	}
@@ -392,6 +392,16 @@ type stubActionsEngine struct {
 	scaled    string
 	replicas  uint64
 	err       error
+
+	// state is what ServiceState reports; nil means a running service.
+	state *docker.ServiceState
+}
+
+func (e *stubActionsEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	if e.state != nil {
+		return *e.state, nil
+	}
+	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
 
 func (e *stubActionsEngine) ServiceRestart(_ context.Context, name string) error {
@@ -409,12 +419,54 @@ func TestReloadRestartsTheAppsService(t *testing.T) {
 	f := newAPIFixture(t)
 	eng := &stubActionsEngine{}
 	svc := api.NewService(f.q, eng, nil)
-	if err := svc.Reload(t.Context(), f.ident, f.appIDString); err != nil {
+	res, err := svc.Reload(t.Context(), f.ident, f.appIDString)
+	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	want := docker.ServiceName(f.appID)
 	if eng.restarted != want {
 		t.Fatalf("want restart of %q, got %q", want, eng.restarted)
+	}
+	if res.Action != "restart" || res.DeploymentID != 0 {
+		t.Fatalf("want a plain restart, got %+v", res)
+	}
+}
+
+// A stopped app must not be restarted on the spec it was stopped with — after
+// the organization network migration that is the shared network, away from
+// its databases. Reload deploys it instead, recorded as an API deploy.
+func TestReloadDeploysAStoppedApp(t *testing.T) {
+	for name, state := range map[string]docker.ServiceState{
+		"scaled to zero": {Found: true, Desired: 0},
+		"never deployed": {Found: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newAPIFixture(t)
+			hub := deploy.NewLogHub()
+			dep := deploy.New(noopEngine{}, noopBuilder{}, deploy.NewDBStore(f.q), hub, "krill-net")
+			// Not started: the deployment stays queued, which is all this checks.
+			t.Cleanup(dep.Stop)
+			eng := &stubActionsEngine{state: &state}
+			svc := api.NewService(f.q, eng, dep)
+
+			res, err := svc.Reload(t.Context(), f.ident, f.appIDString)
+			if err != nil {
+				t.Fatalf("reload: %v", err)
+			}
+			if eng.restarted != "" {
+				t.Fatalf("a stopped app was restarted in place (%q)", eng.restarted)
+			}
+			if res.Action != "deploy" || res.Status != "running" || res.DeploymentID == 0 {
+				t.Fatalf("want a queued deploy, got %+v", res)
+			}
+			d, err := f.q.GetDeployment(t.Context(), res.DeploymentID)
+			if err != nil {
+				t.Fatalf("get deployment: %v", err)
+			}
+			if d.Trigger != deploy.TriggerAPI {
+				t.Fatalf("trigger = %q, want %q", d.Trigger, deploy.TriggerAPI)
+			}
+		})
 	}
 }
 
@@ -435,7 +487,7 @@ func TestStopScalesTheAppsServiceToZero(t *testing.T) {
 // instead of panicking" requirement: the base fixture wires a nil engine.
 func TestReloadNilEngineReturnsError(t *testing.T) {
 	f := newAPIFixture(t)
-	if err := f.svc.Reload(t.Context(), f.ident, f.appIDString); err == nil {
+	if _, err := f.svc.Reload(t.Context(), f.ident, f.appIDString); err == nil {
 		t.Fatalf("want an error with no engine configured, got nil")
 	}
 }

@@ -114,25 +114,56 @@ func (s *Service) Rebuild(ctx context.Context, id Identity, ref string) (DeployA
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
 }
 
+// ReloadResult is the response to Reload. A running app is restarted in place
+// (Action "restart", Status "ok"); a stopped one is deployed instead (Action
+// "deploy", Status "running", with the deployment id to poll).
+type ReloadResult struct {
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	DeploymentID int64  `json:"deployment_id,omitempty"`
+}
+
 // Reload force-restarts the application's current tasks in place — same
 // image, same config, no rebuild and no pull. Useful when a linked resource
 // changed (e.g. a DNS-resolved dependency) and the running process just needs
 // a bounce.
-func (s *Service) Reload(ctx context.Context, id Identity, ref string) error {
+//
+// An app that is stopped (zero replicas) or was never deployed is deployed
+// instead. A restart would bring it back on the service spec it was stopped
+// with, which after the organization network migration is the shared network,
+// away from its databases; a deploy rebuilds the spec from the current config.
+func (s *Service) Reload(ctx context.Context, id Identity, ref string) (ReloadResult, error) {
 	if err := requireWrite(id); err != nil {
-		return err
+		return ReloadResult{}, err
 	}
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
-		return err
+		return ReloadResult{}, err
 	}
 	if s.engine == nil {
-		return fmt.Errorf("reload: no docker engine configured")
+		return ReloadResult{}, fmt.Errorf("reload: no docker engine configured")
+	}
+	st, err := s.engine.ServiceState(ctx, docker.ServiceName(app.ID))
+	if err != nil {
+		return ReloadResult{}, fmt.Errorf("reload: service state: %w", err)
+	}
+	if !st.Found || st.Desired == 0 {
+		if s.dep == nil {
+			return ReloadResult{}, fmt.Errorf("reload: the app is stopped and no deployer is configured")
+		}
+		deployID := s.dep.Enqueue(app.ID, deploy.TriggerAPI)
+		if deployID == 0 {
+			if cErr := s.inFlightConflict(ctx, app.ID, "reload"); cErr != nil {
+				return ReloadResult{}, cErr
+			}
+			return ReloadResult{}, fmt.Errorf("reload: could not enqueue a deployment of the stopped app (queue full or server shutting down)")
+		}
+		return ReloadResult{Action: "deploy", Status: "running", DeploymentID: deployID}, nil
 	}
 	if err := s.engine.ServiceRestart(ctx, docker.ServiceName(app.ID)); err != nil {
-		return fmt.Errorf("reload: service restart: %w", err)
+		return ReloadResult{}, fmt.Errorf("reload: service restart: %w", err)
 	}
-	return nil
+	return ReloadResult{Action: "restart", Status: "ok"}, nil
 }
 
 // Stop scales the application's service to zero replicas. The service

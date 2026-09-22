@@ -368,17 +368,18 @@ func registerRebuild(srv *mcp.Server, svc *api.Service) {
 func registerReload(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolReload,
-		Description: "Force-restart the application's current tasks in place — same image, same config, no rebuild and no pull.",
+		Description: "Force-restart the application's current tasks in place — same image, same config, no rebuild and no pull. A stopped app is deployed instead (action \"deploy\", with a deployment id — poll krill_deployment_status).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
 		id, errRes := callerIdentity(ctx)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
-		if err := svc.Reload(ctx, id, in.App); err != nil {
+		res, err := svc.Reload(ctx, id, in.App)
+		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
-		slog.InfoContext(ctx, "mcp reload requested", "app_ref", in.App, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
-		return jsonResult(ctx, okResult), nil, nil
+		slog.InfoContext(ctx, "mcp reload requested", "app_ref", in.App, "action", res.Action, "deployment_id", res.DeploymentID, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
 	})
 }
 

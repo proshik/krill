@@ -53,3 +53,23 @@ func TestReloadAppRedirects(t *testing.T) {
 		t.Fatalf("reload want 303, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestReloadOfAStoppedAppDeploysIt: a restart would bring a stopped app back
+// on the spec it was stopped with (after the organization network migration,
+// the shared network), so Reload queues a deploy instead.
+func TestReloadOfAStoppedAppDeploysIt(t *testing.T) {
+	h, q, orgSvc := newStoppedAppServer(t)
+	base, cookie, appID := domainFixture(t, h, q, orgSvc, "deploy4.example.com")
+
+	rec := postForm(t, h, base+"/reload", cookie, url.Values{})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("reload want 303, got %d: %s", rec.Code, rec.Body.String())
+	}
+	deps, err := q.ListDeploymentsByApplication(context.Background(), appID)
+	if err != nil {
+		t.Fatalf("list deployments: %v", err)
+	}
+	if len(deps) != 1 || deps[0].Trigger != "manual" {
+		t.Fatalf("want one manual deployment, got %+v", deps)
+	}
+}

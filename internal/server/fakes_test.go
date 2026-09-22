@@ -141,7 +141,7 @@ func newDeployServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *pg
 // being valid. nil uses the real queries, i.e. exactly newDeployServer.
 func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool) {
 	t.Helper()
-	h, q, orgSvc, pool, _ := buildDeployServer(t, tokens)
+	h, q, orgSvc, pool, _ := buildDeployServer(t, tokens, noopEngine{})
 	return h, q, orgSvc, pool
 }
 
@@ -149,18 +149,32 @@ func newDeployServerWithTokens(t *testing.T, tokens api.TokenStore) (http.Handle
 // deployer, so a test can tune it (e.g. the per-organization in-flight cap).
 func newDeployServerWithDeployer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *deploy.Deployer) {
 	t.Helper()
-	h, q, orgSvc, _, dep := buildDeployServer(t, nil)
+	h, q, orgSvc, _, dep := buildDeployServer(t, nil, noopEngine{})
 	return h, q, orgSvc, dep
 }
 
-func buildDeployServer(t *testing.T, tokens api.TokenStore) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool, *deploy.Deployer) {
+// stoppedEngine is noopEngine whose app services are all scaled to zero.
+type stoppedEngine struct{ noopEngine }
+
+func (stoppedEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	return docker.ServiceState{Found: true, Desired: 0}, nil
+}
+
+// newStoppedAppServer is newDeployServer over an engine reporting every
+// service stopped.
+func newStoppedAppServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
+	t.Helper()
+	h, q, orgSvc, _, _ := buildDeployServer(t, nil, stoppedEngine{})
+	return h, q, orgSvc
+}
+
+func buildDeployServer(t *testing.T, tokens api.TokenStore, eng docker.Engine) (http.Handler, *db.Queries, *org.Service, *pgxpool.Pool, *deploy.Deployer) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
-	eng := noopEngine{}
 	dep := deploy.New(eng, noopBuilder{}, deploy.NewDBStore(q), hub, "krill-net")
 	dep.Start(context.Background())
 	t.Cleanup(dep.Stop)

@@ -330,19 +330,21 @@ func (s *Server) apiRebuild(w http.ResponseWriter, r *http.Request, ref string) 
 	writeAPIJSON(w, res)
 }
 
-// apiReload force-restarts the application's current tasks in place.
+// apiReload force-restarts the application's current tasks in place, or
+// deploys it when it is stopped.
 func (s *Server) apiReload(w http.ResponseWriter, r *http.Request, ref string) {
 	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
 	}
-	if err := s.apiSvc.Reload(r.Context(), ident, ref); err != nil {
+	res, err := s.apiSvc.Reload(r.Context(), ident, ref)
+	if err != nil {
 		writeAPIError(w, r, err)
 		return
 	}
-	logFrom(r).Info("api reload requested", "app_ref", ref, "token_id", ident.TokenID, "user_id", ident.UserID)
-	writeAPIJSON(w, map[string]string{"status": "ok"})
+	logFrom(r).Info("api reload requested", "app_ref", ref, "action", res.Action, "deployment_id", res.DeploymentID, "token_id", ident.TokenID, "user_id", ident.UserID)
+	writeAPIJSON(w, res)
 }
 
 // apiStop scales the application's service to zero replicas.

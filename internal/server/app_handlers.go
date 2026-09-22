@@ -645,12 +645,32 @@ func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 }
 
 // reloadApp force-restarts the running containers without rebuilding/re-pulling.
+// A stopped (or never deployed) app is deployed instead: a restart would bring
+// it back on the spec it was stopped with — after the organization network
+// migration, that is the shared network, away from its databases.
 func (s *Server) reloadApp(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
 		return
 	}
 	if s.engine != nil {
+		st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID))
+		if err != nil {
+			logFrom(r).Error("reloadApp: failed to read service state", "err", err, "app_id", c.App.ID)
+			s.flashErrT(w, r, "flash.err.reload_app")
+			return
+		}
+		if !st.Found || st.Desired == 0 {
+			if s.deployer == nil || s.deployer.Enqueue(c.App.ID, deploy.TriggerManual) == 0 {
+				logFrom(r).Error("reloadApp: deployment of a stopped app not accepted (already in flight, organization limit, queue full or shutting down)", "app_id", c.App.ID)
+				s.flashErrT(w, r, "flash.err.queue_deploy")
+				return
+			}
+			logFrom(r).Info("reload of a stopped application enqueued as a deploy", "app_id", c.App.ID, "app_name", c.App.Name)
+			s.flashOK(w, r, "flash.ok.deploy_queued")
+			http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
+			return
+		}
 		if err := s.engine.ServiceRestart(r.Context(), dockerName(c.App.ID)); err != nil {
 			logFrom(r).Error("reloadApp: failed to restart service", "err", err, "app_id", c.App.ID)
 			s.flashErrT(w, r, "flash.err.reload_app")
