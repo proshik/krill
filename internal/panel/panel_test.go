@@ -10,7 +10,7 @@ import (
 
 func TestNormalizeHost(t *testing.T) {
 	ok := map[string]string{
-		"krill.proshik.ru":   "krill.proshik.ru",
+		"krill.example.org":  "krill.example.org",
 		" Krill.Example.COM": "krill.example.com",
 		"panel.example.com.": "panel.example.com",
 		"a-b.c1.example.io":  "a-b.c1.example.io",
