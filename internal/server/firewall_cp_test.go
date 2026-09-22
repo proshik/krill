@@ -26,6 +26,7 @@ type hostFirewall struct {
 	locked   bool
 	pending  bool
 	confirms int
+	refused  int // Applies refused because a switch was already armed
 	rulesets []string
 }
 
@@ -33,6 +34,13 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch {
+	case strings.Contains(cmd, "systemd-run"): // Apply's arm script
+		if h.pending {
+			h.refused++
+			return "pending 1700000000\n", nil
+		}
+		h.pending = true
+		return "armed 1700000000\n", nil
 	case strings.Contains(cmd, "systemctl is-active"):
 		if h.pending {
 			return "yes\n", nil
@@ -43,8 +51,6 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 			return "yes\n", nil
 		}
 		return "no\n", nil
-	case strings.HasPrefix(cmd, "systemd-run"):
-		h.pending = true
 	case cmd == "nft -f -":
 		h.locked = true
 		h.rulesets = append(h.rulesets, stdin)
@@ -131,5 +137,24 @@ func TestControlPlaneLockdownConfirmOpen(t *testing.T) {
 	rec = postForm(t, h, base+"/firewall/open", cookie, url.Values{})
 	if rec.Code != http.StatusSeeOther || fw.locked {
 		t.Fatalf("open must remove the control-plane table: code=%d locked=%v", rec.Code, fw.locked)
+	}
+}
+
+// A second lockdown while the first is unconfirmed must leave the host alone:
+// applying on top would replace the snapshot the armed switch restores.
+func TestControlPlaneLockdownRefusedWhileArmed(t *testing.T) {
+	fw := &hostFirewall{}
+	h, q, orgSvc := newFirewallServer(t, "localhost", fw)
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "fw-armed@k.local", "OrgFWArmed")
+
+	if rec := postForm(t, h, base+"/firewall/lockdown", cookie, url.Values{}); hasErrFlash(rec) {
+		t.Fatalf("first lockdown: %q", flashCookieValue(rec))
+	}
+	rec := postForm(t, h, base+"/firewall/lockdown", cookie, url.Values{})
+	if !hasErrFlash(rec) || fw.refused != 1 || len(fw.rulesets) != 1 {
+		t.Fatalf("second lockdown must be refused without applying: flash=%q refused=%d rulesets=%d", flashCookieValue(rec), fw.refused, len(fw.rulesets))
+	}
+	if msg, _ := url.QueryUnescape(flashCookieValue(rec)); !strings.Contains(msg, "awaiting confirmation") || strings.Contains(msg, "%!") {
+		t.Fatalf("the refusal must say a change is awaiting confirmation, got %q", msg)
 	}
 }

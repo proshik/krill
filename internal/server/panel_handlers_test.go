@@ -598,6 +598,39 @@ func TestPanelDirectPortCloseConfirmOpen(t *testing.T) {
 	}
 }
 
+// The production incident: pressing Close again while the first close was
+// unconfirmed rewrote the dead-man snapshot with the closed ruleset, so the
+// revert restored the very change it guarded. A repeat must change nothing.
+func TestPanelDirectPortCloseTwiceKeepsFirstSwitch(t *testing.T) {
+	e := newPanelServer(t, "localhost")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "panel-twice@k.local", "OrgPanelTwice")
+	e.post(t, base+"/panel-domain", cookie, url.Values{"host": {panelHost}}, false)
+	e.post(t, base+"/panel-domain/confirm", cookie, url.Values{}, true)
+	postForm(t, e.h, base+"/firewall/lockdown", cookie, url.Values{})
+	postForm(t, e.h, base+"/firewall/confirm", cookie, url.Values{})
+
+	if rec := e.post(t, base+"/panel-domain/direct-port/close", cookie, url.Values{}, true); hasErrFlash(rec) {
+		t.Fatalf("first close: %q", flashCookieValue(rec))
+	}
+	applied := len(e.fw.rulesets)
+	rec := e.post(t, base+"/panel-domain/direct-port/close", cookie, url.Values{}, true)
+	if !hasErrFlash(rec) || e.fw.refused != 1 || len(e.fw.rulesets) != applied {
+		t.Fatalf("a repeated close must be refused untouched: flash=%q refused=%d rulesets=%d->%d",
+			flashCookieValue(rec), e.fw.refused, applied, len(e.fw.rulesets))
+	}
+	if row := e.row(t); row.DirectPortClosed || !row.DirectPortClosePending {
+		t.Fatalf("the first close must still be the pending one, got %+v", row)
+	}
+	// Open waits for the switch too; it would otherwise replace the snapshot.
+	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{}, true); !hasErrFlash(rec) || len(e.fw.rulesets) != applied {
+		t.Fatalf("open while armed must be refused untouched: flash=%q", flashCookieValue(rec))
+	}
+	// And the first close can still be confirmed.
+	if rec := e.post(t, base+"/panel-domain/direct-port/confirm", cookie, url.Values{}, true); hasErrFlash(rec) || e.fw.pending {
+		t.Fatalf("confirm: %q pending=%v", flashCookieValue(rec), e.fw.pending)
+	}
+}
+
 // A close that nobody confirmed reverts on the host; the page notices and the
 // stored state follows, so the domain can be managed again.
 func TestPanelDirectPortRevertDetected(t *testing.T) {

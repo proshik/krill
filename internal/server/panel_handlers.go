@@ -480,18 +480,32 @@ func (s *Server) closePanelDirectPort(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, key)
 		return
 	}
-	if key := s.lockdownControlPlane(r, ruleset); key != "" {
-		s.flashErrT(w, r, key)
+	res := s.lockdownControlPlane(r, ruleset)
+	if !res.Applied {
+		key := res.Err
+		if key == "flash.err.firewall_cp_armed" {
+			key = "flash.err.panel_close_armed"
+		}
+		s.flashErr(w, r, res.message(r.Context(), key))
 		return
 	}
+	// The ruleset is on the host even when the swarm check failed, so the close
+	// is recorded as pending either way: the page then offers the confirmation
+	// instead of another close, and a revert is noticed and cleared as usual.
+	// Left unrecorded, a confirmation from the Firewall page would keep a
+	// closed port the stored state calls open.
 	if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{DirectPortClosed: false, DirectPortClosePending: true}); err != nil {
 		// The switch is armed and nothing will confirm it: it reverts on its own.
 		logFrom(r).Error("closePanelDirectPort: save pending close failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	logFrom(r).Info("panel direct port closed; awaiting confirmation through the domain")
-	s.flashOK(w, r, "flash.ok.panel_close_pending")
+	if res.Err != "" {
+		s.setFlash(w, r, "err", res.message(r.Context(), "flash.err.panel_close_cluster"))
+	} else {
+		logFrom(r).Info("panel direct port closed; awaiting confirmation through the domain")
+		s.flashOK(w, r, "flash.ok.panel_close_pending")
+	}
 	w.Header().Set("Connection", "close")
 	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
 }
@@ -574,6 +588,16 @@ func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := firewall.Apply(r.Context(), s.cpFirewall, ruleset); err != nil {
+			var armed *firewall.RevertArmedError
+			if errors.As(err, &armed) {
+				// Opening on top would replace the snapshot the armed switch
+				// restores; "Open cluster" on the Firewall page is the way out
+				// that does not wait.
+				logFrom(r).Warn("openPanelDirectPort: an earlier change is still armed; nothing applied", "revert_at", armed.At)
+				res := cpApply{Err: "flash.err.firewall_cp_armed", RevertAt: armed.At}
+				s.flashErr(w, r, res.message(r.Context(), "flash.err.panel_open_armed"))
+				return
+			}
 			logFrom(r).Warn("openPanelDirectPort: apply failed", "err", err)
 			s.flashErrT(w, r, "flash.err.firewall_cp_apply")
 			return
