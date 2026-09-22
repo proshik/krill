@@ -41,6 +41,11 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 		}
 		h.pending = true
 		return "armed 1700000000\n", nil
+	case strings.HasPrefix(cmd, "nft list table"): // GatewayOnly
+		if h.locked && len(h.rulesets) > 0 {
+			return h.rulesets[len(h.rulesets)-1], nil
+		}
+		return "", nil
 	case strings.Contains(cmd, "systemctl is-active"):
 		if h.pending {
 			return "yes\n", nil

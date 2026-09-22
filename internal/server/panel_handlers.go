@@ -90,6 +90,10 @@ func (s *Server) panelRow(ctx context.Context) (db.PanelGateway, error) {
 	return row, err
 }
 
+// BaseURL is baseURL for callers outside the package (the agent API's startup
+// check).
+func (s *Server) BaseURL(ctx context.Context) string { return s.baseURL(ctx) }
+
 // baseURL is the externally reachable base URL shown in webhook addresses:
 // KRILL_PUBLIC_URL, else the confirmed panel domain, else the legacy derivation
 // from KRILL_HOST.
@@ -225,6 +229,7 @@ func (s *Server) panelDomainPage(w http.ResponseWriter, r *http.Request) {
 		FirewallWired:    s.cpFirewall != nil,
 		ClientIP:         clientIP(r, s.trustForwardedFor(r)),
 		DirectURL:        s.directURL(),
+		DirectPort:       listenPort(s.cfg.ListenAddr),
 	}
 	switch {
 	case s.panel.tokens.Forwarded == "":
@@ -256,18 +261,107 @@ func (s *Server) panelDomainPage(w http.ResponseWriter, r *http.Request) {
 			// See confirmControlPlaneFirewall: the confirmation has to come over
 			// a connection opened after the ruleset changed.
 			w.Header().Set("Connection", "close")
+		} else if st.Available && !st.Pending {
+			v.HostDirectClosed, v.DirectDrift = s.directPortDrift(r, st.Locked, v.DirectPortClosed)
 		}
 	}
 	render(w, r, http.StatusOK, templates.PanelDomain(o, role, v))
 }
 
-// directURL is the address the UI port answers on directly, for display.
+// directPortDrift compares the control plane's live ruleset with the stored
+// direct-port state. They part when a change on the host was never recorded —
+// or recorded but never made — and the page, which otherwise follows the
+// stored state, would then offer only the action for the wrong one. It reports
+// whether the host closes the UI port and whether that disagrees with stored.
+func (s *Server) directPortDrift(r *http.Request, locked, stored bool) (hostClosed, drift bool) {
+	if locked {
+		ctx, cancel := context.WithTimeout(r.Context(), firewallStatusTimeout)
+		defer cancel()
+		closed, err := firewall.GatewayOnly(ctx, s.cpFirewall)
+		if err != nil {
+			logFrom(r).Warn("panelDomainPage: read control-plane ruleset failed", "err", err)
+			return false, false
+		}
+		hostClosed = closed
+	}
+	if hostClosed != stored {
+		logFrom(r).Warn("panel direct port: host ruleset disagrees with stored state",
+			"host_closed", hostClosed, "stored_closed", stored)
+		return hostClosed, true
+	}
+	return hostClosed, false
+}
+
+// directURL is an address the UI port answers on from outside, for display,
+// or "" when none is known. The advertise address is often a private one —
+// a WireGuard or VPC address the swarm runs over — which says nothing about
+// who can reach the port, so a public one is looked up on the host itself.
 func (s *Server) directURL() string {
-	_, port, err := net.SplitHostPort(s.cfg.ListenAddr)
-	if err != nil || s.cfg.AdvertiseAddr == "" {
+	host, port, err := net.SplitHostPort(s.cfg.ListenAddr)
+	if err != nil {
 		return ""
 	}
-	return "http://" + net.JoinHostPort(s.cfg.AdvertiseAddr, port)
+	if ip := net.ParseIP(host); host != "" && (ip == nil || !ip.IsUnspecified()) {
+		// Bound to one address: that one is the only way in.
+		return "http://" + net.JoinHostPort(host, port)
+	}
+	if a := s.cfg.AdvertiseAddr; a != "" {
+		if ip := net.ParseIP(a); ip == nil || publicIP(ip) {
+			return "http://" + net.JoinHostPort(a, port)
+		}
+	}
+	if ip := s.hostPublicIP(); ip != nil {
+		return "http://" + net.JoinHostPort(ip.String(), port)
+	}
+	return ""
+}
+
+// SetInterfaceAddrs replaces the host address listing directURL reads (tests).
+func (s *Server) SetInterfaceAddrs(fn func() ([]net.Addr, error)) { s.interfaceAddrs = fn }
+
+// listenPort is the port of a listen address, or "" if it has none.
+func listenPort(listenAddr string) string {
+	_, port, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return ""
+	}
+	return port
+}
+
+// hostPublicIP returns a public address configured on this host, IPv4 first,
+// or nil. A host behind 1:1 NAT (most clouds) has none.
+func (s *Server) hostPublicIP() net.IP {
+	addrs := s.interfaceAddrs
+	if addrs == nil {
+		addrs = net.InterfaceAddrs
+	}
+	list, err := addrs()
+	if err != nil {
+		return nil
+	}
+	var v6 net.IP
+	for _, a := range list {
+		ipn, ok := a.(*net.IPNet)
+		if !ok || !publicIP(ipn.IP) {
+			continue
+		}
+		if ipn.IP.To4() != nil {
+			return ipn.IP
+		}
+		if v6 == nil {
+			v6 = ipn.IP
+		}
+	}
+	return v6
+}
+
+// cgnat is 100.64.0.0/10 — carrier-grade NAT, and the range Tailscale-style // gitleaks:allow
+// overlays hand out; not reachable from the internet.
+var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// publicIP reports whether ip is an internet-routable unicast address.
+func publicIP(ip net.IP) bool {
+	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !cgnat.Contains(ip)
 }
 
 // setPanelDomain routes the panel on a domain, pending confirmation. The UI
@@ -447,6 +541,10 @@ func (s *Server) closePanelDirectPort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.cpFirewall == nil {
 		http.NotFound(w, r)
 		return
@@ -518,6 +616,10 @@ func (s *Server) confirmPanelDirectPort(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.cpFirewall == nil {
 		http.NotFound(w, r)
 		return
@@ -571,6 +673,10 @@ func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.cpFirewall == nil {
 		http.NotFound(w, r)
 		return

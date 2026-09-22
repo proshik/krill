@@ -58,14 +58,21 @@ type Runner interface {
 
 // armScript refuses while a switch is armed (the timer is waiting, or it fired
 // and its `nft -f` is still running), and otherwise snapshots the current
-// table and schedules its restore. One script, so the check and the snapshot
-// cannot be split by another Apply. It prints "armed <epoch>" or
+// table and schedules its restore. It prints "armed <epoch>" or
 // "pending <epoch>" — the epoch being when the switch fires, or "-" if unknown.
+//
+// The check, the snapshot and the arming run under an flock, so two Applies
+// cannot both pass the check: the second then snapshots after the first has
+// already applied its ruleset, and would save that over the good snapshot.
+// The lock is taken on a fixed fd, which busybox's flock understands as well
+// as util-linux's; a node without flock at all still gets the rest.
 func armScript(savePath string) string {
 	return fmt.Sprintf(`set -e
 unit=%[1]s
 prev=%[2]s
 at="$prev.at"
+exec 9>"$prev.lock"
+if command -v flock >/dev/null 2>&1; then flock 9; fi
 if systemctl is-active --quiet "$unit.timer" "$unit.service"; then
 	echo "pending $(cat "$at" 2>/dev/null || echo -)"
 	exit 0
@@ -153,6 +160,19 @@ func Status(ctx context.Context, r Runner) (bool, error) {
 		return false, ErrNftMissing
 	}
 	return strings.Contains(out, "yes"), nil
+}
+
+// GatewayOnly reports whether the node's live table admits some port only from
+// GatewayInterface — the rule BuildManagerRuleset writes for gatewayPorts, i.e.
+// the control plane's UI port closed to the world. A node with no table
+// reports false. It reads the host, not what Krill last stored, so callers can
+// notice the two disagreeing.
+func GatewayOnly(ctx context.Context, r Runner) (bool, error) {
+	out, err := r.Run(ctx, "", "nft list table inet krill 2>/dev/null || true")
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, fmt.Sprintf("iifname %q", GatewayInterface)), nil
 }
 
 // RevertPending reports whether an Apply is still awaiting Confirm, i.e. the

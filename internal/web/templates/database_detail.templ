@@ -110,6 +110,7 @@ templ backupsSection(c LogicalDBCtx) {
 										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
 									</form>
 									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
+										<input type="hidden" name="enabled" value={ onOff(!b.Enabled) }/>
 										if b.Enabled {
 											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.pause") }</button>
 										} else {

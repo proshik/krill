@@ -83,7 +83,7 @@ Verified in code and tests, but not yet exercised on a real environment:
 10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
     advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
     direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
-    The first attempt (2026-09-22, two-node cluster, v0.3.0) found that a repeated close
+    The first attempt (2026-09-22, two-node cluster, v0.3.1) found that a repeated close
     overwrote the dead-man snapshot and that the snapshot added its rules to the table instead
     of replacing it; both are fixed on `fix/firewall-deadman`. Why the swarm check reported
     dropped nodes that stayed Ready is still unexplained: the check now logs its reason.

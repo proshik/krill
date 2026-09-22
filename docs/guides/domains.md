@@ -117,6 +117,9 @@ Until you confirm or the change reverts, any other change to the control-plane f
 including a second **Close direct access**, is refused, and the message says when the
 automatic revert fires. Applying on top would replace the saved state the revert restores.
 **Open cluster** on the Firewall page is the only thing that does not wait.
+If the ruleset on the host ever disagrees with what Krill has recorded (the port closed on
+the host while Krill says it is open, or the reverse), the page says so and offers
+**Reopen direct access**, which rewrites the ruleset from the recorded state.
 
 While direct access is closed, the domain can't be changed or removed. Reopen direct access
 first. **Open cluster** on the Firewall page reopens it too, and a lockdown started afterwards

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -326,5 +327,53 @@ func TestLocalRunnerHonorsTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("timeout not enforced: took %v", time.Since(start))
+	}
+}
+
+// GatewayOnly reads the rule as `nft list` prints it back.
+func TestGatewayOnly(t *testing.T) {
+	listed := "table inet krill {\n\tchain input {\n\t\ttcp dport { 80, 443 } accept\n\t\tiifname \"docker_gwbridge\" tcp dport 8080 accept\n\t}\n}\n"
+	if got, err := GatewayOnly(context.Background(), scriptedRunner{out: listed}); err != nil || !got {
+		t.Fatalf("want gateway-only, got %v %v", got, err)
+	}
+	open := "table inet krill {\n\tchain input {\n\t\ttcp dport { 80, 443, 8080 } accept\n\t}\n}\n"
+	if got, err := GatewayOnly(context.Background(), scriptedRunner{out: open}); err != nil || got {
+		t.Fatalf("want public, got %v %v", got, err)
+	}
+	if got, _ := GatewayOnly(context.Background(), scriptedRunner{out: ""}); got {
+		t.Fatal("no table is not gateway-only")
+	}
+}
+
+// Two Applies racing on one node: the arm script must serialize them, so the
+// loser sees the winner's switch armed instead of snapshotting after it.
+func TestArmScriptSerializesConcurrentApplies(t *testing.T) {
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("flock not installed")
+	}
+	dir, run := stubNode(t)
+	// Widen the window between the check and systemd-run.
+	os.WriteFile(filepath.Join(dir, "bin", "nft"), []byte("#!/bin/sh\nsleep 0.3; [ \"$1\" = list ] && [ -e \"$STATE/table\" ] && exec cat \"$STATE/table\"; exit 1\n"), 0o755)
+	outs := make(chan string, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			out, err := run()
+			if err != nil {
+				out = "error " + err.Error() + ": " + out
+			}
+			outs <- out
+		}()
+	}
+	var armed, pending int
+	for i := 0; i < 2; i++ {
+		switch state, _ := parseArmOutput(<-outs); state {
+		case "armed":
+			armed++
+		case "pending":
+			pending++
+		}
+	}
+	if armed != 1 || pending != 1 {
+		t.Fatalf("want one armed and one pending, got armed=%d pending=%d", armed, pending)
 	}
 }

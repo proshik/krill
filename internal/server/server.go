@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -72,6 +73,12 @@ type Server struct {
 	// cpFirewall applies the nftables lockdown on the control-plane host itself
 	// (see SetControlPlaneFirewall). Nil leaves the control plane out of it.
 	cpFirewall firewall.Runner
+	// fwMu serializes the handlers that change a firewall (see lockFirewall).
+	fwMu sync.Mutex
+
+	// interfaceAddrs lists this host's addresses, for showing a public one on
+	// the panel page (see directURL). Nil means net.InterfaceAddrs.
+	interfaceAddrs func() ([]net.Addr, error)
 
 	// panel routes the Krill UI itself through the gateway on a domain (see
 	// SetPanelGateway and panel_handlers.go). Zero until wired: the panel page

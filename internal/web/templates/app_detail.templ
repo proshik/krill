@@ -463,6 +463,7 @@ templ domainsTab(c AppCtx) {
 				</form>
 				<div class="flex items-center gap-2 flex-wrap mt-2">
 					<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } class="inline">
+						<input type="hidden" name="tls" value={ onOff(!d.Tls) }/>
 						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "domains.toggle_tls") }</button>
 					</form>
 					if !d.IsPrimary {
@@ -822,6 +823,7 @@ templ volumeBackupsSection(c AppCtx, v db.AppVolume) {
 										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
 									</form>
 									<form method="post" action={ templ.SafeURL(c.base() + "/volumes/backups/" + itoa(b.ID) + "/toggle") } class="inline">
+										<input type="hidden" name="enabled" value={ onOff(!b.Enabled) }/>
 										if b.Enabled {
 											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.pause") }</button>
 										} else {

@@ -265,6 +265,10 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	back := "/orgs/" + strconv.FormatInt(o.ID, 10) + "/firewall"
 	ips, err := s.clusterIPs(r)
 	if err != nil {
@@ -364,6 +368,22 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
+// lockFirewall takes the lock every firewall-changing handler holds for its
+// whole run, or answers "busy" and returns false. The dead-man switch guards
+// one change at a time, and these handlers read state, change the host and
+// record the result in steps another request could interleave with: two
+// overlapping closes, or a confirmation racing its own duplicate, would each
+// act on what the other was about to change. Refusing is right for a
+// duplicate click and harmless for anything else — the operator retries.
+func (s *Server) lockFirewall(w http.ResponseWriter, r *http.Request) bool {
+	if !s.fwMu.TryLock() {
+		logFrom(r).Warn("firewall change refused: another one is still running")
+		s.flashErrT(w, r, "flash.err.firewall_busy")
+		return false
+	}
+	return true
+}
+
 // cpApply is the outcome of lockdownControlPlane.
 type cpApply struct {
 	// Applied: the ruleset is on the host and the dead-man switch is armed,
@@ -450,6 +470,10 @@ func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.cpFirewall == nil {
 		http.NotFound(w, r)
 		return
@@ -565,6 +589,10 @@ func (s *Server) openWorkers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	rows, err := s.q.ListClusterNodes(r.Context())
 	if err != nil {
 		logFrom(r).Error("openWorkers: list cluster nodes failed", "err", err)

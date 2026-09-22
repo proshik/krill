@@ -133,3 +133,18 @@ func (s *Server) flashMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// desiredState reads the on/off state a toggle form asks for ("1" or "0" in
+// field). Toggles post the state they want rather than "flip": a duplicate of
+// a flip — a double click, a retried request — undoes the first. A form
+// without it (a page from before this) is refused so the operator reloads.
+func (s *Server) desiredState(w http.ResponseWriter, r *http.Request, field string) (bool, bool) {
+	switch r.FormValue(field) {
+	case "1":
+		return true, true
+	case "0":
+		return false, true
+	}
+	s.flashErrT(w, r, "flash.err.stale_form")
+	return false, false
+}
