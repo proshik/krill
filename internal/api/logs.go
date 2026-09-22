@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -217,6 +218,13 @@ func parseLevelFilter(level string) (int, error) {
 // result with nothing to say it was cut short — an agent reasoning from an
 // incomplete tail with no signal it's incomplete is worse than a human
 // noticing a short log and scrolling.
+//
+// Swarm applies the tail to each of the service's tasks separately and
+// concatenates the results task by task, not by time — the live task's lines
+// can come first and a dead task's older ones after them. Taking the last n
+// lines of that stream would return whichever task happened to be last, so
+// AppLogs merges every task's lines by their docker timestamp first and only
+// then keeps the n most recent (see sortByLogTime).
 func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int, level string) ([]LogLine, error) {
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
@@ -241,35 +249,64 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 	}
 	defer rc.Close()
 
-	var lines []LogLine
+	var entries []timedLine
+	var last time.Time // sort key of the previous line in the stream, filtered or not
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
 	for sc.Scan() {
 		parsed := logparse.ParseLogLine(sc.Text())
+		if ts, err := time.Parse(time.RFC3339Nano, parsed.Time); err == nil {
+			last = ts
+		}
 		if minRank >= 0 {
 			if r, ok := logLevelRank(parsed.Level); ok && r < minRank {
 				continue
 			}
 		}
-		lines = append(lines, LogLine{Time: parsed.Time, Level: parsed.Level, Message: parsed.Msg})
+		entries = append(entries, timedLine{at: last, line: LogLine{Time: parsed.Time, Level: parsed.Level, Message: parsed.Msg}})
 	}
+	sortByLogTime(entries)
+	if len(entries) > n {
+		entries = entries[len(entries)-n:]
+	}
+	lines := make([]LogLine, 0, len(entries)+1)
+	for _, e := range entries {
+		lines = append(lines, e.line)
+	}
+
 	// A scan error (e.g. a line over the 1 MiB limit, or a broken connection)
 	// leaves everything read so far usable — append a synthetic notice line
 	// describing what happened rather than either discarding the partial read
 	// or returning it silently. The notice bypasses the level filter above (it
-	// describes the read itself, not application output to filter) and is
-	// appended last, so the tail-clamp below always keeps it.
+	// describes the read itself, not application output to filter) and has no
+	// timestamp, so it is appended after the sort: always the last line. It
+	// still counts toward n, as it always has — the window gives up its oldest
+	// line to make room.
 	if notice, ok := logparse.ScanEndNotice(sc.Err()); ok {
 		// The notice handed to the reader is generic; the cause belongs here.
 		slog.Error("log stream scan ended with an error", "err", sc.Err())
+		if len(lines) >= n {
+			lines = lines[len(lines)-n+1:]
+		}
 		lines = append(lines, LogLine{Time: notice.Time, Level: notice.Level, Message: notice.Msg})
 	}
-
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	if lines == nil {
-		lines = []LogLine{}
-	}
 	return lines, nil
+}
+
+// timedLine is a parsed log line with the time it sorts by.
+type timedLine struct {
+	at   time.Time
+	line LogLine
+}
+
+// sortByLogTime orders lines from every task of a service by time, oldest
+// first. A line without a parseable docker timestamp (docker adds one to
+// every line it was asked to, so this is rare) sorts with the line right
+// before it in the stream — its sort key was inherited from that line while
+// reading — so it stays next to the output it came with rather than being
+// dropped or thrown to either end; one at the very start of the stream has
+// nothing to follow and sorts first (zero time). The sort is stable, so lines
+// with equal keys keep their stream order.
+func sortByLogTime(entries []timedLine) {
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].at.Before(entries[j].at) })
 }
