@@ -56,7 +56,7 @@ Two things this branch does not change. **Rule 4 still applies** — building an
 1. `krill_app_status` — is it `running`, `error`, `idle`? What do replicas say, and when was the last deployment?
 2. `krill_deployments` — did the failure start with a deploy? Line the timestamps up against when the user says it broke. A service that has been down since a deploy and one that died on its own point at different causes.
 3. `krill_deployment_status` on the suspect deployment — the build log tail usually names a failed build outright.
-4. `krill_app_logs` with `level: "error"` first; if that is empty or unhelpful, widen to `info` and raise `tail`. An app with unstructured logs has no detectable levels, so the filter keeps all of its lines — read them rather than assuming the result is all errors. Empty logs at `0/n` replicas usually mean the container never got far enough to log.
+4. `krill_app_logs` with `level: "error"` first; if that is empty or unhelpful, widen to `info` and raise `tail`. A line with no detected level (`lvl: ""`) always passes the filter, and most unstructured output has none — so on such an app the result is not "all errors"; read the lines. Empty logs at `0/n` replicas usually mean the container never got far enough to log.
 5. `krill_list_env` when the logs point at configuration — a missing variable is a finding worth reporting (rule 3).
 
 Finish with a hypothesis and the evidence for it: which deployment, which log line, what you think happened. Propose the fix; do not silently apply one.

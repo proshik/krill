@@ -207,8 +207,8 @@ func parseLevelFilter(level string) (int, error) {
 	return rank, nil
 }
 
-// AppLogs tails an application's live runtime log (stdout/stderr from its
-// current container), parsed into structured lines and optionally filtered
+// AppLogs tails an application's runtime log (stdout/stderr of its current
+// task and of the stopped tasks Swarm still keeps in its history), parsed into structured lines and optionally filtered
 // to a minimum severity. tail is clamped by ClampTail and passed straight to
 // the engine, which honors it — docker.Engine.ServiceLogs takes an explicit
 // tail argument rather than hardcoding its own window, so asking for 1000
