@@ -60,7 +60,7 @@ type deployArgs struct {
 type logsArgs struct {
 	App   string `json:"app"`
 	Tail  int    `json:"tail,omitempty" jsonschema:"lines to return, default 200, max 1000"`
-	Level string `json:"level,omitempty" jsonschema:"minimum level: trace, debug, info, warn, error, fatal"`
+	Level string `json:"level,omitempty" jsonschema:"minimum level: trace, debug, info, warn, error, fatal. A line's level is detected from a level= field or a severity word near the start of the line; a line with no detected level is always kept, since it cannot be ranked"`
 }
 
 type deploymentsArgs struct {
@@ -263,7 +263,7 @@ func registerAppStatus(srv *mcp.Server, svc *api.Service) {
 func registerAppLogs(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppLogs,
-		Description: "Tail an application's live runtime log, parsed into structured lines and optionally filtered to a minimum severity.",
+		Description: "Tail an application's runtime log across all of its tasks, merged by time: the most recent lines, oldest first, parsed into structured lines and optionally filtered to a minimum severity. The level filter only drops lines whose detected level is below it; a line with no detected level (lvl \"\") is always kept, so most of an app's unstructured output passes whatever level is asked for.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in logsArgs) (*mcp.CallToolResult, any, error) {
 		id, errRes := callerIdentity(ctx)
 		if errRes != nil {

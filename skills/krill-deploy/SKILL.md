@@ -12,7 +12,7 @@ Krill exposes twelve tools. They **operate apps that already exist**: nothing he
 | `krill_whoami` | read | Who the token acts as, which org, and whether it may write |
 | `krill_list_apps` | read | Every app in the org: path, id, status, source type, image repository + tag, domains |
 | `krill_app_status` | read | One app: status, `running/desired` replicas, node, domains, last deployment; `image` is the repository, `tag` the configured tag |
-| `krill_app_logs` | read | Runtime log tail, parsed; `tail` (default 200, max 1000) and a minimum `level` |
+| `krill_app_logs` | read | Runtime log tail, parsed, most recent lines across all tasks; `tail` (default 200, max 1000) and a minimum `level` (lines with no detected level always pass) |
 | `krill_deployments` | read | Deployment history, newest first |
 | `krill_deployment_status` | read | One deployment: status plus the tail of its build log |
 | `krill_list_env` | read | Environment variable **names** and their source — never values |
@@ -56,7 +56,7 @@ Two things this branch does not change. **Rule 4 still applies** — building an
 1. `krill_app_status` — is it `running`, `error`, `idle`? What do replicas say, and when was the last deployment?
 2. `krill_deployments` — did the failure start with a deploy? Line the timestamps up against when the user says it broke. A service that has been down since a deploy and one that died on its own point at different causes.
 3. `krill_deployment_status` on the suspect deployment — the build log tail usually names a failed build outright.
-4. `krill_app_logs` with `level: "error"` first; if that is empty or unhelpful, widen to `info` and raise `tail`. Empty logs at `0/n` replicas usually mean the container never got far enough to log.
+4. `krill_app_logs` with `level: "error"` first; if that is empty or unhelpful, widen to `info` and raise `tail`. A line with no detected level (`lvl: ""`) always passes the filter, and most unstructured output has none — so on such an app the result is not "all errors"; read the lines. Empty logs at `0/n` replicas usually mean the container never got far enough to log.
 5. `krill_list_env` when the logs point at configuration — a missing variable is a finding worth reporting (rule 3).
 
 Finish with a hypothesis and the evidence for it: which deployment, which log line, what you think happened. Propose the fix; do not silently apply one.

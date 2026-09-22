@@ -493,3 +493,112 @@ func TestAppLogsScanErrorNoticeHidesTheCause(t *testing.T) {
 		t.Fatalf("want a generic stream-stopped notice, got %+v", last)
 	}
 }
+
+// swarmConcatBody mimics what Swarm actually returns for a service with dead
+// tasks in its history: Tail is applied to each task separately and the
+// result is concatenated task by task, not merged by time — here the live
+// task's lines come first and two dead tasks' older lines follow. The dead
+// tasks' ranges also overlap each other (a start-first rollout: the new task
+// logged "listening" before the old one logged "stopping").
+const swarmConcatBody = "" +
+	// live task
+	"2026-09-22T10:00:01.000000000Z level=info msg=live_listening\n" +
+	"2026-09-22T10:00:02.000000000Z level=info msg=live_request\n" +
+	"2026-09-22T10:00:03.000000000Z level=error msg=live_boom\n" +
+	// dead task B
+	"2026-09-17T21:04:25.000000000Z level=info msg=b_listening\n" +
+	"2026-09-17T21:04:30.000000000Z level=info msg=b_stopping\n" +
+	// dead task A
+	"2026-09-17T21:04:20.000000000Z level=info msg=a_request\n" +
+	"2026-09-17T21:04:28.000000000Z level=info msg=a_stopping\n"
+
+// TestAppLogsTailKeepsMostRecentAcrossTasks is the regression test for the
+// live-acceptance finding: with Swarm's per-task concatenation, taking the
+// last N lines of the stream returned the dead tasks' tail and none of the
+// live container's lines. AppLogs must merge every task's lines by time and
+// return the N most recent, oldest first.
+func TestAppLogsTailKeepsMostRecentAcrossTasks(t *testing.T) {
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, &stubLogsEngine{body: swarmConcatBody}, nil)
+
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 3, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	assertMessages(t, lines, "level=info msg=live_listening", "level=info msg=live_request", "level=error msg=live_boom")
+
+	// The whole window comes back in time order, interleaving the tasks.
+	lines, err = svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	assertMessages(t, lines,
+		"level=info msg=a_request",
+		"level=info msg=b_listening",
+		"level=info msg=a_stopping",
+		"level=info msg=b_stopping",
+		"level=info msg=live_listening",
+		"level=info msg=live_request",
+		"level=error msg=live_boom",
+	)
+}
+
+// TestAppLogsUntimedLineStaysWithItsNeighbour proves a line without a
+// parseable docker timestamp is neither dropped nor thrown to either end of
+// the result: it sorts as if it carried the timestamp of the line right
+// before it in the stream, so it stays next to the output it came with. One
+// at the very start of the stream has nothing to follow and sorts first.
+func TestAppLogsUntimedLineStaysWithItsNeighbour(t *testing.T) {
+	f := newAPIFixture(t)
+	body := "" +
+		"untimed at the start\n" +
+		"2026-09-22T10:00:05.000Z live second\n" +
+		"untimed after live second\n" +
+		"2026-09-17T21:04:25.000Z dead first\n" +
+		"2026-09-17T21:04:26.000Z dead second\n"
+	svc := api.NewService(f.q, &stubLogsEngine{body: body}, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	assertMessages(t, lines,
+		"untimed at the start",
+		"dead first",
+		"dead second",
+		"live second",
+		"untimed after live second",
+	)
+}
+
+// TestAppLogsNoticeStaysLastAfterMerge proves the synthetic read-error notice
+// is still the final line once lines are reordered by time: it has no
+// timestamp of its own, and it describes the read, not application output.
+func TestAppLogsNoticeStaysLastAfterMerge(t *testing.T) {
+	f := newAPIFixture(t)
+	eng := &stubLogsEngine{body: swarmConcatBody, readErr: errors.New("connection reset")}
+	svc := api.NewService(f.q, eng, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 2, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("want 1 log line + the notice, got %d: %+v", len(lines), lines)
+	}
+	if lines[0].Message != "level=error msg=live_boom" {
+		t.Fatalf("want the most recent log line before the notice, got %+v", lines[0])
+	}
+	if last := lines[1]; last.Level != "error" || last.Message != "log stream stopped unexpectedly" {
+		t.Fatalf("want the read-error notice last, got %+v", last)
+	}
+}
+
+func assertMessages(t *testing.T, lines []api.LogLine, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(lines))
+	for _, l := range lines {
+		got = append(got, l.Message)
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("messages:\n got  %q\n want %q", got, want)
+	}
+}
