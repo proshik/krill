@@ -35,7 +35,11 @@ func (f *fakeStore) SetOrganizationNetwork(_ context.Context, orgID int64, net s
 	f.written[orgID] = net
 	return nil
 }
-func (f *fakeStore) MarkOrganizationMigrated(_ context.Context, orgID int64) error {
+func (f *fakeStore) MarkOrganizationMigrated(ctx context.Context, orgID int64) error {
+	// Like the real store, a write on an expired context fails.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if f.marked == nil {
 		f.marked = map[int64]bool{}
 	}
@@ -48,7 +52,10 @@ func (f *fakeStore) ListAppIDsByOrg(_ context.Context, orgID int64) ([]int64, er
 func (f *fakeStore) ListInstanceIDsByOrg(_ context.Context, orgID int64) ([]int64, error) {
 	return f.instances[orgID], f.instErr
 }
-func (f *fakeStore) DeploymentStatuses(_ context.Context, ids []int64) (map[int64]string, error) {
+func (f *fakeStore) DeploymentStatuses(ctx context.Context, ids []int64) (map[int64]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.deployReads++
 	if f.onDeployRead != nil {
 		f.onDeployRead(f)
@@ -498,35 +505,83 @@ func TestMigratorWaitsForAppDeploymentsToFinish(t *testing.T) {
 	}
 }
 
-// The pass deadline bounds the wait, and running out of time leaves the
-// organization UNMARKED: a deploy that has not finished has not provably moved
-// the app. The organizations after it are not attempted at all, and do not
-// each fail on the expired context.
-func TestMigratorLeavesTheOrgUnmarkedWhenTheDeadlineExpires(t *testing.T) {
+// The pass deadline bounds the wait, and running out of time leaves an
+// organization with an unfinished deployment UNMARKED: a deploy that has not
+// finished has not provably moved the app. It no longer holds the others back:
+// every organization is submitted before any deployment is waited on, so the
+// one after it still moves and is recorded.
+func TestMigratorASlowOrgDoesNotHoldBackTheOthers(t *testing.T) {
 	st := &fakeStore{
 		orgs:         []Org{{ID: 1}, {ID: 2}},
 		apps:         map[int64][]int64{1: {10}, 2: {20}},
 		instances:    map[int64][]int64{},
-		deployStatus: map[int64]string{10: "running"},
+		deployStatus: map[int64]string{10: "running", 20: "done"},
 	}
-	var ensured []string
+	var submitted []int64
 	m := &Migrator{
 		Store:            st,
-		EnsureNetwork:    func(_ context.Context, n string) error { ensured = append(ensured, n); return nil },
+		EnsureNetwork:    func(context.Context, string) error { return nil },
 		RedeployInstance: func(context.Context, int64) error { return nil },
-		RedeployApp:      func(_ context.Context, id int64) (int64, error) { return id, nil },
-		DeployPoll:       time.Millisecond,
+		RedeployApp: func(_ context.Context, id int64) (int64, error) {
+			submitted = append(submitted, id)
+			return id, nil
+		},
+		DeployPoll: time.Millisecond,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := m.Run(ctx); err != nil {
 		t.Fatalf("run: %v", err)
 	}
+	if len(submitted) != 2 {
+		t.Fatalf("every organization must be submitted before waiting, submitted=%v", submitted)
+	}
 	if st.marked[1] {
 		t.Fatal("a timed-out wait must leave the organization unmarked")
 	}
-	if len(ensured) != 1 {
+	if !st.marked[2] {
+		t.Fatal("an organization whose deployments finished must be marked despite a slow one before it")
+	}
+}
+
+// Organizations not reached before the deadline are not attempted at all, and
+// do not each fail on the expired context. Those already submitted still get
+// one last look on a detached context: one whose deployments did finish is
+// recorded rather than migrated all over again on the next start.
+func TestMigratorFinalSweepAfterTheDeadline(t *testing.T) {
+	st := &fakeStore{
+		orgs:      []Org{{ID: 1}, {ID: 2}, {ID: 3}},
+		apps:      map[int64][]int64{1: {10}, 2: {20}, 3: {30}},
+		instances: map[int64][]int64{},
+	}
+	var ensured []string
+	m := &Migrator{
+		Store:            st,
+		EnsureNetwork:    func(_ context.Context, n string) error { ensured = append(ensured, n); return nil },
+		RedeployInstance: func(context.Context, int64) error { return nil },
+		RedeployApp: func(ctx context.Context, id int64) (int64, error) {
+			if id == 20 {
+				// A full queue: the submission waits out the pass deadline.
+				<-ctx.Done()
+				return 0, ctx.Err()
+			}
+			return id, nil
+		},
+		DeployPoll: time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := m.Run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(ensured) != 2 {
 		t.Fatalf("no organization may be attempted after the deadline, ensured=%v", ensured)
+	}
+	if !st.marked[1] {
+		t.Fatal("an organization whose deployment finished must be marked by the final sweep")
+	}
+	if st.marked[2] || st.marked[3] {
+		t.Fatalf("only the finished organization may be marked, marked=%v", st.marked)
 	}
 }
 

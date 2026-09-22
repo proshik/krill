@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/webhook"
 )
@@ -91,7 +91,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if s.deployer.Enqueue(a.ID, "webhook") == 0 {
+	if s.deployer.Enqueue(a.ID, deploy.TriggerWebhook) == 0 {
 		logFrom(r).Warn("github webhook deploy refused (already in flight, organization limit reached, or queue full)", "app_id", a.ID, "branch", a.GitBranch)
 		refuseWebhookDeploy(w)
 		return
@@ -190,38 +190,16 @@ func (s *Server) deployHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad tag", http.StatusBadRequest)
 		return
 	}
-	retag := tag != "" && tag != a.Tag
-	if retag {
-		// Refuse before retagging when this app already has a deploy in flight
-		// — the likeliest refusal. The worker reads applications.tag when it
-		// picks a job up, so a retag written now could be shipped by that
-		// earlier deploy even though this request is answered with a refusal.
-		n, err := s.q.CountRunningDeploymentsByApplication(r.Context(), a.ID)
-		if err != nil {
-			logFrom(r).Error("deploy hook in-flight check failed", "err", err, "app_id", a.ID)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		if n > 0 {
-			logFrom(r).Warn("deploy hook refused, a deploy is already in flight", "app_id", a.ID)
-			refuseWebhookDeploy(w)
-			return
-		}
-		if err := s.q.UpdateApplicationImage(r.Context(), db.UpdateApplicationImageParams{ID: a.ID, Image: a.Image, Tag: tag}); err != nil {
-			logFrom(r).Error("deploy hook tag update failed", "err", err, "app_id", a.ID)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+	// The tag travels with the deploy job and reaches the application row only
+	// once the job is accepted, so a refusal below leaves the app's tag alone
+	// and a deploy already in flight cannot pick this one up.
+	var deployID int64
+	if tag != "" {
+		deployID = s.deployer.EnqueueImage(a.ID, deploy.TriggerWebhook, a.Image, tag)
+	} else {
+		deployID = s.deployer.Enqueue(a.ID, deploy.TriggerWebhook)
 	}
-	if s.deployer.Enqueue(a.ID, "webhook") == 0 {
-		if retag {
-			// Put the previous tag back. A tag nothing deployed must not stay on
-			// the app: the next deploy from anywhere — the UI included — would
-			// ship it. Best-effort, like api.Service.restoreTag.
-			if err := s.q.UpdateApplicationImage(context.WithoutCancel(r.Context()), db.UpdateApplicationImageParams{ID: a.ID, Image: a.Image, Tag: a.Tag}); err != nil {
-				logFrom(r).Error("deploy hook: could not restore the previous image tag after a refused deploy", "err", err, "app_id", a.ID, "attempted_tag", tag, "previous_tag", a.Tag)
-			}
-		}
+	if deployID == 0 {
 		logFrom(r).Warn("deploy hook refused (already in flight, organization limit reached, or queue full)", "app_id", a.ID)
 		refuseWebhookDeploy(w)
 		return

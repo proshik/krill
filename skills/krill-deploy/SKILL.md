@@ -18,7 +18,7 @@ Krill exposes twelve tools. They **operate apps that already exist**: nothing he
 | `krill_list_env` | read | Environment variable **names** and their source — never values |
 | `krill_deploy` | write | Queue a deploy; optional `tag` retags an `image` app first |
 | `krill_rebuild` | write | `--no-cache` build, `dockerfile` apps only |
-| `krill_reload` | write | Restart the running tasks in place — same image, no build, no pull |
+| `krill_reload` | write | Restart the running tasks in place — same image, no build, no pull. A stopped app is deployed instead (`action: "deploy"` + a deployment id to poll) |
 | `krill_stop` | write | Scale to zero replicas; `krill_deploy` brings it back |
 | `krill_set_env` | write | Set, add or remove one variable, leaving the rest of the file untouched |
 

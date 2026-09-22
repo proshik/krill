@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/webhook"
@@ -61,74 +61,27 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 		return DeployAccepted{}, Invalid(fmt.Sprintf("invalid image tag %q: a tag is the part after the colon (e.g. \"v1.2.3\", \"latest\"), at most 128 characters of letters, digits, '.', '_' and '-' — not a full image reference and with no spaces", tag))
 	}
 
-	// Checked before the retag, not after: a server with no deployer can do
-	// nothing with a new tag, and failing afterwards would leave the app
-	// pointing at an image that was never deployed.
 	if s.dep == nil {
 		return DeployAccepted{}, fmt.Errorf("deploy: no deployer configured")
 	}
 
-	// Checked before the retag for the same reason the nil-deployer check is,
-	// and it is the more likely of the two to fire: Enqueue refuses a second
-	// deployment while one is already in flight, and learning that only
-	// afterwards would leave the application pointing at a tag nothing ever
-	// deployed. That is not a transient failure the caller can shrug off —
-	// the retag is persistent, this API offers no way to put the old tag
-	// back, and every later deployment reuses it, including one a human
-	// starts from the web UI.
-	if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
-		return DeployAccepted{}, cErr
-	}
-
+	// The tag travels with the deploy job and reaches the application row only
+	// once the deployer has accepted the job. A refused deploy — one already in
+	// flight, the organization at its limit, a full queue — therefore leaves the
+	// app's tag untouched, and a deploy already queued cannot ship this one.
+	var deployID int64
 	if tag != "" {
-		if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
-			ID:    app.ID,
-			Image: app.Image,
-			Tag:   tag,
-		}); err != nil {
-			return DeployAccepted{}, fmt.Errorf("deploy: update image: %w", err)
-		}
+		deployID = s.dep.EnqueueImage(app.ID, deploy.TriggerAPI, app.Image, tag)
+	} else {
+		deployID = s.dep.Enqueue(app.ID, deploy.TriggerAPI)
 	}
-
-	deployID := s.dep.Enqueue(app.ID, "manual")
 	if deployID == 0 {
-		// The check above closes the ordinary conflict, but Enqueue also
-		// returns 0 with a full queue, on shutdown, and when it cannot write
-		// the deployment row — none of which is a conflict, and all of which
-		// would otherwise leave the tag moved with no deployment behind it.
-		// Put it back: a persistent retag nothing deployed is the one outcome
-		// this operation must never produce, because the next Deploy from the
-		// web UI would ship it.
-		s.restoreTag(ctx, app, tag)
 		if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
 			return DeployAccepted{}, cErr
 		}
 		return DeployAccepted{}, fmt.Errorf("deploy: could not enqueue a deployment (queue full or server shutting down)")
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
-}
-
-// restoreTag undoes a retag whose deployment never got queued.
-//
-// Best-effort by construction: if this write fails too, the row keeps the new
-// tag and only a log line records it. A stronger guarantee would need the tag
-// to travel WITH the job rather than through the application row — the
-// deployer reads applications.tag when the worker picks the job up, so two
-// deploys racing here still resolve to whichever tag was written last. That is
-// a deployer-shaped change, not an API-shaped one; this narrows the window to
-// a failed enqueue and says so rather than pretending the race is closed.
-func (s *Service) restoreTag(ctx context.Context, app db.Application, attempted string) {
-	if attempted == "" || attempted == app.Tag {
-		return
-	}
-	if err := s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{
-		ID:    app.ID,
-		Image: app.Image,
-		Tag:   app.Tag,
-	}); err != nil {
-		slog.Error("deploy: could not restore the previous image tag after a failed enqueue",
-			"app_id", app.ID, "attempted_tag", attempted, "previous_tag", app.Tag, "err", err)
-	}
 }
 
 // Rebuild forces a from-scratch build (docker build --no-cache) of a
@@ -151,7 +104,7 @@ func (s *Service) Rebuild(ctx context.Context, id Identity, ref string) (DeployA
 	if s.dep == nil {
 		return DeployAccepted{}, fmt.Errorf("rebuild: no deployer configured")
 	}
-	deployID := s.dep.EnqueueRebuild(app.ID, "manual")
+	deployID := s.dep.EnqueueRebuild(app.ID, deploy.TriggerAPI)
 	if deployID == 0 {
 		if cErr := s.inFlightConflict(ctx, app.ID, "rebuild"); cErr != nil {
 			return DeployAccepted{}, cErr
@@ -161,25 +114,56 @@ func (s *Service) Rebuild(ctx context.Context, id Identity, ref string) (DeployA
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
 }
 
+// ReloadResult is the response to Reload. A running app is restarted in place
+// (Action "restart", Status "ok"); a stopped one is deployed instead (Action
+// "deploy", Status "running", with the deployment id to poll).
+type ReloadResult struct {
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	DeploymentID int64  `json:"deployment_id,omitempty"`
+}
+
 // Reload force-restarts the application's current tasks in place — same
 // image, same config, no rebuild and no pull. Useful when a linked resource
 // changed (e.g. a DNS-resolved dependency) and the running process just needs
 // a bounce.
-func (s *Service) Reload(ctx context.Context, id Identity, ref string) error {
+//
+// An app that is stopped (zero replicas) or was never deployed is deployed
+// instead. A restart would bring it back on the service spec it was stopped
+// with, which after the organization network migration is the shared network,
+// away from its databases; a deploy rebuilds the spec from the current config.
+func (s *Service) Reload(ctx context.Context, id Identity, ref string) (ReloadResult, error) {
 	if err := requireWrite(id); err != nil {
-		return err
+		return ReloadResult{}, err
 	}
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
-		return err
+		return ReloadResult{}, err
 	}
 	if s.engine == nil {
-		return fmt.Errorf("reload: no docker engine configured")
+		return ReloadResult{}, fmt.Errorf("reload: no docker engine configured")
+	}
+	st, err := s.engine.ServiceState(ctx, docker.ServiceName(app.ID))
+	if err != nil {
+		return ReloadResult{}, fmt.Errorf("reload: service state: %w", err)
+	}
+	if !st.Found || st.Desired == 0 {
+		if s.dep == nil {
+			return ReloadResult{}, fmt.Errorf("reload: the app is stopped and no deployer is configured")
+		}
+		deployID := s.dep.Enqueue(app.ID, deploy.TriggerAPI)
+		if deployID == 0 {
+			if cErr := s.inFlightConflict(ctx, app.ID, "reload"); cErr != nil {
+				return ReloadResult{}, cErr
+			}
+			return ReloadResult{}, fmt.Errorf("reload: could not enqueue a deployment of the stopped app (queue full or server shutting down)")
+		}
+		return ReloadResult{Action: "deploy", Status: "running", DeploymentID: deployID}, nil
 	}
 	if err := s.engine.ServiceRestart(ctx, docker.ServiceName(app.ID)); err != nil {
-		return fmt.Errorf("reload: service restart: %w", err)
+		return ReloadResult{}, fmt.Errorf("reload: service restart: %w", err)
 	}
-	return nil
+	return ReloadResult{Action: "restart", Status: "ok"}, nil
 }
 
 // Stop scales the application's service to zero replicas. The service

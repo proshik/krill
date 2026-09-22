@@ -67,7 +67,7 @@ func clampDeployListLimit(n int) int {
 type DeploymentSummary struct {
 	ID        int64  `json:"id"`
 	Status    string `json:"status"`  // running | done | error
-	Trigger   string `json:"trigger"` // manual | webhook | schedule
+	Trigger   string `json:"trigger"` // manual | webhook | schedule | api | system
 	ImageTag  string `json:"image_tag,omitempty"`
 	StartedAt string `json:"started_at"`
 	EndedAt   string `json:"ended_at,omitempty"`

@@ -18,6 +18,11 @@ const defaultInstanceBatch = 3
 // minutes, so polling faster only costs queries.
 const defaultDeployPoll = 2 * time.Second
 
+// finalSweepTimeout bounds the one last read of the submitted deployments
+// after the pass deadline has passed. It runs on a context detached from the
+// expired one, so an organization whose deploys did finish still gets marked.
+const finalSweepTimeout = 10 * time.Second
+
 // Terminal deployment statuses (the deployments.status CHECK).
 const (
 	deploymentDone  = "done"
@@ -100,11 +105,29 @@ type Migrator struct {
 	DeployPoll time.Duration
 }
 
+// orgPass is one organization's progress through a migration pass.
+type orgPass struct {
+	orgID int64
+	// ok is false once any step failed; the organization is then not marked
+	// and the whole pass is retried for it on the next start.
+	ok bool
+	// pending counts its submitted app deployments not yet terminal.
+	pending int
+}
+
 // Run creates the network of every organization and moves the services of those
 // not yet migrated. It is idempotent: an organization whose previous pass
 // completed is skipped, and one whose pass failed halfway is retried in full on
 // the next start. A redundant redeploy costs a restart; a tenant silently left
 // on the shared overlay costs the isolation this whole change exists for.
+//
+// It runs in two phases. First every organization's databases are moved and
+// its app redeploys submitted; then the deployments of all organizations are
+// waited on together, and each organization is marked migrated as soon as its
+// own deployments have finished. Waiting organization by organization instead
+// let one slow organization — a long build, a deploy that never converges —
+// spend the pass deadline on its own wait while every organization after it
+// had not even been submitted.
 //
 // Only a failure to enumerate the organizations is returned. Everything else is
 // logged and stepped over: this runs during startup, and a control plane that
@@ -115,15 +138,17 @@ func (m *Migrator) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list organizations: %w", err)
 	}
+	var passes []*orgPass
+	deployments := map[int64]*orgPass{}
 	for i, o := range orgs {
 		// Once the pass deadline is gone every call below fails with it, and
 		// each remaining organization would log an unrelated-looking error of its
 		// own ("could not create the network: context deadline exceeded"). Say
-		// what actually happened, once.
+		// what actually happened, once, and still collect what was submitted.
 		if err := ctx.Err(); err != nil {
 			slog.Warn("organization network migration ran out of time; the remaining organizations will be retried on the next start",
 				"err", err, "remaining", len(orgs)-i)
-			return nil
+			break
 		}
 		name := Name(o.ID)
 		// Ensure the network even for an already-migrated organization: it is
@@ -146,21 +171,43 @@ func (m *Migrator) Run(ctx context.Context) error {
 			}
 		}
 		slog.Info("migrating an organization onto its own network", "org_id", o.ID, "network", name)
-		if !m.moveServices(ctx, o.ID) {
-			slog.Warn("organization network migration incomplete, it will be retried on the next start", "org_id", o.ID)
-			continue
+		ok, ids := m.moveServices(ctx, o.ID)
+		p := &orgPass{orgID: o.ID, ok: ok, pending: len(ids)}
+		for _, id := range ids {
+			deployments[id] = p
 		}
-		if err := m.Store.MarkOrganizationMigrated(ctx, o.ID); err != nil {
-			// Harmless: the next pass redoes the (idempotent) redeploys.
-			slog.Error("organization network migration: could not record completion", "err", err, "org_id", o.ID)
+		passes = append(passes, p)
+	}
+	for _, p := range passes {
+		if p.pending == 0 {
+			m.finish(ctx, p)
 		}
 	}
+	m.waitDeployments(ctx, deployments)
 	return nil
 }
 
-// moveServices redeploys one organization's services into its network and
-// reports whether every one of them actually moved: each database instance came
-// back up, and each app deployment reached a terminal status other than error.
+// finish records an organization whose pass is over: marked migrated when
+// every step succeeded, otherwise left for the next start. The write runs on a
+// context detached from the pass deadline: an organization that did move must
+// not lose its record to a deadline that expired because of another one.
+func (m *Migrator) finish(ctx context.Context, p *orgPass) {
+	if !p.ok {
+		slog.Warn("organization network migration incomplete, it will be retried on the next start", "org_id", p.orgID)
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalSweepTimeout)
+	defer cancel()
+	if err := m.Store.MarkOrganizationMigrated(wctx, p.orgID); err != nil {
+		// Harmless: the next pass redoes the (idempotent) redeploys.
+		slog.Error("organization network migration: could not record completion", "err", err, "org_id", p.orgID)
+	}
+}
+
+// moveServices redeploys one organization's services into its network. It
+// reports whether every step up to submitting the app deploys succeeded, and
+// returns the ids of the app deployments it submitted: those still have to
+// finish without an error before the organization counts as moved.
 // Submitting is not enough. A deploy that fails never reaches ServiceDeploy (or
 // is rolled back by Swarm), so that app keeps running on the OLD shared network;
 // counting it as moved would flag the organization migrated and no later start
@@ -174,13 +221,13 @@ func (m *Migrator) Run(ctx context.Context) error {
 // database redeployments run in their own goroutines rather than queueing
 // behind the app worker — so each batch of databases is waited on before the
 // apps are enqueued.
-func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
+func (m *Migrator) moveServices(ctx context.Context, orgID int64) (bool, []int64) {
 	instances, err := m.Store.ListInstanceIDsByOrg(ctx, orgID)
 	if err != nil {
 		// Fail the whole organization. Moving the apps now would strand them in
 		// a network holding none of their databases, with nothing to retry it.
 		slog.Error("organization network migration: could not list database instances", "err", err, "org_id", orgID)
-		return false
+		return false, nil
 	}
 	// Resolve the app set BEFORE anything moves. Both of these can fail, and
 	// failing after the databases have left the shared network would strand
@@ -189,13 +236,13 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 	apps, err := m.Store.ListAppIDsByOrg(ctx, orgID)
 	if err != nil {
 		slog.Error("organization network migration: could not list applications", "err", err, "org_id", orgID)
-		return false
+		return false, nil
 	}
 	if m.FilterApps != nil {
 		apps, err = m.FilterApps(ctx, apps)
 		if err != nil {
 			slog.Error("organization network migration: could not check which applications are running", "err", err, "org_id", orgID)
-			return false
+			return false, nil
 		}
 	}
 	plan := InstancePlan{Running: instances}
@@ -203,7 +250,7 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 		plan, err = m.PlanInstances(ctx, instances)
 		if err != nil {
 			slog.Error("organization network migration: could not check which database instances are running", "err", err, "org_id", orgID)
-			return false
+			return false, nil
 		}
 	}
 
@@ -262,7 +309,7 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 		if ctx.Err() != nil {
 			// Out of time: every further submission fails the same way. Run logs
 			// the reason once.
-			return false
+			return false, deployments
 		}
 		depID, err := m.RedeployApp(ctx, id)
 		if err != nil {
@@ -272,70 +319,87 @@ func (m *Migrator) moveServices(ctx context.Context, orgID int64) bool {
 		}
 		deployments = append(deployments, depID)
 	}
-	if !m.waitDeployments(ctx, orgID, deployments) {
-		complete = false
-	}
-	return complete
+	return complete, deployments
 }
 
-// waitDeployments polls the given deployments until every one is terminal and
-// reports whether none of them failed. It is bounded by ctx — the deadline of
-// the whole pass — and running out of time counts as failure: an app whose
-// deploy has not finished has not provably moved, and an organization left
-// unmarked costs one idempotent retry on the next start.
+// waitDeployments polls the submitted deployments of every organization until
+// each is terminal, finishing an organization as soon as its last one is: an
+// error fails it, done counts toward it. It is bounded by ctx — the deadline of
+// the whole pass — and an organization with a deployment still unfinished then
+// is left unmarked: an app whose deploy has not finished has not provably
+// moved, and an unmarked organization costs one idempotent retry on the next
+// start. One last read on a detached context follows the deadline, so the
+// organizations that did finish in time are still recorded.
 //
 // A failed read is not a failed deployment; it is logged and polled again, so
-// one transient database error does not cost the organization its pass.
-func (m *Migrator) waitDeployments(ctx context.Context, orgID int64, ids []int64) bool {
-	if len(ids) == 0 {
-		return true
+// one transient database error does not cost anyone their pass.
+func (m *Migrator) waitDeployments(ctx context.Context, pending map[int64]*orgPass) {
+	if len(pending) == 0 {
+		return
 	}
 	poll := m.DeployPoll
 	if poll <= 0 {
 		poll = defaultDeployPoll
 	}
-	pending := make(map[int64]struct{}, len(ids))
-	for _, id := range ids {
-		pending[id] = struct{}{}
-	}
-	ok := true
 	for {
-		batch := make([]int64, 0, len(pending))
-		for id := range pending {
-			batch = append(batch, id)
+		if ctx.Err() != nil {
+			fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finalSweepTimeout)
+			m.sweepDeployments(fctx, pending)
+			cancel()
+			unfinished := map[*orgPass]int{}
+			for _, p := range pending {
+				unfinished[p]++
+			}
+			for p, n := range unfinished {
+				slog.Warn("organization network migration: application deployments did not finish in time, the organization will be retried on the next start",
+					"err", ctx.Err(), "org_id", p.orgID, "unfinished", n)
+			}
+			return
 		}
-		statuses, err := m.Store.DeploymentStatuses(ctx, batch)
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Warn("organization network migration: could not read application deployments, retrying", "err", err, "org_id", orgID)
-			}
-		} else {
-			for _, id := range batch {
-				status, found := statuses[id]
-				switch {
-				case !found:
-					// The row is gone, which only happens when its app was deleted
-					// mid-pass: nothing is left to move.
-					delete(pending, id)
-				case status == deploymentError:
-					slog.Error("organization network migration: an application deployment failed, the organization will be retried on the next start",
-						"org_id", orgID, "deployment_id", id)
-					ok = false
-					delete(pending, id)
-				case status == deploymentDone:
-					delete(pending, id)
-				}
-			}
-			if len(pending) == 0 {
-				return ok
-			}
+		m.sweepDeployments(ctx, pending)
+		if len(pending) == 0 {
+			return
 		}
 		select {
 		case <-ctx.Done():
-			slog.Warn("organization network migration: application deployments did not finish in time, the organization will be retried on the next start",
-				"err", ctx.Err(), "org_id", orgID, "unfinished", len(pending))
-			return false
 		case <-time.After(poll):
+		}
+	}
+}
+
+// sweepDeployments reads every pending deployment once, drops the terminal
+// ones and finishes each organization whose last deployment that was.
+func (m *Migrator) sweepDeployments(ctx context.Context, pending map[int64]*orgPass) {
+	ids := make([]int64, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	statuses, err := m.Store.DeploymentStatuses(ctx, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("organization network migration: could not read application deployments, retrying", "err", err)
+		}
+		return
+	}
+	for _, id := range ids {
+		p := pending[id]
+		status, found := statuses[id]
+		switch {
+		case !found:
+			// The row is gone, which only happens when its app was deleted
+			// mid-pass: nothing is left to move.
+		case status == deploymentError:
+			slog.Error("organization network migration: an application deployment failed, the organization will be retried on the next start",
+				"org_id", p.orgID, "deployment_id", id)
+			p.ok = false
+		case status == deploymentDone:
+		default:
+			continue
+		}
+		delete(pending, id)
+		p.pending--
+		if p.pending == 0 {
+			m.finish(ctx, p)
 		}
 	}
 }

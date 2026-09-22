@@ -68,9 +68,20 @@ func checkRegistryHost(image, registryURL string) error {
 }
 
 func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
+	return s.getApplication(ctx, id, ImageRef{})
+}
+
+// getApplication loads an app for deployment. A non-zero ref replaces the
+// row's image and tag of an image app BEFORE anything reads them, so the
+// registry-host check below runs against the image this deploy actually pulls
+// rather than the one the row happens to hold.
+func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (App, error) {
 	a, err := s.q.GetApplication(ctx, id)
 	if err != nil {
 		return App{}, err
+	}
+	if ref.Tag != "" && a.SourceType == "image" {
+		a.Image, a.Tag = ref.Image, ref.Tag
 	}
 	doms, derr := s.q.ListDomainsByApplication(ctx, a.ID)
 	if derr != nil {
@@ -302,12 +313,16 @@ func (s *DBStore) FinishDeployment(ctx context.Context, deployID int64, status, 
 	})
 }
 
-func (s *DBStore) GetDeploymentApp(ctx context.Context, deployID int64) (App, error) {
+func (s *DBStore) GetDeploymentApp(ctx context.Context, deployID int64, ref ImageRef) (App, error) {
 	dep, err := s.q.GetDeployment(ctx, deployID)
 	if err != nil {
 		return App{}, err
 	}
-	return s.GetApplication(ctx, dep.ApplicationID)
+	return s.getApplication(ctx, dep.ApplicationID, ref)
+}
+
+func (s *DBStore) SetApplicationImage(ctx context.Context, appID int64, image, tag string) error {
+	return s.q.UpdateApplicationImage(ctx, db.UpdateApplicationImageParams{ID: appID, Image: image, Tag: tag})
 }
 
 func (s *DBStore) ClearOldDeploymentLogs(ctx context.Context) error {

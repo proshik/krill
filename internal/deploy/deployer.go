@@ -63,11 +63,17 @@ type App struct {
 // Store — what the deployer needs from the store.
 type Store interface {
 	GetApplication(ctx context.Context, id int64) (App, error)
-	GetDeploymentApp(ctx context.Context, deployID int64) (App, error)
+	// GetDeploymentApp loads the app a deployment deploys. A non-zero ref is
+	// the image reference the job carries; it replaces the row's for an image
+	// app, including in the registry-credential host check.
+	GetDeploymentApp(ctx context.Context, deployID int64, ref ImageRef) (App, error)
 	SetStatus(ctx context.Context, id int64, status string) error
 	CreateDeployment(ctx context.Context, appID int64, trigger string) (int64, error)
 	CountRunningDeployments(ctx context.Context, appID int64) (int64, error)
 	CountRunningDeploymentsByOrg(ctx context.Context, appID int64) (int64, error)
+	// SetApplicationImage records the image reference an accepted deploy
+	// carries, so the application row shows it and later deploys reuse it.
+	SetApplicationImage(ctx context.Context, appID int64, image, tag string) error
 	FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error
 }
 
@@ -86,11 +92,25 @@ func SetConvergeTimeout(d time.Duration) {
 	}
 }
 
+// ImageRef is an image app's image and tag. The zero value means "whatever the
+// application row holds".
+type ImageRef struct {
+	Image string
+	Tag   string
+}
+
 // job is one queued unit of work: a deployment plus build options.
 type job struct {
 	deployID int64
 	appID    int64
 	noCache  bool // force docker build --no-cache (Rebuild)
+
+	// image and tag, when set, are the image reference this deploy ships
+	// (image apps only). They travel with the job rather than through the
+	// application row: the worker picks a job up later, and by then the row
+	// may carry another request's tag, which this deploy would then ship.
+	image string
+	tag   string
 }
 
 // Notifier is the optional sink for deploy-failure alerts (implemented by
@@ -186,7 +206,7 @@ func (d *Deployer) Start(ctx context.Context) {
 				default:
 				}
 				jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
-				d.run(jobCtx, j.deployID, j.noCache)
+				d.run(jobCtx, j)
 				cancel()
 			}
 		}
@@ -218,13 +238,22 @@ func (d *Deployer) failQueued(j job, reason string) {
 
 // Enqueue creates a deployment record and puts it in the queue. Returns deployID (0 on error/after Stop).
 func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
-	return d.enqueue(appID, trigger, false)
+	return d.enqueue(appID, trigger, job{})
+}
+
+// EnqueueImage is Enqueue for an image app moving to image:tag. The reference
+// is carried in the job, so this deploy ships exactly it whatever the
+// application row says by the time the worker gets to it, and it is written to
+// the row only once the job has been accepted: a refused deploy leaves the
+// application's image untouched.
+func (d *Deployer) EnqueueImage(appID int64, trigger, image, tag string) int64 {
+	return d.enqueue(appID, trigger, job{image: image, tag: tag})
 }
 
 // EnqueueRebuild is like Enqueue but forces a from-scratch build (docker build
 // --no-cache for Dockerfile apps; image apps re-pull as usual).
 func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
-	return d.enqueue(appID, trigger, true)
+	return d.enqueue(appID, trigger, job{noCache: true})
 }
 
 // systemQueueRetry is how long EnqueueSystem waits between attempts while the
@@ -255,7 +284,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 		default:
 		}
 		if !d.queueFull() {
-			if id := d.submit(appID, "manual", false); id != 0 {
+			if id := d.submit(appID, TriggerSystem, job{}); id != 0 {
 				return id
 			}
 			// submit only fails for a full queue (lost the race for the slot we
@@ -278,7 +307,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 // queueFull reports whether the shared job queue has no room left.
 func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
 
-func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
+func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
 	select {
 	case <-d.done:
 		return 0
@@ -312,12 +341,13 @@ func (d *Deployer) enqueue(appID int64, trigger string, noCache bool) int64 {
 			return 0
 		}
 	}
-	return d.submit(appID, trigger, noCache)
+	return d.submit(appID, trigger, opts)
 }
 
 // submit creates the deployment row and hands the job to the worker. It is the
 // part of enqueue that both the capped (tenant) path and EnqueueSystem share.
-func (d *Deployer) submit(appID int64, trigger string, noCache bool) int64 {
+// opts carries the build options and image reference; its ids are filled here.
+func (d *Deployer) submit(appID int64, trigger string, opts job) int64 {
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
 		slog.Error("create deployment failed", "app", appID, "err", err)
@@ -326,7 +356,19 @@ func (d *Deployer) submit(appID int64, trigger string, noCache bool) int64 {
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.hub.Open(deployID)
 	select {
-	case d.queue <- job{deployID: deployID, appID: appID, noCache: noCache}:
+	case d.queue <- job{deployID: deployID, appID: appID, noCache: opts.noCache, image: opts.image, tag: opts.tag}:
+		if opts.tag != "" {
+			// After the send, not before: a refused job must not leave its tag
+			// on the application. The worker never reads it from the row, so
+			// writing it now cannot change what this deploy ships. Should the
+			// write fail, the deploy still ships the tag it carries; only the
+			// next deploy without one falls back to the old tag.
+			wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := d.store.SetApplicationImage(wctx, appID, opts.image, opts.tag); err != nil {
+				slog.Error("record deployed image on the application failed", "app", appID, "deploy", deployID, "image", opts.image, "tag", opts.tag, "err", err)
+			}
+		}
 	case <-d.done:
 		// Server shutting down before the job was queued: mark the deployment
 		// failed with a detached context so it isn't orphaned as 'deploying'.
@@ -361,8 +403,9 @@ func (d *Deployer) Stop() {
 	d.wg.Wait()
 }
 
-func (d *Deployer) run(ctx context.Context, deployID int64, noCache bool) {
-	app, appErr := d.store.GetDeploymentApp(ctx, deployID)
+func (d *Deployer) run(ctx context.Context, j job) {
+	deployID, noCache := j.deployID, j.noCache
+	app, appErr := d.store.GetDeploymentApp(ctx, deployID, ImageRef{Image: j.image, Tag: j.tag})
 	out := d.hub.Writer(deployID)
 	if appErr != nil {
 		d.finish(ctx, deployID, app.ID, StatusError, "", appErr.Error())

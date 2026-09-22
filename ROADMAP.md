@@ -13,9 +13,14 @@ describes them in detail.
   volumes with S3 backup and restore, raw TCP/UDP ports, build args and secrets,
   private Git and private registries (each credential bound to its own host), a
   per-organization cap on in-flight deploys, and a periodic BuildKit cache prune.
+  A deploy ships the image tag it was queued with, whatever else writes the app in
+  the meantime; Reload of a stopped app redeploys it rather than restarting its old
+  spec; deployment history tells UI, webhook, agent-API and control-plane deploys apart.
 - **Projects and tenancy:** organization → project → environment → app, owner /
   admin / member roles, an instance-admin flag for cluster-wide resources, a
-  private overlay network per organization, and self-service password changes
+  private overlay network per organization (existing installs are moved onto it in
+  the background, all organizations submitted before any is waited on), and
+  self-service password changes
   (forced for anyone newly added to an organization).
 - **Managed databases:** org-level Postgres, Redis, DragonFly and MinIO instances;
   logical Postgres databases per environment; connection values injected into app
@@ -106,27 +111,13 @@ Verified in code and tests, but not yet exercised on a real environment:
   backed up automatically today.
 - **Direct image upload** in `krill-cli` (`delivery: upload`) for users without a
   registry — designed, not implemented; the CLI refuses the mode for now.
-- **Concurrent deploys of one app with different tags** can still race, because the
-  deploy worker reads the tag when the job starts; the fix is to carry the tag in
-  the job itself.
 - **Email and Slack** notification channels (Telegram ships today).
 - A Homebrew tap for `krill-cli`.
-- Recording API-triggered deploys, and the redeploys made by the network migration, as their own trigger types.
-- **Network migration: do not let one organization hold back the rest.** Organizations are
-  migrated one after another under a single deadline that includes deploy completion, so a
-  slow organization delays every organization after it until the next restart. Submit every
-  organization's redeploys first, then wait for all of them.
-- **Reload of a stopped app after the network migration** restarts it on its old service
-  spec, i.e. on the shared network and away from its databases. Reload of a stopped app
-  should go through a full deploy.
 - **MinIO no longer publishes community builds.** Managed MinIO instances run a pinned
   `quay.io/minio/minio` release that will not receive updates, security fixes included.
   Decide between an actively maintained S3-compatible engine and building MinIO from source.
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
-- **Observability, stage 2 (app metrics):** a manager-side collector on every organization's
-  network scraping per-app metrics endpoints, gated by a scrape token — the node agent (stage
-  1) only covers host metrics and logs.
 - **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
 
 ## Later
