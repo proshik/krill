@@ -137,6 +137,11 @@ Verified in code and tests, but not yet exercised on a real environment:
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
 - **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
+- **Several apps on one host by path** — e.g. a web SPA on `/` and its API on `/api` under
+  one domain, so the browser needs no CORS. Apps of one environment, at most one catch-all
+  per host, paths matched by segment, explicit router priorities, HTTPS as a property of the
+  host. Design and implementation plan are written (maintainer's local notes, 2026-09-24);
+  pick it up when the first app that needs it is ready to ship.
 
 ## Later
 
