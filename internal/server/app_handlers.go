@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/envtext"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
@@ -74,11 +76,6 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.domain_in_use")
 		return
 	}
-	if n, _ := s.q.CountDomainsByHost(r.Context(), domain); n > 0 {
-		logFrom(r).Info("createApp: domain already in use", "environment_id", e.ID, "name", name, "domain", domain)
-		s.flashErrT(w, r, "flash.err.domain_in_use")
-		return
-	}
 	if sourceType == "image" && image == "" {
 		logFrom(r).Info("createApp: image required for image source", "environment_id", e.ID, "name", name)
 		s.flashErrT(w, r, "flash.err.specify_image")
@@ -104,25 +101,24 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		}
 		registryID = &n
 	}
-	a, err := s.q.CreateApplication(r.Context(), db.CreateApplicationParams{
+	if s.hosts == nil {
+		logFrom(r).Error("createApp: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.create_app")
+		return
+	}
+	a, err := s.hosts.CreateApplication(r.Context(), db.CreateApplicationParams{
 		EnvironmentID: e.ID, Name: name, Image: image, Tag: tag, Domain: domain, Port: int32(port),
 		EnvText: r.FormValue("env"), SourceType: sourceType,
 		GitUrl: gitURL, GitBranch: gitBranch, DockerfilePath: dockerfilePath,
 	})
 	if err != nil {
+		var conflict *hostshare.ConflictError
+		if errors.As(err, &conflict) {
+			s.flashErrT(w, r, "flash.err.domain_in_use")
+			return
+		}
 		logFrom(r).Error("createApp: failed to create application", "err", err, "environment_id", e.ID, "name", name)
 		s.flashErrErr(w, r, "flash.err.create_app", err)
-		return
-	}
-	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
-		ApplicationID: a.ID, Host: a.Domain, Tls: false, IsPrimary: true, Exposed: false, Paths: "",
-	}); err != nil {
-		// Roll back the orphaned application so it does not linger without a domain.
-		if derr := s.q.DeleteApplication(r.Context(), a.ID); derr != nil {
-			logFrom(r).Error("createApp: rollback delete application failed", "err", derr, "app_id", a.ID)
-		}
-		logFrom(r).Error("createApp: create primary domain failed", "err", err, "app_id", a.ID, "host", a.Domain)
-		s.flashErrT(w, r, "flash.err.create_domain_failed")
 		return
 	}
 	if registryID != nil {
@@ -465,6 +461,16 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Domains = doms
+		shares, err := s.q.ListHostSharesByApplication(r.Context(), c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: failed to list host shares", "err", err, "app_id", c.App.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		c.HostShares = map[int64][]db.ListHostSharesByApplicationRow{}
+		for _, sh := range shares {
+			c.HostShares[sh.DomainID] = append(c.HostShares[sh.DomainID], sh)
+		}
 	}
 	if tab == "env" {
 		links, lerr := s.q.ListDBLinksByApplication(r.Context(), c.App.ID)

@@ -13,7 +13,9 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/traefik"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 var hostRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
@@ -130,25 +132,29 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.host_in_use")
 		return
 	}
-	if n, _ := s.q.CountDomainsByHost(r.Context(), host); n > 0 {
-		logFrom(r).Info("addDomain: host already in use", "app_id", c.App.ID, "host", host)
-		s.flashErrT(w, r, "flash.err.host_in_use")
-		return
-	}
 	expose := r.FormValue("exposed") == "on"
 	paths, perr := validPaths(r.FormValue("paths"))
 	if perr != nil {
 		s.flashErr(w, r, perr.Error())
 		return
 	}
-	if _, err := s.q.CreateDomain(r.Context(), db.CreateDomainParams{
-		ApplicationID: c.App.ID, Host: host, Tls: tls, IsPrimary: false, Exposed: expose, Paths: strings.Join(paths, "\n"),
-	}); err != nil {
+	if s.hosts == nil {
+		logFrom(r).Error("addDomain: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.add_domain")
+		return
+	}
+	domain, err := s.hosts.Add(r.Context(), hostshare.AddParams{
+		AppID: c.App.ID, Host: host, TLS: tls, Exposed: expose, Paths: paths,
+	})
+	if err != nil {
+		if s.flashHostConflict(w, r, err) {
+			return
+		}
 		logFrom(r).Error("addDomain: create failed", "err", err, "app_id", c.App.ID, "host", host)
 		s.flashErrT(w, r, "flash.err.add_domain")
 		return
 	}
-	logFrom(r).Info("domain added", "app_id", c.App.ID, "host", host, "tls", tls)
+	logFrom(r).Info("domain added", "app_id", c.App.ID, "host", host, "tls", domain.Tls)
 	s.syncAppLabels(r, c.App.ID, c.App.Port)
 	s.flashOK(w, r, "flash.ok.domain_added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
@@ -167,13 +173,21 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.q.SetDomainTLS(r.Context(), db.SetDomainTLSParams{ID: d.ID, Tls: tls}); err != nil {
+	if s.hosts == nil {
+		logFrom(r).Error("toggleDomainTLS: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
+	refs, err := s.hosts.SetTLS(r.Context(), d.ID, tls)
+	if err != nil {
 		logFrom(r).Error("toggleDomainTLS: update failed", "err", err, "domain_id", d.ID)
 		s.flashErrT(w, r, "flash.err.update_domain")
 		return
 	}
 	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", tls)
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	for _, ref := range refs {
+		s.syncAppLabels(r, ref.ID, ref.Port)
+	}
 	s.flashOK(w, r, "flash.ok.tls_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
@@ -193,9 +207,15 @@ func (s *Server) setDomainExposure(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, perr.Error())
 		return
 	}
-	if err := s.q.UpdateDomainExposure(r.Context(), db.UpdateDomainExposureParams{
-		ID: d.ID, Exposed: expose, Paths: strings.Join(paths, "\n"),
-	}); err != nil {
+	if s.hosts == nil {
+		logFrom(r).Error("setDomainExposure: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.update_exposure")
+		return
+	}
+	if err := s.hosts.UpdatePaths(r.Context(), d.ID, expose, paths); err != nil {
+		if s.flashHostConflict(w, r, err) {
+			return
+		}
 		logFrom(r).Error("setDomainExposure: update failed", "err", err, "domain_id", d.ID)
 		s.flashErrT(w, r, "flash.err.update_exposure")
 		return
@@ -406,4 +426,14 @@ func (s *Server) appHiddenMetricsPaths(ctx context.Context, appID int64, appPort
 		in = append(in, appmetrics.Endpoint{Port: e.Port, Path: e.Path})
 	}
 	return appmetrics.HiddenPaths(appPort, in), nil
+}
+
+// flashHostConflict reports only rule violations; callers handle internal errors.
+func (s *Server) flashHostConflict(w http.ResponseWriter, r *http.Request, err error) bool {
+	var conflict *hostshare.ConflictError
+	if !errors.As(err, &conflict) {
+		return false
+	}
+	s.flashErr(w, r, i18n.Tf(r.Context(), conflict.Key, conflict.Args...))
+	return true
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/firewall"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
@@ -41,6 +42,7 @@ type Server struct {
 	logHub   *deploy.DeployLogHub
 	dbsvc    *dbservice.Service
 
+	hosts         *hostshare.Store
 	backupSvc     *backup.Service
 	reloadBackups func()
 
@@ -204,6 +206,9 @@ func (s *Server) acquireLogSlotFor(userID int64) (release func(), ok bool) {
 		releaseSeat()
 	}, true
 }
+
+// SetHostShare wires transactional domain claims; missing wiring refuses writes.
+func (s *Server) SetHostShare(st *hostshare.Store) { s.hosts = st }
 
 // SetBackups wires the backup service and a reload hook (re-reads the cron
 // schedule) into the server without changing New's signature.

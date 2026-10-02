@@ -13,6 +13,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/firewall"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -397,17 +398,17 @@ func (s *Server) setPanelDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.panel_direct_closed")
 		return
 	}
-	n, err := s.q.CountDomainsByHost(r.Context(), host)
-	if err != nil {
-		logFrom(r).Error("setPanelDomain: count app domains failed", "err", err)
+	if s.hosts == nil {
+		logFrom(r).Error("setPanelDomain: host-sharing store unavailable")
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	if n > 0 {
-		s.flashErrT(w, r, "flash.err.panel_host_in_use")
-		return
-	}
-	if err := s.q.SetPanelDomainPending(r.Context(), host); err != nil {
+	if err := s.hosts.SetPanelDomain(r.Context(), host); err != nil {
+		var conflict *hostshare.ConflictError
+		if errors.As(err, &conflict) {
+			s.flashErrT(w, r, "flash.err.panel_host_in_use")
+			return
+		}
 		logFrom(r).Error("setPanelDomain: save failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return

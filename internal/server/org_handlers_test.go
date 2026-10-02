@@ -15,6 +15,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
@@ -72,6 +73,7 @@ func newServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	return srv.Router(), q, orgSvc
 }
@@ -88,6 +90,7 @@ func newServerGuarded(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), false), func() {})
 	return srv.Router(), q, orgSvc
 }

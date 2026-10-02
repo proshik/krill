@@ -28,6 +28,9 @@ describes them in detail.
   and restore.
 - **Routing:** multiple domains per app with per-domain Let's Encrypt, internal by
   default, per-domain public-path allow-lists, basic auth and IP allow-lists.
+- **Shared hosts:** apps of one environment can share a domain on disjoint segment paths,
+  with one catch-all, explicit router priorities and host-wide HTTPS. Domain claims,
+  primary app creation and panel reservation use the same per-host database lock.
 - **Operations:** live structured logs, web terminal, CPU/memory monitoring across
   all nodes, Telegram alerts, a visual cluster topology page.
 - **Multi-node:** worker nodes joined over SSH, placement (any / pinned / global),
@@ -120,6 +123,9 @@ Verified in code and tests, but not yet exercised on a real environment:
     `;`-parameter matching is covered by `TestHiddenMetricsPathsOnRealTraefik` against the pinned
     Traefik only.
 
+14. Shared host: a frontend catch-all and API at `/api` on one real domain, including
+    Let's Encrypt issuance and toggling HTTPS for all apps sharing the host.
+
 ## Open
 
 - **Resilience on top of Swarm:** a resilient ingress (Traefik is a single replica
@@ -137,11 +143,6 @@ Verified in code and tests, but not yet exercised on a real environment:
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
 - **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
-- **Several apps on one host by path** — e.g. a web SPA on `/` and its API on `/api` under
-  one domain, so the browser needs no CORS. Apps of one environment, at most one catch-all
-  per host, paths matched by segment, explicit router priorities, HTTPS as a property of the
-  host. Design and implementation plan are written (maintainer's local notes, 2026-09-24);
-  pick it up when the first app that needs it is ready to ship.
 
 ## Later
 

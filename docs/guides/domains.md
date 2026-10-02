@@ -29,7 +29,36 @@ like the local sslip.io one — stays on plain HTTP and never triggers ACME.
 
 An exposed domain serves every path by default. To publish only part of an app — say, a bot's
 webhook endpoint — list path prefixes under **Public paths**, one per line (`/webhook`).
-Requests to any other path get a 404 from Traefik and never reach the app.
+Paths match whole segments: `/api` includes `/api` and `/api/…`, but excludes `/apix`
+and `/apiary`. A trailing slash is normalized; `/` means every path. Requests to any
+other path get a 404 from Traefik unless another app on the same host serves them.
+Existing domains adopt segment matching on their next deploy or domain edit.
+
+## Several apps on one host
+
+Apps in the **same environment** can share a domain. For example, a frontend serves
+`app.example.com` with empty Public paths, and an API serves the same domain at `/api`.
+The API receives the `/api` prefix unchanged; `/`, `/apix` and all other unclaimed paths
+reach the frontend. Both apps must expose their domain to receive public traffic.
+
+Keep each app's own primary domain. On the API's **Domains** tab, add the frontend's
+host and enter `/api` under **Public paths**. The frontend keeps empty paths as the
+fallback. The domain list shows the other apps sharing the host and their paths.
+
+A host can have at most one app with empty paths (the fallback). Paths of different
+apps must not overlap: `/api` and `/api/v2` conflict, while `/api` and `/apiary` do not.
+An internal domain still reserves its paths. Apps in another environment or organization
+cannot claim any part of the host. The panel domain remains exclusive.
+
+HTTPS belongs to the host: adding an app inherits its HTTPS setting, and toggling HTTPS
+switches every app on that host. Shared domains ask for confirmation listing the affected
+apps. Public paths, basic auth and IP restrictions remain separate for each app; an auth
+failure on a path does not fall back to the frontend.
+
+**Rolling back to a release without shared-host support:** first give the apps separate
+hosts. Older releases overwrite the segment rules and explicit router priorities on a
+deploy or domain edit, so keeping a shared host across a rollback can route requests to
+the wrong app.
 
 ## Protect a domain
 

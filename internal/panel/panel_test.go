@@ -3,6 +3,7 @@ package panel
 import (
 	"encoding/json"
 	"errors"
+	"github.com/proshik/krill/internal/traefik"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -252,5 +253,17 @@ func TestAppsProviderToken(t *testing.T) {
 	a, b := DeriveTokens("secret-a"), DeriveTokens("secret-b")
 	if a.AlloyApps == "" || a.AlloyApps == a.Provider || a.AlloyApps == a.Forwarded || a.AlloyApps == b.AlloyApps || a.AlloyApps != DeriveTokens("secret-a").AlloyApps {
 		t.Fatal("apps provider token must be independent and deterministic")
+	}
+}
+
+// App routers must stay below the panel's, or a tenant app claiming the panel
+// host would tie with it.
+func TestAppRouterPrioritiesStayBelowThePanel(t *testing.T) {
+	if traefik.PriorityPaths >= routerPriority || traefik.PriorityCatchAll >= routerPriority {
+		t.Fatalf("app priorities (%d, %d) must be below the panel's %d",
+			traefik.PriorityPaths, traefik.PriorityCatchAll, routerPriority)
+	}
+	if traefik.PriorityCatchAll >= traefik.PriorityPaths {
+		t.Fatal("a path router must outrank a catch-all on the same host")
 	}
 }

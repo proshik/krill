@@ -16,6 +16,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
@@ -48,10 +49,10 @@ func (noopEngine) ServiceStates(_ context.Context, names []string) (map[string]d
 func (noopEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (noopEngine) ServiceScale(context.Context, string, uint64) error               { return nil }
-func (noopEngine) ServiceRestart(context.Context, string) error                     { return nil }
-func (noopEngine) ImagePull(context.Context, string, io.Writer) error               { return nil }
-func (noopEngine) VolumeRemove(context.Context, string) error { return nil }
+func (noopEngine) ServiceScale(context.Context, string, uint64) error { return nil }
+func (noopEngine) ServiceRestart(context.Context, string) error       { return nil }
+func (noopEngine) ImagePull(context.Context, string, io.Writer) error { return nil }
+func (noopEngine) VolumeRemove(context.Context, string) error         { return nil }
 func (noopEngine) VolumeArchive(context.Context, string, io.Writer, string) error {
 	return nil
 }
@@ -62,7 +63,7 @@ func (noopEngine) VolumeRemoveOn(context.Context, string, string) error { return
 func (noopEngine) VolumeExistsOn(context.Context, string, string) (bool, error) {
 	return false, nil
 }
-func (noopEngine) VolumeChown(context.Context, string, int, int, string) error      { return nil }
+func (noopEngine) VolumeChown(context.Context, string, int, int, string) error { return nil }
 func (noopEngine) ServiceUpdateLabels(context.Context, string, map[string]string) error {
 	return nil
 }
@@ -120,6 +121,7 @@ func newNodeServerWithEngine(t *testing.T, eng docker.Engine) (http.Handler, *db
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	obs := &fakeObsCtl{}
 	srv.SetObservability(obs, func(context.Context, observability.Settings) observability.Report { return observability.Report{} })
@@ -180,6 +182,7 @@ func buildDeployServer(t *testing.T, tokens api.TokenStore, eng docker.Engine) (
 	t.Cleanup(dep.Stop)
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, dep, eng, hub, dbSvc)
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	var tokenStore api.TokenStore = q
 	if tokens != nil {
