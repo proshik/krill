@@ -1,6 +1,7 @@
 package traefik
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -92,7 +93,7 @@ func TestDomainRule(t *testing.T) {
 		t.Errorf("no-paths rule = %q", got)
 	}
 	got := domainRule("a.example.com", []string{"/webhook", "/healthz"}, nil)
-	want := "Host(`a.example.com`) && (PathPrefix(`/webhook`) || PathPrefix(`/healthz`))"
+	want := "Host(`a.example.com`) && ((Path(`/webhook`) || PathPrefix(`/webhook/`)) || (Path(`/healthz`) || PathPrefix(`/healthz/`)))"
 	if got != want {
 		t.Errorf("paths rule = %q want %q", got, want)
 	}
@@ -100,7 +101,7 @@ func TestDomainRule(t *testing.T) {
 
 func TestAppLabelsPaths(t *testing.T) {
 	l := AppLabels("krill-1", []Domain{{Host: "a.example.com", Exposed: true, Paths: []string{"/webhook"}}}, 80, "krill-net", nil)
-	if l["traefik.http.routers.krill-1-d0.rule"] != "Host(`a.example.com`) && (PathPrefix(`/webhook`))" {
+	if l["traefik.http.routers.krill-1-d0.rule"] != "Host(`a.example.com`) && ((Path(`/webhook`) || PathPrefix(`/webhook/`)))" {
 		t.Errorf("unexpected rule: %q", l["traefik.http.routers.krill-1-d0.rule"])
 	}
 }
@@ -129,7 +130,7 @@ func TestDomainRuleHidesMetricsPaths(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 	got = domainRule("a.example", []string{"/api"}, []string{"/metrics"})
-	want = "Host(`a.example`) && (PathPrefix(`/api`)) && !(PathRegexp(`(?i)^/metrics(?:[/;].*)?$`))"
+	want = "Host(`a.example`) && ((Path(`/api`) || PathPrefix(`/api/`))) && !(PathRegexp(`(?i)^/metrics(?:[/;].*)?$`))"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
@@ -143,6 +144,57 @@ func TestAppLabelsHidesOnEveryServingRouter(t *testing.T) {
 	for _, k := range []string{"traefik.http.routers.krill-7-d0s.rule", "traefik.http.routers.krill-7-d0.rule", "traefik.http.routers.krill-7-d1.rule"} {
 		if !strings.Contains(l[k], "!(PathRegexp(`(?i)^/metrics(?:") {
 			t.Errorf("%s = %q: metrics path not excluded", k, l[k])
+		}
+	}
+}
+
+func TestNormalizePaths(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want []string
+	}{
+		{nil, nil},
+		{[]string{"/api"}, []string{"/api"}},
+		{[]string{"/api/"}, []string{"/api"}},
+		{[]string{"/api//"}, []string{"/api"}},
+		{[]string{"/"}, nil},
+		{[]string{"//"}, nil},
+		{[]string{"/api", "/"}, nil},
+		{[]string{"/api", "/api/", " /api "}, []string{"/api"}},
+		{[]string{"/a", "", "/b"}, []string{"/a", "/b"}},
+	}
+	for _, c := range cases {
+		if got := NormalizePaths(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("NormalizePaths(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Legacy rows may hold "/api/" or "/" — the rule must never contain "//".
+func TestDomainRuleNormalizesLegacyPaths(t *testing.T) {
+	if got := domainRule("a.example", []string{"/api/"}, nil); got != "Host(`a.example`) && ((Path(`/api`) || PathPrefix(`/api/`)))" {
+		t.Errorf("trailing slash: %q", got)
+	}
+	if got := domainRule("a.example", []string{"/"}, nil); got != "Host(`a.example`)" {
+		t.Errorf("root path must be catch-all: %q", got)
+	}
+}
+
+func TestAppLabelsPriorities(t *testing.T) {
+	l := AppLabels("krill-1", []Domain{
+		{Host: "a.example", Exposed: true},                                     // catch-all, plain
+		{Host: "b.example", Exposed: true, TLS: true, Paths: []string{"/api"}}, // paths, TLS (+ redirect router)
+		{Host: "c.example", Exposed: true, Paths: []string{"/"}},               // "/" = catch-all
+	}, 80, "krill-net", nil)
+	want := map[string]string{
+		"traefik.http.routers.krill-1-d0.priority":  "100",
+		"traefik.http.routers.krill-1-d1s.priority": "200",
+		"traefik.http.routers.krill-1-d1.priority":  "200",
+		"traefik.http.routers.krill-1-d2.priority":  "100",
+	}
+	for k, v := range want {
+		if l[k] != v {
+			t.Errorf("%s = %q, want %q", k, l[k], v)
 		}
 	}
 }

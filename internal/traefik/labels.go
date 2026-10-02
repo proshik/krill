@@ -29,18 +29,47 @@ func SplitPaths(s string) []string {
 	return out
 }
 
+// NormalizePaths makes legacy trailing slashes and a root prefix consistent
+// with segment routing. Empty means catch-all; input paths are pre-validated.
+func NormalizePaths(paths []string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		p = strings.TrimRight(p, "/")
+		if p == "" {
+			return nil
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Paths outrank a catch-all even when metrics protection makes its rule longer.
+const (
+	PriorityPaths    = 200
+	PriorityCatchAll = 100
+)
+
 // domainRule builds the Traefik router rule for a host with an optional
-// path allow-list (prefix match) and an optional deny-list of metrics paths.
+// path allow-list (segment match) and an optional deny-list of metrics paths.
 // Both lists must be pre-validated (no backticks). A hidden path is matched
 // case-insensitively, together with everything under it and any ";" path
 // parameter: backends that ignore case (ASP.NET) or strip ";..." (servlet
 // containers) would otherwise serve /METRICS or /metrics;x from the domain.
 func domainRule(host string, paths, hidden []string) string {
+	paths = NormalizePaths(paths)
 	rule := fmt.Sprintf("Host(`%s`)", host)
 	if len(paths) > 0 {
 		parts := make([]string, 0, len(paths))
 		for _, p := range paths {
-			parts = append(parts, fmt.Sprintf("PathPrefix(`%s`)", p))
+			parts = append(parts, fmt.Sprintf("(Path(`%s`) || PathPrefix(`%s/`))", p, p))
 		}
 		rule += " && (" + strings.Join(parts, " || ") + ")"
 	}
@@ -81,6 +110,10 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string,
 		if !d.Exposed {
 			continue
 		}
+		priority := strconv.Itoa(PriorityCatchAll)
+		if len(NormalizePaths(d.Paths)) > 0 {
+			priority = strconv.Itoa(PriorityPaths)
+		}
 		base := fmt.Sprintf("%s-d%d", serviceName, i)
 		rule := domainRule(d.Host, d.Paths, hiddenPaths)
 		var servePrefix string // router prefix that actually serves traffic
@@ -98,11 +131,13 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string,
 			mw := base + "-redirect"
 			rp := "traefik.http.routers." + base + "."
 			l[rp+"rule"] = rule
+			l[rp+"priority"] = priority
 			l[rp+"entrypoints"] = "web"
 			l[rp+"service"] = serviceName
 			l[rp+"middlewares"] = mw
 			l["traefik.http.middlewares."+mw+".redirectscheme.scheme"] = "https"
 		}
+		l[servePrefix+"priority"] = priority
 		// Access protection on the serving router: IP filter first, then auth (AND).
 		var mws []string
 		if len(d.AllowedIPs) > 0 {

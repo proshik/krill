@@ -319,3 +319,28 @@ func TestTopologyDataMultiDomainOneEdge(t *testing.T) {
 		t.Errorf("aggregated label must list both domains, got %q", lbl)
 	}
 }
+
+func TestTopologyIngressLabelShowsPaths(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	owner := mkUser(t, q, "topo-paths@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, owner, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "api", Image: "nginx", Tag: "alpine", Domain: "m.example.com", Port: 80,
+		SourceType: "image", DockerfilePath: "Dockerfile",
+	})
+	_, _ = q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: a.ID, Host: "m.example.com", IsPrimary: true, Exposed: true, Paths: "/api"})
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", loginAs(t, q, "topo-paths@k.local"))
+	var g topology.Graph
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range g.Links {
+		if l.Kind == "ingress" && l.Label == "m.example.com/api" {
+			return
+		}
+	}
+	t.Fatalf("no ingress link labelled m.example.com/api: %+v", g.Links)
+}

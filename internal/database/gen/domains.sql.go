@@ -114,6 +114,54 @@ func (q *Queries) GetDomain(ctx context.Context, id int64) (Domain, error) {
 	return i, err
 }
 
+const listDomainClaimsByHost = `-- name: ListDomainClaimsByHost :many
+SELECT d.id, d.application_id, d.paths, d.tls,
+       a.name AS app_name, a.port AS app_port, a.environment_id
+FROM domains d JOIN applications a ON a.id = d.application_id
+WHERE d.host = $1
+ORDER BY d.id
+FOR UPDATE OF d
+`
+
+type ListDomainClaimsByHostRow struct {
+	ID            int64  `json:"id"`
+	ApplicationID int64  `json:"application_id"`
+	Paths         string `json:"paths"`
+	Tls           bool   `json:"tls"`
+	AppName       string `json:"app_name"`
+	AppPort       int32  `json:"app_port"`
+	EnvironmentID int64  `json:"environment_id"`
+}
+
+// Every row claiming a host, locked until its checked update commits.
+func (q *Queries) ListDomainClaimsByHost(ctx context.Context, host string) ([]ListDomainClaimsByHostRow, error) {
+	rows, err := q.db.Query(ctx, listDomainClaimsByHost, host)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDomainClaimsByHostRow
+	for rows.Next() {
+		var i ListDomainClaimsByHostRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.Paths,
+			&i.Tls,
+			&i.AppName,
+			&i.AppPort,
+			&i.EnvironmentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDomainsByApplication = `-- name: ListDomainsByApplication :many
 SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
 FROM domains WHERE application_id = $1 ORDER BY is_primary DESC, created_at
@@ -187,6 +235,49 @@ func (q *Queries) ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []in
 	return items, nil
 }
 
+const listHostSharesByApplication = `-- name: ListHostSharesByApplication :many
+SELECT mine.id AS domain_id, a.id AS app_id, a.name AS app_name, other.paths
+FROM domains mine
+JOIN applications me ON me.id = mine.application_id
+JOIN domains other ON other.host = mine.host AND other.application_id <> mine.application_id
+JOIN applications a ON a.id = other.application_id AND a.environment_id = me.environment_id
+WHERE mine.application_id = $1
+ORDER BY mine.id, a.name
+`
+
+type ListHostSharesByApplicationRow struct {
+	DomainID int64  `json:"domain_id"`
+	AppID    int64  `json:"app_id"`
+	AppName  string `json:"app_name"`
+	Paths    string `json:"paths"`
+}
+
+// For each domain of an app, the other apps of the same environment on its host.
+func (q *Queries) ListHostSharesByApplication(ctx context.Context, applicationID int64) ([]ListHostSharesByApplicationRow, error) {
+	rows, err := q.db.Query(ctx, listHostSharesByApplication, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHostSharesByApplicationRow
+	for rows.Next() {
+		var i ListHostSharesByApplicationRow
+		if err := rows.Scan(
+			&i.DomainID,
+			&i.AppID,
+			&i.AppName,
+			&i.Paths,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setDomainAllowedIPs = `-- name: SetDomainAllowedIPs :exec
 UPDATE domains SET allowed_ips = $2 WHERE id = $1
 `
@@ -226,6 +317,21 @@ type SetDomainTLSParams struct {
 
 func (q *Queries) SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error {
 	_, err := q.db.Exec(ctx, setDomainTLS, arg.ID, arg.Tls)
+	return err
+}
+
+const setDomainTLSByHost = `-- name: SetDomainTLSByHost :exec
+UPDATE domains SET tls = $2 WHERE host = $1
+`
+
+type SetDomainTLSByHostParams struct {
+	Host string `json:"host"`
+	Tls  bool   `json:"tls"`
+}
+
+// TLS is a property of the host: every row sharing it switches together.
+func (q *Queries) SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error {
+	_, err := q.db.Exec(ctx, setDomainTLSByHost, arg.Host, arg.Tls)
 	return err
 }
 

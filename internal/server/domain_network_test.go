@@ -13,6 +13,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
@@ -24,13 +25,18 @@ import (
 // ServiceUpdateLabels.
 type labelEngine struct {
 	noopEngine
-	mu   sync.Mutex
-	last map[string]string
+	mu        sync.Mutex
+	last      map[string]string
+	byService map[string]map[string]string
 }
 
-func (e *labelEngine) ServiceUpdateLabels(_ context.Context, _ string, labels map[string]string) error {
+func (e *labelEngine) ServiceUpdateLabels(_ context.Context, name string, labels map[string]string) error {
 	e.mu.Lock()
 	e.last = labels
+	if e.byService == nil {
+		e.byService = map[string]map[string]string{}
+	}
+	e.byService[name] = labels
 	e.mu.Unlock()
 	return nil
 }
@@ -57,6 +63,7 @@ func newServerWithLabelEnginePool(t *testing.T, eng *labelEngine) (http.Handler,
 	hub := deploy.NewLogHub()
 	dbSvc := dbservice.New(eng, dbservice.NewDBStore(q), hub, "krill-net")
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbSvc)
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	return srv.Router(), q, orgSvc, pool
 }
@@ -230,4 +237,10 @@ func TestCreateOrgDoesNotMarkMigratedWhenTheNetworkNameIsNotRecorded(t *testing.
 	if orgs[0].NetworkMigratedAt.Valid {
 		t.Fatal("an organization with no recorded network must not be marked migrated; the startup pass would never repair it")
 	}
+}
+
+func (e *labelEngine) labelsOf(service string) map[string]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.byService[service]
 }

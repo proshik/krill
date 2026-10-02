@@ -15,6 +15,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/server"
@@ -46,6 +47,7 @@ func newPanelServer(t *testing.T, advertise string) *panelEnv {
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", ListenAddr: ":8080", AdvertiseAddr: advertise}
 	hub := deploy.NewLogHub()
 	srv := server.New(cfg, auth.NewService(q), env.orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net"))
+	srv.SetHostShare(hostshare.NewStore(pool))
 	srv.SetControlPlaneFirewall(env.fw)
 	srv.SetPanelCertCheck(func(context.Context, string) error { return env.cert })
 	upstream, uerr := panel.Upstream(advertise, cfg.ListenAddr)

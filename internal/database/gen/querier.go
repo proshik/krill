@@ -186,6 +186,8 @@ type Querier interface {
 	ListDeploymentSummariesByApplication(ctx context.Context, applicationID int64) ([]ListDeploymentSummariesByApplicationRow, error)
 	ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error)
 	ListDestinationsByOrg(ctx context.Context, organizationID int64) ([]Destination, error)
+	// Every row claiming a host, locked until its checked update commits.
+	ListDomainClaimsByHost(ctx context.Context, host string) ([]ListDomainClaimsByHostRow, error)
 	ListDomainsByApplication(ctx context.Context, applicationID int64) ([]Domain, error)
 	// Batched form for the topology view (one query instead of one per app).
 	ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]Domain, error)
@@ -196,6 +198,8 @@ type Querier interface {
 	// organization at once (one query instead of one per project).
 	ListEnvironmentsByProjectIDs(ctx context.Context, dollar_1 []int64) ([]Environment, error)
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
+	// For each domain of an app, the other apps of the same environment on its host.
+	ListHostSharesByApplication(ctx context.Context, applicationID int64) ([]ListHostSharesByApplicationRow, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
@@ -245,6 +249,8 @@ type Querier interface {
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
+	// TLS is a property of the host: every row sharing it switches together.
+	SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error
 	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error

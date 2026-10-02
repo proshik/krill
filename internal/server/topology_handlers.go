@@ -204,7 +204,13 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		var hosts []string
 		for _, d := range domsByApp[a.ID] {
 			if d.Exposed {
-				hosts = append(hosts, d.Host)
+				if paths := traefik.NormalizePaths(traefik.SplitPaths(d.Paths)); len(paths) > 0 {
+					for _, p := range paths {
+						hosts = append(hosts, d.Host+p)
+					}
+				} else {
+					hosts = append(hosts, d.Host)
+				}
 			}
 		}
 		if len(hosts) > 0 {

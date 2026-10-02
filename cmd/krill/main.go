@@ -30,6 +30,7 @@ import (
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/firewall"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/observability"
@@ -443,6 +444,7 @@ func run() error {
 
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
+	app.SetHostShare(hostshare.NewStore(pool))
 	app.SetBackups(backupSvc, func() {
 		if err := sched.Reload(); err != nil {
 			slog.Error("backup scheduler reload failed", "err", err)
