@@ -93,3 +93,6 @@ JOIN environments e ON e.id = a.environment_id
 JOIN projects p ON p.id = e.project_id
 JOIN organizations o ON o.id = p.organization_id
 WHERE a.id = $1;
+
+-- name: UpdateApplicationEnvClassified :exec
+UPDATE applications SET env_text = $2, env_public_keys = $3, updated_at = now() WHERE id = $1;

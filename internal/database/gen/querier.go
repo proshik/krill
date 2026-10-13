@@ -268,6 +268,7 @@ type Querier interface {
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationBuild(ctx context.Context, arg UpdateApplicationBuildParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error
+	UpdateApplicationEnvClassified(ctx context.Context, arg UpdateApplicationEnvClassifiedParams) error
 	UpdateApplicationImage(ctx context.Context, arg UpdateApplicationImageParams) error
 	UpdateApplicationSource(ctx context.Context, arg UpdateApplicationSourceParams) error
 	UpdateApplicationStatus(ctx context.Context, arg UpdateApplicationStatusParams) error

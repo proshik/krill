@@ -188,6 +188,14 @@
   /* env block editor "Environment Settings" (mono, fixed height, dark) */
   .k-code { width:100%; min-height:24rem; background:#0b0d10; color:#e6e6ea; border:1px solid var(--color-border-strong);
     border-radius:10px; padding:.85rem 1rem; font-family:var(--font-mono); font-size:13px; line-height:1.6; resize:vertical; tab-size:2; }
+  /* Both sections share column widths regardless of their action buttons. */
+  .k-env-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.6fr) 15rem; align-items:center; gap:.5rem; }
+  .k-env-row .k-input { min-width:0; }
+  .k-env-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:.5rem; }
+  @media (max-width:900px) {
+    .k-env-row { grid-template-columns:minmax(0,1fr); }
+    .k-env-actions { justify-content:flex-start; }
+  }
   .k-code:focus { outline:2px solid var(--color-accent); outline-offset:1px; box-shadow:0 0 16px -4px rgba(190,242,100,.4); }
 
   /* log terminal (xterm) — explicit height so FitAddon can size rows even when

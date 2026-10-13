@@ -24,7 +24,7 @@ func (q *Queries) CountApplicationsByProject(ctx context.Context, projectID int6
 
 const createApplication = `-- name: CreateApplication :one
 INSERT INTO applications (environment_id, name, image, tag, domain, port, env_text, source_type, git_url, git_branch, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env, env_public_keys
 `
 
 type CreateApplicationParams struct {
@@ -94,6 +94,7 @@ func (q *Queries) CreateApplication(ctx context.Context, arg CreateApplicationPa
 		&i.MetricsEnabled,
 		&i.MetricsToken,
 		&i.MetricsTokenEnv,
+		&i.EnvPublicKeys,
 	)
 	return i, err
 }
@@ -108,7 +109,7 @@ func (q *Queries) DeleteApplication(ctx context.Context, id int64) error {
 }
 
 const getApplication = `-- name: GetApplication :one
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env FROM applications WHERE id = $1
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env, env_public_keys FROM applications WHERE id = $1
 `
 
 func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, error) {
@@ -152,6 +153,7 @@ func (q *Queries) GetApplication(ctx context.Context, id int64) (Application, er
 		&i.MetricsEnabled,
 		&i.MetricsToken,
 		&i.MetricsTokenEnv,
+		&i.EnvPublicKeys,
 	)
 	return i, err
 }
@@ -243,7 +245,7 @@ func (q *Queries) ListApplicationIDsByOrg(ctx context.Context, organizationID in
 }
 
 const listApplicationsByEnvironment = `-- name: ListApplicationsByEnvironment :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env, env_public_keys FROM applications WHERE environment_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error) {
@@ -293,6 +295,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 			&i.MetricsEnabled,
 			&i.MetricsToken,
 			&i.MetricsTokenEnv,
+			&i.EnvPublicKeys,
 		); err != nil {
 			return nil, err
 		}
@@ -305,7 +308,7 @@ func (q *Queries) ListApplicationsByEnvironment(ctx context.Context, environment
 }
 
 const listApplicationsByEnvironmentIDs = `-- name: ListApplicationsByEnvironmentIDs :many
-SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+SELECT id, environment_id, name, image, tag, domain, port, status, created_at, updated_at, source_type, git_url, git_branch, dockerfile_path, registry_id, memory_limit, cpu_limit, replicas, restart_condition, restart_max_attempts, healthcheck_cmd, healthcheck_interval, healthcheck_timeout, healthcheck_retries, healthcheck_start_period, command, env_text, git_credential_id, build_args, build_secrets, placement_mode, placement_nodes, auto_deploy, webhook_secret, metrics_enabled, metrics_token, metrics_token_env, env_public_keys FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
 `
 
 func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error) {
@@ -355,6 +358,7 @@ func (q *Queries) ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1
 			&i.MetricsEnabled,
 			&i.MetricsToken,
 			&i.MetricsTokenEnv,
+			&i.EnvPublicKeys,
 		); err != nil {
 			return nil, err
 		}
@@ -550,6 +554,21 @@ type UpdateApplicationEnvParams struct {
 
 func (q *Queries) UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error {
 	_, err := q.db.Exec(ctx, updateApplicationEnv, arg.ID, arg.EnvText)
+	return err
+}
+
+const updateApplicationEnvClassified = `-- name: UpdateApplicationEnvClassified :exec
+UPDATE applications SET env_text = $2, env_public_keys = $3, updated_at = now() WHERE id = $1
+`
+
+type UpdateApplicationEnvClassifiedParams struct {
+	ID            int64    `json:"id"`
+	EnvText       string   `json:"env_text"`
+	EnvPublicKeys []string `json:"env_public_keys"`
+}
+
+func (q *Queries) UpdateApplicationEnvClassified(ctx context.Context, arg UpdateApplicationEnvClassifiedParams) error {
+	_, err := q.db.Exec(ctx, updateApplicationEnvClassified, arg.ID, arg.EnvText, arg.EnvPublicKeys)
 	return err
 }
 
