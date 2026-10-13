@@ -300,7 +300,12 @@ func (s *Service) SetEnv(ctx context.Context, id Identity, ref, key, value strin
 	if err != nil {
 		return err
 	}
-	if err := s.q.UpdateApplicationEnv(ctx, db.UpdateApplicationEnvParams{ID: app.ID, EnvText: newText}); err != nil {
+	// An older binary can remove a key without pruning its classification. New
+	// API keys must stay secret even if stale metadata still names that key.
+	publicKeys := envtext.PublicKeys(app.EnvText, app.EnvPublicKeys)
+	if err := s.q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{
+		ID: app.ID, EnvText: newText, EnvPublicKeys: envtext.PublicKeys(newText, publicKeys),
+	}); err != nil {
 		return fmt.Errorf("set env: update: %w", err)
 	}
 	return nil

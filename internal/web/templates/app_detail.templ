@@ -295,8 +295,7 @@ templ envTab(c AppCtx) {
 				<div class="k-panel-desc">{ i18n.T(ctx, "env.settings_desc") }</div>
 			</div>
 			<div class="flex items-center gap-2">
-				<button type="button" class="k-copy" data-show={ i18n.T(ctx, "env.show_values") } data-hide={ i18n.T(ctx, "env.hide_values") } onclick="krillEnvRevealToggle(this)">👁 { i18n.T(ctx, "env.show_values") }</button>
-				<div class="k-seg" id="env-seg">
+				<div class="k-seg flex-wrap" id="env-seg">
 					<button type="button" class="k-seg-btn" data-env-mode="kv" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
 					<button type="button" class="k-seg-btn" data-env-mode="raw" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
 				</div>
@@ -383,18 +382,43 @@ templ envTab(c AppCtx) {
 				<p id="dblink-scheme-hint" class="k-muted text-xs mt-1" style="flex-basis:100%;display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
 			</form>
 		}
-		<form id="env-form" method="post" action={ templ.SafeURL(c.base() + "/env") } onsubmit="if(this.dataset.mode==='kv') krillEnvSyncToTextarea()">
-				<div id="env-kv" style="display:none">
-					<div id="env-rows"></div>
-					<button type="button" class="k-btn k-btn-secondary mt-1" onclick="krillEnvAddRow('','')">+ { i18n.T(ctx, "env.add_var") }</button>
+		<form
+			id="env-form"
+			method="post"
+			action={ templ.SafeURL(c.base() + "/env") }
+			data-show={ i18n.T(ctx, "env.show_values") }
+			data-hide={ i18n.T(ctx, "env.hide_values") }
+			data-to-secret={ i18n.T(ctx, "env.to_secret") }
+			data-to-variable={ i18n.T(ctx, "env.to_variable") }
+			data-remove={ i18n.T(ctx, "env.remove") }
+			data-key={ i18n.T(ctx, "env.key") }
+			data-value={ i18n.T(ctx, "env.value") }
+		>
+			<textarea id="env-textarea" name="env" hidden>{ c.App.EnvText }</textarea>
+			<input id="env-public-keys" type="hidden" name="env_public_keys" value={ strings.Join(c.App.EnvPublicKeys, "\n") }/>
+			<p class="k-panel-desc mb-4">{ i18n.T(ctx, "env.classification_hint") }</p>
+			<div id="env-kv" style="display:none">
+				<div class="k-section">{ i18n.T(ctx, "env.variables") }</div>
+				<div id="env-variable-rows"></div>
+				<button type="button" class="k-btn k-btn-secondary mt-1" onclick="krillEnvAddRow(true)">+ { i18n.T(ctx, "env.add_var") }</button>
+				<div class="k-section mt-4">{ i18n.T(ctx, "env.secrets") }</div>
+				<div id="env-secret-rows"></div>
+				<button type="button" class="k-btn k-btn-secondary mt-1" onclick="krillEnvAddRow(false)">+ { i18n.T(ctx, "env.add_secret") }</button>
+			</div>
+			<div id="env-raw" style="display:none">
+				<label class="k-section" for="env-variables-raw">{ i18n.T(ctx, "env.variables") }</label>
+				<textarea id="env-variables-raw" class="k-code" spellcheck="false" autocomplete="off" oninput="krillEnvRawInput(true)"></textarea>
+				<div class="flex items-center gap-2 mt-4 mb-2">
+					<label class="k-section" for="env-secrets-raw">{ i18n.T(ctx, "env.secrets") }</label>
+					<button id="env-raw-reveal" type="button" class="k-copy" aria-controls="env-secrets-raw" aria-expanded="false" onclick="krillEnvRevealToggle(this)">{ i18n.T(ctx, "env.show_values") }</button>
 				</div>
-				<div id="env-raw">
-					<textarea id="env-textarea" class="k-code" name="env" spellcheck="false" placeholder="NODE_ENV=production&#10;PORT=3000">{ c.App.EnvText }</textarea>
-				</div>
-				<div class="mt-4 flex justify-end">
-					<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button>
-				</div>
-			</form>
+				<p id="env-secrets-hidden" class="k-muted">{ i18n.T(ctx, "env.secrets_hidden") }</p>
+				<textarea id="env-secrets-raw" class="k-code" spellcheck="false" autocomplete="off" hidden oninput="krillEnvRawInput(false)"></textarea>
+			</div>
+			<div class="mt-4 flex justify-end">
+				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.save") }</button>
+			</div>
+		</form>
 	</div>
 }
 

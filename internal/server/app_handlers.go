@@ -723,8 +723,12 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {
 		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.metrics_env_taken", c.App.MetricsTokenEnv))
 		return
 	}
-	if err := s.q.UpdateApplicationEnv(r.Context(), db.UpdateApplicationEnvParams{
-		ID: c.App.ID, EnvText: raw,
+	publicKeys := envtext.PublicKeys(c.App.EnvText, c.App.EnvPublicKeys)
+	if _, present := r.Form["env_public_keys"]; present {
+		publicKeys = strings.Split(r.FormValue("env_public_keys"), "\n")
+	}
+	if err := s.q.UpdateApplicationEnvClassified(r.Context(), db.UpdateApplicationEnvClassifiedParams{
+		ID: c.App.ID, EnvText: raw, EnvPublicKeys: envtext.PublicKeys(raw, publicKeys),
 	}); err != nil {
 		logFrom(r).Error("saveEnv: failed to update application env", "err", err, "app_id", c.App.ID)
 		s.flashErr(w, r, err.Error())

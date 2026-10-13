@@ -91,3 +91,20 @@ func Keys(raw string) []string {
 	}
 	return keys
 }
+
+// PublicKeys keeps explicit ordinary keys only while they exist in raw. Removing
+// and later recreating a variable must not resurrect its former visible status.
+func PublicKeys(raw string, keys []string) []string {
+	allowed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		allowed[key] = true
+	}
+	out := []string{}
+	for _, key := range Keys(raw) {
+		if allowed[key] {
+			out = append(out, key)
+			delete(allowed, key)
+		}
+	}
+	return out
+}

@@ -438,7 +438,8 @@ window.krillEnhance = function () {
   document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
   document.querySelectorAll(".k-mon:not([data-mounted])").forEach(mountMonitoring);
   document.querySelectorAll(".k-topo:not([data-mounted])").forEach(mountTopology);
-  if (document.getElementById("env-form")) {
+  const envForm = document.getElementById("env-form");
+  if (envForm && !envForm.envLines) {
     let mode = "kv";
     try { mode = localStorage.getItem("krillEnvMode") || "kv"; } catch (_) { /* private mode */ }
     krillEnvMode(mode);
@@ -706,6 +707,7 @@ if (!window.__krillSubmitGuardInit) {
   });
   window.addEventListener("pageshow", function (e) {
     if (!e.persisted) return;
+    krillApplyEnvReveal();
     document.querySelectorAll("form[data-k-busy]").forEach(function (f) { f.removeAttribute("data-k-busy"); });
     document.querySelectorAll("[data-k-busy-btn]").forEach(function (b) {
       b.disabled = false;
@@ -771,95 +773,172 @@ window.krillReveal = function (btn) {
   btn.textContent = inp.type === "password" ? "👁" : "🙈";
 };
 
-// Apply the current reveal state (masked by default, Dokploy-style) to BOTH the
-// key/value value inputs AND the raw textarea. Key/value mode masks each value
-// input (type=password); raw mode masks the whole textarea (-webkit-text-security)
-// since a textarea can't mask per-value. Called on toggle and on editor init/mode
-// switch so masking holds in both modes.
-window.krillApplyEnvReveal = function () {
-  const on = !!window.__krillEnvReveal;
-  document.querySelectorAll("#env-rows .env-val").forEach(function (i) {
-    i.type = on ? "text" : "password";
-  });
-  const ta = document.getElementById("env-textarea");
-  if (ta) ta.style.webkitTextSecurity = on ? "none" : "disc";
-};
-window.krillEnvRevealToggle = function (btn) {
-  window.__krillEnvReveal = !window.__krillEnvReveal;
-  window.krillApplyEnvReveal();
-  const on = window.__krillEnvReveal;
-  btn.textContent = (on ? "🙈 " : "👁 ") + (on ? btn.dataset.hide : btn.dataset.show);
+// Environment editor state belongs to this form, never to the previous app.
+// Keep original lines (including comments and whitespace) until actually edited.
+function envLineKey(line) {
+  if (!line.trim() || line.trimStart().startsWith("#")) return "";
+  const i = line.indexOf("=");
+  return i < 0 ? "" : line.slice(0, i).trim();
+}
+function envEditor() {
+  const form = document.getElementById("env-form");
+  if (!form) return null;
+  if (!form.envLines) {
+    const ordinary = new Set(document.getElementById("env-public-keys").value.split("\n"));
+    form.envLines = document.getElementById("env-textarea").value.split("\n").map(function (text) {
+      const key = envLineKey(text);
+      return { text: text, ordinary: !!key && ordinary.has(key), draft: /^\s*=/.test(text) };
+    });
+  }
+  return form;
+}
+window.krillEnvSyncToTextarea = function () {
+  const form = envEditor();
+  if (!form) return;
+  document.getElementById("env-textarea").value = form.envLines.map(l => l.text).join("\n");
+  document.getElementById("env-public-keys").value = form.envLines
+    .filter(l => l.ordinary && envLineKey(l.text)).map(l => envLineKey(l.text)).join("\n");
 };
 
-// ── Environment editor: switch between a raw KEY=VALUE textarea and key/value rows.
-// The hidden textarea (name="env") is always the submitted source of truth; in
-// key/value mode the rows are synced into it on every edit.
-window.krillEnvSyncToTextarea = function () {
-  const ta = document.getElementById("env-textarea");
-  if (!ta) return;
-  const lines = [];
-  document.querySelectorAll("#env-rows .env-row").forEach(function (r) {
-    const k = r.querySelector(".env-key").value.trim();
-    const v = r.querySelector(".env-val").value; // keep value as-typed (spaces are significant)
-    if (k) lines.push(k + "=" + v);
-  });
-  ta.value = lines.join("\n");
-};
-window.krillEnvAddRow = function (key, val) {
-  const rows = document.getElementById("env-rows");
-  if (!rows) return;
-  const row = document.createElement("div");
-  row.className = "env-row flex items-center gap-2 mb-2";
-  const k = document.createElement("input");
-  k.className = "k-input env-key"; k.placeholder = "KEY"; k.value = key || "";
-  const v = document.createElement("input");
-  v.className = "k-input env-val"; v.placeholder = "value"; v.value = val || "";
-  v.type = window.__krillEnvReveal ? "text" : "password"; // values masked by default
-  const del = document.createElement("button");
-  del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
-  del.setAttribute("aria-label", "Remove variable");
-  del.addEventListener("click", function () { row.remove(); krillEnvSyncToTextarea(); });
-  k.addEventListener("input", krillEnvSyncToTextarea);
-  v.addEventListener("input", krillEnvSyncToTextarea);
-  row.appendChild(k); row.appendChild(v); row.appendChild(del);
-  rows.appendChild(row);
-};
-window.krillEnvBuildRows = function (text) {
-  const rows = document.getElementById("env-rows");
-  if (!rows) return;
-  rows.innerHTML = "";
-  (text || "").split("\n").forEach(function (line) {
-    line = line.trim();
-    if (!line) return;
-    const i = line.indexOf("=");
-    if (i < 0) return;
-    krillEnvAddRow(line.slice(0, i).trim(), line.slice(i + 1).trim());
-  });
-  if (!rows.children.length) krillEnvAddRow("", "");
-};
-window.krillEnvMode = function (mode) {
+// A mode switch or navigation resets ALL reveals. Raw secrets are hidden with
+// the native hidden attribute, rather than browser-specific text masking CSS.
+window.krillApplyEnvReveal = function () {
   const form = document.getElementById("env-form");
   if (!form) return;
-  const raw = document.getElementById("env-raw");
-  const kv = document.getElementById("env-kv");
-  if (mode === "kv") {
-    krillEnvBuildRows(document.getElementById("env-textarea").value);
-    raw.style.display = "none";
-    kv.style.display = "";
-  } else {
-    // only sync rows→textarea if KV rows exist, so we never wipe the textarea
-    if (document.querySelectorAll("#env-rows .env-row").length) krillEnvSyncToTextarea();
-    kv.style.display = "none";
-    raw.style.display = "";
+  // HTMX serializes innerHTML for history: keep textarea text in step with
+  // the live value and the hidden classification input's reflected attribute.
+  const source = document.getElementById("env-textarea");
+  source.defaultValue = source.value;
+  form.querySelectorAll("#env-secret-rows .env-val").forEach(i => { i.type = "password"; });
+  form.querySelectorAll(".env-eye").forEach(function (b) {
+    b.textContent = "👁";
+    b.setAttribute("aria-label", form.dataset.show);
+    b.setAttribute("aria-pressed", "false");
+  });
+  document.getElementById("env-secrets-raw").hidden = true;
+  document.getElementById("env-secrets-hidden").hidden = false;
+  const button = document.getElementById("env-raw-reveal");
+  button.textContent = form.dataset.show;
+  button.setAttribute("aria-expanded", "false");
+};
+window.krillEnvRevealToggle = function (btn) {
+  const form = envEditor();
+  if (!form) return;
+  const ta = document.getElementById("env-secrets-raw");
+  ta.hidden = !ta.hidden;
+  document.getElementById("env-secrets-hidden").hidden = !ta.hidden;
+  btn.textContent = ta.hidden ? form.dataset.show : form.dataset.hide;
+  btn.setAttribute("aria-expanded", String(!ta.hidden));
+};
+window.krillEnvAddRow = function (ordinary) {
+  const form = envEditor();
+  if (!form) return;
+  const line = { text: "", ordinary: ordinary, draft: true };
+  form.envLines.push(line);
+  const row = envRenderRow(form, line);
+  row.querySelector(".env-key").focus();
+};
+function envRenderRow(form, line) {
+  const row = document.createElement("div");
+  row.className = "env-row k-env-row mb-2";
+  const k = document.createElement("input");
+  k.className = "k-input env-key"; k.placeholder = form.dataset.key;
+  k.setAttribute("aria-label", form.dataset.key);
+  k.value = envLineKey(line.text);
+  const v = document.createElement("input");
+  v.className = "k-input env-val"; v.placeholder = form.dataset.value;
+  v.setAttribute("aria-label", form.dataset.value);
+  v.value = line.text.includes("=") ? line.text.slice(line.text.indexOf("=") + 1) : "";
+  v.type = line.ordinary ? "text" : "password";
+  k.autocomplete = "off"; v.autocomplete = "off";
+  k.spellcheck = false; v.spellcheck = false;
+  const eye = document.createElement("button");
+  eye.type = "button"; eye.className = "k-copy env-eye"; eye.textContent = "👁";
+  eye.hidden = line.ordinary;
+  eye.setAttribute("aria-label", form.dataset.show);
+  eye.setAttribute("aria-pressed", "false");
+  eye.addEventListener("click", function () {
+    const reveal = v.type === "password";
+    v.type = reveal ? "text" : "password";
+    eye.textContent = reveal ? "🙈" : "👁";
+    eye.setAttribute("aria-label", reveal ? form.dataset.hide : form.dataset.show);
+    eye.setAttribute("aria-pressed", String(reveal));
+  });
+  const move = document.createElement("button");
+  move.type = "button"; move.className = "k-btn k-btn-secondary env-move";
+  move.textContent = line.ordinary ? form.dataset.toSecret : form.dataset.toVariable;
+  move.addEventListener("click", function () {
+    line.ordinary = !line.ordinary;
+    row.remove();
+    const replacement = envRenderRow(form, line);
+    krillEnvSyncToTextarea();
+    replacement.querySelector(".env-move").focus();
+  });
+  const del = document.createElement("button");
+  del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
+  del.setAttribute("aria-label", form.dataset.remove);
+  del.addEventListener("click", function () {
+    form.envLines.splice(form.envLines.indexOf(line), 1);
+    row.remove();
+    krillEnvSyncToTextarea();
+  });
+  function edit() {
+    const key = k.value.trim();
+    // Keep spacing before '=' if only the value changed.
+    const prefix = key === envLineKey(line.text) && line.text.includes("=")
+      ? line.text.slice(0, line.text.indexOf("=") + 1) : key + "=";
+    line.text = prefix + v.value;
+    line.draft = !key;
+    krillEnvSyncToTextarea();
   }
+  k.addEventListener("input", edit); v.addEventListener("input", edit);
+  const actions = document.createElement("div");
+  actions.className = "k-env-actions";
+  actions.append(eye, move, del);
+  row.append(k, v, actions);
+  document.getElementById(line.ordinary ? "env-variable-rows" : "env-secret-rows").appendChild(row);
+  return row;
+}
+window.krillEnvBuildRows = function () {
+  const form = envEditor();
+  if (!form) return;
+  document.getElementById("env-variable-rows").replaceChildren();
+  document.getElementById("env-secret-rows").replaceChildren();
+  form.envLines.forEach(function (line) {
+    if (envLineKey(line.text) || line.draft) envRenderRow(form, line);
+  });
+};
+window.krillEnvRawInput = function (ordinary) {
+  const form = envEditor();
+  if (!form) return;
+  const text = document.getElementById(ordinary ? "env-variables-raw" : "env-secrets-raw").value;
+  const lines = text === "" ? [] : text.split("\n").map(text => ({ text: text, ordinary: ordinary, draft: /^\s*=/.test(text) }));
+  // Replace this section's slots in place. Unedited lines in the other section
+  // keep their position; merely switching modes never rebuilds the raw source.
+  let index = 0;
+  const next = [];
+  form.envLines.forEach(function (line) {
+    if (line.ordinary !== ordinary) next.push(line);
+    else if (index < lines.length) next.push(lines[index++]);
+  });
+  form.envLines = next.concat(lines.slice(index));
+  krillEnvSyncToTextarea();
+};
+window.krillEnvMode = function (mode) {
+  const form = envEditor();
+  if (!form) return;
+  mode = mode === "raw" ? "raw" : "kv";
+  krillEnvBuildRows();
+  document.getElementById("env-variables-raw").value = form.envLines.filter(l => l.ordinary).map(l => l.text).join("\n");
+  document.getElementById("env-secrets-raw").value = form.envLines.filter(l => !l.ordinary).map(l => l.text).join("\n");
+  document.getElementById("env-raw").style.display = mode === "raw" ? "" : "none";
+  document.getElementById("env-kv").style.display = mode === "kv" ? "" : "none";
   form.dataset.mode = mode;
   try { localStorage.setItem("krillEnvMode", mode); } catch (_) { /* private mode */ }
   document.querySelectorAll("#env-seg [data-env-mode]").forEach(function (b) {
     b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
   });
-  // Honor the current masked/revealed state in the now-active mode (so the raw
-  // textarea is masked by default on load, matching the key/value inputs).
-  window.krillApplyEnvReveal();
+  krillApplyEnvReveal();
 };
 
 // Run enhancements on first load and after every hx-boost swap. Guarded so a
@@ -868,5 +947,7 @@ if (!window.__krillEnhanceInit) {
   window.__krillEnhanceInit = true;
   document.addEventListener("DOMContentLoaded", window.krillEnhance);
   document.addEventListener("htmx:afterSettle", window.krillEnhance);
+  document.addEventListener("htmx:beforeHistorySave", window.krillApplyEnvReveal);
+  document.addEventListener("htmx:historyRestore", window.krillEnhance);
 }
 window.krillEnhance();

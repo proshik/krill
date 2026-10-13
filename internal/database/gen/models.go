@@ -98,6 +98,7 @@ type Application struct {
 	MetricsEnabled         bool      `json:"metrics_enabled"`
 	MetricsToken           *string   `json:"metrics_token"`
 	MetricsTokenEnv        string    `json:"metrics_token_env"`
+	EnvPublicKeys          []string  `json:"env_public_keys"`
 }
 
 type Backup struct {
