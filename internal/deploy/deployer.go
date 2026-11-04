@@ -5,21 +5,30 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/builder"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
+	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/traefik"
 )
 
 // App — application representation for deployment.
 type App struct {
+	RuntimePinned    bool
+	MetricsEndpoints []appmetrics.Endpoint
+	Runtime          RuntimeSettings
+	Dependencies     string
 	// MetricsHiddenPaths are metrics paths excluded from every domain.
 	MetricsHiddenPaths []string
 	ID                 int64
+	PredeployCommand   string
 	Name               string
 	Image              string
 	Tag                string
@@ -95,15 +104,20 @@ func SetConvergeTimeout(d time.Duration) {
 // ImageRef is an image app's image and tag. The zero value means "whatever the
 // application row holds".
 type ImageRef struct {
-	Image string
-	Tag   string
+	SkipBuild       bool
+	CredentialImage string
+	Image           string
+	Tag             string
 }
 
 // job is one queued unit of work: a deployment plus build options.
 type job struct {
-	deployID int64
-	appID    int64
-	noCache  bool // force docker build --no-cache (Rebuild)
+	deployID         int64
+	appID            int64
+	skipPredeploy    bool
+	rollbackID       int64
+	rollbackExpected *RuntimeSettings
+	noCache          bool // force docker build --no-cache (Rebuild)
 
 	// image and tag, when set, are the image reference this deploy ships
 	// (image apps only). They travel with the job rather than through the
@@ -163,6 +177,9 @@ func (d *Deployer) SetResourceDefaults(memBytes, nanoCPUs int64) {
 // none. An unlimited container can starve every other tenant on the host, so
 // "no limit" is not a safe default; an explicit per-app value always wins.
 func (d *Deployer) withResourceDefaults(a App) App {
+	if a.RuntimePinned {
+		return a
+	}
 	if a.MemoryLimitBytes == 0 {
 		a.MemoryLimitBytes = d.defaultMemBytes
 	}
@@ -289,7 +306,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 		default:
 		}
 		if !d.queueFull() {
-			if id := d.submit(appID, TriggerSystem, job{}); id != 0 {
+			if id := d.submit(appID, TriggerSystem, job{skipPredeploy: true}); id != 0 {
 				return id
 			}
 			// submit only fails for a full queue (lost the race for the slot we
@@ -360,10 +377,16 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) int64 {
 		slog.Error("create deployment failed", "app", appID, "err", err)
 		return 0
 	}
+	if opts.rollbackID != 0 {
+		if err := d.store.(releaseStore).RecordRollbackSource(context.Background(), deployID, opts.rollbackID); err != nil {
+			d.store.FinishDeployment(context.Background(), deployID, "error", "", "could not record rollback source", "")
+			return 0
+		}
+	}
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.hub.Open(deployID)
 	select {
-	case d.queue <- job{deployID: deployID, appID: appID, noCache: opts.noCache, image: opts.image, tag: opts.tag}:
+	case d.queue <- job{deployID: deployID, appID: appID, noCache: opts.noCache, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}:
 		if opts.tag != "" {
 			// After the send, not before: a refused job must not leave its tag
 			// on the application. The worker never reads it from the row, so
@@ -412,16 +435,53 @@ func (d *Deployer) Stop() {
 
 func (d *Deployer) run(ctx context.Context, j job) {
 	deployID, noCache := j.deployID, j.noCache
-	app, appErr := d.store.GetDeploymentApp(ctx, deployID, ImageRef{Image: j.image, Tag: j.tag})
+	var app App
+	var err error
+	var imageTag string
+	var snapshot releaseSnapshot
+	var expected *RuntimeSettings
+	releaseSaved := false
+	rs, releaseCapable := d.store.(releaseStore)
 	out := d.hub.Writer(deployID)
-	if appErr != nil {
-		d.finish(ctx, deployID, app.ID, StatusError, "", appErr.Error())
+	if j.rollbackID != 0 {
+		if !releaseCapable {
+			err = ErrReleaseUnavailable
+		} else {
+			snapshot, err = rs.LoadRelease(ctx, j.appID, j.rollbackID)
+			if err == nil {
+				app, err = rs.RollbackApplication(ctx, j.appID, snapshot.Image)
+			}
+			if err == nil && (j.rollbackExpected == nil || !reflect.DeepEqual(app.Runtime, *j.rollbackExpected) || !reflect.DeepEqual(guards(app), snapshot.Guards)) {
+				err = ErrReleaseDrift
+			}
+			if err == nil {
+				original := app.Runtime
+				expected = &original
+				app = applyRelease(app, snapshot)
+				imageTag = snapshot.Image
+				if validator, ok := d.engine.(docker.ReleaseValidator); ok {
+					err = validator.ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes)
+				} else {
+					err = ErrReleaseUnavailable
+				}
+			}
+		}
+	} else {
+		app, err = d.store.GetDeploymentApp(ctx, deployID, ImageRef{Image: j.image, Tag: j.tag})
+	}
+	if err != nil {
+		message := err.Error()
+		if j.rollbackID != 0 {
+			message = ErrReleaseDrift.Error()
+		}
+		fmt.Fprintln(out, message)
+		d.finish(ctx, deployID, j.appID, StatusError, "", message)
 		return
 	}
 
-	var imageTag string
-	var err error
-	if app.SourceType == "dockerfile" {
+	if j.rollbackID != 0 {
+		fmt.Fprintf(out, "→ rollback to deployment %d (%s)\n", j.rollbackID, imageTag)
+	} else if app.SourceType == "dockerfile" {
 		imageTag = docker.BuildImageTag(app.ID, deployID)
 		err = d.builder.Build(ctx, builder.BuildRequest{
 			AppID: app.ID, DeployID: deployID,
@@ -434,8 +494,66 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		}, out)
 	} else {
 		imageTag = app.Image + ":" + app.Tag
-		imageTag = resolveImageRef(ctx, d.engine, app, imageTag)
+		if app.PredeployCommand != "" && !j.skipPredeploy {
+			imageTag, err = d.engine.ResolveDigest(ctx, imageTag, app.RegistryAuth)
+			if err == nil && imageTag == "" {
+				err = fmt.Errorf("registry did not return an immutable image")
+			}
+		} else {
+			imageTag = resolveImageRef(ctx, d.engine, app, imageTag)
+		}
 		fmt.Fprintf(out, "→ deploy image %s\n", imageTag)
+	}
+
+	// Resolve local builds once. The same immutable image goes into predeploy,
+	// the service and the encrypted release snapshot.
+	if err == nil && j.rollbackID == 0 && app.SourceType == "dockerfile" && ((app.PredeployCommand != "" && !j.skipPredeploy) || (releaseCapable && secret.Enabled())) {
+		if runner, ok := d.engine.(docker.PredeployRunner); ok {
+			imageTag, err = runner.LocalImageID(ctx, imageTag)
+		} else if app.PredeployCommand != "" && !j.skipPredeploy {
+			err = ErrReleaseUnavailable
+		}
+	}
+	if err == nil && releaseCapable && secret.Enabled() && immutableImage(imageTag) {
+		snapshot = d.snapshotFor(app, imageTag)
+		err = rs.SaveRelease(ctx, app.ID, deployID, snapshot, j.rollbackID)
+		releaseSaved = err == nil
+	}
+	if err == nil && app.PredeployCommand != "" && !j.skipPredeploy {
+		err = d.predeploy(ctx, app, deployID, imageTag, out)
+	}
+
+	// Both checks use the captured desired settings, not updated_at (status
+	// polling legitimately changes that timestamp while a deployment runs).
+	if err == nil && expected != nil {
+		current, cerr := rs.RollbackApplication(ctx, app.ID, imageTag)
+		if cerr != nil || !reflect.DeepEqual(current.Runtime, *expected) || !reflect.DeepEqual(guards(current), snapshot.Guards) {
+			err = ErrReleaseDrift
+		} else {
+			app = applyRelease(current, snapshot)
+			err = d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes)
+		}
+	}
+	complete := func() {
+		if releaseSaved {
+			var restore *RuntimeSettings
+			if expected != nil {
+				if e := rs.CheckRollback(ctx, app.ID, *expected, snapshot.Guards, imageTag); e != nil {
+					fmt.Fprintln(out, ErrReleaseDrift.Error())
+					d.finish(ctx, deployID, app.ID, StatusError, imageTag, ErrReleaseDrift.Error())
+					return
+				}
+				restore = &snapshot.Runtime
+			}
+			if e := rs.ConfirmRelease(ctx, app.ID, deployID, expected, restore); e != nil {
+				msg := "could not confirm release or restore settings; concurrent changes were preserved"
+				fmt.Fprintln(out, msg)
+				d.finish(ctx, deployID, app.ID, StatusError, imageTag, msg)
+				return
+			}
+		}
+		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
+		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 	}
 
 	// Chown owned volumes to the app's runtime uid:gid before the task starts
@@ -445,25 +563,40 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		err = d.chownOwnedVolumes(ctx, app, out)
 	}
 
-	// Baseline task set BEFORE the deploy: convergence below only counts tasks
-	// outside it, so the old StartFirst task of a rolling update can never
-	// satisfy it (it kept redeploys reporting instant false success).
 	var baseline []string
 	if err == nil {
-		// A snapshot we cannot take is not an empty snapshot: an empty baseline
-		// makes the old StartFirst task count as new, so convergence would be
-		// satisfied instantly by the version we are replacing. Fail the deploy
-		// rather than report a success nobody verified. (prev.Found == false is
-		// legitimate — the service does not exist yet on a first deploy.)
-		prev, perr := d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil)
-		if perr != nil {
-			err = fmt.Errorf("snapshot running tasks before deploy: %w", perr)
-		} else {
+		err = func() error {
+			key := oplock.AppRouting(app.ID)
+			if err := oplock.Acquire(ctx, key); err != nil {
+				return err
+			}
+			defer oplock.Release(key)
+			if expected != nil {
+				if err := rs.CheckRollback(ctx, app.ID, *expected, snapshot.Guards, imageTag); err != nil {
+					return err
+				}
+			}
+			if routes, ok := d.store.(interface {
+				RefreshRouting(context.Context, *App) error
+			}); ok {
+				if err := routes.RefreshRouting(ctx, &app); err != nil {
+					return fmt.Errorf("refresh app routing: %w", err)
+				}
+			}
+			// Snapshot immediately before apply, after waiting for routing and
+			// refreshing it. A reload during that wait can start another OLD-image
+			// task, which must also be excluded from this release's convergence.
+			// A failed snapshot is never an empty baseline (that would count old
+			// tasks as new). Found=false is legitimate on the first deploy.
+			prev, err := d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil)
+			if err != nil {
+				return fmt.Errorf("snapshot running tasks before deploy: %w", err)
+			}
 			if prev.Found {
 				baseline = prev.TaskIDs
 			}
-			err = d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
-		}
+			return d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
+		}()
 	}
 
 	if err != nil {
@@ -503,7 +636,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			rolledBack = true
 			break
 		}
-		if serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired {
+		if serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired && (st.UpdateState == "" || st.UpdateState == "completed") {
 			converged = true
 			break
 		}
@@ -522,8 +655,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		break
 	}
 	if converged {
-		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
-		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+		complete()
 		return
 	}
 	if rolledBack {
@@ -541,7 +673,11 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	// an error (the live status poll reconciles it to running).
 	if ctx.Err() != nil {
 		fmt.Fprintf(out, "⚠ deploy interrupted (server shutting down)\n")
-		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "interrupted")
+		if j.rollbackID != 0 {
+			d.finish(ctx, deployID, app.ID, StatusError, imageTag, "rollback interrupted before confirmation")
+		} else {
+			d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "interrupted")
+		}
 		return
 	}
 	fctx, fcancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -551,9 +687,8 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	case serr == nil && st.Found && strings.HasPrefix(st.UpdateState, "rollback"):
 		fmt.Fprintf(out, "❌ rolling update failed — swarm rolled back to the previous version\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "update rolled back")
-	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired:
-		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
-		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
+	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired && (st.UpdateState == "" || st.UpdateState == "completed"):
+		complete()
 	case serr == nil && st.Found && st.Failed > 0 && st.Running < st.Desired:
 		fmt.Fprintf(out, "❌ service has failed tasks (crash-looping) — check the image, command and env\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
@@ -561,7 +696,11 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		// A new task exists but is not ready yet, or the rolling update is still
 		// in flight — leave the app "deploying"; the live poll reconciles it.
 		fmt.Fprintf(out, "⚠ service still starting after %s — continuing in the background\n", timeout)
-		d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")
+		if j.rollbackID != 0 {
+			d.finish(ctx, deployID, app.ID, StatusError, imageTag, "rollback did not settle before deadline")
+		} else {
+			d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")
+		}
 	default:
 		fmt.Fprintf(out, "❌ service did not become healthy in time\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service did not converge")

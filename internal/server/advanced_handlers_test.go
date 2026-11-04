@@ -44,6 +44,7 @@ func TestSaveAdvancedValid(t *testing.T) {
 
 	rec := postForm(t, h, base+"/advanced", cookie, url.Values{
 		"command":              {"start-dev"},
+		"predeploy_command":    {"  ./migrate --safe  "},
 		"replicas":             {"2"},
 		"memory_limit":         {"256m"},
 		"cpu_limit":            {"0.5"},
@@ -62,6 +63,9 @@ func TestSaveAdvancedValid(t *testing.T) {
 	}
 	if a.Command == nil || *a.Command != "start-dev" {
 		t.Errorf("Command want %q, got %v", "start-dev", a.Command)
+	}
+	if a.PredeployCommand != "./migrate --safe" {
+		t.Fatalf("predeploy command not persisted: %q", a.PredeployCommand)
 	}
 	if a.MemoryLimit == nil || *a.MemoryLimit != "256m" {
 		t.Errorf("MemoryLimit want %q, got %v", "256m", a.MemoryLimit)

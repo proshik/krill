@@ -591,7 +591,7 @@ func ensureImageOn(ctx context.Context, cli *client.Client, ref string) error {
 // no network. Root is required so files owned by any uid (apps run as varied
 // non-root users) are readable, and so original ownership is captured in the tar.
 func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out io.Writer, swarmNodeID string) error {
-	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	cli, release, err := e.volumeNodeClient(ctx, swarmNodeID)
 	if err != nil {
 		return fmt.Errorf("reach node for volume archive %s: %w", volumeName, err)
 	}
@@ -612,7 +612,7 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 		return err
 	}
 	cid := resp.ID
-	defer removeSidecar(ctx, cli, cid)
+	defer e.removeSidecarOn(ctx, swarmNodeID, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -640,7 +640,7 @@ func (e *dockerEngine) VolumeArchive(ctx context.Context, volumeName string, out
 // result would be a merge of two points in time — stale indexes, lock files and
 // deleted uploads coming back from the dead. Callers quiesce the app first.
 func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in io.Reader, swarmNodeID string) error {
-	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	cli, release, err := e.volumeNodeClient(ctx, swarmNodeID)
 	if err != nil {
 		return fmt.Errorf("reach node for volume restore %s: %w", volumeName, err)
 	}
@@ -666,7 +666,7 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 		return err
 	}
 	cid := resp.ID
-	defer removeSidecar(ctx, cli, cid)
+	defer e.removeSidecarOn(ctx, swarmNodeID, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -696,14 +696,13 @@ func (e *dockerEngine) VolumeRestore(ctx context.Context, volumeName string, in 
 }
 
 // VolumeChown runs a short root busybox sidecar that chowns a named volume's
-// contents to uid:gid. It runs on the node given by swarmNodeID: an empty id (or
-// a node that is not a registered worker → the control plane) uses the local
-// daemon; a registered worker is reached over the SSH tunnel (via the same
-// selectClient path as Exec). Fresh named volumes are created root:root 0755, so
+// contents to uid:gid. An empty swarmNodeID uses the local daemon; an explicit
+// node ID is verified against the selected daemon, using SSH for workers.
+// Fresh named volumes are created root:root 0755, so
 // a non-root app cannot write until this runs (the deployer runs it before
 // ServiceDeploy). chown -R is instant on a fresh empty volume.
 func (e *dockerEngine) VolumeChown(ctx context.Context, volumeName string, uid, gid int, swarmNodeID string) error {
-	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, swarmNodeID)
+	cli, release, err := e.volumeNodeClient(ctx, swarmNodeID)
 	if err != nil {
 		return fmt.Errorf("reach node for volume chown %s: %w", volumeName, err)
 	}
@@ -724,7 +723,7 @@ func (e *dockerEngine) VolumeChown(ctx context.Context, volumeName string, uid, 
 		return err
 	}
 	cid := resp.ID
-	defer removeSidecar(ctx, cli, cid)
+	defer e.removeSidecarOn(ctx, swarmNodeID, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -849,15 +848,29 @@ func (e *dockerEngine) ExecInteractive(ctx context.Context, serviceName string, 
 // sidecarCleanupTimeout bounds removal of a helper container.
 const sidecarCleanupTimeout = 30 * time.Second
 
-// removeSidecar force-removes a helper container on a context of its own. The
-// operation that created it may have died precisely because its context
-// expired, and a removal riding that same context cannot run — leaking the
-// container (and its volume mount) on every timeout.
-func removeSidecar(ctx context.Context, cli client.APIClient, cid string) {
+// volumeNodeClient keeps the empty-node convention for local volumes, while
+// an explicit node must match the daemon we reach. A removed worker registration
+// must never redirect a volume operation or its cleanup to the manager.
+func (e *dockerEngine) volumeNodeClient(ctx context.Context, node string) (*client.Client, func(), error) {
+	if node == "" {
+		return e.cli, func() {}, nil
+	}
+	return e.verifiedNodeClient(ctx, node)
+}
+
+// removeSidecarOn owns a new bounded connection as well as a detached context.
+// The operation's original SSH transport closes when its context is canceled;
+// reusing that client would leak the sidecar despite detaching the HTTP request.
+func (e *dockerEngine) removeSidecarOn(ctx context.Context, node, cid string) {
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarCleanupTimeout)
 	defer cancel()
-	if err := cli.ContainerRemove(rctx, cid, container.RemoveOptions{Force: true}); err != nil {
-		slog.Warn("could not remove helper container", "container", cid, "err", err)
+	cli, release, err := e.volumeNodeClient(rctx, node)
+	if err == nil {
+		defer release()
+		err = cli.ContainerRemove(rctx, cid, container.RemoveOptions{Force: true})
+	}
+	if err != nil && !errdefs.IsNotFound(err) {
+		slog.Warn("could not remove helper container", "container", cid, "node", node, "err", err)
 	}
 }
 

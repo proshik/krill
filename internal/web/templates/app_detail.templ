@@ -620,6 +620,11 @@ templ advancedTab(c AppCtx) {
 					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "app.command_hint") }</p>
 				</div>
 				<div>
+					<label class="k-label" for="predeploy-command">{ i18n.T(ctx, "app.predeploy_command") }</label>
+					<textarea id="predeploy-command" class="k-input k-mono" name="predeploy_command" rows="2">{ c.App.PredeployCommand }</textarea>
+					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "app.predeploy_hint") }</p>
+				</div>
+				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.replicas") }</label>
 					<input class="k-input" name="replicas" type="number" min="1" value={ itoa(int64(c.App.Replicas)) }/>
 				</div>

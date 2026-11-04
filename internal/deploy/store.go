@@ -2,6 +2,8 @@ package deploy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/builder"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -22,10 +25,17 @@ import (
 
 // DBStore implements Store on top of sqlc queries.
 type DBStore struct {
-	q *db.Queries
+	q    *db.Queries
+	pool *pgxpool.Pool
 }
 
-func NewDBStore(q *db.Queries) *DBStore { return &DBStore{q: q} }
+func NewDBStore(q *db.Queries, pools ...*pgxpool.Pool) *DBStore {
+	s := &DBStore{q: q}
+	if len(pools) > 0 {
+		s.pool = pools[0]
+	}
+	return s
+}
 
 // ErrCredentialHostMismatch guards against a credential being handed to a host
 // it was not registered for: git answers an askpass prompt for ANY host, so an
@@ -76,6 +86,20 @@ func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 // registry-host check below runs against the image this deploy actually pulls
 // rather than the one the row happens to hold.
 func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (App, error) {
+	if s.pool != nil {
+		tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return App{}, err
+		}
+		defer tx.Rollback(ctx)
+		view := &DBStore{q: s.q.WithTx(tx)}
+		a, err := view.getApplication(ctx, id, ref)
+		if err != nil {
+			return App{}, err
+		}
+		return a, tx.Commit(ctx)
+	}
+
 	a, err := s.q.GetApplication(ctx, id)
 	if err != nil {
 		return App{}, err
@@ -88,19 +112,21 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		return App{}, derr
 	}
 	out := App{
-		ID:             a.ID,
-		Name:           a.Name,
-		Image:          a.Image,
-		Tag:            a.Tag,
-		Domain:         a.Domain,
-		Port:           a.Port,
-		Env:            parseEnvText(a.EnvText),
-		SourceType:     a.SourceType,
-		GitURL:         a.GitUrl,
-		GitBranch:      a.GitBranch,
-		DockerfilePath: a.DockerfilePath,
-		Args:           docker.SplitCommand(strDeref(a.Command)),
+		ID:               a.ID,
+		Name:             a.Name,
+		PredeployCommand: a.PredeployCommand,
+		Image:            a.Image,
+		Tag:              a.Tag,
+		Domain:           a.Domain,
+		Port:             a.Port,
+		Env:              parseEnvText(a.EnvText),
+		SourceType:       a.SourceType,
+		GitURL:           a.GitUrl,
+		GitBranch:        a.GitBranch,
+		DockerfilePath:   a.DockerfilePath,
+		Args:             docker.SplitCommand(strDeref(a.Command)),
 	}
+	out.Runtime = runtimeSettings(a)
 	for _, d := range doms {
 		out.Domains = append(out.Domains, traefik.Domain{
 			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
@@ -136,9 +162,9 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		slog.Warn("advanced: invalid stored cpu_limit", "app", a.ID, "value", strDeref(a.CpuLimit), "err", err)
 	}
 	out.Healthcheck = buildHealthcheck(a)
-	if a.RegistryID != nil {
+	if a.RegistryID != nil && !strings.HasPrefix(ref.CredentialImage, "sha256:") {
 		if reg, rerr := s.q.GetRegistry(ctx, *a.RegistryID); rerr == nil {
-			if herr := checkRegistryHost(a.Image, reg.RegistryUrl); herr != nil {
+			if herr := checkRegistryHost(registryImage(a.Image, ref), reg.RegistryUrl); herr != nil {
 				return App{}, herr
 			}
 			pw, derr := secret.Dec(reg.Password)
@@ -148,10 +174,12 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 			if auth, aerr := docker.EncodeRegistryAuth(reg.Username, pw, reg.RegistryUrl); aerr == nil {
 				out.RegistryAuth = auth
 			}
+		} else if ref.SkipBuild {
+			return App{}, fmt.Errorf("rollback registry unavailable: %w", rerr)
 		}
 	}
 	// Build-time credentials/args/secrets only matter for source builds.
-	if a.SourceType == "dockerfile" {
+	if a.SourceType == "dockerfile" && !ref.SkipBuild {
 		if a.GitCredentialID != nil {
 			if gc, gerr := s.q.GetGitCredential(ctx, *a.GitCredentialID); gerr == nil {
 				if herr := checkGitCredentialHost(a.GitUrl, gc.Host); herr != nil {
@@ -201,17 +229,24 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 	if lerr != nil {
 		return App{}, lerr
 	}
+	injected := map[string]string{}
 	for _, l := range links {
 		val, ok, rerr := s.resolveDBLinkValue(ctx, l)
 		if rerr != nil {
 			return App{}, fmt.Errorf("resolve db-link %d: %w", l.ID, rerr)
 		}
 		if ok {
+			injected[l.VarName] = val
 			out.Env[l.VarName] = val // linked-DB value wins over env_text on key collision
 		} else {
-			slog.Warn("db-link: target database missing, skipping injection", "app", a.ID, "link_id", l.ID, "var", l.VarName)
+			return App{}, fmt.Errorf("db-link target unavailable")
 		}
 	}
+	depBytes, _ := json.Marshal(struct {
+		Links  []db.ListDBLinksByApplicationRow
+		Values map[string]string
+	}{links, injected})
+	out.Dependencies = fmt.Sprintf("%x", sha256.Sum256(depBytes))
 	if err := s.applyMetrics(ctx, a.ID, a.Port, &out); err != nil {
 		return App{}, err
 	}
@@ -402,6 +437,18 @@ func (s *DBStore) applyMetrics(ctx context.Context, appID int64, appPort int32, 
 	if err != nil {
 		return err
 	}
+	var metricsToken string
+	if m.MetricsEnabled && m.MetricsToken != nil {
+		metricsToken, err = secret.Dec(*m.MetricsToken)
+		if err != nil {
+			return fmt.Errorf("app %d metrics token: %w", appID, err)
+		}
+	}
+	metricBytes, _ := json.Marshal(struct {
+		Enabled         bool
+		TokenEnv, Token string
+	}{m.MetricsEnabled, m.MetricsTokenEnv, metricsToken})
+	out.Dependencies += fmt.Sprintf("/%x", sha256.Sum256(metricBytes))
 	if !m.MetricsEnabled {
 		return nil
 	}
@@ -409,18 +456,18 @@ func (s *DBStore) applyMetrics(ctx context.Context, appID int64, appPort int32, 
 	if err != nil {
 		return err
 	}
+	epBytes, _ := json.Marshal(eps)
+	out.Dependencies += fmt.Sprintf("/%x", sha256.Sum256(epBytes))
 	in := make([]appmetrics.Endpoint, 0, len(eps))
 	for _, e := range eps {
 		in = append(in, appmetrics.Endpoint{Port: e.Port, Path: e.Path})
 	}
+	out.MetricsEndpoints = in
 	out.MetricsHiddenPaths = appmetrics.HiddenPaths(appPort, in)
 	if m.MetricsToken == nil {
 		return nil
 	}
-	tok, err := secret.Dec(*m.MetricsToken)
-	if err != nil {
-		return fmt.Errorf("app %d metrics token: %w", appID, err)
-	}
+	tok := metricsToken
 	if _, clash := out.Env[m.MetricsTokenEnv]; clash {
 		slog.Warn("metrics token overrides a variable of the same name", "app", appID, "var", m.MetricsTokenEnv)
 	}
@@ -432,5 +479,48 @@ func (s *DBStore) applyMetrics(ctx context.Context, appID int64, appPort int32, 
 		out.ContainerLabels = map[string]string{}
 	}
 	out.ContainerLabels[appmetrics.ContainerLabelTokenHash] = appmetrics.TokenHash(m.MetricsTokenEnv, tok)
+	return nil
+}
+
+func registryImage(current string, ref ImageRef) string {
+	if ref.CredentialImage != "" {
+		return ref.CredentialImage
+	}
+	return current
+}
+
+// RefreshRouting reads only public routing state, retaining the selected image,
+// runtime, credentials and env. Caller holds the app routing lock until apply.
+func (s *DBStore) RefreshRouting(ctx context.Context, app *App) error {
+	doms, err := s.q.ListDomainsByApplication(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	network, err := s.q.GetOrganizationNetworkByApp(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	metrics, err := s.q.GetApplicationMetrics(ctx, app.ID)
+	if err != nil {
+		return err
+	}
+	var hidden []string
+	if metrics.MetricsEnabled {
+		endpoints, err := s.q.ListMetricsEndpointsByApplication(ctx, app.ID)
+		if err != nil {
+			return err
+		}
+		var paths []appmetrics.Endpoint
+		for _, ep := range endpoints {
+			paths = append(paths, appmetrics.Endpoint{Port: ep.Port, Path: ep.Path})
+		}
+		hidden = appmetrics.HiddenPaths(app.Port, paths)
+	}
+	app.Domains = nil
+	for _, d := range doms {
+		app.Domains = append(app.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths), BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps)})
+	}
+	app.Network = network
+	app.MetricsHiddenPaths = hidden
 	return nil
 }

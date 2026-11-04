@@ -210,7 +210,7 @@ func run() error {
 	}
 	gate.SetPhase(server.PhaseStarting)
 
-	store := deploy.NewDBStore(q)
+	store := deploy.NewDBStore(q, pool)
 	deploy.SetConvergeTimeout(cfg.ConvergeTimeout)
 
 	// Notifications: Telegram alerts on failures + health transitions. Wire the
@@ -249,9 +249,6 @@ func run() error {
 	}
 	dep.SetResourceDefaults(defaultMemBytes, defaultNanoCPUs)
 	dep.SetMaxBuildsPerOrg(cfg.MaxBuildsPerOrg)
-
-	dep.Start(ctx)
-	defer dep.Stop()
 
 	// Nothing else ever trims the BuildKit cache: every Dockerfile build leaves
 	// layers behind, and on a small VPS the disk fills silently until builds
@@ -338,7 +335,7 @@ func run() error {
 					if kerr != nil {
 						return nil, nil, fmt.Errorf("cluster node %d ssh key: %w", row.ID, kerr)
 					}
-					cl, derr := cluster.DialVerified(cluster.JoinSpec{
+					cl, derr := cluster.DialVerifiedContext(cc, cluster.JoinSpec{
 						Host:       row.SshHost,
 						Port:       int(row.SshPort),
 						User:       row.SshUser,
@@ -348,8 +345,8 @@ func run() error {
 					if derr != nil {
 						return nil, nil, derr
 					}
-					rs, rerr := docker.NewRemoteStatsWithCache(func(_ context.Context, _, _ string) (net.Conn, error) {
-						return cl.Dial("unix", "/var/run/docker.sock")
+					rs, rerr := docker.NewRemoteStatsWithCache(func(dialCtx context.Context, _, _ string) (net.Conn, error) {
+						return cl.DialContext(dialCtx, "unix", "/var/run/docker.sock")
 					}, cache)
 					if rerr != nil {
 						_ = cl.Close()
@@ -390,15 +387,15 @@ func run() error {
 			if kerr != nil {
 				return nil, nil, fmt.Errorf("cluster node %d ssh key: %w", row.ID, kerr)
 			}
-			cl, derr := cluster.DialVerified(cluster.JoinSpec{
+			cl, derr := cluster.DialVerifiedContext(ctx, cluster.JoinSpec{
 				Host: row.SshHost, Port: int(row.SshPort), User: row.SshUser,
 				PrivateKey: []byte(key), HostKey: row.HostKey,
 			}, cfg.MetricsNodeTimeout)
 			if derr != nil {
 				return nil, nil, derr
 			}
-			cli, cerr := docker.NewRemoteClient(func(_ context.Context, _, _ string) (net.Conn, error) {
-				return cl.Dial("unix", "/var/run/docker.sock")
+			cli, cerr := docker.NewRemoteClient(func(dialCtx context.Context, _, _ string) (net.Conn, error) {
+				return cl.DialContext(dialCtx, "unix", "/var/run/docker.sock")
 			})
 			if cerr != nil {
 				_ = cl.Close()
@@ -407,6 +404,16 @@ func run() error {
 			return cli, func() error { cli.Close(); return cl.Close() }, nil
 		})
 	}
+
+	if cleaner, ok := engine.(docker.PredeployRunner); ok {
+		cleanupCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		if err := cleaner.CleanupPredeploy(cleanupCtx); err != nil {
+			slog.Error("could not clean up interrupted predeploy containers", "err", err)
+		}
+		cancel()
+	}
+	dep.Start(ctx)
+	defer dep.Stop()
 
 	sched := backup.NewScheduler(backupStore, func(ctx context.Context, id int64) {
 		// Bound scheduled runs like the manual path (backup_handlers.go) — an

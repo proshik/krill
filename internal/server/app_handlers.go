@@ -804,6 +804,7 @@ func (s *Server) saveAdvanced(w http.ResponseWriter, r *http.Request) {
 	if err := s.q.UpdateApplicationAdvanced(r.Context(), db.UpdateApplicationAdvancedParams{
 		ID:                     c.App.ID,
 		Command:                nilIfEmpty(command),
+		PredeployCommand:       strings.TrimSpace(r.FormValue("predeploy_command")),
 		MemoryLimit:            nilIfEmpty(memLimit),
 		CpuLimit:               nilIfEmpty(cpuLimit),
 		Replicas:               int32(replicas),

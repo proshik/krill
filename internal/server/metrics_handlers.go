@@ -43,7 +43,10 @@ func (s *Server) portPublished(ctx context.Context, appID int64, port int32) (bo
 
 func (s *Server) metricsSuccess(w http.ResponseWriter, r *http.Request, c templates.AppCtx, key string, syncLabels bool) {
 	if syncLabels {
-		s.syncAppLabels(r, c.App.ID, c.App.Port)
+		if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
 	}
 	logFrom(r).Info("app metrics settings changed", "app_id", c.App.ID, "action", key)
 	s.flashOK(w, r, key)

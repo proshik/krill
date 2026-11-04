@@ -99,6 +99,7 @@ type Application struct {
 	MetricsToken           *string   `json:"metrics_token"`
 	MetricsTokenEnv        string    `json:"metrics_token_env"`
 	EnvPublicKeys          []string  `json:"env_public_keys"`
+	PredeployCommand       string    `json:"predeploy_command"`
 }
 
 type Backup struct {
@@ -146,15 +147,24 @@ type DbInstance struct {
 }
 
 type Deployment struct {
-	ID            int64              `json:"id"`
-	ApplicationID int64              `json:"application_id"`
-	Status        string             `json:"status"`
-	Trigger       string             `json:"trigger"`
-	ImageTag      string             `json:"image_tag"`
-	Log           string             `json:"log"`
-	ErrorMessage  string             `json:"error_message"`
-	StartedAt     time.Time          `json:"started_at"`
-	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ID               int64              `json:"id"`
+	ApplicationID    int64              `json:"application_id"`
+	Status           string             `json:"status"`
+	Trigger          string             `json:"trigger"`
+	ImageTag         string             `json:"image_tag"`
+	Log              string             `json:"log"`
+	ErrorMessage     string             `json:"error_message"`
+	StartedAt        time.Time          `json:"started_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	RollbackSourceID *int64             `json:"rollback_source_id"`
+}
+
+type DeploymentRelease struct {
+	DeploymentID       int64  `json:"deployment_id"`
+	ApplicationID      int64  `json:"application_id"`
+	Payload            string `json:"payload"`
+	Confirmed          bool   `json:"confirmed"`
+	SourceDeploymentID *int64 `json:"source_deployment_id"`
 }
 
 type Destination struct {

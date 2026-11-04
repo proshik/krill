@@ -511,6 +511,7 @@ func (s *Server) Router() http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(auth.RequireRole(auth.RoleAdmin))
 					r.Post("/deploy", s.deployApp)
+					r.Post("/deployments/{deployID}/rollback", s.rollbackApp)
 					r.Post("/rebuild", s.rebuildApp)
 					r.Post("/reload", s.reloadApp)
 					r.Post("/stop", s.stopApp)
