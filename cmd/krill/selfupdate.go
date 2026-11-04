@@ -13,6 +13,7 @@ type updateBusy struct {
 	migratingInstances func(context.Context) (int64, error)
 	backups            interface{ InFlight() int }
 	volumes            interface{ InFlight() int }
+	clones             interface{ InFlight() int }
 }
 
 // reason reports why restarting Krill right now would be disruptive, as one
@@ -20,6 +21,9 @@ type updateBusy struct {
 // "backup", "volume_backup", "db_migration"), or "" when nothing is in
 // flight.
 func (b updateBusy) reason(ctx context.Context) string {
+	if b.clones != nil && b.clones.InFlight() > 0 {
+		return "environment_clone"
+	}
 	if n, err := b.runningDeploys(ctx); err != nil {
 		slog.Warn("self-update: could not check running deploys; treating as busy", "err", err)
 		return "deploy"

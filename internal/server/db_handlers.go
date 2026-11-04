@@ -9,6 +9,7 @@ import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -192,6 +193,13 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Coordinate the physical DROP and row deletion with clone publication.
+	key := oplock.CloneProject(p.ID)
+	if !oplock.TryAcquire(key) {
+		s.flashErrT(w, r, "clone.busy")
+		return
+	}
+	defer oplock.Release(key)
 	inst, err := s.q.GetDBInstance(r.Context(), ld.InstanceID)
 	if err != nil {
 		logFrom(r).Error("deleteLogicalDatabase: instance missing", "err", err, "ldb_id", ld.ID)

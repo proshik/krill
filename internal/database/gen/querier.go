@@ -11,11 +11,14 @@ import (
 
 type Querier interface {
 	ActivatePanelDomain(ctx context.Context, host string) (int64, error)
+	AdvanceEnvironmentCloneCleanup(ctx context.Context, arg AdvanceEnvironmentCloneCleanupParams) (string, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
+	CompleteEnvironmentCloneCleanup(ctx context.Context, requestKey string) (int64, error)
 	ConfirmDeploymentRelease(ctx context.Context, deploymentID int64) error
+	CountActiveEnvironmentClones(ctx context.Context) (int64, error)
 	CountAppPortsByHostPort(ctx context.Context, arg CountAppPortsByHostPortParams) (int64, error)
 	CountApplicationsByGitCredential(ctx context.Context, gitCredentialID *int64) (int64, error)
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
@@ -65,6 +68,7 @@ type Querier interface {
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
+	CreateCloneApplication(ctx context.Context, arg CreateCloneApplicationParams) (Application, error)
 	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error)
 	CreateDBInstance(ctx context.Context, arg CreateDBInstanceParams) (DbInstance, error)
 	CreateDBLink(ctx context.Context, arg CreateDBLinkParams) (CreateDBLinkRow, error)
@@ -118,6 +122,7 @@ type Querier interface {
 	// not hand out a second one.
 	DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int64, error)
 	DisablePanelDomain(ctx context.Context) error
+	EnvironmentCloneNotice(ctx context.Context, targetID *int64) (EnvironmentCloneNoticeRow, error)
 	// Reconcile deploys that were in flight when the process died: nothing will
 	// ever finish them, so they read as permanently running in the history. Safe to
 	// run at startup only — a just-booted control plane has no deploy in flight.
@@ -130,6 +135,7 @@ type Querier interface {
 	// The names and ids an app's containers are labelled with for log collection.
 	GetApplicationIdentity(ctx context.Context, id int64) (GetApplicationIdentityRow, error)
 	GetApplicationMetrics(ctx context.Context, id int64) (GetApplicationMetricsRow, error)
+	GetApplicationPlacement(ctx context.Context, id int64) (GetApplicationPlacementRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
 	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
 	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
@@ -140,6 +146,7 @@ type Querier interface {
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
+	GetEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
 	GetGitCredential(ctx context.Context, id int64) (GitCredential, error)
 	GetLogicalDatabase(ctx context.Context, id int64) (LogicalDatabase, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
@@ -162,6 +169,7 @@ type Querier interface {
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
 	InitPanelGateway(ctx context.Context, secret string) error
+	InsertEnvironmentClone(ctx context.Context, arg InsertEnvironmentCloneParams) error
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
@@ -195,6 +203,7 @@ type Querier interface {
 	ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]Domain, error)
 	ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsRow, error)
 	ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup, error)
+	ListEnvironmentCloneRecovery(ctx context.Context) ([]EnvironmentClone, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
 	// Batched form for the topology view, which needs every environment of an
 	// organization at once (one query instead of one per project).
@@ -224,11 +233,17 @@ type Querier interface {
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
+	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
+	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
 	PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error
+	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
+	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
+	ReleaseEnvironmentCloneSlug(ctx context.Context, requestKey string) error
+	ReserveEnvironmentCloneSlug(ctx context.Context, arg ReserveEnvironmentCloneSlugParams) (int64, error)
 	// Boot sweep: a control-plane restart kills the in-process migration job,
 	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
 	// honest: the job died mid-copy and the service was left scaled to 0.
@@ -256,6 +271,7 @@ type Querier interface {
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	// TLS is a property of the host: every row sharing it switches together.
 	SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error
+	SetEnvironmentCloneCleanup(ctx context.Context, requestKey string) (int64, error)
 	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error
@@ -270,6 +286,7 @@ type Querier interface {
 	SetVolumeBackupResult(ctx context.Context, arg SetVolumeBackupResultParams) error
 	SetVolumeOwner(ctx context.Context, arg SetVolumeOwnerParams) error
 	TouchAPIToken(ctx context.Context, id int64) error
+	TouchEnvironmentCloneRecovery(ctx context.Context, requestKey string) error
 	UpdateApplicationAdvanced(ctx context.Context, arg UpdateApplicationAdvancedParams) error
 	UpdateApplicationBuild(ctx context.Context, arg UpdateApplicationBuildParams) error
 	UpdateApplicationEnv(ctx context.Context, arg UpdateApplicationEnvParams) error

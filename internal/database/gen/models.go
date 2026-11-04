@@ -200,6 +200,29 @@ type Environment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type EnvironmentClone struct {
+	RequestKey      string    `json:"request_key"`
+	UserID          int64     `json:"user_id"`
+	OrganizationID  int64     `json:"organization_id"`
+	ProjectID       int64     `json:"project_id"`
+	SourceID        int64     `json:"source_id"`
+	DestinationName string    `json:"destination_name"`
+	DestinationSlug string    `json:"destination_slug"`
+	State           string    `json:"state"`
+	TargetID        *int64    `json:"target_id"`
+	ResourceIntent  string    `json:"resource_intent"`
+	Deadline        time.Time `json:"deadline"`
+	FencesPruned    bool      `json:"fences_pruned"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type EnvironmentCloneReservation struct {
+	ProjectID  int64  `json:"project_id"`
+	Slug       string `json:"slug"`
+	RequestKey string `json:"request_key"`
+}
+
 type GitCredential struct {
 	ID             int64     `json:"id"`
 	OrganizationID int64     `json:"organization_id"`

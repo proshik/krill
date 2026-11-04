@@ -50,6 +50,16 @@ func TestUpdateBusyReason(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "clone critical work",
+			b:    func() updateBusy { b := idle(); b.clones = fakeInFlight{1}; return b }(),
+			want: "environment_clone",
+		},
+		{
+			name: "clone cleanup not executing",
+			b:    func() updateBusy { b := idle(); b.clones = fakeInFlight{0}; return b }(),
+			want: "",
+		},
+		{
 			name: "deploy running",
 			b: func() updateBusy {
 				b := idle()

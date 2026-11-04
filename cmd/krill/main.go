@@ -29,6 +29,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envclone"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/metrics"
@@ -452,6 +453,14 @@ func run() error {
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
 	app.SetHostShare(hostshare.NewStore(pool))
+	cloner := envclone.New(pool, dbSvc, engine, cfg.BaseDomain)
+	app.SetEnvironmentCloner(cloner)
+	defer func() {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = cloner.Shutdown(c)
+	}()
+
 	app.SetBackups(backupSvc, func() {
 		if err := sched.Reload(); err != nil {
 			slog.Error("backup scheduler reload failed", "err", err)
@@ -477,6 +486,7 @@ func run() error {
 			migratingInstances: q.CountMigratingDBInstances,
 			backups:            backupSvc,
 			volumes:            volSvc,
+			clones:             cloner,
 		}.reason)
 	app.SetSelfUpdate(updateChecker, updater)
 
@@ -596,6 +606,7 @@ func run() error {
 		go runOrgNetworkMigration(ctx, q, engine, dep, dbSvc)
 	}
 
+	cloner.StartRecovery()
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	select {
@@ -605,6 +616,7 @@ func run() error {
 		slog.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		_ = cloner.Shutdown(shutdownCtx)
 		return srv.Shutdown(shutdownCtx)
 	}
 }

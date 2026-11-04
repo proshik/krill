@@ -103,6 +103,7 @@ else's production:
 | [Installing Krill](docs/install.md) | Install, upgrade, external Postgres, uninstall. |
 | [Configuration](docs/configuration.md) | Every `KRILL_*` setting. |
 | [Domains, HTTPS and access control](docs/guides/domains.md) | Custom domains, certificates, path exposure, basic auth, IP allowlists, raw ports. |
+| [Environment cloning](docs/guides/environments.md) | Isolated staging configuration, secret handling and cleanup. |
 | [Deployments](docs/guides/deployments.md) | Pre-deploy commands, failure behavior and limits. |
 | [Backups](docs/guides/backups.md) | S3 storage, schedules, retention, restore. |
 | [Private images and repositories](docs/guides/registries.md) | Registries, private Git, build arguments and secrets. |

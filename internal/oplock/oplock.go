@@ -79,3 +79,9 @@ func Acquire(ctx context.Context, name string) error {
 
 // AppRouting serializes final spec application with current routing updates.
 func AppRouting(id int64) string { return "app-routing:" + strconv.FormatInt(id, 10) }
+
+// CloneProject serializes environment cloning with project/environment deletion.
+func CloneProject(id int64) string { return "clone-project:" + strconv.FormatInt(id, 10) }
+
+// AppPlacement serializes placement persistence/labels with final deployment.
+func AppPlacement(id int64) string { return "app-placement:" + strconv.FormatInt(id, 10) }

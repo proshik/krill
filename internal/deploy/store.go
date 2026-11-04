@@ -77,6 +77,16 @@ func checkRegistryHost(image, registryURL string) error {
 	return nil
 }
 
+// Placement reads only scheduling metadata: a future draft's credentials must
+// not invalidate a captured deployment. Keep normalization equal to getApplication.
+func (s *DBStore) Placement(ctx context.Context, id int64) (string, []string, error) {
+	row, err := s.q.GetApplicationPlacement(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	return row.PlacementMode, splitCSV(row.PlacementNodes), nil
+}
+
 func (s *DBStore) GetApplication(ctx context.Context, id int64) (App, error) {
 	return s.getApplication(ctx, id, ImageRef{})
 }

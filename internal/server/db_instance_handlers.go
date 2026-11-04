@@ -357,18 +357,21 @@ func (s *Server) versionDBInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	image := strings.TrimSpace(r.FormValue("image"))
-	if image != "" {
-		if err := s.q.UpdateDBInstanceImage(r.Context(), db.UpdateDBInstanceImageParams{ID: inst.ID, Image: image}); err != nil {
-			logFrom(r).Error("versionDBInstance: update failed", "err", err, "instance_id", inst.ID, "image", image)
-			s.flashErrT(w, r, "flash.err.update_image")
-			return
+	if err := s.dbsvc.UpdateAndDeployInstance(r.Context(), inst.ID, func(ctx context.Context) error {
+		if image == "" {
+			return nil
 		}
-		logFrom(r).Info("db instance version updated", "instance_id", inst.ID, "image", image)
-	}
-	if err := s.dbsvc.DeployInstance(inst.ID); err != nil {
-		s.flashErrT(w, r, "flash.err.db_deploy_busy_saved")
+		return s.q.UpdateDBInstanceImage(ctx, db.UpdateDBInstanceImageParams{ID: inst.ID, Image: image})
+	}); err != nil {
+		logFrom(r).Error("versionDBInstance: update/deploy failed", "err", err, "instance_id", inst.ID)
+		if errors.Is(err, dbservice.ErrInstanceBusy) || errors.Is(err, dbservice.ErrDeployInProgress) {
+			s.flashErrT(w, r, "flash.err.db_deploy_busy")
+		} else {
+			s.flashErrT(w, r, "flash.err.internal")
+		}
 		return
 	}
+	logFrom(r).Info("db instance version update requested", "instance_id", inst.ID)
 	s.flashOK(w, r, "flash.ok.version_queued")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
@@ -436,21 +439,21 @@ func (s *Server) setDBInstanceExternalPort(w http.ResponseWriter, r *http.Reques
 		s.flashErrT(w, r, "flash.err.console_port_in_use")
 		return
 	}
-	if err := s.q.UpdateDBInstanceExternalPort(r.Context(), db.UpdateDBInstanceExternalPortParams{ID: inst.ID, ExternalPort: ext}); err != nil {
-		logFrom(r).Error("setDBInstanceExternalPort: update failed", "err", err, "instance_id", inst.ID)
-		s.flashErrT(w, r, "flash.err.internal")
+	if err := s.dbsvc.UpdateAndDeployInstance(r.Context(), inst.ID, func(ctx context.Context) error {
+		if err := s.q.UpdateDBInstanceExternalPort(ctx, db.UpdateDBInstanceExternalPortParams{ID: inst.ID, ExternalPort: ext}); err != nil {
+			return err
+		}
+		return s.q.UpdateDBInstanceConsolePort(ctx, db.UpdateDBInstanceConsolePortParams{ID: inst.ID, ConsoleExternalPort: console})
+	}); err != nil {
+		logFrom(r).Error("setDBInstanceExternalPort: failed", "err", err, "instance_id", inst.ID)
+		if errors.Is(err, dbservice.ErrInstanceBusy) || errors.Is(err, dbservice.ErrDeployInProgress) {
+			s.flashErrT(w, r, "flash.err.db_deploy_busy")
+		} else {
+			s.flashErrT(w, r, "flash.err.internal")
+		}
 		return
 	}
-	if err := s.q.UpdateDBInstanceConsolePort(r.Context(), db.UpdateDBInstanceConsolePortParams{ID: inst.ID, ConsoleExternalPort: console}); err != nil {
-		logFrom(r).Error("setDBInstanceExternalPort: update console port failed", "err", err, "instance_id", inst.ID)
-		s.flashErrT(w, r, "flash.err.internal")
-		return
-	}
-	logFrom(r).Info("db instance external port set", "instance_id", inst.ID, "external", ext != nil, "console", console != nil)
-	if err := s.dbsvc.DeployInstance(inst.ID); err != nil {
-		s.flashErrT(w, r, "flash.err.db_deploy_busy_saved")
-		return
-	}
+	logFrom(r).Info("db instance external port updated", "instance_id", inst.ID)
 	s.flashOK(w, r, "flash.ok.external_access_updated")
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
 }
@@ -580,26 +583,22 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	// also means a real docker failure here never silently destroys bookkeeping
 	// for an instance that is still actually running (not-found is tolerated —
 	// see dbsvc.RemoveInstanceContainers).
-	if err := s.dbsvc.RemoveInstanceContainers(r.Context(), inst.ID, destroy); err != nil {
-		logFrom(r).Error("deleteDBInstance: failed", "err", err, "instance_id", inst.ID, "destroy_data", destroy)
-		s.flashErrT(w, r, "flash.err.delete_database")
-		return
-	}
-
-	if n > 0 {
-		ldbs, _ := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
-		for _, ld := range ldbs {
-			if derr := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); derr != nil {
-				logFrom(r).Error("deleteDBInstance: delete logical db row failed", "err", derr, "ldb_id", ld.ID)
-				s.flashErrT(w, r, "flash.err.internal")
-				return
+	if err := s.dbsvc.RemoveInstanceThen(r.Context(), inst.ID, destroy, func() error {
+		if n > 0 {
+			ldbs, err := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
+			if err != nil {
+				return err
+			}
+			for _, ld := range ldbs {
+				if err := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); err != nil {
+					return err
+				}
 			}
 		}
-	}
-
-	if err := s.dbsvc.DeleteInstanceRow(r.Context(), inst.ID); err != nil {
-		logFrom(r).Error("deleteDBInstance: delete instance row failed", "err", err, "instance_id", inst.ID)
-		s.flashErrT(w, r, "flash.err.internal")
+		return s.dbsvc.DeleteInstanceRow(r.Context(), inst.ID)
+	}); err != nil {
+		logFrom(r).Error("deleteDBInstance: failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.delete_database")
 		return
 	}
 
