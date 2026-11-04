@@ -95,6 +95,13 @@ var ErrDeployInProgress = errors.New("a deploy of this instance is already in pr
 // outlives it. It returns ErrDeployInProgress, and starts nothing, while
 // another deploy of the instance runs.
 func (s *Service) DeployInstance(id int64) error {
+	return s.UpdateAndDeployInstance(context.Background(), id, nil)
+}
+
+// UpdateAndDeployInstance holds the instance lifecycle lock across a settings
+// mutation and the resulting deploy. deployCore stays lock-free for migration,
+// which already owns DBInstance throughout its internal redeploys.
+func (s *Service) UpdateAndDeployInstance(ctx context.Context, id int64, update func(context.Context) error) error {
 	// One deploy per instance at a time: a double-clicked Deploy button would
 	// otherwise race two ServiceDeploy calls and two status writes, and the
 	// loser's outcome would overwrite the winner's. The caller hears about it:
@@ -105,8 +112,26 @@ func (s *Service) DeployInstance(id int64) error {
 		slog.Warn("db instance deploy already in progress, refusing a second one", "instance_id", id)
 		return ErrDeployInProgress
 	}
+	inst, err := s.store.GetInstance(ctx, id)
+	if err != nil {
+		oplock.Release(lock)
+		return err
+	}
+	instanceLock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(instanceLock) {
+		oplock.Release(lock)
+		return ErrInstanceBusy
+	}
+	if update != nil {
+		if err := update(ctx); err != nil {
+			oplock.Release(instanceLock)
+			oplock.Release(lock)
+			return err
+		}
+	}
 	go func() {
 		defer oplock.Release(lock)
+		defer oplock.Release(instanceLock)
 		ctx, cancel := context.WithTimeout(context.Background(), dbDeployTimeout)
 		defer cancel()
 		s.deployInstance(ctx, id)
@@ -189,6 +214,12 @@ func (s *Service) ParkInstance(ctx context.Context, id int64, replicas uint64) e
 	if err != nil {
 		return err
 	}
+	instanceLock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(instanceLock) {
+		return ErrInstanceBusy
+	}
+	defer oplock.Release(instanceLock)
+
 	netName, err := s.networkFor(ctx, inst)
 	if err != nil {
 		return fmt.Errorf("resolve organization network: %w", err)
@@ -209,6 +240,12 @@ func (s *Service) StartInstance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	instanceLock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(instanceLock) {
+		return ErrInstanceBusy
+	}
+	defer oplock.Release(instanceLock)
+
 	if err := s.engine.ServiceScale(ctx, inst.AppName, 1); err != nil {
 		return err
 	}
@@ -220,6 +257,12 @@ func (s *Service) StopInstance(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+	instanceLock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(instanceLock) {
+		return ErrInstanceBusy
+	}
+	defer oplock.Release(instanceLock)
+
 	if err := s.engine.ServiceScale(ctx, inst.AppName, 0); err != nil {
 		return err
 	}
@@ -235,10 +278,33 @@ func (s *Service) StopInstance(ctx context.Context, id int64) error {
 // gone": a real docker failure here must not silently destroy backups/links
 // for an instance that is still running.
 func (s *Service) RemoveInstanceContainers(ctx context.Context, id int64, destroyData bool) error {
+	return s.RemoveInstanceThen(ctx, id, destroyData, nil)
+}
+
+// RemoveInstanceThen retains the lifecycle lock through bookkeeping deletion.
+// Callbacks must not acquire the same instance lock again.
+func (s *Service) RemoveInstanceThen(ctx context.Context, id int64, destroyData bool, finish func() error) error {
 	inst, err := s.store.GetInstance(ctx, id)
 	if err != nil {
 		return err
 	}
+	instanceLock := oplock.DBInstance(inst.AppName)
+	if !oplock.TryAcquire(instanceLock) {
+		return ErrInstanceBusy
+	}
+	defer oplock.Release(instanceLock)
+
+	if err := s.removeInstanceContainers(ctx, inst, destroyData); err != nil {
+		return err
+	}
+	if finish != nil {
+		return finish()
+	}
+	return nil
+}
+
+func (s *Service) removeInstanceContainers(ctx context.Context, inst Instance, destroyData bool) error {
+	id := inst.ID
 	if s.engine == nil {
 		return nil
 	}
@@ -294,8 +360,5 @@ func (s *Service) DeleteInstanceRow(ctx context.Context, id int64) error {
 // ServiceRemove failure is surfaced (not swallowed): the row is kept so the
 // delete is retryable; a not-found failure is tolerated (already gone).
 func (s *Service) DeleteInstance(ctx context.Context, id int64, destroyData bool) error {
-	if err := s.RemoveInstanceContainers(ctx, id, destroyData); err != nil {
-		return err
-	}
-	return s.store.DeleteInstanceRow(ctx, id)
+	return s.RemoveInstanceThen(ctx, id, destroyData, func() error { return s.store.DeleteInstanceRow(ctx, id) })
 }

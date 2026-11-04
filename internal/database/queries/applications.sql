@@ -97,3 +97,6 @@ WHERE a.id = $1;
 
 -- name: UpdateApplicationEnvClassified :exec
 UPDATE applications SET env_text = $2, env_public_keys = $3, updated_at = now() WHERE id = $1;
+
+-- name: GetApplicationPlacement :one
+SELECT placement_mode, placement_nodes FROM applications WHERE id = $1;

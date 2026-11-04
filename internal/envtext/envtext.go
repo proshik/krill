@@ -108,3 +108,29 @@ func PublicKeys(raw string, keys []string) []string {
 	}
 	return out
 }
+
+// Clone copies ordinary assignments verbatim and blanks every secret or linked
+// assignment. A linked key must have no literal fallback to its old database.
+// Non-assignment lines and line endings remain unchanged.
+func Clone(raw string, public, linked []string) string {
+	keep := make(map[string]bool, len(public))
+	for _, key := range public {
+		keep[key] = true
+	}
+	for _, key := range linked {
+		delete(keep, key)
+	}
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		key, ok := KeyOf(line)
+		if !ok || keep[key] {
+			continue
+		}
+		ending := ""
+		if strings.HasSuffix(line, "\r") {
+			ending = "\r"
+		}
+		lines[i] = line[:strings.IndexByte(line, '=')+1] + ending
+	}
+	return strings.Join(lines, "\n")
+}

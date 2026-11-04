@@ -1,6 +1,22 @@
 package i18n
 
 var en = map[string]string{
+	"flash.err.placement_busy":      "A deployment is applying placement. Wait for it to finish before changing placement or deleting this app.",
+	"clone.button":                  "Clone environment",
+	"clone.source":                  "Source: %s",
+	"clone.review":                  "Cloning does not deploy apps. It copies ordinary values, clears secret values and build secrets, and creates empty databases and volumes. Review service URLs, secrets and predeploy commands before Deploy: copied URLs may still point to production.",
+	"clone.servers":                 "New Redis, DragonFly and MinIO servers need an explicit Deploy in Database Servers. They remain organization resources after this environment is deleted. PostgreSQL uses new databases and credentials on the existing server.",
+	"clone.created":                 "Environment cloned. Review its settings before deploying.",
+	"clone.isolation_required":      "PostgreSQL isolation requires removing PUBLIC CONNECT access from existing logical databases. Ask the server administrator to review their permissions before cloning.",
+	"clone.failed":                  "The environment could not be cloned. No partial environment was published. Check source settings and try again.",
+	"clone.name_conflict":           "Choose a different environment name: this name is invalid, already used or reserved by another clone.",
+	"clone.busy":                    "A related resource operation is already running. Try again after it finishes.",
+	"clone.unavailable":             "A required database server or placement node is unavailable. Start the server explicitly or check the source configuration.",
+	"clone.cleanup_pending":         "The clone was not published. Cleanup of its new resources is pending and will be retried automatically.",
+	"clone.outcome_unknown":         "The clone result could not be confirmed. Reload the project before trying again; its recorded outcome will be checked safely.",
+	"clone.pending":                 "A clone is running or its new resources are awaiting cleanup. Existing source data is not copied or removed by cloning.",
+	"update.busy.environment_clone": "an environment clone or its cleanup is executing",
+
 	"tab.metrics":                          "Metrics",
 	"metrics.enable":                       "Collect metrics",
 	"metrics.disable":                      "Stop collecting",
@@ -264,7 +280,7 @@ var en = map[string]string{
 	"env.remove":                           "Remove variable",
 	"env.key":                              "Key",
 	"env.value":                            "Value",
-	"env.classification_hint":              "Ordinary variables are visible. Secrets are hidden by default. This controls display only; values stay in the app environment.",
+	"env.classification_hint":              "Ordinary values are copied when cloning; secret values are left empty. Both are still injected normally when deploying the original app.",
 	"env.secrets_hidden":                   "Secrets are hidden. Reveal to edit the raw text.",
 	"env.add_var":                          "Add variable",
 	"env.show_values":                      "Show values",

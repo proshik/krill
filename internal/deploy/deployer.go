@@ -514,11 +514,47 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			err = ErrReleaseUnavailable
 		}
 	}
+
+	// Builds do not hold this guard: a user may change placement while building.
+	// Refuse that stale build, then hold the guard through label/service mutation
+	// and convergence so a placement save cannot expand the eligible node set.
+	if err == nil {
+		key := oplock.AppPlacement(app.ID)
+		if err = oplock.Acquire(ctx, key); err == nil {
+			defer oplock.Release(key)
+			if j.rollbackID == 0 {
+				var mode string
+				var nodes []string
+				var e error
+				if placement, ok := d.store.(interface {
+					Placement(context.Context, int64) (string, []string, error)
+				}); ok {
+					mode, nodes, e = placement.Placement(ctx, app.ID)
+				} else {
+					var current App
+					current, e = d.store.GetApplication(ctx, app.ID)
+					mode, nodes = current.PlacementMode, current.PlacementNodes
+				}
+				if e != nil {
+					err = e
+				} else if mode != app.PlacementMode || !reflect.DeepEqual(nodes, app.PlacementNodes) {
+					err = fmt.Errorf("placement changed during deployment; deploy the current settings again")
+				}
+			}
+		}
+	}
 	if err == nil && releaseCapable && secret.Enabled() && immutableImage(imageTag) {
 		snapshot = d.snapshotFor(app, imageTag)
 		err = rs.SaveRelease(ctx, app.ID, deployID, snapshot, j.rollbackID)
 		releaseSaved = err == nil
 	}
+	// New configuration-only clones have no node labels until explicit Deploy.
+	// Failed/ambiguous mutations remain associated with this existing app ID;
+	// cloning itself never creates labels requiring external compensation.
+	if err == nil && j.rollbackID == 0 {
+		err = d.ensurePlacement(ctx, app)
+	}
+
 	if err == nil && app.PredeployCommand != "" && !j.skipPredeploy {
 		err = d.predeploy(ctx, app, deployID, imageTag, out)
 	}
@@ -594,6 +630,11 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			}
 			if prev.Found {
 				baseline = prev.TaskIDs
+			}
+			if expected != nil {
+				if err := d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes); err != nil {
+					return err
+				}
 			}
 			return d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 		}()
@@ -849,3 +890,44 @@ func resolveImageRef(ctx context.Context, engine docker.Engine, app App, imageTa
 }
 
 var _ io.Writer = (*hubWriter)(nil)
+
+func (d *Deployer) ensurePlacement(ctx context.Context, app App) error {
+	nodes, err := d.engine.Nodes(ctx)
+	if err != nil {
+		return fmt.Errorf("load placement nodes: %w", err)
+	}
+	live := map[string]bool{}
+	for _, n := range nodes {
+		live[n.ID] = true
+	}
+	for _, id := range app.PlacementNodes {
+		if !live[id] {
+			return fmt.Errorf("placement node is missing: %s", id)
+		}
+	}
+	key := fmt.Sprintf("krill.place.%d", app.ID)
+	selected := map[string]bool{}
+	if app.PlacementMode == "pin" || app.PlacementMode == "global" {
+		for _, id := range app.PlacementNodes {
+			selected[id] = true
+		}
+	}
+	// Remove extras first: a failed add cannot leave more eligible nodes than
+	// intended. Only this app's label key is touched.
+	for _, node := range nodes {
+		if !selected[node.ID] {
+			if err := d.engine.NodeDeleteLabel(ctx, node.ID, key); err != nil {
+				return fmt.Errorf("clear app placement label: %w", err)
+			}
+		}
+	}
+	for _, node := range nodes {
+		if selected[node.ID] {
+			if err := d.engine.NodeSetLabel(ctx, node.ID, key, "1"); err != nil {
+				return fmt.Errorf("set app placement label: %w", err)
+			}
+		}
+	}
+
+	return nil
+}

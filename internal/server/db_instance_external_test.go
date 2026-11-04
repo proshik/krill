@@ -2,9 +2,11 @@ package server_test
 
 import (
 	"context"
+	"github.com/proshik/krill/internal/oplock"
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 )
@@ -23,6 +25,7 @@ func TestSetExternalPortToggle(t *testing.T) {
 	}
 	cookie := loginAs(t, q, "extport@k.local")
 	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+	t.Cleanup(func() { awaitInstanceLifecycle(t, inst.AppName) })
 
 	// set a valid port
 	if rec := postForm(t, h, base+"/external-port", cookie, url.Values{"external_port": {"5433"}}); rec.Code != http.StatusSeeOther {
@@ -34,6 +37,7 @@ func TestSetExternalPortToggle(t *testing.T) {
 	}
 
 	// clear it
+	awaitInstanceLifecycle(t, inst.AppName)
 	postForm(t, h, base+"/external-port", cookie, url.Values{"external_port": {""}})
 	got, _ = q.GetDBInstance(ctx, inst.ID)
 	if got.ExternalPort != nil {
@@ -41,6 +45,7 @@ func TestSetExternalPortToggle(t *testing.T) {
 	}
 
 	// out-of-range rejected
+	awaitInstanceLifecycle(t, inst.AppName)
 	postForm(t, h, base+"/external-port", cookie, url.Values{"external_port": {"70000"}})
 	if got, _ := q.GetDBInstance(ctx, inst.ID); got.ExternalPort != nil {
 		t.Fatalf("bad port must not persist, got %v", *got.ExternalPort)
@@ -65,6 +70,7 @@ func TestSetConsolePortToggle(t *testing.T) {
 	}
 	cookie := loginAs(t, q, "consoleport@k.local")
 	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(inst.ID)
+	t.Cleanup(func() { awaitInstanceLifecycle(t, inst.AppName) })
 
 	// set both external and console ports together
 	if rec := postForm(t, h, base+"/external-port", cookie, url.Values{
@@ -79,6 +85,7 @@ func TestSetConsolePortToggle(t *testing.T) {
 
 	// editing external_port alone (no console_external_port field in the
 	// request) must NOT clear the previously-set console port
+	awaitInstanceLifecycle(t, inst.AppName)
 	postForm(t, h, base+"/external-port", cookie, url.Values{"external_port": {"9100"}})
 	got, _ = q.GetDBInstance(ctx, inst.ID)
 	if got.ConsoleExternalPort == nil || *got.ConsoleExternalPort != 9101 {
@@ -87,6 +94,7 @@ func TestSetConsolePortToggle(t *testing.T) {
 
 	// a console port equal to the instance's own external port is rejected
 	// (both would host-publish the same port for two different targets)
+	awaitInstanceLifecycle(t, inst.AppName)
 	postForm(t, h, base+"/external-port", cookie, url.Values{
 		"external_port": {"9100"}, "console_external_port": {"9100"},
 	})
@@ -96,6 +104,7 @@ func TestSetConsolePortToggle(t *testing.T) {
 	}
 
 	// clear the console port explicitly
+	awaitInstanceLifecycle(t, inst.AppName)
 	postForm(t, h, base+"/external-port", cookie, url.Values{
 		"external_port": {"9100"}, "console_external_port": {""},
 	})
@@ -163,5 +172,18 @@ func TestCreateDBInstanceConsolePortConsoleConflict(t *testing.T) {
 	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
 	if len(insts) != 1 {
 		t.Fatalf("conflicting instance must not be created, got %d instances", len(insts))
+	}
+}
+
+// Each edit starts an asynchronous redeploy. A subsequent independent edit
+// must wait; overlapping edits now correctly receive busy without changing state.
+func awaitInstanceLifecycle(t *testing.T, appName string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for oplock.Held(oplock.DBInstance(appName)) {
+		if time.Now().After(deadline) {
+			t.Fatal("instance lifecycle did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

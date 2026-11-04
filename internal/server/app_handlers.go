@@ -16,6 +16,7 @@ import (
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
@@ -253,6 +254,7 @@ func (s *Server) saveBuild(w http.ResponseWriter, r *http.Request) {
 
 // reconcilePlacementLabels makes the per-app krill.place.<appID> node label
 // present on exactly the selected nodes (idempotent; best-effort per node).
+// Callers hold AppPlacement through persistence and these label mutations.
 // Returns the number of nodes whose label could not be set/cleared — a nonzero
 // count means a pinned app may be unschedulable until placement is re-saved.
 func (s *Server) reconcilePlacementLabels(r *http.Request, appID int64, selected []string) int {
@@ -291,6 +293,13 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	key := oplock.AppPlacement(c.App.ID)
+	if !oplock.TryAcquire(key) {
+		s.flashErrT(w, r, "flash.err.placement_busy")
+		return
+	}
+	defer oplock.Release(key)
+
 	mode := r.FormValue("placement_mode") // implicitly parses the form
 	if mode != "any" && mode != "pin" && mode != "global" {
 		s.flashErrT(w, r, "flash.err.invalid_placement")
@@ -874,6 +883,13 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	key := oplock.AppPlacement(c.App.ID)
+	if !oplock.TryAcquire(key) {
+		s.flashErrT(w, r, "flash.err.placement_busy")
+		return
+	}
+	defer oplock.Release(key)
+
 	// Removal failure is logged but must not block the DB delete.
 	if s.engine != nil {
 		if err := s.engine.ServiceRemove(r.Context(), dockerName(c.App.ID)); err != nil {

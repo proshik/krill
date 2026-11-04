@@ -217,6 +217,22 @@ func (q *Queries) GetApplicationIdentity(ctx context.Context, id int64) (GetAppl
 	return i, err
 }
 
+const getApplicationPlacement = `-- name: GetApplicationPlacement :one
+SELECT placement_mode, placement_nodes FROM applications WHERE id = $1
+`
+
+type GetApplicationPlacementRow struct {
+	PlacementMode  string `json:"placement_mode"`
+	PlacementNodes string `json:"placement_nodes"`
+}
+
+func (q *Queries) GetApplicationPlacement(ctx context.Context, id int64) (GetApplicationPlacementRow, error) {
+	row := q.db.QueryRow(ctx, getApplicationPlacement, id)
+	var i GetApplicationPlacementRow
+	err := row.Scan(&i.PlacementMode, &i.PlacementNodes)
+	return i, err
+}
+
 const listApplicationIDsByOrg = `-- name: ListApplicationIDsByOrg :many
 SELECT a.id
 FROM applications a

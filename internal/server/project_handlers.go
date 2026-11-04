@@ -10,6 +10,8 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envclone"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -107,6 +109,13 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	cloneLock := oplock.CloneProject(p.ID)
+	if !oplock.TryAcquire(cloneLock) {
+		s.flashErrT(w, r, "clone.busy")
+		return
+	}
+	defer oplock.Release(cloneLock)
+
 	// remove Swarm services of all applications in the project
 	envs, err := s.q.ListEnvironments(r.Context(), p.ID)
 	if err != nil {
@@ -174,6 +183,13 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	cloneLock := oplock.CloneProject(p.ID)
+	if !oplock.TryAcquire(cloneLock) {
+		s.flashErrT(w, r, "clone.busy")
+		return
+	}
+	defer oplock.Release(cloneLock)
+
 	apps, err := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
 	if err != nil {
 		slog.Error("deleteEnvironment: list apps", "env", e.ID, "err", err)
@@ -252,7 +268,22 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		logFrom(r).Error("projectPage: list db instances", "err", err, "org_id", o.ID)
 	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries))
+	cloneView := templates.EnvironmentCloneView{}
+	if s.cloner != nil && active.ID != 0 {
+		if notice, err := s.q.EnvironmentCloneNotice(r.Context(), &active.ID); err == nil {
+			cloneView.Cloned, cloneView.Pending = notice.Cloned, notice.Pending
+		} else {
+			logFrom(r).Error("projectPage: clone notice lookup failed", "environment_id", active.ID)
+		}
+		if role == "owner" || role == "admin" {
+			if key, err := envclone.NewRequestKey(); err == nil {
+				cloneView.RequestKey = key
+			} else {
+				logFrom(r).Error("projectPage: clone request identity generation failed", "environment_id", active.ID)
+			}
+		}
+	}
+	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries, cloneView))
 }
 
 // deriveCardStatuses replaces each app/logical-db stored status with the LIVE

@@ -5,7 +5,7 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry) {
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry, clone ...EnvironmentCloneView) {
 	@Layout(project.Name, org, role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
@@ -31,8 +31,11 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						}
 					</div>
 					if role == "owner" || role == "admin" {
-						<div class="flex items-center gap-2">
+						<div class="flex items-center gap-2 flex-wrap">
 							if active.ID != 0 {
+								if cloneInfo(clone).RequestKey != "" {
+									<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('clone-env')">{ i18n.T(ctx, "clone.button") }</button>
+								}
 								<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-app')">+ { i18n.T(ctx, "project.new_app") }</button>
 								<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_env", active.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "env.delete") }</button>
@@ -45,6 +48,12 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 					}
 				</div>
 				<div class="k-panel-body">
+					if cloneInfo(clone).Cloned {
+						<div class="k-card mb-4" data-clone-notice><p>{ i18n.T(ctx, "clone.review") }</p><p class="mt-2">{ i18n.T(ctx, "clone.servers") } <a class="underline" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx,"dbi.title") }</a></p></div>
+					}
+					if cloneInfo(clone).Pending {
+						<p class="k-card mb-4">{ i18n.T(ctx,"clone.pending") }</p>
+					}
 					if active.ID != 0 {
 						<div class="flex justify-end items-center gap-3 mb-3">
 							<button id="status-refresh" type="button" class="k-copy" hx-get={ "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/statuses" } hx-swap="none">↻ { i18n.T(ctx, "status.refresh") }</button>
@@ -80,7 +89,9 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
 								for _, d := range dbs {
 									<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases/" + itoa(d.ID)) }>
-										<div class="flex items-center justify-between"><div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { d.Name }</div>@CardStatus("cs-ldb-"+itoa(d.ID), d.InstanceStatus, false)</div>
+										<div class="flex items-center justify-between">
+											<div class="font-semibold text-base"><span aria-hidden="true">🐘</span> { d.Name }</div>@CardStatus("cs-ldb-"+itoa(d.ID), d.InstanceStatus, false)
+										</div>
 										<div class="k-mono text-xs">{ d.DbName + " @ " + d.InstanceName }</div>
 									</a>
 								}
@@ -98,6 +109,28 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 			</div>
 		</div>
 		if role == "owner" || role == "admin" {
+			if cloneInfo(clone).RequestKey != "" && active.ID != 0 {
+				<dialog id="clone-env" class="k-modal">
+					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/clone") }>
+						<input type="hidden" name="request_key" value={ cloneInfo(clone).RequestKey }/>
+						<div class="k-modal-head">
+							<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('clone-env')">✕</button>
+							<div class="k-modal-title">{ i18n.T(ctx,"clone.button") }</div>
+							<div class="k-modal-desc">{ i18n.Tf(ctx,"clone.source",active.Name) }</div>
+						</div>
+						<div class="k-modal-body">
+							<label class="k-label k-label-required" for="clone-name">{ i18n.T(ctx,"common.name") }</label>
+							<input id="clone-name" class="k-input" name="name" required value={ cloneDefaultName(active) }/>
+							<p class="text-sm mt-3">{ i18n.T(ctx,"clone.review") }</p>
+							<p class="text-sm mt-2">{ i18n.T(ctx,"clone.servers") }</p>
+						</div>
+						<div class="k-modal-foot">
+							<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('clone-env')">{ i18n.T(ctx,"common.cancel") }</button>
+							<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx,"common.create") }</button>
+						</div>
+					</form>
+				</dialog>
+			}
 			<dialog id="new-env" class="k-modal">
 				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments") }>
 					<div class="k-modal-head">
@@ -218,4 +251,23 @@ templ appCreateModal(orgID, projID, envID int64, registries []db.Registry) {
 		</form>
 		<script>krillToggleSource('image');</script>
 	</dialog>
+}
+
+type EnvironmentCloneView struct {
+	RequestKey      string
+	Cloned, Pending bool
+}
+
+func cloneInfo(values []EnvironmentCloneView) EnvironmentCloneView {
+	if len(values) > 0 {
+		return values[0]
+	}
+	return EnvironmentCloneView{}
+}
+
+func cloneDefaultName(source db.Environment) string {
+	if source.Slug == "production" {
+		return "staging"
+	}
+	return source.Name + "-copy"
 }

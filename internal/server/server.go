@@ -18,6 +18,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/envclone"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/mcpsrv"
@@ -42,6 +43,7 @@ type Server struct {
 	logHub   *deploy.DeployLogHub
 	dbsvc    *dbservice.Service
 
+	cloner        *envclone.Service
 	hosts         *hostshare.Store
 	backupSvc     *backup.Service
 	reloadBackups func()
@@ -470,6 +472,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/rename", s.renameProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)
+				r.Post("/projects/{projID}/environments/{envID}/clone", s.cloneEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/delete", s.deleteEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/delete", s.deleteApp)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -180,26 +181,56 @@ func panelAvailable(ctx context.Context, q *db.Queries, host string) error {
 // CreateApplication reserves an exclusive primary host and creates its app and
 // domain atomically. It must use the same lock as Add after host uniqueness is removed.
 func (s *Store) CreateApplication(ctx context.Context, p db.CreateApplicationParams) (db.Application, error) {
-	var out db.Application
-	err := s.inHostTx(ctx, p.Domain, func(q *db.Queries) error {
-		if err := panelAvailable(ctx, q, p.Domain); err != nil {
-			return err
-		}
-		n, err := q.CountDomainsByHost(ctx, p.Domain)
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			return &ConflictError{Key: KeyHostTaken}
-		}
-		out, err = q.CreateApplication(ctx, p)
-		if err != nil {
-			return err
-		}
-		_, err = q.CreateDomain(ctx, db.CreateDomainParams{
-			ApplicationID: out.ID, Host: p.Domain, IsPrimary: true,
-		})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return db.Application{}, err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}()
+	out, err := CreateApplicationTx(ctx, tx, p)
+	if err != nil {
+		return db.Application{}, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+// ReservePrimaryHost must run in the same transaction as the app/domain writes.
+// Environment cloning uses it with a preallocated app ID and captured fields.
+// The namespace and panel reservation are shared with every domain mutation.
+func ReservePrimaryHost(ctx context.Context, tx pgx.Tx, host string) error {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "krill.domain-host:"+host); err != nil {
+		return fmt.Errorf("lock host: %w", err)
+	}
+	q := db.New(tx)
+	if err := panelAvailable(ctx, q, host); err != nil {
 		return err
+	}
+	n, err := q.CountDomainsByHost(ctx, host)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return &ConflictError{Key: KeyHostTaken}
+	}
+	return nil
+}
+
+// CreateApplicationTx lets a larger atomic operation own the commit. An error
+// requires the caller to roll back the transaction, including its app insert.
+func CreateApplicationTx(ctx context.Context, tx pgx.Tx, p db.CreateApplicationParams) (db.Application, error) {
+	if err := ReservePrimaryHost(ctx, tx, p.Domain); err != nil {
+		return db.Application{}, err
+	}
+	q := db.New(tx)
+	out, err := q.CreateApplication(ctx, p)
+	if err != nil {
+		return db.Application{}, err
+	}
+	_, err = q.CreateDomain(ctx, db.CreateDomainParams{
+		ApplicationID: out.ID, Host: p.Domain, IsPrimary: true,
 	})
 	return out, err
 }
