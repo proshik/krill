@@ -59,6 +59,7 @@ UPDATE applications SET
     healthcheck_timeout = $10,
     healthcheck_retries = $11,
     healthcheck_start_period = $12,
+    predeploy_command = $13,
     updated_at = now()
 WHERE id = $1;
 

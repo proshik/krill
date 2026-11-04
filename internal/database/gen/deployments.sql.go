@@ -79,7 +79,7 @@ func (q *Queries) CountRunningDeploymentsByOrg(ctx context.Context, id int64) (i
 }
 
 const createDeployment = `-- name: CreateDeployment :one
-INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at
+INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id
 `
 
 type CreateDeploymentParams struct {
@@ -100,6 +100,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.ErrorMessage,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.RollbackSourceID,
 	)
 	return i, err
 }
@@ -149,7 +150,7 @@ func (q *Queries) FinishDeployment(ctx context.Context, arg FinishDeploymentPara
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at FROM deployments WHERE id = $1
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, error) {
@@ -165,6 +166,7 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 		&i.ErrorMessage,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.RollbackSourceID,
 	)
 	return i, err
 }
@@ -202,19 +204,22 @@ func (q *Queries) ListDeploymentStatuses(ctx context.Context, ids []int64) ([]Li
 }
 
 const listDeploymentSummariesByApplication = `-- name: ListDeploymentSummariesByApplication :many
-SELECT id, application_id, status, trigger, image_tag, error_message, started_at, finished_at
-FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.error_message, d.started_at, d.finished_at, d.rollback_source_id,
+EXISTS (SELECT 1 FROM deployment_releases r WHERE r.deployment_id=d.id AND r.confirmed AND d.status='done') AS rollback_eligible
+FROM deployments d WHERE d.application_id = $1 ORDER BY d.started_at DESC LIMIT 50
 `
 
 type ListDeploymentSummariesByApplicationRow struct {
-	ID            int64              `json:"id"`
-	ApplicationID int64              `json:"application_id"`
-	Status        string             `json:"status"`
-	Trigger       string             `json:"trigger"`
-	ImageTag      string             `json:"image_tag"`
-	ErrorMessage  string             `json:"error_message"`
-	StartedAt     time.Time          `json:"started_at"`
-	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ID               int64              `json:"id"`
+	ApplicationID    int64              `json:"application_id"`
+	Status           string             `json:"status"`
+	Trigger          string             `json:"trigger"`
+	ImageTag         string             `json:"image_tag"`
+	ErrorMessage     string             `json:"error_message"`
+	StartedAt        time.Time          `json:"started_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	RollbackSourceID *int64             `json:"rollback_source_id"`
+	RollbackEligible bool               `json:"rollback_eligible"`
 }
 
 // Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
@@ -238,6 +243,8 @@ func (q *Queries) ListDeploymentSummariesByApplication(ctx context.Context, appl
 			&i.ErrorMessage,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.RollbackSourceID,
+			&i.RollbackEligible,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +257,7 @@ func (q *Queries) ListDeploymentSummariesByApplication(ctx context.Context, appl
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
 `
 
 func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error) {
@@ -272,6 +279,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationI
 			&i.ErrorMessage,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.RollbackSourceID,
 		); err != nil {
 			return nil, err
 		}

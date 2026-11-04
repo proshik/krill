@@ -11,8 +11,9 @@ SELECT * FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIM
 -- Same rows as ListDeploymentsByApplication but without the (up to ~256KB) log
 -- column — for the deploy-history list, which is polled every 2s and never
 -- renders the log. Use GetDeployment for the single-deployment detail/log view.
-SELECT id, application_id, status, trigger, image_tag, error_message, started_at, finished_at
-FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50;
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.error_message, d.started_at, d.finished_at, d.rollback_source_id,
+EXISTS (SELECT 1 FROM deployment_releases r WHERE r.deployment_id=d.id AND r.confirmed AND d.status='done') AS rollback_eligible
+FROM deployments d WHERE d.application_id = $1 ORDER BY d.started_at DESC LIMIT 50;
 
 -- name: FinishDeployment :exec
 UPDATE deployments

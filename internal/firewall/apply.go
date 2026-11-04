@@ -220,7 +220,7 @@ type RealRunner struct {
 }
 
 func (rr RealRunner) Run(ctx context.Context, stdin, cmd string) (string, error) {
-	cl, err := cluster.DialVerified(rr.Spec, rr.Timeout)
+	cl, err := cluster.DialVerifiedContext(ctx, rr.Spec, rr.Timeout)
 	if err != nil {
 		return "", err
 	}

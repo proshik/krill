@@ -3,6 +3,7 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+"github.com/proshik/krill/internal/secret"
 )
 
 templ Deployments(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
@@ -15,6 +16,12 @@ templ Deployments(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 
 templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	<table id="deployments-list" class="k-table">
+        <caption class="text-left mb-3">
+            <p>{ i18n.T(ctx,"deploy.rollback_hint") }</p>
+            if !secret.Enabled() {
+                <p>{ i18n.T(ctx,"deploy.rollback_key_required") }</p>
+            }
+        </caption>
 		<thead><tr><th>{ i18n.T(ctx, "deploy.col_time") }</th><th>{ i18n.T(ctx, "deploy.col_status") }</th><th>{ i18n.T(ctx, "deploy.col_trigger") }</th><th>{ i18n.T(ctx, "deploy.col_image") }</th><th>{ i18n.T(ctx, "deploy.col_log") }</th></tr></thead>
 		<tbody>
 			if len(deps) == 0 {
@@ -24,9 +31,21 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 					<tr>
 						<td class="k-mono">{ dp.StartedAt.Format("2006-01-02 15:04:05") }</td>
 						<td>@StatusBadge(dp.Status)</td>
-						<td class="k-mono">{ dp.Trigger }</td>
+						<td class="k-mono">
+                            { dp.Trigger }
+                            if dp.RollbackSourceID != nil {
+ <span>{ i18n.Tf(ctx,"deploy.rollback_source",*dp.RollbackSourceID) }</span>
+ }
+                        </td>
 						<td class="k-mono">{ dp.ImageTag }</td>
-						<td><a class="text-[color:var(--color-accent)]" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>{ i18n.T(ctx, "deploy.open") }</a></td>
+						<td>
+                            <a class="text-[color:var(--color-accent)]" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(dp.ID)) }>{ i18n.T(ctx, "deploy.open") }</a>
+                            if dp.RollbackEligible && secret.Enabled() && (c.Role=="admin" || c.Role=="owner") {
+                                <form method="post" action={ templ.SafeURL(c.base()+"/deployments/"+itoa(dp.ID)+"/rollback") } hx-boost="false" data-confirm={ i18n.T(ctx,"confirm.rollback_app") } data-label={ i18n.T(ctx,"deploy.rollback") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.label, 'primary')">
+                                    <button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx,"deploy.rollback") }</button>
+                                </form>
+                            }
+                        </td>
 					</tr>
 				}
 			}

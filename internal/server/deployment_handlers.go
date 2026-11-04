@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -106,4 +108,30 @@ func (s *Server) loadDeployment(w http.ResponseWriter, r *http.Request) (templat
 		return templates.AppCtx{}, db.Deployment{}, false
 	}
 	return c, dep, true
+}
+
+// rollbackApp queues a new deployment; loadDeployment checks the complete tenant chain.
+func (s *Server) rollbackApp(w http.ResponseWriter, r *http.Request) {
+	c, source, ok := s.loadDeployment(w, r)
+	if !ok {
+		return
+	}
+	if s.deployer == nil {
+		s.flashErrT(w, r, "flash.err.rollback_unavailable")
+		return
+	}
+	id, err := s.deployer.EnqueueRollback(r.Context(), c.App.ID, source.ID)
+	if err != nil {
+		if errors.Is(err, deploy.ErrReleaseUnavailable) {
+			s.flashErrT(w, r, "flash.err.rollback_unavailable")
+		} else if errors.Is(err, deploy.ErrReleaseDrift) {
+			s.flashErrT(w, r, "flash.err.rollback_drift")
+		} else {
+			s.flashErrT(w, r, "flash.err.rollback_refused")
+		}
+		return
+	}
+	logFrom(r).Info("application rollback queued", "app_id", c.App.ID, "source_deployment_id", source.ID, "deployment_id", id)
+	s.flashOK(w, r, "flash.ok.rollback_queued")
+	http.Redirect(w, r, appURL(c)+"?tab=deployments", http.StatusSeeOther)
 }

@@ -15,6 +15,7 @@ type Querier interface {
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
+	ConfirmDeploymentRelease(ctx context.Context, deploymentID int64) error
 	CountAppPortsByHostPort(ctx context.Context, arg CountAppPortsByHostPortParams) (int64, error)
 	CountApplicationsByGitCredential(ctx context.Context, gitCredentialID *int64) (int64, error)
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
@@ -135,6 +136,7 @@ type Querier interface {
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
+	GetDeploymentRelease(ctx context.Context, arg GetDeploymentReleaseParams) (DeploymentRelease, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
@@ -231,6 +233,8 @@ type Querier interface {
 	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
 	// honest: the job died mid-copy and the service was left scaled to 0.
 	ResetMigratingInstances(ctx context.Context) error
+	RestoreReleaseRuntime(ctx context.Context, arg RestoreReleaseRuntimeParams) (int64, error)
+	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
@@ -246,6 +250,7 @@ type Querier interface {
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error
+	SetDeploymentRollbackSource(ctx context.Context, arg SetDeploymentRollbackSourceParams) error
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error

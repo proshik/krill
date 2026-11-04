@@ -14,6 +14,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -155,7 +156,10 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("domain added", "app_id", c.App.ID, "host", host, "tls", domain.Tls)
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.domain_added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
@@ -186,7 +190,10 @@ func (s *Server) toggleDomainTLS(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("domain tls toggled", "domain_id", d.ID, "app_id", c.App.ID, "tls", tls)
 	for _, ref := range refs {
-		s.syncAppLabels(r, ref.ID, ref.Port)
+		if !s.syncAppLabels(r, ref.ID, ref.Port) {
+			s.flashErrT(w, r, "flash.err.update_domain")
+			return
+		}
 	}
 	s.flashOK(w, r, "flash.ok.tls_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
@@ -221,7 +228,10 @@ func (s *Server) setDomainExposure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("domain exposure updated", "domain_id", d.ID, "app_id", c.App.ID, "exposed", expose, "paths", len(paths))
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.exposure_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
@@ -251,20 +261,29 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("domain deleted", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host)
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.domain_deleted")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
 // syncAppLabels re-applies the application's Traefik labels (no container restart).
-func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
+func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) bool {
 	if s.engine == nil {
-		return
+		return true
 	}
+	key := oplock.AppRouting(appID)
+	if err := oplock.Acquire(r.Context(), key); err != nil {
+		logFrom(r).Error("syncAppLabels: wait for routing lock", "err", err, "app_id", appID)
+		return false
+	}
+	defer oplock.Release(key)
 	doms, err := s.q.ListDomainsByApplication(r.Context(), appID)
 	if err != nil {
 		logFrom(r).Error("syncAppLabels: list domains failed", "err", err, "app_id", appID)
-		return
+		return false
 	}
 	ds := make([]traefik.Domain, 0, len(doms))
 	for _, d := range doms {
@@ -275,17 +294,19 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) {
 	}
 	net, ok := s.appNetwork(r, appID)
 	if !ok {
-		return // the network is unknown; a wrong label is worse than a stale one
+		return false // the network is unknown; a wrong label is worse than a stale one
 	}
 	hidden, err := s.appHiddenMetricsPaths(r.Context(), appID, port)
 	if err != nil {
 		logFrom(r).Error("syncAppLabels: read metrics paths failed", "err", err, "app_id", appID)
-		return
+		return false
 	}
 	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net, hidden)
 	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {
 		logFrom(r).Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
+		return false
 	}
+	return true
 }
 
 // appNetwork is the overlay network an application's Traefik router must resolve
@@ -348,7 +369,10 @@ func (s *Server) addDomainBasicAuthUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	logFrom(r).Info("domain basic-auth user added", "domain_id", d.ID, "app_id", c.App.ID, "username", username)
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.ba_user_added")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
@@ -376,7 +400,10 @@ func (s *Server) deleteDomainBasicAuthUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	logFrom(r).Info("domain basic-auth user removed", "domain_id", d.ID, "app_id", c.App.ID, "username", username)
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.ba_user_removed")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
@@ -402,7 +429,10 @@ func (s *Server) setDomainAllowedIPs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logFrom(r).Info("domain allowed IPs updated", "domain_id", d.ID, "app_id", c.App.ID, "count", len(ips))
-	s.syncAppLabels(r, c.App.ID, c.App.Port)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
 	s.flashOK(w, r, "flash.ok.allowed_ips_updated")
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -45,9 +46,20 @@ func hostKeyMatches(stored, presented string) bool {
 	return stored == "" || stored == presented
 }
 
-// sshDial builds an SSH client for spec using the given host-key callback.
-// When timeout > 0 it is used as the dial timeout; otherwise 15s is applied.
-func sshDial(spec JoinSpec, cb ssh.HostKeyCallback, timeout time.Duration) (*ssh.Client, error) {
+// contextConn keeps cancellation attached to the owned SSH transport, including
+// channel opens. Close unregisters the callback on normal session completion.
+type contextConn struct {
+	net.Conn
+	stop func() bool
+	once sync.Once
+}
+
+func (c *contextConn) Close() error {
+	c.once.Do(func() { c.stop() })
+	return c.Conn.Close()
+}
+
+func sshDialContext(ctx context.Context, spec JoinSpec, cb ssh.HostKeyCallback, timeout time.Duration) (*ssh.Client, error) {
 	signer, err := ssh.ParsePrivateKey(spec.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse ssh key: %w", err)
@@ -66,7 +78,35 @@ func sshDial(spec JoinSpec, cb ssh.HostKeyCallback, timeout time.Duration) (*ssh
 		HostKeyCallback: cb,
 		Timeout:         dialTimeout,
 	}
-	return ssh.Dial("tcp", net.JoinHostPort(spec.Host, strconv.Itoa(port)), cfg)
+	addr := net.JoinHostPort(spec.Host, strconv.Itoa(port))
+	handshakeCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(handshakeCtx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	owned := &contextConn{Conn: raw, stop: context.AfterFunc(ctx, func() { raw.Close() })}
+	// The handshake deadline is temporary; the caller context owns the lifetime.
+	deadline, _ := handshakeCtx.Deadline()
+	if err = raw.SetDeadline(deadline); err != nil {
+		owned.Close()
+		return nil, err
+	}
+	stopHandshake := context.AfterFunc(handshakeCtx, func() { raw.Close() })
+	conn, channels, requests, err := ssh.NewClientConn(owned, addr, cfg)
+	stopped := stopHandshake()
+	if err != nil || !stopped || ctx.Err() != nil {
+		owned.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, handshakeCtx.Err()
+	}
+	if err = raw.SetDeadline(time.Time{}); err != nil {
+		owned.Close()
+		return nil, err
+	}
+	return ssh.NewClient(conn, channels, requests), nil
 }
 
 // DialVerified opens an SSH client, verifying the presented host key strictly
@@ -74,6 +114,12 @@ func sshDial(spec JoinSpec, cb ssh.HostKeyCallback, timeout time.Duration) (*ssh
 // non-empty; an empty value is rejected so a misconfigured caller cannot
 // silently accept any key. The caller closes the returned client.
 func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
+	return DialVerifiedContext(context.Background(), spec, timeout)
+}
+
+// DialVerifiedContext bounds handshake and all later channel operations by ctx.
+// Closing the client releases its cancellation callback.
+func DialVerifiedContext(ctx context.Context, spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
 	if spec.HostKey == "" {
 		return nil, fmt.Errorf("DialVerified: host key required")
 	}
@@ -84,7 +130,7 @@ func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
 		}
 		return nil
 	}
-	return sshDial(spec, cb, timeout)
+	return sshDialContext(ctx, spec, cb, timeout)
 }
 
 // Leave makes the worker leave the swarm again. It compensates a join whose
@@ -93,7 +139,7 @@ func DialVerified(spec JoinSpec, timeout time.Duration) (*ssh.Client, error) {
 // spec.HostKey is expected to be set (the join just learned it), so this
 // verifies strictly rather than accepting on first use.
 func Leave(ctx context.Context, spec JoinSpec) error {
-	cl, err := DialVerified(spec, 0)
+	cl, err := DialVerifiedContext(ctx, spec, 0)
 	if err != nil {
 		return fmt.Errorf("ssh dial: %w", err)
 	}
@@ -134,7 +180,7 @@ func Join(ctx context.Context, spec JoinSpec) (output, hostKey string, err error
 		}
 		return nil
 	}
-	cl, err := sshDial(spec, cb, 0)
+	cl, err := sshDialContext(ctx, spec, cb, 0)
 	if err != nil {
 		return "", seen, fmt.Errorf("ssh dial: %w", err)
 	}
