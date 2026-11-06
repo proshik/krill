@@ -339,10 +339,10 @@ func TestMinioDriverSpec(t *testing.T) {
 	if !ok {
 		t.Fatal("minio driver not registered")
 	}
-	if d.Label() != "MinIO" {
+	if d.Label() != "S3 (Silo)" {
 		t.Fatalf("label = %q", d.Label())
 	}
-	if d.DefaultImage() != "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z" {
+	if d.DefaultImage() != "pgsty/silo:RELEASE.2026-10-26T00-00-00Z" {
 		t.Fatalf("default image = %q", d.DefaultImage())
 	}
 	if d.SuperuserName() != "" {

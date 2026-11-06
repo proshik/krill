@@ -20,8 +20,9 @@ type MinioInfo struct {
 	Region    string // "us-east-1"
 }
 
-// NewMinio spins up a disposable MinIO container and returns its connection
-// info. The container is terminated when the test finishes.
+// NewMinio spins up a disposable S3 server — the image a managed S3 instance
+// runs (Silo, a MinIO fork) — and returns its connection info. The container is
+// terminated when the test finishes.
 func NewMinio(t *testing.T) MinioInfo {
 	t.Helper()
 	ctx := context.Background()
