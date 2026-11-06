@@ -59,3 +59,13 @@ func TestValidBucketName(t *testing.T) {
 		}
 	}
 }
+
+func TestParseConnStats(t *testing.T) {
+	c, err := parseConnStats("SET\n100 12 5 4 1 37 2\n")
+	if err != nil || c != (ConnStats{Max: 100, Total: 12, Database: 5, Role: 4, IdleInTx: 1, OldestIdleTxS: 37, AdvisoryLocks: 2}) {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if _, err := parseConnStats("ERROR: boom"); err == nil {
+		t.Fatal("garbage must not parse")
+	}
+}

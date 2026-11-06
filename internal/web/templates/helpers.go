@@ -9,6 +9,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
@@ -360,4 +361,19 @@ func taskHint(ctx context.Context, t docker.TaskRecord) string {
 		return i18n.T(ctx, "runtime.hint_starting")
 	}
 	return ""
+}
+
+// connWarnings are the connection-budget situations worth a closer look.
+func connWarnings(ctx context.Context, c dbservice.ConnStats) []string {
+	var out []string
+	if c.Max > 0 && c.Total*100 >= c.Max*80 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_budget", c.Total, c.Max))
+	}
+	if c.IdleInTx > 0 && c.OldestIdleTxS >= 60 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_idle_tx", c.IdleInTx, c.OldestIdleTxS))
+	}
+	if c.AdvisoryLocks > 0 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_advisory", c.AdvisoryLocks))
+	}
+	return out
 }
