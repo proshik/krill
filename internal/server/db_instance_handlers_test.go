@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/oplock"
 )
 
@@ -158,8 +159,8 @@ func TestAdminCreatesMinioDBInstance(t *testing.T) {
 	if insts[0].SuperuserPassword == "" {
 		t.Fatal("instance must get a generated password")
 	}
-	if !strings.Contains(insts[0].Image, "minio") {
-		t.Fatalf("expected default minio image, got %q", insts[0].Image)
+	if insts[0].Image != drivers.MinIOImage {
+		t.Fatalf("expected the default S3 image %q, got %q", drivers.MinIOImage, insts[0].Image)
 	}
 }
 
