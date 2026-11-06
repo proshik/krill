@@ -222,6 +222,22 @@ type RemoteExecConfigurable interface {
 	SetRemoteClientProvider(p RemoteClientProvider)
 }
 
+// OverlayNetworks is the optional capability to set the MTU of the overlay
+// networks the engine creates and to read the MTU of the existing ones. Only
+// the real *dockerEngine implements it; callers type-assert.
+type OverlayNetworks interface {
+	// SetOverlayMTU sets the MTU containers see on the networks NetworkEnsure
+	// creates; 0 leaves Docker's default.
+	SetOverlayMTU(mtu int)
+	// OverlayMTUs returns, by name, the MTU containers see on every
+	// swarm-scoped overlay network.
+	OverlayMTUs(ctx context.Context) (map[string]int, error)
+}
+
+// DefaultOverlayMTU is the MTU containers see on an overlay network created
+// without the mtu option (a 1500-byte underlay minus VXLAN's 50 bytes).
+const DefaultOverlayMTU = 1450
+
 // SwarmObjects is the optional capability to manage Swarm configs and secrets.
 // Only the real *dockerEngine implements it; callers type-assert, so the Engine
 // interface and its test fakes stay unchanged.

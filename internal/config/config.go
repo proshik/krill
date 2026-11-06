@@ -24,6 +24,13 @@ type Config struct {
 	AdvertiseAddr string `env:"KRILL_ADVERTISE_ADDR"`
 	BaseDomain    string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
 	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
+	// OverlayMTU is the MTU of the overlay networks Krill creates (the base
+	// network and every organization's). 0 leaves Docker's default (1450, which
+	// assumes a 1500-byte underlay). A swarm running over a tunnel such as
+	// WireGuard (MTU 1420) needs the tunnel's MTU minus 50 bytes of VXLAN
+	// overhead, or large packets are dropped. It applies only when a network is
+	// created; an existing network keeps the MTU it was created with.
+	OverlayMTU int `env:"KRILL_OVERLAY_MTU" envDefault:"0"`
 	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
 	PublicURL     string `env:"KRILL_PUBLIC_URL"`
 	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
@@ -108,11 +115,21 @@ type Config struct {
 	UpdateRepo string `env:"KRILL_UPDATE_REPO" envDefault:"proshik/krill"`
 }
 
+// Overlay MTU bounds: IPv6 needs at least 1280, and nothing Krill runs on
+// carries jumbo frames beyond 9000.
+const (
+	MinOverlayMTU = 1280
+	MaxOverlayMTU = 9000
+)
+
 // Load reads the configuration from the environment.
 func Load() (Config, error) {
 	var c Config
 	if err := env.Parse(&c); err != nil {
 		return Config{}, err
+	}
+	if c.OverlayMTU != 0 && (c.OverlayMTU < MinOverlayMTU || c.OverlayMTU > MaxOverlayMTU) {
+		return Config{}, fmt.Errorf("KRILL_OVERLAY_MTU %d: want 0 (Docker default) or %d..%d", c.OverlayMTU, MinOverlayMTU, MaxOverlayMTU)
 	}
 	if !updateRepoPattern.MatchString(c.UpdateRepo) {
 		return Config{}, fmt.Errorf("KRILL_UPDATE_REPO %q: want owner/name", c.UpdateRepo)

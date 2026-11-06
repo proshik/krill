@@ -14,6 +14,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
@@ -28,12 +29,38 @@ type hostFirewall struct {
 	confirms int
 	refused  int // Applies refused because a switch was already armed
 	rulesets []string
+	persisted string // ruleset saved for boot ("" = none)
 }
 
 func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch {
+	case strings.HasPrefix(cmd, "# krill-fw-probe"):
+		out := "nft yes\n"
+		if h.locked && len(h.rulesets) > 0 {
+			out += "table yes\nlive " + firewall.RulesetID(h.rulesets[len(h.rulesets)-1]) + "\n"
+		} else {
+			out += "table no\n"
+		}
+		if h.pending {
+			out += "pending yes\n"
+		} else {
+			out += "pending no\n"
+		}
+		if h.persisted != "" {
+			out += "persisted yes\npersisted-id " + firewall.RulesetID(h.persisted) + "\nunit yes\n"
+		} else {
+			out += "unit no\n"
+		}
+		return out, nil
+	case strings.HasPrefix(cmd, "set -e\nf="): // Confirm's persist script
+		if h.locked && len(h.rulesets) > 0 {
+			h.persisted = h.rulesets[len(h.rulesets)-1]
+			return "persisted\n", nil
+		}
+		h.persisted = ""
+		return "removed\n", nil
 	case strings.Contains(cmd, "systemd-run"): // Apply's arm script
 		if h.pending {
 			h.refused++
@@ -60,7 +87,7 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 		h.locked = true
 		h.rulesets = append(h.rulesets, stdin)
 	case strings.Contains(cmd, "nft delete table"): // Open
-		h.locked, h.pending = false, false
+		h.locked, h.pending, h.persisted = false, false, ""
 	case strings.Contains(cmd, "systemctl stop"): // Confirm
 		h.pending = false
 		h.confirms++
@@ -133,6 +160,10 @@ func TestControlPlaneLockdownConfirmOpen(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) || fw.pending || fw.confirms != 1 {
 		t.Fatalf("confirm: code=%d flash=%q pending=%v confirms=%d", rec.Code, flashCookieValue(rec), fw.pending, fw.confirms)
 	}
+	// Only a confirmed ruleset is saved for boot, and it is the applied one.
+	if fw.persisted != fw.rulesets[0] {
+		t.Fatalf("confirm must persist the confirmed ruleset, persisted=%q", fw.persisted)
+	}
 	// The switch is gone: a second confirm has nothing to cancel.
 	rec = postForm(t, h, base+"/firewall/confirm", cookie, url.Values{})
 	if !hasErrFlash(rec) || fw.confirms != 1 {
@@ -140,8 +171,8 @@ func TestControlPlaneLockdownConfirmOpen(t *testing.T) {
 	}
 
 	rec = postForm(t, h, base+"/firewall/open", cookie, url.Values{})
-	if rec.Code != http.StatusSeeOther || fw.locked {
-		t.Fatalf("open must remove the control-plane table: code=%d locked=%v", rec.Code, fw.locked)
+	if rec.Code != http.StatusSeeOther || fw.locked || fw.persisted != "" {
+		t.Fatalf("open must remove the control-plane table and its boot copy: code=%d locked=%v persisted=%v", rec.Code, fw.locked, fw.persisted != "")
 	}
 }
 
@@ -161,5 +192,30 @@ func TestControlPlaneLockdownRefusedWhileArmed(t *testing.T) {
 	}
 	if msg, _ := url.QueryUnescape(flashCookieValue(rec)); !strings.Contains(msg, "awaiting confirmation") || strings.Contains(msg, "%!") {
 		t.Fatalf("the refusal must say a change is awaiting confirmation, got %q", msg)
+	}
+}
+
+// After a reboot that did not reload the table (or a flush by another tool),
+// the page must say the lockdown is missing instead of showing the node open.
+func TestFirewallPageShowsMissingTable(t *testing.T) {
+	fw := &hostFirewall{}
+	h, q, orgSvc := newFirewallServer(t, "localhost", fw)
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "fw-missing@k.local", "OrgFWMissing")
+	postForm(t, h, base+"/firewall/lockdown", cookie, url.Values{})
+	postForm(t, h, base+"/firewall/confirm", cookie, url.Values{})
+	if fw.persisted == "" {
+		t.Fatal("setup: confirm must persist")
+	}
+	fw.mu.Lock()
+	fw.locked = false // the table is gone; the boot copy is still there
+	fw.mu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, base+"/firewall", nil)
+	req.AddCookie(cookie)
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, req)
+	body := page.Body.String()
+	if page.Code != http.StatusOK || !strings.Contains(body, "no ruleset is loaded now") {
+		t.Fatalf("missing table not reported: %d\n%s", page.Code, body)
 	}
 }

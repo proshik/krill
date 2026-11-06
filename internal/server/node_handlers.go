@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	"github.com/proshik/krill/internal/cluster"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -204,9 +207,11 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	// hostname (the operator may have entered either). Warn if unresolved so the
 	// blank swarm_node_id (un-removable via UI) is observable, not silent.
 	resolved := false
+	var swarmAddr net.IP
 	if nodes, nerr := s.engine.Nodes(r.Context()); nerr == nil {
 		for _, n := range nodes {
 			if n.Addr == host || n.Hostname == host {
+				swarmAddr = net.ParseIP(n.Addr)
 				// A swallowed failure here leaves swarm_node_id empty while
 				// claiming the node resolved — the row then looks healthy but is
 				// un-removable via the UI and invisible to cross-node exec.
@@ -229,8 +234,39 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	// node_labels row yet (that's a separate, later setNodeLabel call), so
 	// the agent's krill_node mapping is unchanged by adding it — it keeps
 	// showing the raw hostname until the operator names it.
-	s.flashOK(w, r, "flash.ok.node_added")
+	if msg := s.joinMTUWarning(r, cluster.JoinSpec{Host: host, Port: port, User: user, PrivateKey: []byte(key), HostKey: hostKey}, name, swarmAddr); msg != "" {
+		s.setFlash(w, r, "err", msg)
+	} else {
+		s.flashOK(w, r, "flash.ok.node_added")
+	}
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
+}
+
+// joinMTUWarning reads a freshly joined node's swarm interface and returns a
+// warning when overlay packets (the MTU new networks get, plus VXLAN's 50
+// bytes) would not fit through it — the node joined, but large responses to
+// and from it would stall. "" when they fit or the node cannot be read; the
+// Firewall page shows the same comparison for every node.
+func (s *Server) joinMTUWarning(r *http.Request, spec cluster.JoinSpec, name string, addr net.IP) string {
+	if addr == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), firewallStatusTimeout)
+	defer cancel()
+	h, err := firewall.Probe(ctx, firewall.RealRunner{Spec: spec, Timeout: firewallRunnerTimeout}, addr)
+	if err != nil || h.SwarmIface == nil || h.SwarmIface.MTU == 0 {
+		logFrom(r).Warn("addNode: could not read the new node's swarm interface MTU", "err", err, "node", name)
+		return ""
+	}
+	effective := s.cfg.OverlayMTU
+	if effective == 0 {
+		effective = docker.DefaultOverlayMTU
+	}
+	if effective+vxlanOverhead <= h.SwarmIface.MTU {
+		return ""
+	}
+	logFrom(r).Warn("addNode: overlay MTU exceeds the new node's swarm interface", "node", name, "iface", h.SwarmIface.Name, "iface_mtu", h.SwarmIface.MTU, "overlay_mtu", effective)
+	return i18n.Tf(r.Context(), "flash.err.node_mtu", name, h.SwarmIface.Name, h.SwarmIface.MTU, effective, h.SwarmIface.MTU-vxlanOverhead)
 }
 
 // setNodeAvailability drains/activates a node by its Swarm ID (admin-only).

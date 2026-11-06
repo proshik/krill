@@ -136,6 +136,60 @@ closed, the UI port open only to the gateway (`docker_gwbridge`). A node that be
 on its own, and the control plane's lockdown is reverted unless you confirm it from the page
 within two minutes.
 
+Once a node's lockdown is confirmed, the loaded table is saved to `/etc/krill/firewall.nft` and
+the `krill-firewall.service` unit reloads it at boot, ordered after the distribution's own
+`nftables.service` and firewalld, either of which may flush the whole ruleset when it starts.
+**Open cluster** removes both. An unconfirmed change is never saved, so a reboot during the
+two-minute window brings back the last confirmed state, not the change under test.
+
+The firewall reads each node's WireGuard interfaces before building its ruleset. WireGuard
+listen ports are admitted from anywhere, because WireGuard drops anything that does not
+authenticate and a peer's endpoint need not be a cluster address. When a node's swarm
+address sits on a WireGuard interface whose subnet holds every node's swarm address, the
+swarm ports (2377, 7946, 4789) are accepted only on that interface: VXLAN has no
+authentication of its own. A node with WireGuard but no `wg` tool to read its ports is left
+unchanged rather than cut off from its tunnel.
+
+The Firewall page reads every node live: whether the table is loaded, whether it is the
+ruleset the current cluster needs (each ruleset carries a hash of itself as an empty
+`krill_rs_<hash>` chain), and whether it is saved for boot. A table missing after a reboot or a
+flush, a ruleset left behind by a node added or removed since, or one written by hand or by an
+older Krill each show as a note on the node; locking down again repairs all of them. A node
+that cannot be read shows when it was last read successfully.
+
+### Overlay MTU
+
+VXLAN adds 50 bytes to every overlay packet on the swarm interface. Docker sizes an overlay
+network for a 1500-byte interface (containers get 1450), so a swarm running over a tunnel
+with a smaller MTU — WireGuard's default is 1420 — drops or fragments the largest packets,
+and large HTTP responses stall for seconds or time out while small ones pass.
+`KRILL_OVERLAY_MTU` sets the MTU containers see on the networks Krill creates (the base
+network and every organization's network); 1370 fits a 1420 tunnel. The installer sets it
+on a fresh install when the advertise address sits on an interface smaller than 1500 bytes.
+
+The Firewall page shows the MTU of each node's swarm interface, the recommended overlay MTU
+(the smallest of them minus 50) and the MTU every existing Krill network was created with.
+Adding a worker whose swarm interface is too small for the configured MTU warns on the Nodes
+page; the node still joins.
+
+Docker cannot change an existing network's MTU, and every Krill release attaches the gateway
+to the networks by name, so a network has to be recreated under the same name. Krill does not
+do this on its own. With Krill stopped (so nothing redeploys halfway), for each network
+`<net>` and with `<tmp>` a temporary name:
+
+1. `docker network create -d overlay --attachable --opt com.docker.network.driver.mtu=<MTU+50> <tmp>`
+   (the option is the swarm interface's MTU: containers get it minus 50).
+2. For every service attached to `<net>` (`krill-traefik` included):
+   `docker service update --network-add <tmp> <service>`.
+3. For every one of them: `docker service update --network-rm <net> <service>`.
+4. `docker network rm <net>`, then create `<net>` again with the same options as step 1.
+5. For every service: `--network-add <net>`, then `--network-rm <tmp>`; remove `<tmp>`.
+
+Every service stays on at least one network it shares with the others throughout, so names
+keep resolving, but each step restarts its tasks: apps roll start-first, databases restart
+stop-first four times. Plan a maintenance window for databases. To roll back at any step,
+reverse the steps done so far; the data volumes are never touched.
+
 ## Observability agent
 
 **Settings → Observability** (instance-admin only) deploys `krill-alloy-node`, a global Swarm

@@ -165,6 +165,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Set before anything below ensures a network: the MTU applies only when a
+	// network is created.
+	if ov, ok := engine.(docker.OverlayNetworks); ok {
+		ov.SetOverlayMTU(cfg.OverlayMTU)
+	}
 	acme := traefik.AcmeConfig{Email: cfg.AcmeContact(), Staging: cfg.AcmeStaging}
 
 	// The panel domain: the gateway polls Krill for the UI's own routes, so it

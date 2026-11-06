@@ -223,6 +223,11 @@ type EnvironmentCloneReservation struct {
 	RequestKey string `json:"request_key"`
 }
 
+type FirewallCheck struct {
+	Node      string    `json:"node"`
+	CheckedAt time.Time `json:"checked_at"`
+}
+
 type GitCredential struct {
 	ID             int64     `json:"id"`
 	OrganizationID int64     `json:"organization_id"`

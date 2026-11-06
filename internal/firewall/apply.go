@@ -112,7 +112,7 @@ func Apply(ctx context.Context, r Runner, ruleset string) error {
 	if _, err := r.Run(ctx, ruleset, "nft -f -"); err != nil {
 		// `nft -f` is one transaction: a rejected ruleset changed nothing, so
 		// the armed switch would only block the next attempt for its full delay.
-		if cerr := Confirm(ctx, r); cerr != nil {
+		if cerr := disarm(ctx, r); cerr != nil {
 			return fmt.Errorf("apply ruleset: %w (disarming the revert also failed: %v)", err, cerr)
 		}
 		return fmt.Errorf("apply ruleset: %w", err)
@@ -138,16 +138,91 @@ func parseArmOutput(out string) (string, time.Time) {
 }
 
 // Confirm cancels the pending auto-revert after the caller has verified the node
-// is still reachable and swarm-healthy.
+// is still reachable and swarm-healthy, and persists the now-proven table so
+// the node loads it again at boot.
 func Confirm(ctx context.Context, r Runner) error {
+	if err := disarm(ctx, r); err != nil {
+		return err
+	}
+	out, err := r.Run(ctx, "", persistScript(persistPath, bootUnitDir+"/"+bootUnit))
+	if err != nil {
+		return fmt.Errorf("persist ruleset: %w: %s", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// disarm cancels the pending auto-revert without persisting anything: for a
+// ruleset nft rejected, which changed nothing.
+func disarm(ctx context.Context, r Runner) error {
 	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; systemctl reset-failed %s 2>/dev/null; true", revertUnit, revertUnit))
 	return err
 }
 
-// Open removes the lockdown table (and cancels any pending revert).
+// bootUnitText is the unit that reloads the persisted ruleset at boot. It runs
+// before the network comes up, like the distribution's own nftables.service,
+// and after it and firewalld: both may flush the whole ruleset when they
+// start, which would remove a table loaded earlier. It has no ExecStop, so
+// stopping the unit never opens the node.
+func bootUnitText(nft, file string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Krill node firewall (inet krill)
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=nftables.service firewalld.service
+Conflicts=shutdown.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=null
+ExecStart=%s -f %s
+
+[Install]
+WantedBy=sysinit.target
+`, nft, file)
+}
+
+// persistScript writes the loaded table to persistPath — prefixed with the
+// same full-replace prologue as a snapshot, so loading it replaces whatever
+// table exists — and enables the boot unit; with no table loaded it removes
+// both, so a node that is open stays open after a reboot. The file is written
+// next to its final place and renamed, so a failure never leaves a truncated
+// ruleset for the next boot.
+func persistScript(file, unit string) string {
+	return fmt.Sprintf(`set -e
+f=%[1]s
+mkdir -p "$(dirname "$f")"
+if nft list table inet krill > "$f.list" 2>/dev/null; then
+	{ printf '%[2]s'; cat "$f.list"; } > "$f.new"
+	rm -f "$f.list"
+	chmod 600 "$f.new"
+	mv "$f.new" "$f"
+	nft=$(command -v nft)
+	cat > %[3]s.new <<'UNIT'
+%[4]sUNIT
+	sed "s#__NFT__#$nft#" %[3]s.new > %[3]s.tmp && mv %[3]s.tmp %[3]s.new
+	if ! cmp -s %[3]s.new %[3]s 2>/dev/null; then mv %[3]s.new %[3]s; systemctl daemon-reload; else rm -f %[3]s.new; fi
+	systemctl enable %[5]s >/dev/null 2>&1
+	echo persisted
+else
+	rm -f "$f.list" "$f"
+	systemctl disable %[5]s >/dev/null 2>&1 || true
+	echo removed
+fi
+`, file, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), unit, bootUnitText("__NFT__", file), bootUnit)
+}
+
+// Open removes the lockdown table, cancels any pending revert and removes the
+// persisted ruleset, so the node also stays open after a reboot.
 func Open(ctx context.Context, r Runner) error {
-	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; true", revertUnit))
+	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; %s", revertUnit, unpersistScript()))
 	return err
+}
+
+// unpersistScript removes the persisted ruleset and disables its boot unit.
+func unpersistScript() string {
+	return fmt.Sprintf("rm -f %s; systemctl disable %s >/dev/null 2>&1; true", persistPath, bootUnit)
 }
 
 // Status reports whether the lockdown table is present on the node.

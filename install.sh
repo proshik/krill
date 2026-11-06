@@ -104,6 +104,19 @@ start_pg_container() {
 		-p 127.0.0.1:5432:5432 "$PG_IMAGE" >/dev/null || die "failed to start Postgres"
 }
 
+# detect_overlay_mtu ADDR — print the overlay MTU a swarm advertised on ADDR
+# needs (the MTU of ADDR's interface minus 50 bytes of VXLAN), or nothing when
+# Docker's default of 1450 already fits (a 1500-byte interface or larger) or
+# the interface cannot be read. A WireGuard tunnel (MTU 1420) yields 1370.
+detect_overlay_mtu() {
+	_dev="$(ip -o addr show 2>/dev/null | awk -v a="$1" '{split($4,p,"/"); if (p[1]==a) {print $2; exit}}')"
+	[ -n "$_dev" ] || return 0
+	_mtu="$(cat "/sys/class/net/$_dev/mtu" 2>/dev/null)"
+	case "$_mtu" in '' | *[!0-9]*) return 0 ;; esac
+	[ "$_mtu" -lt 1500 ] && echo $((_mtu - 50))
+	return 0
+}
+
 # persist_advertise_addr FILE ADDR — append KRILL_ADVERTISE_ADDR=ADDR to FILE
 # unless FILE already sets it (a value the operator put there by hand wins) or
 # ADDR is empty. Idempotent: a second run is a no-op. An upgrade keeps the env
@@ -217,6 +230,10 @@ else
 		PG_PW="$(rand_hex 16)"
 		DB_URL="postgres://krill:${PG_PW}@127.0.0.1:5432/krill?sslmode=disable"
 	fi
+	# Overlay networks are created at first start and keep their MTU, so this
+	# is decided here, once. An explicit KRILL_OVERLAY_MTU wins.
+	OVERLAY_MTU="${KRILL_OVERLAY_MTU:-$(detect_overlay_mtu "${ADVERTISE:-}")}"
+	[ -n "$OVERLAY_MTU" ] && info "Overlay networks will use MTU $OVERLAY_MTU (the swarm interface is smaller than 1500 bytes)."
 	ADMIN_EMAIL="admin@krill.local"
 	[ -n "${KRILL_DOMAIN:-}" ] && ADMIN_EMAIL="admin@${KRILL_DOMAIN}"
 	ADMIN_PW="$(rand_hex 12)"
@@ -233,6 +250,7 @@ else
 		# address to put in `docker swarm join`, and the firewall allowlist loses
 		# the manager. Detected above even when nobody passed it.
 		[ -n "${ADVERTISE:-}" ] && echo "KRILL_ADVERTISE_ADDR=${ADVERTISE}"
+		[ -n "$OVERLAY_MTU" ] && echo "KRILL_OVERLAY_MTU=${OVERLAY_MTU}"
 		echo "KRILL_LISTEN_ADDR=:8080"
 		# First boot is over plain http://<ip>:8080, where secure cookies would
 		# be dropped and break login. Leave it false: once the UI is served on

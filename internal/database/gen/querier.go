@@ -208,6 +208,7 @@ type Querier interface {
 	// Batched form for the topology view, which needs every environment of an
 	// organization at once (one query instead of one per project).
 	ListEnvironmentsByProjectIDs(ctx context.Context, dollar_1 []int64) ([]Environment, error)
+	ListFirewallChecks(ctx context.Context) ([]FirewallCheck, error)
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	// For each domain of an app, the other apps of the same environment on its host.
 	ListHostSharesByApplication(ctx context.Context, applicationID int64) ([]ListHostSharesByApplicationRow, error)
@@ -242,6 +243,7 @@ type Querier interface {
 	PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error
 	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
+	RecordFirewallCheck(ctx context.Context, node string) error
 	ReleaseEnvironmentCloneSlug(ctx context.Context, requestKey string) error
 	ReserveEnvironmentCloneSlug(ctx context.Context, arg ReserveEnvironmentCloneSlugParams) (int64, error)
 	// Boot sweep: a control-plane restart kills the in-process migration job,
