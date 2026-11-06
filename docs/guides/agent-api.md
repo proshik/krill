@@ -95,6 +95,11 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
   Give each machine or agent its own token.
 - `401` means the token was rejected; `503` with `code: "unavailable"` means it couldn't be
   checked (the database is down) — retry that one rather than reissuing the token.
+- A deploy, rebuild or reload that is not accepted creates no deployment and changes nothing:
+  `409 conflict` when this app already has a deployment in progress (poll it), `503
+  unavailable` with `Retry-After` when the queue is full, the organization has
+  `KRILL_MAX_BUILDS_PER_ORG` deployments in progress, or Krill is shutting down. An accepted one
+  always returns a `deployment_id`.
 - Reading env values is deliberately impossible: everything an agent reads reaches its model
   provider. Writing a value is allowed.
 - Tokens cross the network in clear text over plain HTTP. Krill logs a warning at startup when

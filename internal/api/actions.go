@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -70,16 +71,14 @@ func (s *Service) Deploy(ctx context.Context, id Identity, ref, tag string) (Dep
 	// flight, the organization at its limit, a full queue — therefore leaves the
 	// app's tag untouched, and a deploy already queued cannot ship this one.
 	var deployID int64
+	var qerr error
 	if tag != "" {
-		deployID = s.dep.EnqueueImage(app.ID, deploy.TriggerAPI, app.Image, tag)
+		deployID, qerr = s.dep.EnqueueImageErr(app.ID, deploy.TriggerAPI, app.Image, tag)
 	} else {
-		deployID = s.dep.Enqueue(app.ID, deploy.TriggerAPI)
+		deployID, qerr = s.dep.EnqueueErr(app.ID, deploy.TriggerAPI)
 	}
-	if deployID == 0 {
-		if cErr := s.inFlightConflict(ctx, app.ID, "deploy"); cErr != nil {
-			return DeployAccepted{}, cErr
-		}
-		return DeployAccepted{}, fmt.Errorf("deploy: could not enqueue a deployment (queue full or server shutting down)")
+	if qerr != nil {
+		return DeployAccepted{}, refusal("deploy", qerr)
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
 }
@@ -104,12 +103,9 @@ func (s *Service) Rebuild(ctx context.Context, id Identity, ref string) (DeployA
 	if s.dep == nil {
 		return DeployAccepted{}, fmt.Errorf("rebuild: no deployer configured")
 	}
-	deployID := s.dep.EnqueueRebuild(app.ID, deploy.TriggerAPI)
-	if deployID == 0 {
-		if cErr := s.inFlightConflict(ctx, app.ID, "rebuild"); cErr != nil {
-			return DeployAccepted{}, cErr
-		}
-		return DeployAccepted{}, fmt.Errorf("rebuild: could not enqueue a deployment (queue full or server shutting down)")
+	deployID, qerr := s.dep.EnqueueRebuildErr(app.ID, deploy.TriggerAPI)
+	if qerr != nil {
+		return DeployAccepted{}, refusal("rebuild", qerr)
 	}
 	return DeployAccepted{DeploymentID: deployID, Status: "running"}, nil
 }
@@ -151,12 +147,9 @@ func (s *Service) Reload(ctx context.Context, id Identity, ref string) (ReloadRe
 		if s.dep == nil {
 			return ReloadResult{}, fmt.Errorf("reload: the app is stopped and no deployer is configured")
 		}
-		deployID := s.dep.Enqueue(app.ID, deploy.TriggerAPI)
-		if deployID == 0 {
-			if cErr := s.inFlightConflict(ctx, app.ID, "reload"); cErr != nil {
-				return ReloadResult{}, cErr
-			}
-			return ReloadResult{}, fmt.Errorf("reload: could not enqueue a deployment of the stopped app (queue full or server shutting down)")
+		deployID, qerr := s.dep.EnqueueErr(app.ID, deploy.TriggerAPI)
+		if qerr != nil {
+			return ReloadResult{}, refusal("reload", qerr)
 		}
 		return ReloadResult{Action: "deploy", Status: "running", DeploymentID: deployID}, nil
 	}
@@ -309,4 +302,22 @@ func (s *Service) SetEnv(ctx context.Context, id Identity, ref, key, value strin
 		return fmt.Errorf("set env: update: %w", err)
 	}
 	return nil
+}
+
+// refusal maps a deploy the deployer did not accept onto an API error: the
+// app's own deployment in progress is a conflict; a full queue, the
+// organization's limit or a shutdown is "unavailable" (retry as is); a store
+// failure is internal. No refusal creates a deployment or changes the app.
+func refusal(op string, err error) error {
+	switch {
+	case errors.Is(err, deploy.ErrDeployInFlight):
+		return Conflict(op + ": a deployment for this application is already in progress; poll krill_deployment_status and start another once it finishes")
+	case errors.Is(err, deploy.ErrOrgDeployLimit):
+		return Unavailable(op + ": the organization already has as many deployments in progress as it may; retry once one of them finishes")
+	case errors.Is(err, deploy.ErrQueueFull):
+		return Unavailable(op + ": the deploy queue is full; retry in a few minutes")
+	case errors.Is(err, deploy.ErrDeployerStopped):
+		return Unavailable(op + ": Krill is shutting down; retry once it is back")
+	}
+	return fmt.Errorf("%s: could not enqueue a deployment: %w", op, err)
 }

@@ -111,3 +111,53 @@ func TestEnqueueSystemWaitsForQueueRoom(t *testing.T) {
 		t.Fatal("with room in the queue the system deploy must be accepted")
 	}
 }
+
+// Every refusal says why, and none of them leaves a deployment row or an
+// application status behind: a refused deploy must never look pending or
+// failed. A full queue used to record a failed deployment and mark the app
+// "error" although nothing about the app had changed.
+func TestEnqueueRefusalsAreTypedAndLeaveNoTrace(t *testing.T) {
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
+	for i := 0; i < cap(d.queue); i++ {
+		if _, err := d.EnqueueErr(int64(i+1), "manual"); err != nil {
+			t.Fatalf("enqueue %d: %v", i, err)
+		}
+	}
+	before := len(st.depApp)
+	st.mu.Lock()
+	statusBefore := st.status[int64(cap(d.queue)+1)]
+	st.mu.Unlock()
+
+	if id, err := d.EnqueueErr(int64(cap(d.queue)+1), "manual"); id != 0 || !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("full queue: id=%d err=%v", id, err)
+	}
+	st.mu.Lock()
+	after, statusAfter := len(st.depApp), st.status[int64(cap(d.queue)+1)]
+	st.mu.Unlock()
+	if after != before || statusAfter != statusBefore {
+		t.Fatalf("a refused deploy left a trace: deployments %d->%d, app status %q->%q", before, after, statusBefore, statusAfter)
+	}
+	// The same app twice: already in flight.
+	if _, err := d.EnqueueErr(1, "manual"); !errors.Is(err, ErrDeployInFlight) {
+		t.Fatalf("in flight: %v", err)
+	}
+
+	st2 := newFakeStore(imageApp())
+	st2.runningByOrg = 2
+	d2 := newDeployer(&mockEngine{}, &mockBuilder{}, st2)
+	d2.SetMaxBuildsPerOrg(2)
+	if _, err := d2.EnqueueErr(1, "manual"); !errors.Is(err, ErrOrgDeployLimit) {
+		t.Fatalf("org limit: %v", err)
+	}
+	d2.Stop()
+	if _, err := d2.EnqueueErr(1, "manual"); !errors.Is(err, ErrDeployerStopped) {
+		t.Fatalf("stopped: %v", err)
+	}
+	st2.orgCountErr = errors.New("db down")
+	d3 := newDeployer(&mockEngine{}, &mockBuilder{}, st2)
+	d3.SetMaxBuildsPerOrg(2)
+	if _, err := d3.EnqueueErr(1, "manual"); err == nil || errors.Is(err, ErrOrgDeployLimit) {
+		t.Fatalf("a failed check is its own error, not a limit: %v", err)
+	}
+}

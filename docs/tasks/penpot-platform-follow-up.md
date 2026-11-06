@@ -292,7 +292,8 @@ Stages, each a local commit series with its own checks:
 - [x] **S5 Systems UI** (option A; checked in the running app at desktop and
   768px, keyboard focus highlights, EN/RU, RBAC and 404 tests) — option A, reusing topology link types; RBAC, 404 on
   cross-org/env ids, EN/RU, keyboard, narrow viewport; checked in the running app.
-- [ ] **S6 diagnostics** — typed deploy refusals across UI/REST/MCP; effective
+- [ ] **S6 diagnostics** — typed deploy refusals across UI/REST/MCP (done; a full
+  queue no longer marks the app errored); effective
   limits, OOM and readiness on the app page; connection-budget hints (no session
   killing).
 - [ ] **S7 bucket backup/restore** — after the recovery contract is decided.

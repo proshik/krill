@@ -127,7 +127,7 @@ func (s *Server) rollbackApp(w http.ResponseWriter, r *http.Request) {
 		} else if errors.Is(err, deploy.ErrReleaseDrift) {
 			s.flashErrT(w, r, "flash.err.rollback_drift")
 		} else {
-			s.flashErrT(w, r, "flash.err.rollback_refused")
+			s.flashErrT(w, r, deployRefusalKey(err, "flash.err.rollback_refused"))
 		}
 		return
 	}

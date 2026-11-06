@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -258,9 +259,35 @@ func (d *Deployer) failQueued(j job, reason string) {
 	d.hub.Close(j.deployID)
 }
 
+// Why a deploy was not accepted. A refused deploy creates no deployment row
+// and changes no application state, so it never shows up as pending.
+var (
+	ErrDeployInFlight  = errors.New("a deployment of this application is already in progress")
+	ErrOrgDeployLimit  = errors.New("the organization has reached its limit of deployments in progress")
+	ErrQueueFull       = errors.New("the deploy queue is full")
+	ErrDeployerStopped = errors.New("Krill is shutting down")
+)
+
 // Enqueue creates a deployment record and puts it in the queue. Returns deployID (0 on error/after Stop).
 func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
+	id, _ := d.enqueue(appID, trigger, job{})
+	return id
+}
+
+// EnqueueErr is Enqueue reporting why a deploy was refused: one of the Err*
+// values above, or a wrapped store error.
+func (d *Deployer) EnqueueErr(appID int64, trigger string) (int64, error) {
 	return d.enqueue(appID, trigger, job{})
+}
+
+// EnqueueImageErr is EnqueueImage reporting why a deploy was refused.
+func (d *Deployer) EnqueueImageErr(appID int64, trigger, image, tag string) (int64, error) {
+	return d.enqueue(appID, trigger, job{image: image, tag: tag})
+}
+
+// EnqueueRebuildErr is EnqueueRebuild reporting why a deploy was refused.
+func (d *Deployer) EnqueueRebuildErr(appID int64, trigger string) (int64, error) {
+	return d.enqueue(appID, trigger, job{noCache: true})
 }
 
 // EnqueueImage is Enqueue for an image app moving to image:tag. The reference
@@ -269,13 +296,15 @@ func (d *Deployer) Enqueue(appID int64, trigger string) int64 {
 // the row only once the job has been accepted: a refused deploy leaves the
 // application's image untouched.
 func (d *Deployer) EnqueueImage(appID int64, trigger, image, tag string) int64 {
-	return d.enqueue(appID, trigger, job{image: image, tag: tag})
+	id, _ := d.enqueue(appID, trigger, job{image: image, tag: tag})
+	return id
 }
 
 // EnqueueRebuild is like Enqueue but forces a from-scratch build (docker build
 // --no-cache for Dockerfile apps; image apps re-pull as usual).
 func (d *Deployer) EnqueueRebuild(appID int64, trigger string) int64 {
-	return d.enqueue(appID, trigger, job{noCache: true})
+	id, _ := d.enqueue(appID, trigger, job{noCache: true})
+	return id
 }
 
 // systemQueueRetry is how long EnqueueSystem waits between attempts while the
@@ -306,7 +335,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 		default:
 		}
 		if !d.queueFull() {
-			if id := d.submit(appID, TriggerSystem, job{skipPredeploy: true}); id != 0 {
+			if id, _ := d.submit(appID, TriggerSystem, job{skipPredeploy: true}); id != 0 {
 				return id
 			}
 			// submit only fails for a full queue (lost the race for the slot we
@@ -329,10 +358,10 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 // queueFull reports whether the shared job queue has no room left.
 func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
 
-func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
+func (d *Deployer) enqueue(appID int64, trigger string, opts job) (int64, error) {
 	select {
 	case <-d.done:
-		return 0
+		return 0, ErrDeployerStopped
 	default:
 	}
 	d.admitMu.Lock()
@@ -345,10 +374,10 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
 	// caps that at one slot per app.
 	if n, err := d.store.CountRunningDeployments(context.Background(), appID); err != nil {
 		slog.Error("in-flight deploy check failed", "app", appID, "err", err)
-		return 0
+		return 0, fmt.Errorf("check deployments in progress: %w", err)
 	} else if n > 0 {
 		slog.Info("deploy rejected, one is already in flight", "app", appID, "in_flight", n)
-		return 0
+		return 0, ErrDeployInFlight
 	}
 	// Cap in-flight deploys per organization. Without this, one tenant with many
 	// apps can hold the single shared build worker indefinitely and stall every
@@ -358,12 +387,20 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
 		n, err := d.store.CountRunningDeploymentsByOrg(context.Background(), appID)
 		if err != nil {
 			slog.Error("per-org in-flight check failed", "app", appID, "err", err)
-			return 0
+			return 0, fmt.Errorf("check the organization's deployments in progress: %w", err)
 		}
 		if n >= int64(d.maxBuildsPerOrg) {
 			slog.Info("deploy rejected, the organization is at its in-flight limit", "app", appID, "in_flight", n)
-			return 0
+			return 0, ErrOrgDeployLimit
 		}
+	}
+	// Only enqueue adds to the queue while admitMu is held, so a queue seen
+	// full here is still full when submit would send: refuse before a
+	// deployment row exists, instead of recording a failed deployment and
+	// marking an app that may be running fine as errored.
+	if d.queueFull() {
+		slog.Warn("deploy rejected, the queue is full", "app", appID)
+		return 0, ErrQueueFull
 	}
 	return d.submit(appID, trigger, opts)
 }
@@ -371,16 +408,16 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) int64 {
 // submit creates the deployment row and hands the job to the worker. It is the
 // part of enqueue that both the capped (tenant) path and EnqueueSystem share.
 // opts carries the build options and image reference; its ids are filled here.
-func (d *Deployer) submit(appID int64, trigger string, opts job) int64 {
+func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) {
 	deployID, err := d.store.CreateDeployment(context.Background(), appID, trigger)
 	if err != nil {
 		slog.Error("create deployment failed", "app", appID, "err", err)
-		return 0
+		return 0, fmt.Errorf("create deployment: %w", err)
 	}
 	if opts.rollbackID != 0 {
 		if err := d.store.(releaseStore).RecordRollbackSource(context.Background(), deployID, opts.rollbackID); err != nil {
 			d.store.FinishDeployment(context.Background(), deployID, "error", "", "could not record rollback source", "")
-			return 0
+			return 0, fmt.Errorf("record rollback source: %w", err)
 		}
 	}
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
@@ -408,6 +445,7 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) int64 {
 		// Leave the app deploying (not error) on shutdown — it never ran; the
 		// live status poll reconciles after restart.
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
+		return 0, ErrDeployerStopped
 	default:
 		// Queue full (a full queue is hours of backlog with one worker): fail the
 		// deployment immediately instead of blocking the HTTP handler goroutine
@@ -418,9 +456,9 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) int64 {
 		defer cancel()
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "deploy queue full, try again later", "")
 		_ = d.store.SetStatus(wctx, appID, StatusError)
-		return 0
+		return 0, ErrQueueFull
 	}
-	return deployID
+	return deployID, nil
 }
 
 func (d *Deployer) Stop() {

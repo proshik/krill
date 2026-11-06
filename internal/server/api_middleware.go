@@ -163,6 +163,9 @@ func writeAPIError(w http.ResponseWriter, r *http.Request, err error) {
 			status = http.StatusBadRequest
 		case api.CodeConflict:
 			status = http.StatusConflict
+		case api.CodeUnavailable:
+			status = http.StatusServiceUnavailable
+			w.Header().Set("Retry-After", "30")
 		default:
 			status = http.StatusInternalServerError
 		}

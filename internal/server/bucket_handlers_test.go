@@ -230,3 +230,16 @@ func flashSays(rec *httptest.ResponseRecorder, text string) bool {
 	msg, _ := url.QueryUnescape(flashCookieValue(rec))
 	return hasErrFlash(rec) && strings.Contains(msg, text)
 }
+
+// A refused deploy says why in the UI instead of a generic queue error.
+func TestDeployRefusalSaysWhy(t *testing.T) {
+	f := newBucketFixture(t, "dep-refuse@k.local")
+	ctx := context.Background()
+	if _, err := f.q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: f.app.ID, Trigger: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(t, f.h, f.appBase+"/deploy", f.cookie, url.Values{})
+	if !flashSays(rec, "already in progress") {
+		t.Fatalf("flash: %q", flashCookieValue(rec))
+	}
+}
