@@ -1,8 +1,10 @@
 # Penpot platform follow-up
 
-Status: intake complete; proposed implementation awaits owner decisions and UI approval.
-Owner acceptance: pending. This document is the single backlog/spec and phased plan.
-No product implementation, production migration or publication is authorized by it.
+Status: implementation in progress (owner handed review and implementation to the
+Claude Code session on 2026-11-06). This document is the single backlog/spec and
+phased plan. It authorizes local implementation, local commits and disposable
+verification only; production migration, push, merge, release and deploy each
+need a separate explicit owner decision.
 
 ## Owner request and scope
 
@@ -85,6 +87,74 @@ present; this public-safe document is the canonical artifact.
 | Queue | [handlers](../../internal/server/app_handlers.go) reject Enqueue result zero, including v0.5.0; [deployer](../../internal/deploy/deployer.go) uses one worker. Do not describe this as proven silently lost deploys. REST/MCP already expose accepted deployment IDs/status. |
 | Newer master | [deployment guide](../guides/deployments.md) documents pre-deploy commands and release rollback; [environment guide](../guides/environments.md) documents cloning. These landed after v0.5.0 and must be reused. Rollback does not restore database/volume data and checks link identity/credentials. |
 | Backups/volumes | [backup](../../internal/backup) and [volume backup](../../internal/volume) already exist; bucket-object backup lifecycle is missing. [VolumeName](../../internal/docker/volume.go) includes app ID. |
+
+## Implementation review (2026-11-06)
+
+Reviewed against the sources at `6a677ec`. Corrections and additions to the
+intake, each checked in code:
+
+- **Baseline.** `70c329c` is tag `v0.6.0`; pre-deploy commands, release rollback
+  and environment cloning are released, not "newer master". The previous release
+  for the next one is v0.6.0, but production still runs v0.5.0, so a direct
+  v0.5.0 → next upgrade would roll back to v0.5.0. Both must be considered.
+- **Unknown engine crashes the previous release.** v0.5.0 and v0.6.0 call
+  `drivers.Registry.MustGet(engine)` in `instanceSpec`, `reconcileProxy` and
+  instance removal; an unregistered engine returns nil and the call panics. The
+  deploy runs in a goroutine without a recover, so a Deploy/Start/version change
+  on a `valkey` row after a rollback kills the whole process (listing and detail
+  pages use `Registry.Get` and survive). Owner decision: ship Valkey in one
+  release, document that a rolled-back binary must not act on Valkey instances,
+  and make the new code tolerant (unknown engine → error, never panic) so later
+  engines are safe to roll back over.
+- **Silo stays `engine=minio`.** No new engine value; subresources (buckets,
+  principals, bucket links) live in new tables the previous release ignores.
+  Bucket links do not reuse `app_db_links` (widening its XOR CHECK would make the
+  previous release's link resolver see rows it cannot resolve); a separate table
+  is invisible to it. Under rollback, a redeploy loses the injected bucket
+  variables; documented.
+- **Firewall is not persisted.** `firewall.Apply` loads the ruleset with
+  `nft -f` only; nothing writes it to disk or reloads it at boot, so a reboot
+  always leaves a node without `inet krill`. This is a confirmed code gap, not
+  proof of why the historical table disappeared. Worker status on the Firewall
+  page comes from the stored `firewall_managed` flag, never from the host, so a
+  missing table on a worker is invisible.
+- **Firewall and WireGuard.** The drop-policy ruleset admits no UDP listener for
+  WireGuard, and swarm ports (2377/7946/4789) are admitted by source address on any
+  interface, although VXLAN is unauthenticated. Admitting WireGuard listen ports
+  (authenticated by WireGuard itself) and binding swarm ports to the WireGuard
+  interface when the swarm runs over it closes both.
+- **Overlay MTU.** `NetworkEnsure` creates every overlay with Docker's default
+  (1450, assumes a 1500 underlay). The existing network's MTU cannot be changed in
+  place, and its name is derived from the organization id in v0.6.0 (gateway
+  attachment in `cmd/krill/main.go`, `orgnet.Migrator`), so moving an organization
+  to a differently named network breaks ingress after a rollback. Recreation must
+  keep the name: a two-hop move through a temporary network the gateway also joins.
+- **Deploy refusals.** `Deployer.enqueue` returns 0 for every refusal (app busy,
+  org cap, queue full, store error, no worker); callers cannot tell them apart.
+  Not a lost-deploy bug; typed reasons are the gap.
+- **S3 admin client.** madmin-go is AGPL-3.0 (Krill is MIT). Owner decision: a
+  small own client for the MinIO admin API (user, canned policy, policy attach)
+  on the existing aws-sdk-go-v2 signer and golang.org/x/crypto; buckets through
+  aws-sdk-go-v2. Compatibility is proven against the Silo image in integration
+  tests.
+
+## Owner decisions (2026-11-06)
+
+1. **Systems UI: option A.** Env-scoped "System" entity; an app belongs to at
+   most one system; collapsible cards with a resource row and component cards;
+   selecting a component highlights its links, selecting a resource highlights
+   its consumers; an "Ungrouped" section; the environment's database list stays.
+   Removing a system never touches apps, resources or data; a shared instance is
+   badged "shared" and owned by nobody. Detailed states (empty, error, narrow
+   viewport, keyboard) are reviewed on the running implementation.
+2. **Valkey: one release, durable by default** (volume `/data`, AOF + RDB,
+   stop-first + flock, no backups in v1, same as Redis). Rollback limitation
+   documented, see the review above.
+3. **S3 admin: own minimal client.** Silo remains the chosen product.
+4. Still open, decided at their stage: bucket snapshot RPO/retention/overwrite
+   contract; automated existing-network MTU migration versus a documented
+   procedure; ownership scope of buckets (proposal: env-scoped like logical
+   databases, inside an org-scoped instance).
 
 ## Proposed work packages and acceptance scenarios
 
@@ -193,32 +263,36 @@ Approve a concrete mockup and interaction states before product implementation.
   Never automatically kill arbitrary PG sessions. Use existing pre-deploy and
   release rollback where appropriate, without claiming they undo schema/data.
 
-## Open decisions requiring owner approval
-
-1. **UI/entity:** System entity (recommended) versus labels; name, membership,
-   ordering and the concrete expandable-card interaction above. No schema/UI build
-   until a mockup with expanded, collapsed and ungrouped states is accepted.
-2. **Managed service contract:** Silo variant under existing engine (recommended
-   first for compatibility) versus explicit engine with staged compatibility;
-   env bucket ownership versus org resource with env grants; cache-only/durable
-   Valkey and migration downtime. Silo itself is already chosen.
-3. **Recovery contract:** bucket snapshot RPO/RTO, retention, overwrite/versioning
-   behavior and allowed cutover downtime. Recommend isolated restore before any
-   destructive restore, explicit retention opt-in for adopted backups.
-
 ## Phased implementation and safe Penpot adoption
 
-- [ ] Parent accepts intake scope/evidence; owner resolves the three decisions.
-- [ ] Produce and approve concrete UI mockup in existing Krill style. Refine this
-  document, not a competing plan; no dependency installation at intake.
-- [ ] P0 disposable-cluster reproduction, network migration design and firewall
-  compatibility checks. Ship independently of native-resource adoption.
-- [ ] P1 additive service/subresource contracts and explicit Valkey support;
-  previous-release read/rollback compatibility checks before new enum writes.
-- [ ] P1 grouping and environment graph projection, UI/API/RBAC tests; existing
-  environments/apps remain ungrouped until explicitly organized.
-- [ ] Bucket backup/restore and diagnostic work; prove isolated recovery first.
-- [ ] Obtain separate production migration approval with measured downtime and
+Stages, each a local commit series with its own checks:
+
+- [x] Review of the intake against the sources; owner decisions recorded above.
+- [ ] **S1 firewall** — persisted ruleset (written only after confirmation,
+  reloaded at boot by a `krill-firewall` unit, removed by Open), WireGuard listen
+  ports admitted, swarm ports bound to the WireGuard interface when the swarm
+  runs over one, live per-node status with drift (missing table, ruleset differs
+  from the expected one, not persisted, revert pending). Dead-man switch reused.
+- [ ] **S2 overlay MTU** — `KRILL_OVERLAY_MTU` for networks Krill creates
+  (unset keeps Docker's default, so existing installs are unchanged); per-node
+  underlay inventory and DF probes on the Network page with a recommended value;
+  warning when a joining node's budget is below the configured MTU. Existing
+  networks: design of the same-name two-hop recreation with inventory, downtime
+  estimate and rollback; implemented only after the owner chooses it over a
+  documented procedure.
+- [ ] **S3 engine tolerance + Valkey driver** — unknown engine is an error, not
+  a panic; `valkey` engine (CHECK widened), correct `valkey-server` entrypoint,
+  auth, healthcheck, durable volume, links identical to redis.
+- [ ] **S4 Silo/S3** — supported image as the MinIO default (test image too),
+  buckets, restricted principals/policies, bucket-scoped links by default, import
+  of an existing bucket/user, rotation, delete guards.
+- [ ] **S5 Systems UI** — option A, reusing topology link types; RBAC, 404 on
+  cross-org/env ids, EN/RU, keyboard, narrow viewport; checked in the running app.
+- [ ] **S6 diagnostics** — typed deploy refusals across UI/REST/MCP; effective
+  limits, OOM and readiness on the app page; connection-budget hints (no session
+  killing).
+- [ ] **S7 bucket backup/restore** — after the recovery contract is decided.
+- [ ] Separate production migration approval with measured downtime and
   rollback deadline. This plan grants none.
 
 Before cutover, inventory and securely preserve PG database/role, Penpot master
@@ -241,21 +315,9 @@ under explicit data-loss approval. Release rollback alone is insufficient and ma
 refuse after db-link changes. Do not delete old cache/backup jobs until replacement
 recovery is proven; stop overlapping writers/jobs during the transition.
 
-## Intake completion gate
+## Intake verification (historical)
 
-Deliver this document and a local commit to the parent for acceptance. Source/link
-and privacy checks are required; repository policy also requires `make test` before
-commit. Live scenarios above remain UNVERIFIED until their implementation phases.
-The intake ends with handoff, not background implementation.
-
-Local verification: relative code/doc links, whitespace and private-address/path/token
-scan passed. During the required `make test`, `TestS3Roundtrip` and
-`TestS3CheckAccessBlocksLoopbackByDefault` failed to create MinIO because the
-registry manifest HEAD returned 401 for the pinned default image. This independently
-reproduces image unavailability for this test environment; it does not establish
-permanent registry status. Product sources were unchanged by this intake.
-
-Final `make test` result: FAIL. The backup, server and volume packages had
-MinIO-dependent failures on the same registry 401; the full suite was allowed
-to finish. Documentation checks passed; no product code was changed to bypass
-these failures.
+The intake's `make test` failed in the backup, server and volume packages because
+the pinned MinIO test image returned 401 from its registry. Fixing the supported
+S3 and test image is part of S4; until then those failures are a known baseline,
+not regressions of this work.
