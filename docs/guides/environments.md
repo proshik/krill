@@ -16,6 +16,7 @@ organization. It does not deploy applications or copy production data.
 | Build secrets | Cleared |
 | Modeled database links | Remapped to new resources; overriding raw literals are cleared, including public ones |
 | PostgreSQL | New empty logical databases and owner credentials on the existing running server |
+| Buckets and bucket links | Not copied |
 | Linked Redis, Valkey, DragonFly and MinIO servers | One new stopped configuration per distinct source server, with a fresh password |
 | Domains | One new internal primary domain per app; no source/custom/shared hosts, routes, TLS or access credentials |
 | Volumes | New empty named volumes, created at Deploy |

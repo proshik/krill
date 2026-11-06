@@ -487,6 +487,10 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/basic-auth", s.addDomainBasicAuthUser)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/basic-auth/delete", s.deleteDomainBasicAuthUser)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/allowed-ips", s.setDomainAllowedIPs)
+				r.Post("/projects/{projID}/environments/{envID}/buckets", s.createBucket)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/rotate", s.rotateBucketKey)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/revoke-previous", s.revokeBucketPrevKey)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/delete", s.deleteBucket)
 				r.Post("/projects/{projID}/environments/{envID}/databases", s.createLogicalDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{dbID}/delete", s.deleteLogicalDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{dbID}/backups", s.addBackup)
@@ -525,6 +529,8 @@ func (s *Server) Router() http.Handler {
 					r.Post("/volumes/{volID}/owner", s.setVolumeOwner)
 					r.Post("/db-links", s.addDBLink)
 					r.Post("/db-links/{linkID}/delete", s.deleteDBLink)
+					r.Post("/bucket-links", s.addBucketLink)
+					r.Post("/bucket-links/{linkID}/delete", s.deleteBucketLink)
 					r.Post("/volumes/{volID}/backups", s.addVolumeBackup)
 					r.Post("/volumes/backups/{vbID}/toggle", s.toggleVolumeBackup)
 					r.Post("/volumes/backups/{vbID}/delete", s.deleteVolumeBackup)
@@ -548,6 +554,7 @@ func (s *Server) Router() http.Handler {
 			})
 
 			r.Get("/projects/{projID}/environments/{envID}/databases/{dbID}", s.logicalDatabaseDetail)
+			r.Get("/projects/{projID}/environments/{envID}/buckets/{bucketID}", s.bucketDetail)
 		})
 	})
 

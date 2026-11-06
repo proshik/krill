@@ -521,6 +521,23 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Field: l.Field, Collides: collides,
 			})
 		}
+		buckets, berr := s.q.ListS3BucketsByEnvironment(r.Context(), c.Env.ID)
+		if berr != nil {
+			logFrom(r).Error("appDetail: list buckets", "err", berr, "app_id", c.App.ID)
+		}
+		c.EnvBuckets = buckets
+		bucketName := map[int64]string{}
+		for _, b := range buckets {
+			bucketName[b.ID] = b.Name
+		}
+		bLinks, blerr := s.q.ListBucketLinksByApplication(r.Context(), c.App.ID)
+		if blerr != nil {
+			logFrom(r).Error("appDetail: list bucket links", "err", blerr, "app_id", c.App.ID)
+		}
+		for _, l := range bLinks {
+			_, collides := envKeys[l.VarName]
+			c.BucketLinks = append(c.BucketLinks, templates.BucketLinkView{ID: l.ID, Bucket: bucketName[l.BucketID], VarName: l.VarName, Field: l.Field, Collides: collides})
+		}
 	}
 	if tab == "volumes" {
 		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)

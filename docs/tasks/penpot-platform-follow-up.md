@@ -150,7 +150,9 @@ intake, each checked in code:
 2. **Valkey: one release, durable by default** (volume `/data`, AOF + RDB,
    stop-first + flock, no backups in v1, same as Redis). Rollback limitation
    documented, see the review above.
-3. **S3 admin: own minimal client.** Silo remains the chosen product.
+3. **S3 admin: `mc` through Engine.Exec** (revised once the Silo image was found
+   to ship `mc`; the first choice, an own admin-API client, would have needed
+   madmin's body encryption). Silo remains the chosen product.
 4. Still open, decided at their stage: bucket snapshot RPO/retention/overwrite
    contract; automated existing-network MTU migration versus a documented
    procedure; ownership scope of buckets (proposal: env-scoped like logical
@@ -268,22 +270,23 @@ Approve a concrete mockup and interaction states before product implementation.
 Stages, each a local commit series with its own checks:
 
 - [x] Review of the intake against the sources; owner decisions recorded above.
-- [ ] **S1 firewall** — persisted ruleset (written only after confirmation,
+- [x] **S1 firewall** (`59e8978`) — persisted ruleset (written only after confirmation,
   reloaded at boot by a `krill-firewall` unit, removed by Open), WireGuard listen
   ports admitted, swarm ports bound to the WireGuard interface when the swarm
   runs over one, live per-node status with drift (missing table, ruleset differs
   from the expected one, not persisted, revert pending). Dead-man switch reused.
-- [ ] **S2 overlay MTU** — `KRILL_OVERLAY_MTU` for networks Krill creates
+- [x] **S2 overlay MTU** (`59e8978`; automated recreation of existing networks
+  not built, a documented same-name procedure instead — owner decision pending) — `KRILL_OVERLAY_MTU` for networks Krill creates
   (unset keeps Docker's default, so existing installs are unchanged); per-node
   underlay inventory and DF probes on the Network page with a recommended value;
   warning when a joining node's budget is below the configured MTU. Existing
   networks: design of the same-name two-hop recreation with inventory, downtime
   estimate and rollback; implemented only after the owner chooses it over a
   documented procedure.
-- [ ] **S3 engine tolerance + Valkey driver** — unknown engine is an error, not
+- [x] **S3 engine tolerance + Valkey driver** (`a5711d6`) — unknown engine is an error, not
   a panic; `valkey` engine (CHECK widened), correct `valkey-server` entrypoint,
   auth, healthcheck, durable volume, links identical to redis.
-- [ ] **S4 Silo/S3** — supported image as the MinIO default (test image too),
+- [x] **S4 Silo/S3** (`2cb2085` Silo default + test image; buckets commit below) — supported image as the MinIO default (test image too),
   buckets, restricted principals/policies, bucket-scoped links by default, import
   of an existing bucket/user, rotation, delete guards.
 - [ ] **S5 Systems UI** — option A, reusing topology link types; RBAC, 404 on
@@ -314,6 +317,29 @@ configuration; if writes occurred, reconcile or restore a paired PG/assets snaps
 under explicit data-loss approval. Release rollback alone is insufficient and may
 refuse after db-link changes. Do not delete old cache/backup jobs until replacement
 recovery is proven; stop overlapping writers/jobs during the transition.
+
+## Verification log
+
+Local and disposable only; nothing touched production.
+
+- Firewall: generated rulesets, the persisted copy and the probe were run on real
+  nft and kernel WireGuard in a throwaway privileged container (load, idempotent
+  reload, reload of the persisted copy, marker read back, wg0 MTU 1420 and port
+  51820 detected, Open removing the copy). A real reboot and systemd ordering are
+  UNVERIFIED until a disposable VM run.
+- Overlay MTU: `TestOverlayNetworkMTU` on the local swarm reads MTU 1370 inside a
+  container on a network created with `KRILL_OVERLAY_MTU=1370` (the Docker option
+  is the underlay MTU, found by this check). The same-name recreation procedure
+  and the before/after large-response reproduction over a constrained WireGuard
+  cluster are UNVERIFIED.
+- Valkey: `TestValkeyDriverOnRealImage` (Debian and alpine tags): valkey user,
+  authenticated healthcheck, AOF data across containers, directory lock.
+- Silo buckets: `TestBucketLifecycleOnSilo` on the local swarm: restricted key
+  denied on another bucket, import without recreation, rotation and revoke,
+  removal. UI checked in the running app (bucket section, bucket page, linked
+  buckets, root-credential marking, Firewall page with the MTU section).
+- `make test`-equivalent: the earlier MinIO 401 baseline is gone with the Silo
+  test image.
 
 ## Intake verification (historical)
 

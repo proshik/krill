@@ -33,7 +33,7 @@ and Traefik for routing, and stores its state in Postgres.
 - **Deploy from an image or a Dockerfile.** Build from a Git repository on the server, or pull
   a public or private image. Zero-downtime rolling updates, automatic rollback, deployment
   history with live build logs.
-- **Managed databases.** Postgres, Redis, Valkey, DragonFly and MinIO. One Postgres server holds
+- **Managed databases.** Postgres, Redis, Valkey, DragonFly and S3 (Silo) with per-environment buckets and restricted keys. One Postgres server holds
   separate databases for each environment, and linked apps get connection values injected on
   every deploy.
 - **Backups to S3.** Scheduled Postgres and volume backups with retention, restored from the
@@ -106,6 +106,7 @@ else's production:
 | [Environment cloning](docs/guides/environments.md) | Isolated staging configuration, secret handling and cleanup. |
 | [Deployments](docs/guides/deployments.md) | Pre-deploy commands, failure behavior and limits. |
 | [Backups](docs/guides/backups.md) | S3 storage, schedules, retention, restore. |
+| [Buckets](docs/guides/buckets.md) | Per-environment buckets on a managed S3 server, restricted keys, rotation. |
 | [Private images and repositories](docs/guides/registries.md) | Registries, private Git, build arguments and secrets. |
 | [Agent and CI API](docs/guides/agent-api.md) | REST, MCP, tokens, webhooks. |
 | [Observability](docs/guides/observability.md) | The optional Grafana Alloy agent: metrics, logs, labels, cost, security. |

@@ -41,6 +41,9 @@ type AppCtx struct {
 	Ldbs          []db.ListLogicalDatabasesByEnvironmentRow // logical DBs of this environment (pg link options)
 	LinkInstances []db.DbInstance                           // non-postgres instances of this org — redis/dragonfly/minio link options
 
+	BucketLinks []BucketLinkView
+	EnvBuckets  []db.ListS3BucketsByEnvironmentRow // buckets of this environment (bucket link options)
+
 	AutoDeploy    bool
 	WebhookSecret string // decrypted; set for admins only
 	WebhookURL    string // full external webhook/deploy-hook URL
@@ -54,6 +57,15 @@ type AppCtx struct {
 
 // DBLinkView is a linked DB row for the Environment tab. Collides is true when
 // VarName is also present in env_text (the link overrides it on deploy).
+// BucketLinkView is one bucket link on the app's Environment tab.
+type BucketLinkView struct {
+	ID       int64
+	Bucket   string
+	VarName  string
+	Field    string
+	Collides bool
+}
+
 type DBLinkView struct {
 	ID       int64
 	Engine   string
@@ -344,7 +356,11 @@ templ envTab(c AppCtx) {
 							<option value={ "pg:" + itoa(ldb.ID) } data-engine="pg">🐘 { ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")" }</option>
 						}
 						for _, inst := range c.LinkInstances {
-							<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ dbEngineIcon(inst.Engine) + " " + inst.Name }</option>
+							if inst.Engine == "minio" {
+								<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ dbEngineIcon(inst.Engine) + " " + inst.Name + " — " + i18n.T(ctx, "dblink.root_credentials") }</option>
+							} else {
+								<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ dbEngineIcon(inst.Engine) + " " + inst.Name }</option>
+							}
 						}
 					</select>
 				</div>
@@ -382,6 +398,7 @@ templ envTab(c AppCtx) {
 				<p id="dblink-scheme-hint" class="k-muted text-xs mt-1" style="flex-basis:100%;display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
 			</form>
 		}
+		@bucketLinksSection(c)
 		<form
 			id="env-form"
 			method="post"
@@ -940,4 +957,68 @@ templ volumeBackupsSection(c AppCtx, v db.AppVolume) {
 			</form>
 		}
 	</div>
+}
+
+templ bucketLinksSection(c AppCtx) {
+	<div class="k-section">{ i18n.T(ctx, "bucketlink.section") }</div>
+	<p class="k-panel-desc mb-2">{ i18n.T(ctx, "bucketlink.note") }</p>
+	if len(c.BucketLinks) > 0 {
+		<div class="overflow-x-auto">
+			<table class="k-table mb-3">
+				<thead><tr>
+					<th>{ i18n.T(ctx, "dblink.var_name") }</th>
+					<th>{ i18n.T(ctx, "bucket.name") }</th>
+					<th></th>
+				</tr></thead>
+				<tbody>
+					for _, l := range c.BucketLinks {
+						<tr>
+							<td class="k-mono">
+								{ l.VarName }
+								<span class="k-muted text-xs">· { l.Field }</span>
+								if l.Collides {
+									<span class="k-toast k-toast-err" style="display:inline-block;margin-left:.5rem;padding:.1rem .4rem">{ i18n.Tf(ctx, "dblink.collision", l.VarName) }</span>
+								}
+							</td>
+							<td class="k-mono"><span aria-hidden="true">🪣</span> { l.Bucket }</td>
+							<td>
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/bucket-links/" + itoa(l.ID) + "/delete") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.delete_dblink", l.VarName) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+									<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "dblink.delete") }</button>
+								</form>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+	if len(c.EnvBuckets) == 0 {
+		<p class="k-muted mb-3">{ i18n.T(ctx, "bucketlink.none") }</p>
+	} else {
+		<form method="post" action={ templ.SafeURL(c.base() + "/bucket-links") } class="flex items-end gap-2 flex-wrap mb-4">
+			<div>
+				<label class="k-label" for="bucketlink-bucket">{ i18n.T(ctx, "bucket.name") }</label>
+				<select id="bucketlink-bucket" class="k-select" name="bucket_id">
+					for _, b := range c.EnvBuckets {
+						<option value={ itoa(b.ID) }>{ b.Name + " @ " + b.InstanceName }</option>
+					}
+				</select>
+			</div>
+			<div>
+				<label class="k-label" for="bucketlink-var">{ i18n.T(ctx, "dblink.var_name") }</label>
+				<input id="bucketlink-var" class="k-input k-mono" name="var_name" placeholder="AWS_S3_BUCKET" required/>
+			</div>
+			<div>
+				<label class="k-label" for="bucketlink-field">{ i18n.T(ctx, "dblink.field") }</label>
+				<select id="bucketlink-field" class="k-select" name="field">
+					<option value="endpoint">endpoint</option>
+					<option value="bucket">bucket</option>
+					<option value="access_key">access_key</option>
+					<option value="secret_key">secret_key</option>
+					<option value="region">region</option>
+				</select>
+			</div>
+			<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
+		</form>
+	}
 }

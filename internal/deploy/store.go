@@ -257,10 +257,73 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		Values map[string]string
 	}{links, injected})
 	out.Dependencies = fmt.Sprintf("%x", sha256.Sum256(depBytes))
+	if err := s.applyBucketLinks(ctx, a.ID, &out); err != nil {
+		return App{}, err
+	}
 	if err := s.applyMetrics(ctx, a.ID, a.Port, &out); err != nil {
 		return App{}, err
 	}
 	return out, nil
+}
+
+// applyBucketLinks injects each bucket link's value — the bucket's restricted
+// principal, never the instance's root credentials — over env_text and DB
+// links. Only an app with bucket links gets a "/b<hash>" part in Dependencies,
+// so every other app's release identity is the same as before buckets existed.
+func (s *DBStore) applyBucketLinks(ctx context.Context, appID int64, out *App) error {
+	links, err := s.q.ListBucketLinksByApplication(ctx, appID)
+	if err != nil {
+		return err
+	}
+	if len(links) == 0 {
+		return nil
+	}
+	values := make(map[string]string, len(links))
+	for _, l := range links {
+		val, err := s.bucketLinkValue(ctx, l)
+		if err != nil {
+			return fmt.Errorf("resolve bucket link %d: %w", l.ID, err)
+		}
+		values[l.VarName] = val
+		out.Env[l.VarName] = val
+	}
+	b, _ := json.Marshal(struct {
+		Links  []db.AppBucketLink
+		Values map[string]string
+	}{links, values})
+	out.Dependencies += fmt.Sprintf("/b%x", sha256.Sum256(b))
+	return nil
+}
+
+// bucketLinkValue resolves one bucket link field.
+func (s *DBStore) bucketLinkValue(ctx context.Context, l db.AppBucketLink) (string, error) {
+	b, err := s.q.GetS3Bucket(ctx, l.BucketID)
+	if err != nil {
+		return "", err
+	}
+	inst, err := s.q.GetDBInstance(ctx, b.InstanceID)
+	if err != nil {
+		return "", err
+	}
+	switch l.Field {
+	case "endpoint":
+		v, _ := drivers.LinkValue(inst.Engine, drivers.LinkSource{AppName: inst.AppName}, "endpoint")
+		return v, nil
+	case "region":
+		v, _ := drivers.LinkValue(inst.Engine, drivers.LinkSource{AppName: inst.AppName}, "region")
+		return v, nil
+	case "bucket":
+		return b.Name, nil
+	case "access_key":
+		return b.AccessKey, nil
+	case "secret_key":
+		v, err := secret.Dec(b.SecretKey)
+		if err != nil {
+			return "", fmt.Errorf("bucket %d secret key: %w", b.ID, err)
+		}
+		return v, nil
+	}
+	return "", fmt.Errorf("unknown bucket link field %q", l.Field)
 }
 
 // resolveDBLinkValue derives the link's source fields (password decrypted live)

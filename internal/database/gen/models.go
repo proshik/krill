@@ -23,6 +23,15 @@ type ApiToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type AppBucketLink struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	BucketID      int64     `json:"bucket_id"`
+	VarName       string    `json:"var_name"`
+	Field         string    `json:"field"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AppDbLink struct {
 	ID                int64     `json:"id"`
 	ApplicationID     int64     `json:"application_id"`
@@ -343,6 +352,19 @@ type Registry struct {
 	RegistryUrl    string    `json:"registry_url"`
 	Username       string    `json:"username"`
 	Password       string    `json:"password"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type S3Bucket struct {
+	ID             int64     `json:"id"`
+	InstanceID     int64     `json:"instance_id"`
+	EnvironmentID  int64     `json:"environment_id"`
+	Name           string    `json:"name"`
+	AccessKey      string    `json:"access_key"`
+	SecretKey      string    `json:"secret_key"`
+	PrevAccessKey  string    `json:"prev_access_key"`
+	PrevSecretKey  string    `json:"prev_secret_key"`
+	CreatedByKrill bool      `json:"created_by_krill"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

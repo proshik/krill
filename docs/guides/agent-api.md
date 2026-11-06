@@ -75,7 +75,7 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`) is always kept. The level comes from a `level=` field or a severity word (`INFO`, `WARN`, `ERROR`, …) near the start of the line, so most unstructured output has none and passes the filter. |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
 | `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. |
-| `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link`) — never values. |
+| `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link` / `bucket-link`) — never values. |
 | `POST /api/v1/apps/{app}/deploy` | write | Optional body `{"tag":"v1.2.3"}` for image apps — a bare tag, not a full image reference. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/rebuild` | write | Build without cache; Dockerfile apps only. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull (`{"action":"restart","status":"ok"}`). A stopped app is deployed instead: `{"action":"deploy","status":"running","deployment_id":…}`. |

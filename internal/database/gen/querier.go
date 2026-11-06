@@ -16,6 +16,7 @@ type Querier interface {
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
+	ClearS3BucketPrevKey(ctx context.Context, id int64) error
 	CompleteEnvironmentCloneCleanup(ctx context.Context, requestKey string) (int64, error)
 	ConfirmDeploymentRelease(ctx context.Context, deploymentID int64) error
 	CountActiveEnvironmentClones(ctx context.Context) (int64, error)
@@ -63,11 +64,13 @@ type Querier interface {
 	// In-flight deployments across the whole organization that owns $1. One tenant
 	// must not be able to fill the single build worker's queue for everyone else.
 	CountRunningDeploymentsByOrg(ctx context.Context, id int64) (int64, error)
+	CountS3BucketsByInstance(ctx context.Context, instanceID int64) (int64, error)
 	CountTCPAppPortsByContainerPort(ctx context.Context, arg CountTCPAppPortsByContainerPortParams) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
+	CreateBucketLink(ctx context.Context, arg CreateBucketLinkParams) (AppBucketLink, error)
 	CreateCloneApplication(ctx context.Context, arg CreateCloneApplicationParams) (Application, error)
 	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error)
 	CreateDBInstance(ctx context.Context, arg CreateDBInstanceParams) (DbInstance, error)
@@ -88,6 +91,7 @@ type Querier interface {
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
+	CreateS3Bucket(ctx context.Context, arg CreateS3BucketParams) (S3Bucket, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
@@ -96,6 +100,7 @@ type Querier interface {
 	DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
+	DeleteBucketLink(ctx context.Context, id int64) error
 	DeleteClusterNode(ctx context.Context, id int64) error
 	DeleteDBInstance(ctx context.Context, id int64) error
 	DeleteDBLink(ctx context.Context, id int64) error
@@ -111,6 +116,7 @@ type Querier interface {
 	DeleteOrganization(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error
+	DeleteS3Bucket(ctx context.Context, id int64) error
 	DeleteSession(ctx context.Context, token string) error
 	// Changing a password logs out every other device; the current session is kept
 	// so the user is not bounced back to the login form mid-flow.
@@ -137,6 +143,7 @@ type Querier interface {
 	GetApplicationMetrics(ctx context.Context, id int64) (GetApplicationMetricsRow, error)
 	GetApplicationPlacement(ctx context.Context, id int64) (GetApplicationPlacementRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
+	GetBucketLink(ctx context.Context, id int64) (AppBucketLink, error)
 	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
 	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
@@ -160,6 +167,7 @@ type Querier interface {
 	GetPanelGateway(ctx context.Context) (PanelGateway, error)
 	GetProject(ctx context.Context, id int64) (Project, error)
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
+	GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error)
 	GetSession(ctx context.Context, token string) (Session, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
@@ -179,6 +187,9 @@ type Querier interface {
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
+	ListBucketLinksByApplication(ctx context.Context, applicationID int64) ([]AppBucketLink, error)
+	ListBucketLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]AppBucketLink, error)
+	ListBucketLinksByBucket(ctx context.Context, bucketID int64) ([]ListBucketLinksByBucketRow, error)
 	ListClusterNodes(ctx context.Context) ([]ClusterNode, error)
 	ListDBInstanceIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
@@ -229,6 +240,8 @@ type Querier interface {
 	// loop). DISTINCT on environments because the app join multiplies env rows.
 	ListProjectsWithCounts(ctx context.Context, organizationID int64) ([]ListProjectsWithCountsRow, error)
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
+	ListS3BucketsByEnvironment(ctx context.Context, environmentID int64) ([]ListS3BucketsByEnvironmentRow, error)
+	ListS3BucketsByInstance(ctx context.Context, instanceID int64) ([]S3Bucket, error)
 	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
 	ListVolumesByApplication(ctx context.Context, applicationID int64) ([]AppVolume, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
@@ -251,6 +264,7 @@ type Querier interface {
 	// honest: the job died mid-copy and the service was left scaled to 0.
 	ResetMigratingInstances(ctx context.Context) error
 	RestoreReleaseRuntime(ctx context.Context, arg RestoreReleaseRuntimeParams) (int64, error)
+	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) error
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error

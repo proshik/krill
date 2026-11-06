@@ -255,3 +255,44 @@ func TestAppTagIsPublishedForImageAppsOnly(t *testing.T) {
 		t.Fatalf("dockerfile app status should omit the tag key entirely, got %s", raw)
 	}
 }
+
+// A bucket link's variable is listed as "bucket-link", without its value.
+func TestListEnvLabelsBucketLinkSourceAndNeverLeaksItsValue(t *testing.T) {
+	f := newAPIFixture(t)
+	app, err := f.q.GetApplication(t.Context(), f.appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := f.q.CreateDBInstance(t.Context(), db.CreateDBInstanceParams{
+		OrganizationID: f.ident.OrgID, Engine: "minio", Name: "silo", AppName: "krill-minio-fixture-1",
+		Image: "pgsty/silo:x", Superuser: "root", SuperuserPassword: "root-pw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bucketSecret = "s3cr3t-bucket-key"
+	b, err := f.q.CreateS3Bucket(t.Context(), db.CreateS3BucketParams{InstanceID: inst.ID, EnvironmentID: app.EnvironmentID, Name: "assets", AccessKey: "krill-assets-aaaaaa", SecretKey: bucketSecret, CreatedByKrill: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for v, field := range map[string]string{"PORT": "bucket", "AWS_SECRET_ACCESS_KEY": "secret_key"} {
+		if _, err := f.q.CreateBucketLink(t.Context(), db.CreateBucketLinkParams{ApplicationID: f.appID, BucketID: b.ID, VarName: v, Field: field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys, err := f.svc.ListEnv(t.Context(), f.ident, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := map[string]string{}
+	for _, k := range keys {
+		bySource[k.Key] = k.Source
+	}
+	if len(keys) != 3 || bySource["PORT"] != "bucket-link" || bySource["AWS_SECRET_ACCESS_KEY"] != "bucket-link" || bySource["SECRET_TOKEN"] != "literal" {
+		t.Fatalf("keys: %+v", keys)
+	}
+	blob, _ := json.Marshal(keys)
+	if bytes.Contains(blob, []byte(bucketSecret)) || bytes.Contains(blob, []byte("assets")) {
+		t.Fatalf("a bucket link value leaked: %s", blob)
+	}
+}

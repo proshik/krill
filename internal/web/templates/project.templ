@@ -5,7 +5,14 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry, clone ...EnvironmentCloneView) {
+// EnvResources are the environment's resources beyond apps and logical
+// databases: its buckets, and the organization's S3 servers a new one can go on.
+type EnvResources struct {
+	Buckets []db.ListS3BucketsByEnvironmentRow
+	S3Insts []db.DbInstance
+}
+
+templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry, res EnvResources, clone ...EnvironmentCloneView) {
 	@Layout(project.Name, org, role) {
 		<p class="k-crumbs mb-3">
 			<a href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ org.Name }</a> / { project.Name }
@@ -97,6 +104,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 								}
 							</div>
 						}
+						@envBuckets(org, project, active, role, res)
 					} else {
 						<div class="flex flex-col items-center justify-center min-h-[36vh] gap-3">
 							<p class="k-mono">{ i18n.T(ctx, "project.create_env_hint") }</p>
@@ -151,6 +159,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				</form>
 			</dialog>
 			if active.ID != 0 {
+				@bucketCreateModal(org, project, active, res)
 				@appCreateModal(org.ID, project.ID, active.ID, registries)
 				<dialog id="new-db" class="k-modal">
 					<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/databases") }>
@@ -270,4 +279,76 @@ func cloneDefaultName(source db.Environment) string {
 		return "staging"
 	}
 	return source.Name + "-copy"
+}
+
+templ envBuckets(org db.Organization, project db.Project, active db.Environment, role string, res EnvResources) {
+	<h3 class="text-xl mt-8 mb-3">{ i18n.T(ctx, "bucket.section") }</h3>
+	if role == "owner" || role == "admin" {
+		<div class="mb-3"><button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-bucket')">+ { i18n.T(ctx, "bucket.new") }</button></div>
+	}
+	if len(res.Buckets) == 0 {
+		<div class="k-card"><p class="k-mono">{ i18n.T(ctx, "bucket.empty") }</p></div>
+	} else {
+		<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+			for _, b := range res.Buckets {
+				<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/buckets/" + itoa(b.ID)) }>
+					<div class="flex items-center justify-between">
+						<div class="font-semibold text-base"><span aria-hidden="true">🪣</span> { b.Name }</div>
+						@StatusBadge(b.InstanceStatus)
+					</div>
+					<div class="k-mono text-xs">{ b.Name + " @ " + b.InstanceName }</div>
+				</a>
+			}
+		</div>
+	}
+}
+
+templ bucketCreateModal(org db.Organization, project db.Project, active db.Environment, res EnvResources) {
+	<dialog id="new-bucket" class="k-modal">
+		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/buckets") }>
+			<div class="k-modal-head">
+				<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-bucket')">✕</button>
+				<div class="k-modal-title">{ i18n.T(ctx, "bucket.new") }</div>
+				<div class="k-modal-desc">{ i18n.T(ctx, "bucket.new_desc") }</div>
+			</div>
+			<div class="k-modal-body">
+				<div>
+					<label class="k-label k-label-required" for="bucket-instance">{ i18n.T(ctx, "bucket.instance") }</label>
+					<select id="bucket-instance" class="k-select" name="instance_id" required>
+						for _, in := range res.S3Insts {
+							<option value={ itoa(in.ID) }>{ in.Name } ({ in.Image })</option>
+						}
+					</select>
+					if len(res.S3Insts) == 0 {
+						<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "bucket.no_instances") } <a class="underline" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx, "dbi.title") }</a></p>
+					}
+				</div>
+				<div>
+					<label class="k-label k-label-required" for="bucket-name">{ i18n.T(ctx, "bucket.name") }</label>
+					<input id="bucket-name" class="k-input k-mono" name="name" required pattern="[a-z0-9][a-z0-9\-]{1,61}[a-z0-9]" placeholder="penpot"/>
+					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "bucket.name_hint") }</p>
+				</div>
+				<fieldset class="flex flex-col gap-1">
+					<legend class="k-label">{ i18n.T(ctx, "bucket.mode") }</legend>
+					<label class="flex items-center gap-2 text-sm"><input type="radio" name="mode" value="create" checked onchange="document.getElementById('bucket-import').hidden = true"/> { i18n.T(ctx, "bucket.mode_create") }</label>
+					<label class="flex items-center gap-2 text-sm"><input type="radio" name="mode" value="import" onchange="document.getElementById('bucket-import').hidden = false"/> { i18n.T(ctx, "bucket.mode_import") }</label>
+				</fieldset>
+				<div id="bucket-import" class="flex flex-col gap-2" hidden>
+					<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "bucket.import_hint") }</p>
+					<div>
+						<label class="k-label" for="bucket-ak">{ i18n.T(ctx, "bucket.access_key") }</label>
+						<input id="bucket-ak" class="k-input k-mono" name="access_key" autocomplete="off"/>
+					</div>
+					<div>
+						<label class="k-label" for="bucket-sk">{ i18n.T(ctx, "bucket.secret_key") }</label>
+						<input id="bucket-sk" class="k-input k-mono" name="secret_key" type="password" autocomplete="off"/>
+					</div>
+				</div>
+			</div>
+			<div class="k-modal-foot">
+				<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-bucket')">{ i18n.T(ctx, "common.cancel") }</button>
+				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+			</div>
+		</form>
+	</dialog>
 }
