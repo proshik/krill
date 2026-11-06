@@ -4,6 +4,12 @@ What is done, what is waiting for live verification, and what is open.
 [README.md](README.md) gives an overview of the features, and [docs/](docs/)
 describes them in detail.
 
+## Planned intake
+
+- [Penpot platform follow-up](docs/tasks/penpot-platform-follow-up.md): network/firewall,
+  native S3/Valkey and environment systems. Implementation awaits owner decisions
+  and UI approval.
+
 ## Done
 
 - **Apps:** deploy from an image or a Dockerfile (Git clone + local build), deployment
