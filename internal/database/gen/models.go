@@ -375,6 +375,18 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type System struct {
+	ID            int64     `json:"id"`
+	EnvironmentID int64     `json:"environment_id"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type SystemMember struct {
+	ApplicationID int64 `json:"application_id"`
+	SystemID      int64 `json:"system_id"`
+}
+
 type User struct {
 	ID                 int64     `json:"id"`
 	Email              string    `json:"email"`

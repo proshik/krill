@@ -951,3 +951,43 @@ if (!window.__krillEnhanceInit) {
   document.addEventListener("htmx:historyRestore", window.krillEnhance);
 }
 window.krillEnhance();
+
+// Environment systems: pointing at or focusing a component highlights the
+// resources it uses; a resource chip highlights the components using it.
+// Delegated on document so boosted swaps need no re-binding.
+(function () {
+  function clear(root) {
+    root.classList.remove("k-sys-active");
+    root.querySelectorAll(".k-sys-hit").forEach(function (n) { n.classList.remove("k-sys-hit"); });
+  }
+  function mark(root, attr, values) {
+    values.split(" ").forEach(function (v) {
+      if (!v) return;
+      root.querySelectorAll("[" + attr + '="' + v + '"]').forEach(function (n) { n.classList.add("k-sys-hit"); });
+    });
+  }
+  function show(e) {
+    var root = e.target.closest && e.target.closest("[data-sys]");
+    if (!root) return;
+    var el = e.target.closest("[data-sys-app],[data-sys-res]");
+    clear(root);
+    if (!el) return;
+    root.classList.add("k-sys-active");
+    el.classList.add("k-sys-hit");
+    if (el.hasAttribute("data-sys-app")) mark(root, "data-sys-res", el.getAttribute("data-uses") || "");
+    else mark(root, "data-sys-app", el.getAttribute("data-users") || "");
+  }
+  document.addEventListener("pointerover", show);
+  document.addEventListener("focusin", show);
+  document.addEventListener("pointerout", function (e) {
+    var root = e.target.closest && e.target.closest("[data-sys]");
+    if (root && !root.contains(e.relatedTarget)) clear(root);
+  });
+  document.addEventListener("focusout", function (e) {
+    var root = e.target.closest && e.target.closest("[data-sys]");
+    if (root && !root.contains(e.relatedTarget)) clear(root);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") document.querySelectorAll("[data-sys].k-sys-active").forEach(clear);
+  });
+})();

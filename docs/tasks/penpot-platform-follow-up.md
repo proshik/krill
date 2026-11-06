@@ -289,7 +289,8 @@ Stages, each a local commit series with its own checks:
 - [x] **S4 Silo/S3** (`2cb2085` Silo default + test image; buckets commit below) — supported image as the MinIO default (test image too),
   buckets, restricted principals/policies, bucket-scoped links by default, import
   of an existing bucket/user, rotation, delete guards.
-- [ ] **S5 Systems UI** — option A, reusing topology link types; RBAC, 404 on
+- [x] **S5 Systems UI** (option A; checked in the running app at desktop and
+  768px, keyboard focus highlights, EN/RU, RBAC and 404 tests) — option A, reusing topology link types; RBAC, 404 on
   cross-org/env ids, EN/RU, keyboard, narrow viewport; checked in the running app.
 - [ ] **S6 diagnostics** — typed deploy refusals across UI/REST/MCP; effective
   limits, OOM and readiness on the app page; connection-budget hints (no session

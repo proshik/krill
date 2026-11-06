@@ -1,6 +1,9 @@
 package templates
 
 import (
+	"strings"
+
+	"github.com/proshik/krill/internal/topology"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -10,6 +13,7 @@ import (
 type EnvResources struct {
 	Buckets []db.ListS3BucketsByEnvironmentRow
 	S3Insts []db.DbInstance
+	View    topology.EnvView // apps grouped into systems with the resources they use
 }
 
 templ Project(org db.Organization, role string, project db.Project, envs []db.Environment, active db.Environment, apps []db.Application, dbs []db.ListLogicalDatabasesByEnvironmentRow, pgInsts []db.DbInstance, registries []db.Registry, res EnvResources, clone ...EnvironmentCloneView) {
@@ -65,6 +69,9 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 						<div class="flex justify-end items-center gap-3 mb-3">
 							<button id="status-refresh" type="button" class="k-copy" hx-get={ "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(active.ID) + "/statuses" } hx-swap="none">↻ { i18n.T(ctx, "status.refresh") }</button>
 							<label class="k-mono text-xs flex items-center gap-1" style="color:var(--color-muted)"><input class="k-check" type="checkbox" data-target="status-refresh" onchange="krillAutoRefresh(this)"/> { i18n.T(ctx, "status.autorefresh") }</label>
+							if role == "owner" || role == "admin" {
+								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-system')">+ { i18n.T(ctx, "system.new") }</button>
+							}
 						</div>
 						if len(apps) == 0 {
 							<div class="k-card flex items-center justify-between gap-3 flex-wrap">
@@ -73,6 +80,8 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 									<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-app')">{ i18n.T(ctx, "project.create_app") }</button>
 								}
 							</div>
+						} else if len(res.View.Systems) > 0 {
+							@envSystems(org, project, active, role, res.View)
 						} else {
 							<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
 								for _, a := range apps {
@@ -159,6 +168,7 @@ templ Project(org db.Organization, role string, project db.Project, envs []db.En
 				</form>
 			</dialog>
 			if active.ID != 0 {
+				@systemCreateModal(org, project, active)
 				@bucketCreateModal(org, project, active, res)
 				@appCreateModal(org.ID, project.ID, active.ID, registries)
 				<dialog id="new-db" class="k-modal">
@@ -351,4 +361,135 @@ templ bucketCreateModal(org db.Organization, project db.Project, active db.Envir
 			</div>
 		</form>
 	</dialog>
+}
+
+templ systemCreateModal(org db.Organization, project db.Project, active db.Environment) {
+	<dialog id="new-system" class="k-modal">
+		<form method="post" action={ templ.SafeURL(envBase(org, project, active) + "/systems") }>
+			<div class="k-modal-head">
+				<button type="button" class="k-modal-x" aria-label={ i18n.T(ctx, "common.close") } onclick="krillCloseModal('new-system')">✕</button>
+				<div class="k-modal-title">{ i18n.T(ctx, "system.new") }</div>
+				<div class="k-modal-desc">{ i18n.T(ctx, "system.new_desc") }</div>
+			</div>
+			<div class="k-modal-body">
+				<label class="k-label k-label-required" for="system-name">{ i18n.T(ctx, "common.name") }</label>
+				<input id="system-name" class="k-input" name="name" required maxlength="80" placeholder="Penpot"/>
+			</div>
+			<div class="k-modal-foot">
+				<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-system')">{ i18n.T(ctx, "common.cancel") }</button>
+				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ envSystems(org db.Organization, project db.Project, active db.Environment, role string, view topology.EnvView) {
+	<div class="flex flex-col gap-4">
+		for _, sy := range view.Systems {
+			@systemCard(org, project, active, role, view, sy, sy.Name)
+		}
+		if len(view.Ungrouped.Apps) > 0 {
+			@systemCard(org, project, active, role, view, view.Ungrouped, i18n.T(ctx, "system.ungrouped"))
+		}
+	</div>
+}
+
+templ systemCard(org db.Organization, project db.Project, active db.Environment, role string, view topology.EnvView, sy topology.SystemView, name string) {
+	<details class="k-card k-sys" open data-sys>
+		<summary>
+			<span class="k-sys-caret" aria-hidden="true">▸</span>
+			<span class="font-semibold text-base">{ name }</span>
+			<span class="k-mono text-xs" style="color:var(--color-muted)">{ systemSummary(ctx, sy) }</span>
+			if len(sy.Resources) > 0 {
+				<span class="k-sys-collapsed k-mono text-xs" style="color:var(--color-faint)">{ collapsedResources(ctx, sy) }</span>
+			}
+		</summary>
+		<div class="flex flex-col gap-4 mt-4">
+			if len(sy.Resources) > 0 {
+				<ul class="flex flex-wrap gap-2" aria-label={ i18n.T(ctx, "system.resources") }>
+					for _, r := range sy.Resources {
+						<li>
+							@resourceChip(r)
+						</li>
+					}
+				</ul>
+			} else {
+				<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "system.no_resources") }</p>
+			}
+			if len(sy.Apps) == 0 {
+				<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "system.no_apps") }</p>
+			} else {
+				<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+					for _, a := range sy.Apps {
+						<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col gap-2" data-sys-app={ itoa(a.ID) } data-uses={ strings.Join(a.Uses, " ") } href={ templ.SafeURL(envBase(org, project, active) + "/apps/" + itoa(a.ID)) }>
+							<div class="flex items-center justify-between">
+								<div class="font-semibold text-base">{ a.Name }</div>
+								@CardStatus("cs-app-"+itoa(a.ID), a.Status, false)
+							</div>
+							<div class="k-mono text-xs">{ a.Image }</div>
+						</a>
+					}
+				</div>
+			}
+			if sy.ID != 0 && (role == "owner" || role == "admin") {
+				@systemManage(org, project, active, view, sy)
+			}
+		</div>
+	</details>
+}
+
+templ resourceChip(r topology.ResourceView) {
+	<a class="k-chip" href={ templ.SafeURL(r.Href) } data-sys-res={ r.Key } data-users={ joinIDs(r.Users) } title={ strings.Join(r.Vars, ", ") } aria-label={ resourceAria(ctx, r) }>
+		<span aria-hidden="true">{ resourceIcon(r) }</span>
+		<span>{ resourceKind(r) }</span>
+		<span>{ resourceLabel(r) }</span>
+		if r.Shared {
+			<span class="k-chip-tag">⇄ { i18n.T(ctx, "system.shared") }</span>
+		}
+		if r.Detected {
+			<span class="k-chip-tag">{ i18n.T(ctx, "system.detected") }</span>
+		}
+	</a>
+}
+
+templ systemManage(org db.Organization, project db.Project, active db.Environment, view topology.EnvView, sy topology.SystemView) {
+	<details class="k-sys-manage">
+		<summary class="k-mono text-xs" style="color:var(--color-muted)">{ i18n.T(ctx, "system.manage") }</summary>
+		<div class="flex flex-col gap-3 mt-3">
+			<form method="post" action={ templ.SafeURL(envBase(org, project, active) + "/systems/" + itoa(sy.ID) + "/rename") } class="flex items-end gap-2 flex-wrap">
+				<div>
+					<label class="k-label" for={ "sys-name-" + itoa(sy.ID) }>{ i18n.T(ctx, "common.name") }</label>
+					<input id={ "sys-name-" + itoa(sy.ID) } class="k-input" name="name" value={ sy.Name } required maxlength="80"/>
+				</div>
+				<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "project.rename_btn") }</button>
+			</form>
+			if cands := systemCandidates(view, sy.ID); len(cands) > 0 {
+				<form method="post" action={ templ.SafeURL(envBase(org, project, active) + "/systems/" + itoa(sy.ID) + "/apps") } class="flex items-end gap-2 flex-wrap">
+					<div>
+						<label class="k-label" for={ "sys-add-" + itoa(sy.ID) }>{ i18n.T(ctx, "system.add_app") }</label>
+						<select id={ "sys-add-" + itoa(sy.ID) } class="k-select" name="app_id">
+							for _, c := range cands {
+								<option value={ itoa(c.ID) }>{ c.Name }</option>
+							}
+						</select>
+					</div>
+					<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "system.add") }</button>
+				</form>
+			}
+			if len(sy.Apps) > 0 {
+				<ul class="flex flex-wrap gap-2" aria-label={ i18n.T(ctx, "system.members") }>
+					for _, a := range sy.Apps {
+						<li>
+							<form method="post" action={ templ.SafeURL(envBase(org, project, active) + "/systems/" + itoa(sy.ID) + "/apps/" + itoa(a.ID) + "/remove") }>
+								<button type="submit" class="k-chip" aria-label={ i18n.Tf(ctx, "system.remove_app", a.Name) }>{ a.Name } ✕</button>
+							</form>
+						</li>
+					}
+				</ul>
+			}
+			<form method="post" hx-boost="false" action={ templ.SafeURL(envBase(org, project, active) + "/systems/" + itoa(sy.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "system.confirm_delete", sy.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+				<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "system.delete") }</button>
+			</form>
+		</div>
+	</details>
 }

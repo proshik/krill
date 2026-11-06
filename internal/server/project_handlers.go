@@ -280,6 +280,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("projectPage: list buckets", "err", err, "environment_id", active.ID)
 		}
 		res.Buckets = buckets
+		res.View = s.envView(r.Context(), o.ID, p.ID, active, apps, dbs, buckets)
 	}
 	cloneView := templates.EnvironmentCloneView{}
 	if s.cloner != nil && active.ID != 0 {

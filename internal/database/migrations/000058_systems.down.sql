@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS system_members;
+DROP TABLE IF EXISTS systems;

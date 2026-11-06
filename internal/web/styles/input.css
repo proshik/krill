@@ -295,6 +295,25 @@
   .k-topo-arrowhead { fill:var(--color-faint); }
   .k-topo-edgelabel { fill:var(--color-fg); font-size:9px; paint-order:stroke; stroke:var(--color-bg); stroke-width:3px; stroke-linejoin:round; }
   .k-topo-sw-arrow { display:inline-block; margin-right:6px; color:var(--color-faint); font-family:var(--font-mono); }
+
+  /* Environment systems: collapsible cards with resource chips. */
+  .k-sys > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .k-sys > summary::-webkit-details-marker { display:none; }
+  .k-sys > summary:focus-visible { outline:2px solid var(--color-accent); outline-offset:4px; border-radius:6px; }
+  .k-sys-caret { display:inline-block; color:var(--color-muted); transition:transform .15s ease; }
+  .k-sys[open] > summary .k-sys-caret { transform:rotate(90deg); }
+  .k-sys[open] > summary .k-sys-collapsed { display:none; }
+  .k-sys-collapsed { flex-basis:100%; overflow-wrap:anywhere; }
+  .k-sys-manage > summary { cursor:pointer; width:max-content; }
+  .k-chip { display:inline-flex; align-items:center; gap:6px; max-width:100%; padding:4px 10px; border:1px solid var(--color-border-strong); border-radius:999px; background:var(--color-surface-2); color:var(--color-fg); font-family:var(--font-mono); font-size:12px; overflow-wrap:anywhere; transition:opacity .15s ease, border-color .15s ease; }
+  .k-chip:hover, .k-chip:focus-visible { border-color:var(--color-accent); outline:none; }
+  .k-chip-tag { color:var(--color-muted); font-size:11px; }
+  .k-sys [data-sys-app] { transition:opacity .15s ease, border-color .15s ease; }
+  .k-sys.k-sys-active [data-sys-app]:not(.k-sys-hit), .k-sys.k-sys-active [data-sys-res]:not(.k-sys-hit) { opacity:.4; }
+  .k-sys .k-sys-hit { border-color:var(--color-accent); }
+  @media (prefers-reduced-motion: reduce) {
+    .k-sys-caret, .k-chip, .k-sys [data-sys-app] { transition:none; }
+  }
 }
 
 @keyframes k-toast-in { from { opacity:0; transform:translateX(8px); } to { opacity:1; transform:translateX(0); } }

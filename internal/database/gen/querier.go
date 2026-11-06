@@ -50,6 +50,9 @@ type Querier interface {
 	CountOtherDBInstancesByExternalPort(ctx context.Context, arg CountOtherDBInstancesByExternalPortParams) (int64, error)
 	CountOwners(ctx context.Context, organizationID int64) (int64, error)
 	CountRegistriesByName(ctx context.Context, arg CountRegistriesByNameParams) (int64, error)
+	// Everything a server hosts that Krill models: logical databases and buckets
+	// (org-wide, across environments), for the "shared" badge.
+	CountResourcesByInstance(ctx context.Context, instanceID int64) (int32, error)
 	// In-flight deployments across the whole instance. The self-updater refuses to
 	// restart Krill while any of them runs, since the restart fails them.
 	CountRunningDeployments(ctx context.Context) (int64, error)
@@ -93,6 +96,7 @@ type Querier interface {
 	CreateRegistry(ctx context.Context, arg CreateRegistryParams) (Registry, error)
 	CreateS3Bucket(ctx context.Context, arg CreateS3BucketParams) (S3Bucket, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateSystem(ctx context.Context, arg CreateSystemParams) (System, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
@@ -121,6 +125,7 @@ type Querier interface {
 	// Changing a password logs out every other device; the current session is kept
 	// so the user is not bounced back to the login form mid-flow.
 	DeleteSessionsByUserExcept(ctx context.Context, arg DeleteSessionsByUserExceptParams) error
+	DeleteSystem(ctx context.Context, id int64) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
 	// Revoke the instance-operator flag from everyone except the seeded admin.
@@ -169,6 +174,7 @@ type Querier interface {
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error)
 	GetSession(ctx context.Context, token string) (Session, error)
+	GetSystem(ctx context.Context, id int64) (System, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
 	GetUserIsAdmin(ctx context.Context, id int64) (bool, error)
@@ -242,6 +248,8 @@ type Querier interface {
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListS3BucketsByEnvironment(ctx context.Context, environmentID int64) ([]ListS3BucketsByEnvironmentRow, error)
 	ListS3BucketsByInstance(ctx context.Context, instanceID int64) ([]S3Bucket, error)
+	ListSystemMembersByEnvironment(ctx context.Context, environmentID int64) ([]SystemMember, error)
+	ListSystemsByEnvironment(ctx context.Context, environmentID int64) ([]System, error)
 	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
 	ListVolumesByApplication(ctx context.Context, applicationID int64) ([]AppVolume, error)
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
@@ -258,6 +266,8 @@ type Querier interface {
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
 	RecordFirewallCheck(ctx context.Context, node string) error
 	ReleaseEnvironmentCloneSlug(ctx context.Context, requestKey string) error
+	RemoveAppFromSystem(ctx context.Context, applicationID int64) error
+	RenameSystem(ctx context.Context, arg RenameSystemParams) error
 	ReserveEnvironmentCloneSlug(ctx context.Context, arg ReserveEnvironmentCloneSlugParams) (int64, error)
 	// Boot sweep: a control-plane restart kills the in-process migration job,
 	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
@@ -267,6 +277,7 @@ type Querier interface {
 	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) error
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
+	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationMetricsEnabled(ctx context.Context, arg SetApplicationMetricsEnabledParams) error

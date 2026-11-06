@@ -11,6 +11,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -218,4 +219,100 @@ func onOff(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func envBase(org db.Organization, project db.Project, env db.Environment) string {
+	return "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(env.ID)
+}
+
+func joinIDs(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = itoa(id)
+	}
+	return strings.Join(parts, " ")
+}
+
+// systemSummary is a system card's count line: apps, running, failing.
+func systemSummary(ctx context.Context, sy topology.SystemView) string {
+	s := i18n.Tf(ctx, "system.summary", len(sy.Apps), sy.Running)
+	if sy.Failing > 0 {
+		s += " · " + i18n.Tf(ctx, "system.failing", sy.Failing)
+	}
+	return s
+}
+
+// collapsedResources is the one-line resource list a collapsed card shows.
+func collapsedResources(ctx context.Context, sy topology.SystemView) string {
+	parts := make([]string, 0, len(sy.Resources))
+	for _, r := range sy.Resources {
+		p := resourceKind(r) + " " + resourceLabel(r)
+		if r.Shared {
+			p += " ⇄ " + i18n.T(ctx, "system.shared")
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func resourceKind(r topology.ResourceView) string {
+	switch r.Kind {
+	case "ldb":
+		return "PG"
+	case "bucket":
+		return "S3"
+	}
+	switch r.Engine {
+	case "redis":
+		return "Redis"
+	case "valkey":
+		return "Valkey"
+	case "dragonfly":
+		return "DragonFly"
+	case "minio":
+		return "S3"
+	}
+	return r.Engine
+}
+
+func resourceLabel(r topology.ResourceView) string {
+	if r.Kind == "instance" {
+		return r.Label
+	}
+	return r.Label + " @ " + r.Server
+}
+
+func resourceIcon(r topology.ResourceView) string {
+	if r.Kind == "bucket" {
+		return "🪣"
+	}
+	return dbEngineIcon(r.Engine)
+}
+
+// systemCandidates are the environment's apps not in system sysID: the ones
+// "Add app" can move into it.
+func systemCandidates(view topology.EnvView, sysID int64) []topology.AppView {
+	var out []topology.AppView
+	for _, s := range view.Systems {
+		if s.ID != sysID {
+			out = append(out, s.Apps...)
+		}
+	}
+	return append(out, view.Ungrouped.Apps...)
+}
+
+// resourceAria is a resource chip's accessible name: what it shows, its
+// badges, then the variables it feeds (the chip's title carries only those).
+func resourceAria(ctx context.Context, r topology.ResourceView) string {
+	s := resourceKind(r) + " " + resourceLabel(r)
+	if r.Shared {
+		s += ", " + i18n.T(ctx, "system.shared")
+	}
+	if r.Detected {
+		s += ", " + i18n.T(ctx, "system.detected")
+	}
+	if len(r.Vars) > 0 {
+		s += ": " + strings.Join(r.Vars, ", ")
+	}
+	return s
 }
