@@ -36,11 +36,20 @@ func TestBucketLifecycleOnSilo(t *testing.T) {
 		Superuser: "rootadmin", SuperuserPassword: "root-secret-123",
 	}
 	spec := d.BuildSpec(inst, "krill-net")
-	t.Cleanup(func() {
+	// Start from an empty volume, and leave none behind: a volume is "in use"
+	// for a few seconds after its service is removed.
+	clean := func() {
 		_ = eng.ServiceRemove(context.Background(), inst.AppName)
-		time.Sleep(3 * time.Second)
-		_ = eng.VolumeRemove(context.Background(), drivers.VolumeName(inst.AppName))
-	})
+		for i := 0; i < 15; i++ {
+			if eng.VolumeRemove(context.Background(), drivers.VolumeName(inst.AppName)) == nil {
+				return
+			}
+			time.Sleep(time.Second)
+		}
+		t.Logf("volume %s not removed", drivers.VolumeName(inst.AppName))
+	}
+	clean()
+	t.Cleanup(clean)
 	if err := eng.ImagePull(ctx, spec.Image, io.Discard); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
