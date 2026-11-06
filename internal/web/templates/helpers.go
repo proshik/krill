@@ -133,6 +133,8 @@ func dbEngineIcon(engine string) string {
 		return "🟥"
 	case "dragonfly":
 		return "🪰"
+	case "valkey":
+		return "🔑"
 	case "minio":
 		return "🪣"
 	default:

@@ -49,7 +49,11 @@ func (s *Service) reconcileProxy(ctx context.Context, inst Instance) error {
 	if err != nil {
 		return fmt.Errorf("resolve organization network: %w", err)
 	}
-	for _, t := range drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst) {
+	d, err := drivers.Registry.Lookup(inst.Engine)
+	if err != nil {
+		return err
+	}
+	for _, t := range d.ExternalTargets(inst) {
 		name := proxyName(inst.ID) + t.Suffix
 		if t.HostPort == nil {
 			if err := s.engine.ServiceRemove(ctx, name); err != nil && !isNotFound(err) {

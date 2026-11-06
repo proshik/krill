@@ -1,5 +1,10 @@
 package drivers
 
+import (
+	"errors"
+	"fmt"
+)
+
 // registry looks up a Driver by engine name.
 type registry struct {
 	m     map[string]Driver
@@ -20,6 +25,21 @@ func New(ds ...Driver) *registry {
 func (r *registry) Get(e string) (Driver, bool) {
 	d, ok := r.m[e]
 	return d, ok
+}
+
+// ErrUnknownEngine is returned by Lookup for an engine no driver handles: a row
+// written by a newer Krill (rolled back to this one), or a damaged one.
+var ErrUnknownEngine = errors.New("unsupported database engine")
+
+// Lookup returns the driver for engine, or an error naming it. Code that acts
+// on an instance (deploy, park, proxy, delete) uses this, never MustGet: a
+// nil driver panics, and those paths run in goroutines whose panic takes the
+// whole process down.
+func (r *registry) Lookup(e string) (Driver, error) {
+	if d, ok := r.m[e]; ok {
+		return d, nil
+	}
+	return nil, fmt.Errorf("%w %q (written by a newer Krill?)", ErrUnknownEngine, e)
 }
 
 // MustGet looks up a driver by engine name, returning nil if not registered.
@@ -48,5 +68,5 @@ func (r *registry) List() []Driver {
 	return out
 }
 
-// Registry is the process-wide driver set: postgres + redis + dragonfly + minio today.
-var Registry = New(&postgresDriver{}, &redisDriver{}, &dragonflyDriver{}, &minioDriver{})
+// Registry is the process-wide driver set: postgres + redis + dragonfly + minio + valkey.
+var Registry = New(&postgresDriver{}, &redisDriver{}, &dragonflyDriver{}, &minioDriver{}, &valkeyDriver{})

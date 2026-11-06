@@ -33,7 +33,7 @@ and Traefik for routing, and stores its state in Postgres.
 - **Deploy from an image or a Dockerfile.** Build from a Git repository on the server, or pull
   a public or private image. Zero-downtime rolling updates, automatic rollback, deployment
   history with live build logs.
-- **Managed databases.** Postgres, Redis, DragonFly and MinIO. One Postgres server holds
+- **Managed databases.** Postgres, Redis, Valkey, DragonFly and MinIO. One Postgres server holds
   separate databases for each environment, and linked apps get connection values injected on
   every deploy.
 - **Backups to S3.** Scheduled Postgres and volume backups with retention, restored from the

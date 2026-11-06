@@ -147,6 +147,15 @@ func isDBNameChar(b byte) bool {
 // also contains "/<db_name>" for a logical DB in that instance targets the
 // logical DB (chip); otherwise the instance. At most one detection per instance;
 // env keys are scanned in sorted order for determinism.
+// redisCompatible reports the engines that serve RESP on 6379.
+func redisCompatible(engine string) bool {
+	switch engine {
+	case "redis", "dragonfly", "valkey":
+		return true
+	}
+	return false
+}
+
 func DetectEnvLinks(env map[string]string, instances []EnvInstance, logicals []EnvLogical) []DetectedLink {
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -157,7 +166,7 @@ func DetectEnvLinks(env map[string]string, instances []EnvInstance, logicals []E
 	var out []DetectedLink
 	for _, inst := range instances {
 		port := ":5432"
-		if inst.Engine == "redis" {
+		if redisCompatible(inst.Engine) {
 			port = ":6379"
 		}
 		token := inst.AppName + port

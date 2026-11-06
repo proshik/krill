@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/proshik/krill/internal/dbservice/drivers"
 )
 
 // TestDeployedInstanceUsesTheOrganizationNetwork is the database-side
@@ -106,5 +108,32 @@ func TestParkInstanceReportsADeployFailure(t *testing.T) {
 	svc := newSvc(eng, newFakeStore(samplePGInstance()))
 	if err := svc.ParkInstance(context.Background(), 1, 0); err == nil {
 		t.Fatal("a failed service deploy must be reported")
+	}
+}
+
+// An instance whose engine this build has no driver for — a row a newer Krill
+// wrote before being rolled back — must fail its deploy, park and delete with
+// an error. A nil driver used to panic in the deploy goroutine and take the
+// whole process down.
+func TestUnknownEngineFailsInsteadOfPanicking(t *testing.T) {
+	inst := samplePGInstance()
+	inst.Engine = "future-engine"
+	eng := newMockEngine()
+	st := newFakeStore(inst)
+	svc := newSvc(eng, st)
+
+	svc.DeployInstance(inst.ID)
+	waitFor(t, func() bool { return st.st(inst.ID) == "error" })
+	if len(eng.deployed) != 0 {
+		t.Fatalf("nothing may be deployed for an unknown engine: %+v", eng.deployed)
+	}
+	if err := svc.ParkInstance(context.Background(), inst.ID, 0); !errors.Is(err, drivers.ErrUnknownEngine) {
+		t.Fatalf("park: want ErrUnknownEngine, got %v", err)
+	}
+	if err := svc.removeInstanceContainers(context.Background(), inst, false); !errors.Is(err, drivers.ErrUnknownEngine) {
+		t.Fatalf("remove: want ErrUnknownEngine, got %v", err)
+	}
+	if len(eng.removed) != 0 {
+		t.Fatalf("an unknown engine must leave every service in place: %v", eng.removed)
 	}
 }

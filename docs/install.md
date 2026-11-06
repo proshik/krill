@@ -180,6 +180,12 @@ environment at all, so it is safe to run first.
 Neither kind of rollback undoes database changes made by the newer release — only the binary
 goes back.
 
+Rolling back to a release without the Valkey engine (v0.6.0 and earlier) keeps Valkey
+instances listed, but that binary has no driver for them: do not deploy, start, stop, change
+or delete a Valkey instance from it — on those releases the action crashes Krill (it restarts on
+its own). Apps keep the connection values injected by their last deploy. Releases from this one
+on refuse such an action with an error instead.
+
 Rolling back to a release without the [observability agent](guides/observability.md) leaves
 the agent running with nothing managing it; remove it with `docker service rm krill-alloy-node`
 and its configs and secrets labelled `krill.observability=node-agent` (see

@@ -107,8 +107,8 @@ the host.
 
 A database instance's data directory is protected against ever running two writers at once —
 the failure mode that matters most for a node coming back into the cluster mid-reconciliation,
-which is not a service update Swarm's own rolling-update order can see. Every Postgres, Redis
-and DragonFly instance wraps its container's own entrypoint in a portable flock around the
+which is not a service update Swarm's own rolling-update order can see. Every Postgres, Redis,
+Valkey and DragonFly instance wraps its container's own entrypoint in a portable flock around the
 volume's mount-point directory (the volume itself, since for Postgres that directory is
 `PGDATA`): it opens the directory on a fixed file descriptor and locks that descriptor rather
 than a path, a form both GNU/util-linux's and busybox's `flock` understand — busybox, shipped

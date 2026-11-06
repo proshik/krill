@@ -363,13 +363,13 @@ templ envTab(c AppCtx) {
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "dblink.field") }</label>
 					<select id="dblink-field" class="k-select" name="field">
-						<option value="url" data-engines="pg redis dragonfly">url</option>
-						<option value="password" data-engines="pg redis dragonfly">password</option>
-						<option value="host" data-engines="pg redis dragonfly">host</option>
-						<option value="port" data-engines="pg redis dragonfly">port</option>
+						<option value="url" data-engines="pg redis dragonfly valkey">url</option>
+						<option value="password" data-engines="pg redis dragonfly valkey">password</option>
+						<option value="host" data-engines="pg redis dragonfly valkey">host</option>
+						<option value="port" data-engines="pg redis dragonfly valkey">port</option>
 						<option value="user" data-engines="pg">user</option>
 						<option value="dbname" data-engines="pg">dbname</option>
-						<option value="hostport" data-engines="pg redis dragonfly">host:port</option>
+						<option value="hostport" data-engines="pg redis dragonfly valkey">host:port</option>
 						<option value="endpoint" data-engines="minio">endpoint</option>
 						<option value="access_key" data-engines="minio">access_key</option>
 						<option value="secret_key" data-engines="minio">secret_key</option>

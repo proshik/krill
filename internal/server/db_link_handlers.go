@@ -72,7 +72,7 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		}
 		drv = d
 		switch inst.Engine {
-		case "redis", "dragonfly":
+		case "redis", "dragonfly", "valkey":
 			scheme = "redis"
 		case "minio":
 			scheme = "" // S3 access — no connection-string scheme to choose

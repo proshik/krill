@@ -4,7 +4,7 @@ Krill backs up **Postgres databases** and **app volumes** to S3-compatible stora
 MinIO, or any other service that speaks the S3 API. Both use the same form and the same
 scheduling.
 
-Not covered: Redis, DragonFly and MinIO instances, and **Krill's own state database**. Back
+Not covered: Redis, Valkey, DragonFly and MinIO instances, and **Krill's own state database**. Back
 that one up yourself, or install Krill against a managed Postgres — see
 [Installing Krill](../install.md#use-a-managed--external-postgres).
 

@@ -28,12 +28,12 @@ func (e *recEngine) ServiceRemove(ctx context.Context, name string) error {
 
 func TestInstanceSpecNoHostPublish(t *testing.T) {
 	s := &Service{}
-	spec := s.instanceSpec(Instance{Engine: "postgres", AppName: "krill-postgres-x", ExternalPort: p32(5433)}, "krill-net")
+	spec, _ := s.instanceSpec(Instance{Engine: "postgres", AppName: "krill-postgres-x", ExternalPort: p32(5433)}, "krill-net")
 	if len(spec.Ports) != 0 {
 		t.Fatalf("DB service must not host-publish external_port anymore, got %+v", spec.Ports)
 	}
 
-	redisSpec := s.instanceSpec(Instance{Engine: "redis", AppName: "krill-redis-y", ExternalPort: p32(6380)}, "krill-net")
+	redisSpec, _ := s.instanceSpec(Instance{Engine: "redis", AppName: "krill-redis-y", ExternalPort: p32(6380)}, "krill-net")
 	if len(redisSpec.Ports) != 0 {
 		t.Fatalf("redis service must not host-publish external_port anymore, got %+v", redisSpec.Ports)
 	}
@@ -63,7 +63,7 @@ func TestInstanceSpecPostgres(t *testing.T) {
 		ExternalPort: int32p(55001),
 	}
 	svc := &Service{}
-	s := svc.instanceSpec(inst, "krill-net")
+	s, _ := svc.instanceSpec(inst, "krill-net")
 	if s.Name != inst.AppName || s.Image != "postgres:17" || !s.DNSRR || s.Replicas != 1 {
 		t.Fatalf("basic fields wrong: %+v", s)
 	}
@@ -86,7 +86,7 @@ func TestInstanceSpecPostgres(t *testing.T) {
 
 func TestInstanceSpecRedis(t *testing.T) {
 	inst := Instance{Engine: "redis", AppName: "krill-redis-y-abc123", Image: "redis:7", SuperuserPassword: "pw"}
-	s := (&Service{}).instanceSpec(inst, "krill-net")
+	s, _ := (&Service{}).instanceSpec(inst, "krill-net")
 	want := []string{"redis-server", "--requirepass", "pw"}
 	if len(s.Args) != 3 || s.Args[0] != want[0] || s.Args[1] != want[1] || s.Args[2] != want[2] {
 		t.Fatalf("args wrong: %v", s.Args)
@@ -121,7 +121,7 @@ func TestInstanceSpecResourceDefaults(t *testing.T) {
 	s := &Service{}
 	s.SetResourceDefaults(256*1024*1024, 500_000_000)
 
-	spec := s.instanceSpec(Instance{Engine: "redis", AppName: "krill-redis-z", SuperuserPassword: "pw"}, "krill-net")
+	spec, _ := s.instanceSpec(Instance{Engine: "redis", AppName: "krill-redis-z", SuperuserPassword: "pw"}, "krill-net")
 	if spec.MemoryLimitBytes != 256*1024*1024 || spec.NanoCPUs != 500_000_000 {
 		t.Fatalf("instance-wide defaults not applied to db instance spec: %+v", spec)
 	}

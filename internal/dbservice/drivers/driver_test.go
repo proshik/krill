@@ -1,6 +1,7 @@
 package drivers
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -104,12 +105,12 @@ func TestRegistryGetAndList(t *testing.T) {
 	if d, ok := Registry.Get("minio"); !ok || d.Engine() != "minio" {
 		t.Fatalf("get minio: %v %v", d, ok)
 	}
-	list := Registry.List()
-	if len(list) != 4 {
-		t.Fatalf("List() = %d drivers, want 4", len(list))
+	var got []string
+	for _, d := range Registry.List() {
+		got = append(got, d.Engine())
 	}
-	if list[0].Engine() != "postgres" || list[1].Engine() != "redis" || list[2].Engine() != "dragonfly" || list[3].Engine() != "minio" {
-		t.Fatalf("List() order = [%s, %s, %s, %s], want stable [postgres, redis, dragonfly, minio]", list[0].Engine(), list[1].Engine(), list[2].Engine(), list[3].Engine())
+	if want := []string{"postgres", "redis", "dragonfly", "minio", "valkey"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("List() = %v, want stable %v", got, want)
 	}
 }
 
@@ -454,5 +455,49 @@ func TestMinioConnDisplay(t *testing.T) {
 	}
 	if fields2[2].Value != "http://example.com:59001" {
 		t.Fatalf("console URL: %+v", fields2[2])
+	}
+}
+
+func TestValkeyBuildSpec(t *testing.T) {
+	d, err := Registry.Lookup("valkey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst := Instance{Engine: "valkey", AppName: "krill-valkey-x", Image: d.DefaultImage(), SuperuserPassword: "pw", NodeHostname: "worker-app"}
+	s := d.BuildSpec(inst, "krill-org-1")
+	wantArgs := []string{"valkey-server", "--requirepass", "pw", "--appendonly", "yes"}
+	if !reflect.DeepEqual(s.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v (valkey-server is what makes the entrypoint drop root)", s.Args, wantArgs)
+	}
+	if !reflect.DeepEqual(s.Command, flockCommand("/data", "docker-entrypoint.sh")) {
+		t.Fatalf("command = %v", s.Command)
+	}
+	if !s.UpdateStopFirst || !s.DNSRR || s.Network != "krill-org-1" || s.Constraints[0] != "node.hostname==worker-app" {
+		t.Fatalf("spec: %+v", s)
+	}
+	if len(s.Mounts) != 1 || s.Mounts[0].Source != "krill-valkey-x-data" || s.Mounts[0].Target != "/data" {
+		t.Fatalf("mounts: %+v", s.Mounts)
+	}
+	if s.Env["REDISCLI_AUTH"] != "pw" || s.Healthcheck == nil || !strings.Contains(s.Healthcheck.Test[1], "valkey-cli ping") {
+		t.Fatalf("health: env=%v hc=%+v", s.Env, s.Healthcheck)
+	}
+	if d.SuperuserName() != "default" || d.HasLogicalResource() {
+		t.Fatal("identity")
+	}
+}
+
+// Valkey links exactly like redis: an app linked to it gets the same shape of
+// connection string and fields.
+func TestValkeyLinksLikeRedis(t *testing.T) {
+	src := LinkSource{AppName: "h", Password: "p", Scheme: "redis"}
+	for _, f := range Registry.MustGet("redis").LinkFields() {
+		r, _ := LinkValue("redis", src, f)
+		v, ok := LinkValue("valkey", src, f)
+		if !ok || v != r {
+			t.Errorf("field %s: valkey %q, redis %q", f, v, r)
+		}
+	}
+	if _, err := Registry.Lookup("no-such-engine"); err == nil {
+		t.Fatal("an unknown engine must be an error")
 	}
 }

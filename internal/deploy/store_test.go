@@ -471,6 +471,19 @@ func TestResolveDBLinkValueDispatchesByEngine(t *testing.T) {
 		t.Errorf("dragonfly url = %q, ok=%v, err=%v", val, ok, rerr)
 	}
 
+	// Valkey (RESP-compatible with redis, migration 000056 admits the engine).
+	valkeyInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "valkey", Name: "vk", AppName: "krill-valkey-disp",
+		Image: "valkey/valkey:8.1.4", Superuser: "default", SuperuserPassword: "vkpw",
+	})
+	if err != nil {
+		t.Fatalf("create valkey instance: %v", err)
+	}
+	vkRow := db.ListDBLinksByApplicationRow{InstanceID: &valkeyInst.ID, VarName: "VALKEY_URL", Scheme: "redis", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, vkRow); rerr != nil || !ok || val != "redis://default:vkpw@krill-valkey-disp:6379" {
+		t.Errorf("valkey url = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+
 	// MinIO: endpoint/access_key/secret_key resolve via the instance's own
 	// superuser (= access key) and decrypted password (= secret key).
 	epRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "S3_ENDPOINT", Field: "endpoint"}
