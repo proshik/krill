@@ -453,6 +453,9 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.Ports = ports
 	}
+	if tab == "advanced" {
+		c.Runtime = s.runtimeView(r, c.App)
+	}
 	if tab == "deployments" {
 		deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
 		if err != nil {
@@ -1005,4 +1008,39 @@ func deployRefusalKey(err error, fallback string) string {
 		return "flash.err.deploy_shutting_down"
 	}
 	return fallback
+}
+
+// runtimeTaskLimit bounds the task history the Advanced tab shows.
+const runtimeTaskLimit = 8
+
+// runtimeView reports the limits a deploy of app applies — its own, or the
+// instance default it falls back to — and its recent tasks.
+func (s *Server) runtimeView(r *http.Request, app db.Application) templates.RuntimeView {
+	v := templates.RuntimeView{MemSource: "none", CPUSource: "none",
+		MemDefault: strings.TrimSpace(s.cfg.DefaultMemoryLimit), CPUDefault: strings.TrimSpace(s.cfg.DefaultCPULimit)}
+	switch {
+	case app.MemoryLimit != nil && strings.TrimSpace(*app.MemoryLimit) != "":
+		v.MemLimit, v.MemSource = *app.MemoryLimit, "explicit"
+	case strings.TrimSpace(s.cfg.DefaultMemoryLimit) != "":
+		v.MemLimit, v.MemSource = s.cfg.DefaultMemoryLimit, "default"
+	}
+	switch {
+	case app.CpuLimit != nil && strings.TrimSpace(*app.CpuLimit) != "":
+		v.CPULimit, v.CPUSource = *app.CpuLimit, "explicit"
+	case strings.TrimSpace(s.cfg.DefaultCPULimit) != "":
+		v.CPULimit, v.CPUSource = s.cfg.DefaultCPULimit, "default"
+	}
+	th, ok := s.engine.(docker.TaskHistory)
+	if !ok {
+		v.TasksUnavailable = true
+		return v
+	}
+	tasks, err := th.ServiceTaskHistory(r.Context(), dockerName(app.ID), runtimeTaskLimit)
+	if err != nil {
+		logFrom(r).Warn("runtimeView: task history unavailable", "err", err, "app_id", app.ID)
+		v.TasksUnavailable = true
+		return v
+	}
+	v.Tasks = tasks
+	return v
 }

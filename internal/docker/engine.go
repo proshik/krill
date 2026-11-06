@@ -238,6 +238,24 @@ type OverlayNetworks interface {
 // without the mtu option (a 1500-byte underlay minus VXLAN's 50 bytes).
 const DefaultOverlayMTU = 1450
 
+// TaskRecord is one task of a service, current or recent, for diagnostics.
+type TaskRecord struct {
+	ID       string
+	NodeName string
+	State    string // swarm task state; "starting" until a healthcheck passes
+	Desired  string
+	Message  string
+	Err      string
+	ExitCode int
+	Updated  time.Time
+}
+
+// TaskHistory is the optional capability to read a service's recent tasks,
+// terminated ones included. Only the real *dockerEngine implements it.
+type TaskHistory interface {
+	ServiceTaskHistory(ctx context.Context, name string, limit int) ([]TaskRecord, error)
+}
+
 // SwarmObjects is the optional capability to manage Swarm configs and secrets.
 // Only the real *dockerEngine implements it; callers type-assert, so the Engine
 // interface and its test fakes stay unchanged.

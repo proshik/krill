@@ -9,7 +9,19 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
+// RuntimeView is what the Advanced tab shows about how the app actually runs:
+// the limits a deploy applies (its own or the instance default) and its
+// recent Swarm tasks.
+type RuntimeView struct {
+	MemLimit, MemSource string // source: explicit | default | none
+	CPULimit, CPUSource string
+	MemDefault, CPUDefault string // the instance defaults ("" when none)
+	Tasks               []docker.TaskRecord
+	TasksUnavailable    bool
+}
+
 type AppCtx struct {
+	Runtime    RuntimeView
 	Org        db.Organization
 	Role       string
 	Project    db.Project
@@ -630,6 +642,7 @@ templ advancedTab(c AppCtx) {
 			<div class="k-panel-title">{ i18n.T(ctx, "adv.title") }</div>
 			<div class="k-panel-desc">{ i18n.T(ctx, "adv.desc") }</div>
 		</div>
+		@runtimeTasks(c)
 		<form method="post" action={ templ.SafeURL(c.base() + "/advanced") } class="grid gap-3" style="max-width:820px">
 				<div>
 					<label class="k-label">{ i18n.T(ctx, "app.command") }</label>
@@ -648,13 +661,14 @@ templ advancedTab(c AppCtx) {
 				<div class="grid grid-cols-2 gap-3">
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.memory_limit") }</label>
-						<input class="k-input" name="memory_limit" placeholder="e.g. 256m (blank = no limit)" value={ strv(c.App.MemoryLimit) }/>
+						<input class="k-input" name="memory_limit" placeholder={ limitPlaceholder(ctx, "256m", c.Runtime.MemDefault) } value={ strv(c.App.MemoryLimit) }/>
 					</div>
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.cpu_limit") }</label>
-						<input class="k-input" name="cpu_limit" placeholder="e.g. 0.5 (blank = no limit)" value={ strv(c.App.CpuLimit) }/>
+						<input class="k-input" name="cpu_limit" placeholder={ limitPlaceholder(ctx, "0.5", c.Runtime.CPUDefault) } value={ strv(c.App.CpuLimit) }/>
 					</div>
 				</div>
+				<p class="k-mono text-xs" style="color:var(--color-muted)">{ i18n.Tf(ctx, "runtime.effective", limitText(ctx, c.Runtime.MemLimit, c.Runtime.MemSource), limitText(ctx, c.Runtime.CPULimit, c.Runtime.CPUSource)) }</p>
 				<div class="grid grid-cols-2 gap-3">
 					<div>
 						<label class="k-label">{ i18n.T(ctx, "app.restart_condition") }</label>
@@ -1020,5 +1034,41 @@ templ bucketLinksSection(c AppCtx) {
 			</div>
 			<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "dblink.add") }</button>
 		</form>
+	}
+}
+
+templ runtimeTasks(c AppCtx) {
+	<div class="k-section">{ i18n.T(ctx, "runtime.tasks") }</div>
+	<p class="k-panel-desc mb-2">{ i18n.T(ctx, "runtime.tasks_desc") }</p>
+	if c.Runtime.TasksUnavailable {
+		<p class="k-muted mb-3">{ i18n.T(ctx, "runtime.tasks_unavailable") }</p>
+	} else if len(c.Runtime.Tasks) == 0 {
+		<p class="k-muted mb-3">{ i18n.T(ctx, "runtime.no_tasks") }</p>
+	} else {
+		<div class="overflow-x-auto mb-4">
+			<table class="k-table">
+				<thead><tr>
+					<th>{ i18n.T(ctx, "runtime.when") }</th>
+					<th>{ i18n.T(ctx, "runtime.state") }</th>
+					<th>{ i18n.T(ctx, "nodes.hostname") }</th>
+					<th>{ i18n.T(ctx, "runtime.detail") }</th>
+				</tr></thead>
+				<tbody>
+					for _, t := range c.Runtime.Tasks {
+						<tr>
+							<td class="k-mono text-xs">{ t.Updated.Local().Format("2006-01-02 15:04:05") }</td>
+							<td class="k-mono text-xs">{ t.State }</td>
+							<td class="k-mono text-xs">{ t.NodeName }</td>
+							<td class="text-xs">
+								<span class="k-mono">{ taskDetail(t) }</span>
+								if hint := taskHint(ctx, t); hint != "" {
+									<div style="color:var(--color-warn)">{ hint }</div>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
 	}
 }

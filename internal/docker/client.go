@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1297,4 +1298,35 @@ func (e *dockerEngine) ServiceContainerLabels(ctx context.Context, name string) 
 		return map[string]string{}, true, nil
 	}
 	return svc.Spec.TaskTemplate.ContainerSpec.Labels, true, nil
+}
+
+// ServiceTaskHistory implements TaskHistory: the service's most recent tasks,
+// newest first, at most limit of them.
+func (e *dockerEngine) ServiceTaskHistory(ctx context.Context, name string, limit int) ([]TaskRecord, error) {
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{Filters: filters.NewArgs(filters.Arg("service", name))})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].Status.Timestamp.After(tasks[j].Status.Timestamp) })
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	id2name := map[string]string{}
+	if nodes, nerr := e.Nodes(ctx); nerr == nil {
+		for _, n := range nodes {
+			id2name[n.ID] = n.Hostname
+		}
+	}
+	out := make([]TaskRecord, 0, len(tasks))
+	for _, t := range tasks {
+		rec := TaskRecord{
+			ID: t.ID, NodeName: id2name[t.NodeID], State: string(t.Status.State), Desired: string(t.DesiredState),
+			Message: t.Status.Message, Err: t.Status.Err, Updated: t.Status.Timestamp,
+		}
+		if t.Status.ContainerStatus != nil {
+			rec.ExitCode = t.Status.ContainerStatus.ExitCode
+		}
+		out = append(out, rec)
+	}
+	return out, nil
 }

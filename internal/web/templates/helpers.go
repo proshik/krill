@@ -316,3 +316,48 @@ func resourceAria(ctx context.Context, r topology.ResourceView) string {
 	}
 	return s
 }
+
+// limitText is an effective limit with where it comes from.
+func limitText(ctx context.Context, value, source string) string {
+	switch source {
+	case "explicit":
+		return value
+	case "default":
+		return i18n.Tf(ctx, "runtime.limit_default", value)
+	}
+	return i18n.T(ctx, "runtime.limit_none")
+}
+
+// limitPlaceholder says what a blank limit field means: the instance default
+// when one is configured, otherwise no limit.
+func limitPlaceholder(ctx context.Context, example, def string) string {
+	if def != "" {
+		return i18n.Tf(ctx, "runtime.placeholder_default", example, def)
+	}
+	return i18n.Tf(ctx, "runtime.placeholder_none", example)
+}
+
+// taskDetail is a task's own message, error and exit code in one line.
+func taskDetail(t docker.TaskRecord) string {
+	parts := []string{}
+	if t.Err != "" {
+		parts = append(parts, t.Err)
+	} else if t.Message != "" {
+		parts = append(parts, t.Message)
+	}
+	if t.ExitCode != 0 {
+		parts = append(parts, "exit "+strconv.Itoa(t.ExitCode))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// taskHint explains the task states that are easy to misread.
+func taskHint(ctx context.Context, t docker.TaskRecord) string {
+	switch {
+	case t.ExitCode == 137:
+		return i18n.T(ctx, "runtime.hint_137")
+	case t.State == "starting":
+		return i18n.T(ctx, "runtime.hint_starting")
+	}
+	return ""
+}
