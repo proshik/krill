@@ -380,6 +380,24 @@ regression test unless noted.
 | Deleting storage used by a bucket/volume backup flashed a raw FK error | Claude | counted in `CountBackupsByDestination` |
 | Environment clone silently drops bucket links | Claude | stated in the clone notice (buckets are per environment) |
 
+### Second revust round (r2)
+
+revust r2 read the fixes (`fe75d7d..8a0ddd9`), 4 of 4 sources reported. It
+was the last round the review budget allows; no further rounds.
+
+| Finding | Severity | Outcome |
+| --- | --- | --- |
+| `removeNode` opened the firewall without `fwMu`, racing a lockdown's Apply | major | lock held through Open and row delete; regression test |
+| Imported-key ownership test never ran a cleanup | minor | test deletes a bucket after rotation and an environment, recording removed principals |
+| No import test for a key that can write but not read | minor | Silo test added; through mc the refusal also shows at the principal's own `rm` (it stats first), noted in the test |
+| Key operations used the row read before the bucket lock | major (pre-existing in r1 fix) | `lockBucket` re-reads the row; 404 if gone |
+| Refused restore's cleanup could remove a target an app had just linked | major | cleanup under the target's lock, only with no links |
+| `https://h` and `https://h:443` counted as different storage | major | compared by host and effective port |
+| Confirm could not tell a waiting timer from a running revert | major | shared flock + confirmed marker between Confirm and the revert |
+
+Found while fixing: a successful import logged a spurious "probe not removed"
+warning (the principal had already removed it); the second removal is skipped.
+
 ## Intake verification (historical)
 
 The intake's `make test` failed in the backup, server and volume packages because

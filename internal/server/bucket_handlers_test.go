@@ -30,11 +30,13 @@ type bucketFixture struct {
 	inst    db.DbInstance
 	envBase string
 	appBase string
+	mc      *mcLog
 }
 
 func newBucketFixture(t *testing.T, email string) bucketFixture {
 	t.Helper()
-	h, q, orgSvc, _, _ := buildDeployServer(t, nil, mcEngine{})
+	mc := &mcLog{}
+	h, q, orgSvc, _, _ := buildDeployServer(t, nil, mcEngine{log: mc})
 	ctx := context.Background()
 	uid := mkUser(t, q, email)
 	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
@@ -54,7 +56,7 @@ func newBucketFixture(t *testing.T, email string) bucketFixture {
 	}
 	envBase := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID)
 	return bucketFixture{h: h, q: q, cookie: loginAs(t, q, email), org: o, proj: p, env: e, other: other, app: app, inst: inst,
-		envBase: envBase, appBase: envBase + "/apps/" + i64(app.ID)}
+		envBase: envBase, appBase: envBase + "/apps/" + i64(app.ID), mc: mc}
 }
 
 func TestBucketCreateImportAndLink(t *testing.T) {
@@ -352,6 +354,68 @@ func TestImportedKeyIsNeverMarkedGenerated(t *testing.T) {
 	}
 }
 
+// Cleanup removes exactly the principals Krill generated, as recorded on the
+// row: an imported key that looks generated survives a rotation and a bucket
+// delete, and a deleted environment removes only its generated keys.
+func TestBucketCleanupRemovesOnlyGeneratedKeys(t *testing.T) {
+	f := newBucketFixture(t, "bkt-cleanup@k.local")
+	ctx := context.Background()
+	const imported = "krill-assets-abcdef"
+	if rec := postForm(t, f.h, f.envBase+"/buckets", f.cookie, url.Values{
+		"instance_id": {i64(f.inst.ID)}, "name": {"assets"}, "mode": {"import"},
+		"access_key": {imported}, "secret_key": {"imported-secret"},
+	}); hasErrFlash(rec) {
+		t.Fatalf("import: %q", flashCookieValue(rec))
+	}
+	bs, _ := f.q.ListS3BucketsByEnvironment(ctx, f.env.ID)
+	if len(bs) != 1 {
+		t.Fatalf("buckets: %+v", bs)
+	}
+	bb := f.envBase + "/buckets/" + i64(bs[0].ID)
+	if rec := postForm(t, f.h, bb+"/rotate", f.cookie, url.Values{}); hasErrFlash(rec) {
+		t.Fatalf("rotate: %q", flashCookieValue(rec))
+	}
+	rotated, _ := f.q.GetS3Bucket(ctx, bs[0].ID)
+	if rotated.PrevAccessKey != imported {
+		t.Fatalf("rotation must keep the imported key as previous: %+v", rotated)
+	}
+	if rec := postForm(t, f.h, bb+"/delete", f.cookie, url.Values{}); hasErrFlash(rec) {
+		t.Fatalf("delete: %q", flashCookieValue(rec))
+	}
+	if got := f.mc.removedUsers(); len(got) != 1 || got[0] != rotated.AccessKey {
+		t.Fatalf("bucket delete removed %v, want only the generated %q", got, rotated.AccessKey)
+	}
+
+	// An environment delete: its generated key goes, its imported one stays.
+	otherBase := "/orgs/" + i64(f.org.ID) + "/projects/" + i64(f.proj.ID) + "/environments/" + i64(f.other.ID)
+	if rec := postForm(t, f.h, otherBase+"/buckets", f.cookie, url.Values{"instance_id": {i64(f.inst.ID)}, "name": {"fresh"}}); hasErrFlash(rec) {
+		t.Fatalf("create: %q", flashCookieValue(rec))
+	}
+	if rec := postForm(t, f.h, otherBase+"/buckets", f.cookie, url.Values{
+		"instance_id": {i64(f.inst.ID)}, "name": {"media"}, "mode": {"import"},
+		"access_key": {"krill-media-abcdef"}, "secret_key": {"imported-secret"},
+	}); hasErrFlash(rec) {
+		t.Fatalf("import: %q", flashCookieValue(rec))
+	}
+	created, _ := f.q.ListS3BucketsByEnvironment(ctx, f.other.ID)
+	var generated string
+	for _, b := range created {
+		if b.Name == "fresh" {
+			generated = b.AccessKey
+		}
+	}
+	if generated == "" {
+		t.Fatalf("buckets in the other environment: %+v", created)
+	}
+	before := len(f.mc.removedUsers())
+	if rec := postForm(t, f.h, otherBase+"/delete", f.cookie, url.Values{}); hasErrFlash(rec) {
+		t.Fatalf("environment delete: %q", flashCookieValue(rec))
+	}
+	if got := f.mc.removedUsers()[before:]; len(got) != 1 || got[0] != generated {
+		t.Fatalf("environment delete removed %v, want only the generated %q", got, generated)
+	}
+}
+
 // Storage is compared by where it writes, not by the destination's id, and a
 // storage referenced by a bucket backup cannot be deleted from under it.
 func TestBucketBackupStorageIdentity(t *testing.T) {
@@ -388,10 +452,37 @@ func TestMetricsTokenEnvRefusesBucketLinkVar(t *testing.T) {
 // mcEngine answers the mc commands bucket management runs like a real S3
 // server with an empty bucket would: a probe object does not exist until it
 // is written, and reads back what was written.
-type mcEngine struct{ noopEngine }
+type mcEngine struct {
+	noopEngine
+	log *mcLog
+}
 
-func (mcEngine) Exec(_ context.Context, _ string, cmd []string, _ []string, _ io.Reader, out io.Writer) error {
+// mcLog records the mc commands run, for asserting which principals went.
+type mcLog struct {
+	mu   sync.Mutex
+	cmds []string
+}
+
+// removedUsers lists the principals removed with `mc admin user remove`.
+func (l *mcLog) removedUsers() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, c := range l.cmds {
+		if _, key, ok := strings.Cut(c, "admin user remove k "); ok {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+func (e mcEngine) Exec(_ context.Context, _ string, cmd []string, _ []string, _ io.Reader, out io.Writer) error {
 	joined := strings.Join(cmd, " ")
+	if e.log != nil {
+		e.log.mu.Lock()
+		e.log.cmds = append(e.log.cmds, joined)
+		e.log.mu.Unlock()
+	}
 	switch {
 	case strings.Contains(joined, " stat ") && strings.Contains(joined, ".krill-import-check-"):
 		io.WriteString(out, `{"status":"error","error":{"message":"Unable to stat","cause":{"message":"Object does not exist"}}}`+"\n")

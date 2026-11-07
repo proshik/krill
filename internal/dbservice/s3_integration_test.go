@@ -110,6 +110,34 @@ func TestBucketLifecycleOnSilo(t *testing.T) {
 	if _, err := svc.ListObjects(ctx, inst, "penpot", 1); !errors.Is(err, dbservice.ErrTooManyObjects) {
 		t.Fatalf("listing past its limit: %v", err)
 	}
+	// A principal that can write and delete but not read is refused: links
+	// hand apps a key that must read their bucket back, and the probe it
+	// wrote is removed all the same. (mc's rm stats the object first, which
+	// needs s3:GetObject too, so through mc the refusal shows at the read-back
+	// and at the principal's own rm alike; the read-back stays as the explicit
+	// check, not relying on that detail of mc.)
+	root := []string{"MC_HOST_k=http://rootadmin:root-secret-123@127.0.0.1:9000"}
+	writeOnly := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::penpot/*"]}]}`
+	for _, step := range []struct {
+		cmd   []string
+		stdin string
+	}{
+		{[]string{"mc", "--json", "admin", "policy", "create", "k", "it-write-only", "/dev/stdin"}, writeOnly},
+		{[]string{"mc", "--json", "admin", "user", "add", "k", "it-writer", "writer-secret-1"}, ""},
+		{[]string{"mc", "--json", "admin", "policy", "attach", "k", "it-write-only", "--user", "it-writer"}, ""},
+	} {
+		var out bytes.Buffer
+		if err := eng.Exec(ctx, inst.AppName, step.cmd, root, bytes.NewReader([]byte(step.stdin)), &out); err != nil {
+			t.Fatalf("%v: %v %s", step.cmd[2:5], err, out.String())
+		}
+	}
+	if err := svc.ImportBucket(ctx, inst, dbservice.Bucket{Name: "penpot", AccessKey: "it-writer", SecretKey: "writer-secret-1"}); !errors.Is(err, dbservice.ErrBucketCredentials) {
+		t.Fatalf("a principal without read access must be refused, got %v", err)
+	}
+	if objs, err := svc.ListObjects(ctx, inst, "penpot", 10); err != nil || len(objs) != 2 {
+		t.Fatalf("a refused import must leave no probe behind: %+v %v", objs, err)
+	}
+
 	// Undoing a bucket only ever removes an empty one.
 	if err := svc.RemoveEmptyBucket(ctx, inst, "penpot"); err == nil {
 		t.Fatal("a non-empty bucket must not be removed by RemoveEmptyBucket")

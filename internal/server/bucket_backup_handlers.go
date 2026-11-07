@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +13,8 @@ import (
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/bucketbackup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -267,17 +271,7 @@ func (s *Server) restoreBucketBackup(w http.ResponseWriter, r *http.Request) {
 	t := bucketbackup.Target{Server: di.AppName, Bucket: target.Name, RootUser: di.Superuser, RootPass: di.SuperuserPassword}
 	if err := s.bucketBackups.StartRestore(r.Context(), b.ID, snapshot, t, bucketBackupTimeout); err != nil {
 		logFrom(r).Warn("restoreBucketBackup: refused", "err", err, "bucket_backup_id", b.ID, "snapshot", snapshot)
-		// The target was created for this restore. Undo it only while it is
-		// still empty: anything a client wrote into it meanwhile stays, and so
-		// does the bucket in Krill.
-		cctx := context.WithoutCancel(r.Context())
-		if rerr := s.dbsvc.RemoveEmptyBucket(cctx, di, target.Name); rerr != nil {
-			logFrom(r).Warn("restoreBucketBackup: unused target bucket kept (not empty or not removable)", "err", rerr, "bucket", target.Name)
-		} else if rerr := s.removeGeneratedPrincipals(cctx, di, target); rerr != nil {
-			logFrom(r).Error("restoreBucketBackup: remove unused target key", "err", rerr, "bucket", target.Name)
-		} else if derr := s.q.DeleteS3Bucket(cctx, target.ID); derr != nil {
-			logFrom(r).Error("restoreBucketBackup: delete unused target row", "err", derr, "bucket_id", target.ID)
-		}
+		s.dropUnusedRestoreTarget(r, di, target)
 		switch {
 		case errors.Is(err, bucketbackup.ErrRunning):
 			s.flashErrT(w, r, "flash.err.backup_running")
@@ -293,12 +287,60 @@ func (s *Server) restoreBucketBackup(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, c.url(), http.StatusSeeOther)
 }
 
-// sameStorage reports whether two destinations write into the same S3 bucket.
-func sameStorage(a, b db.Destination) bool {
-	norm := func(endpoint string) string {
-		e := strings.ToLower(strings.TrimSpace(endpoint))
-		e = strings.TrimPrefix(strings.TrimPrefix(e, "https://"), "http://")
-		return strings.TrimRight(e, "/")
+// dropUnusedRestoreTarget undoes the target bucket a refused restore created.
+// The bucket is published as soon as its row exists, so an app may already
+// have been linked to it: under the bucket's own lock (the one addBucketLink
+// and deleteBucket take), it is removed only while nothing links to it and it
+// is still empty. Anything else keeps the bucket, its key and its row.
+func (s *Server) dropUnusedRestoreTarget(r *http.Request, di dbservice.Instance, target db.S3Bucket) {
+	ctx := context.WithoutCancel(r.Context())
+	lock := oplock.Bucket(target.ID)
+	if !oplock.TryAcquire(lock) {
+		logFrom(r).Warn("restoreBucketBackup: unused target bucket kept (in use)", "bucket_id", target.ID)
+		return
 	}
-	return norm(a.Endpoint) == norm(b.Endpoint) && strings.EqualFold(strings.TrimSpace(a.Bucket), strings.TrimSpace(b.Bucket))
+	defer oplock.Release(lock)
+	links, err := s.q.ListBucketLinksByBucket(ctx, target.ID)
+	if err != nil || len(links) > 0 {
+		logFrom(r).Warn("restoreBucketBackup: unused target bucket kept (linked or links unknown)", "err", err, "links", len(links), "bucket_id", target.ID)
+		return
+	}
+	if err := s.dbsvc.RemoveEmptyBucket(ctx, di, target.Name); err != nil {
+		logFrom(r).Warn("restoreBucketBackup: unused target bucket kept (not empty or not removable)", "err", err, "bucket", target.Name)
+		return
+	}
+	if err := s.removeGeneratedPrincipals(ctx, di, target); err != nil {
+		logFrom(r).Error("restoreBucketBackup: remove unused target key", "err", err, "bucket", target.Name)
+		return
+	}
+	if err := s.q.DeleteS3Bucket(ctx, target.ID); err != nil {
+		logFrom(r).Error("restoreBucketBackup: delete unused target row", "err", err, "bucket_id", target.ID)
+	}
+}
+
+// sameStorage reports whether two destinations write into the same S3 bucket:
+// same host and effective port (an explicit default port is the same storage
+// as none), whatever the scheme's or host's spelling. An endpoint that does not
+// parse is compared as written.
+func sameStorage(a, b db.Destination) bool {
+	return storageAddr(a.Endpoint) == storageAddr(b.Endpoint) && strings.EqualFold(strings.TrimSpace(a.Bucket), strings.TrimSpace(b.Bucket))
+}
+
+func storageAddr(endpoint string) string {
+	e := strings.TrimSpace(endpoint)
+	if !strings.Contains(e, "://") {
+		e = "https://" + e
+	}
+	u, err := url.Parse(e)
+	if err != nil || u.Hostname() == "" {
+		return strings.ToLower(strings.TrimRight(strings.TrimSpace(endpoint), "/"))
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+		if strings.EqualFold(u.Scheme, "http") {
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(strings.ToLower(strings.TrimSuffix(u.Hostname(), ".")), port) + strings.TrimRight(u.EscapedPath(), "/")
 }

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/oplock"
@@ -270,13 +272,12 @@ func (s *Server) rotateBucketKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.lockBucket(w, r, c) {
+	if !s.lockBucket(w, r, &c) {
 		return
 	}
 	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
 	if c.Bucket.PrevAccessKey != "" {
 		s.flashErrT(w, r, "flash.err.bucket_rotation_pending")
-		http.Redirect(w, r, c.url(), http.StatusSeeOther)
 		return
 	}
 	di, key := s.s3Instance(r, c.Org.ID, c.Bucket.InstanceID)
@@ -321,7 +322,7 @@ func (s *Server) revokeBucketPrevKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.lockBucket(w, r, c) {
+	if !s.lockBucket(w, r, &c) {
 		return
 	}
 	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
@@ -360,7 +361,7 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	}
 	// Held through the link check, the server-side cleanup and the row
 	// delete, so a link created meanwhile cannot outlive the bucket's data.
-	if !s.lockBucket(w, r, c) {
+	if !s.lockBucket(w, r, &c) {
 		return
 	}
 	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
@@ -372,7 +373,6 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(links) > 0 {
 		s.flashErrT(w, r, "flash.err.bucket_linked")
-		http.Redirect(w, r, c.url(), http.StatusSeeOther)
 		return
 	}
 	di, key := s.s3Instance(r, c.Org.ID, c.Bucket.InstanceID)
@@ -423,13 +423,30 @@ func (s *Server) removeGeneratedPrincipals(ctx context.Context, di dbservice.Ins
 }
 
 // lockBucket takes the bucket's lock or flashes "busy"; the caller releases.
-func (s *Server) lockBucket(w http.ResponseWriter, r *http.Request, c bucketCtx) bool {
-	if oplock.TryAcquire(oplock.Bucket(c.Bucket.ID)) {
-		return true
+//
+// It also re-reads the bucket into c: the row loaded before the lock may be
+// stale — a rotation or delete that held the lock a moment ago may have
+// changed its keys or removed it — and every mutation must act on the keys
+// and ownership flags as they are now. A bucket gone meanwhile is a 404, with
+// nothing changed on the server.
+func (s *Server) lockBucket(w http.ResponseWriter, r *http.Request, c *bucketCtx) bool {
+	if !oplock.TryAcquire(oplock.Bucket(c.Bucket.ID)) {
+		s.flashErrT(w, r, "flash.err.bucket_busy")
+		return false
 	}
-	s.flashErrT(w, r, "flash.err.bucket_busy")
-	http.Redirect(w, r, c.url(), http.StatusSeeOther)
-	return false
+	b, err := s.q.GetS3Bucket(r.Context(), c.Bucket.ID)
+	if err != nil {
+		oplock.Release(oplock.Bucket(c.Bucket.ID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.NotFound(w, r)
+		} else {
+			logFrom(r).Error("lockBucket: re-read failed", "err", err, "bucket_id", c.Bucket.ID)
+			s.flashErrT(w, r, "flash.err.internal")
+		}
+		return false
+	}
+	c.Bucket = b
+	return true
 }
 
 // removeEnvBuckets runs when an environment is deleted: its buckets' rows go

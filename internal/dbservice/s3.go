@@ -3,9 +3,9 @@ package dbservice
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -264,8 +264,13 @@ func (s *Service) ImportBucket(ctx context.Context, inst Instance, b Bucket) err
 		}
 		return err
 	}
-	// Whatever the read shows, the probe goes again: it is ours alone.
+	// Whatever the read shows, the probe goes again: it is ours alone. Once
+	// the principal has removed it itself there is nothing left to remove.
+	removed := false
 	defer func() {
+		if removed {
+			return
+		}
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionCompensateTimeout)
 		defer cancel()
 		if err := s.mc(cctx, inst, "rm probe", nil, "rm", probe); err != nil {
@@ -284,6 +289,7 @@ func (s *Service) ImportBucket(ctx context.Context, inst Instance, b Bucket) err
 		}
 		return err
 	}
+	removed = true
 	return nil
 }
 
