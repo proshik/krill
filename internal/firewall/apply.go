@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -140,15 +141,45 @@ func parseArmOutput(out string) (string, time.Time) {
 // Confirm cancels the pending auto-revert after the caller has verified the node
 // is still reachable and swarm-healthy, and persists the now-proven table so
 // the node loads it again at boot.
+//
+// It refuses with ErrRevertFired when the switch is no longer armed: the
+// revert has run (or is running), so the live table is the previous one and
+// persisting it as "confirmed" could capture the change it just undid.
+//
+// Once disarmed the change is confirmed, whatever happens next: a failure to
+// persist it is logged, not returned, so a caller never treats a ruleset that
+// is in force (with no revert left) as unconfirmed. The Firewall page reports
+// a table that is not persisted.
 func Confirm(ctx context.Context, r Runner) error {
-	if err := disarm(ctx, r); err != nil {
-		return err
-	}
-	out, err := r.Run(ctx, "", persistScript(persistPath, bootUnitDir+"/"+bootUnit))
+	out, err := r.Run(ctx, "", disarmIfArmedScript())
 	if err != nil {
-		return fmt.Errorf("persist ruleset: %w: %s", err, strings.TrimSpace(out))
+		return fmt.Errorf("disarm: %w: %s", err, strings.TrimSpace(out))
+	}
+	if strings.Contains(out, "expired") {
+		return ErrRevertFired
+	}
+	if out, err := r.Run(ctx, "", persistScript(persistPath, bootUnitDir+"/"+bootUnit)); err != nil {
+		slog.Warn("firewall: confirmed ruleset not persisted for boot", "err", err, "output", strings.TrimSpace(out))
 	}
 	return nil
+}
+
+// ErrRevertFired: Confirm found no armed dead-man switch to cancel.
+var ErrRevertFired = errors.New("firewall: the change was already reverted")
+
+// disarmIfArmedScript stops the revert timer if it is still waiting and says
+// which: "disarmed", or "expired" when it has already fired (or was never
+// armed).
+func disarmIfArmedScript() string {
+	return fmt.Sprintf(`# krill-fw-disarm
+if systemctl is-active --quiet %[1]s.timer 2>/dev/null; then
+	systemctl stop %[1]s.timer 2>/dev/null
+	systemctl reset-failed %[1]s >/dev/null 2>&1
+	echo disarmed
+else
+	echo expired
+fi
+`, revertUnit)
 }
 
 // disarm cancels the pending auto-revert without persisting anything: for a

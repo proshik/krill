@@ -54,6 +54,13 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 			out += "unit no\n"
 		}
 		return out, nil
+	case strings.HasPrefix(cmd, "# krill-fw-disarm"): // Confirm's disarm
+		if !h.pending {
+			return "expired\n", nil
+		}
+		h.pending = false
+		h.confirms++
+		return "disarmed\n", nil
 	case strings.HasPrefix(cmd, "set -e\nf="): // Confirm's persist script
 		if h.locked && len(h.rulesets) > 0 {
 			h.persisted = h.rulesets[len(h.rulesets)-1]

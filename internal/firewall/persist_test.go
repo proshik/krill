@@ -255,3 +255,70 @@ esac`,
 		t.Fatalf("ports: %+v\n%s", h, out)
 	}
 }
+
+// confirmRunner answers commands by prefix and records them.
+type confirmRunner struct {
+	disarm   string
+	persistE error
+	cmds     []string
+}
+
+func (s *confirmRunner) Run(_ context.Context, _, cmd string) (string, error) {
+	s.cmds = append(s.cmds, cmd)
+	switch {
+	case strings.HasPrefix(cmd, "# krill-fw-disarm"):
+		return s.disarm, nil
+	case strings.HasPrefix(cmd, "set -e\nf="):
+		return "", s.persistE
+	}
+	return "", nil
+}
+
+// A confirmation that arrives after the revert fired must not persist: the
+// live table is the previous one, or is being restored to it.
+func TestConfirmRefusesAfterTheRevertFired(t *testing.T) {
+	r := &confirmRunner{disarm: "expired\n"}
+	if err := Confirm(context.Background(), r); !errors.Is(err, ErrRevertFired) {
+		t.Fatalf("want ErrRevertFired, got %v", err)
+	}
+	for _, c := range r.cmds {
+		if strings.HasPrefix(c, "set -e\nf=") {
+			t.Fatal("a fired revert must not be followed by persisting")
+		}
+	}
+}
+
+// Once disarmed the change is in force: failing to persist it must not make
+// the caller treat it as unconfirmed.
+func TestConfirmSucceedsWhenOnlyPersistingFails(t *testing.T) {
+	r := &confirmRunner{disarm: "disarmed\n", persistE: errors.New("read-only file system")}
+	if err := Confirm(context.Background(), r); err != nil {
+		t.Fatalf("confirm must succeed once disarmed: %v", err)
+	}
+	if len(r.cmds) != 2 {
+		t.Fatalf("want disarm then persist, got %d commands", len(r.cmds))
+	}
+}
+
+// The disarm script itself, against a stubbed systemctl.
+func TestDisarmScriptReportsState(t *testing.T) {
+	for armed, want := range map[bool]string{true: "disarmed", false: "expired"} {
+		dir, _ := stubNode(t)
+		if armed {
+			os.WriteFile(filepath.Join(dir, "armed"), nil, 0o644)
+		}
+		out, err := LocalRunner{Timeout: 10 * time.Second}.Run(context.Background(), "", disarmIfArmedScript())
+		if err != nil || strings.TrimSpace(out) != want {
+			t.Fatalf("armed=%v: %q %v", armed, out, err)
+		}
+	}
+}
+
+// A userspace WireGuard (wireguard-go) is no "type wireguard" link; wg still
+// lists it, and its port must be admitted.
+func TestParseProbeUserspaceWireGuard(t *testing.T) {
+	h := parseProbe("nft yes\niface utun3 10.8.0.2/24\nmtu utun3 1420\nwgtool yes\nwg utun3\nwgport utun3 51820\n")
+	if h.SwarmIface == nil || !h.SwarmIface.WireGuard || len(h.WireGuardPorts) != 1 {
+		t.Fatalf("%+v %+v", h, h.SwarmIface)
+	}
+}

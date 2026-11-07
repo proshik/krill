@@ -527,7 +527,10 @@ func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Requ
 		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
 		return
 	}
-	if err := firewall.Confirm(r.Context(), s.cpFirewall); err != nil {
+	if err := firewall.Confirm(r.Context(), s.cpFirewall); errors.Is(err, firewall.ErrRevertFired) {
+		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
+		return
+	} else if err != nil {
 		logFrom(r).Error("confirm control-plane firewall failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return

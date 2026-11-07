@@ -27,18 +27,11 @@ func workerCheckKey(id int64) string { return "node-" + strconv.FormatInt(id, 10
 // swarmAddrs returns the address each node runs the swarm over: the control
 // plane's advertise address, and every swarm node's own address by node ID.
 // all holds every one of them, for deciding whether the whole cluster sits on
-// one WireGuard subnet. Lookup failures leave addresses out rather than
-// failing: an unknown address only means the ruleset is not bound to an
-// interface, which is the safe direction.
+// one WireGuard subnet. It is nil unless every node's address is known: a
+// shorter list would make binding swarm ports to the WireGuard interface MORE
+// likely (only the known nodes are checked), and an unbound ruleset is the
+// safe direction.
 func (s *Server) swarmAddrs(ctx context.Context) (cp net.IP, byNode map[string]net.IP, all []net.IP) {
-	byNode = map[string]net.IP{}
-	seen := map[string]bool{}
-	add := func(ip net.IP) {
-		if k := ip.String(); !seen[k] {
-			seen[k] = true
-			all = append(all, ip)
-		}
-	}
 	if s.cfg.AdvertiseAddr != "" {
 		if ips, err := resolveHostIPs(ctx, s.cfg.AdvertiseAddr); err == nil && len(ips) > 0 {
 			cp = ips[0]
@@ -48,23 +41,58 @@ func (s *Server) swarmAddrs(ctx context.Context) (cp net.IP, byNode map[string]n
 					break
 				}
 			}
-			add(cp)
 		}
 	}
-	if s.engine != nil {
-		nodes, err := s.engine.Nodes(ctx)
-		if err != nil {
-			slog.Warn("firewall: list swarm nodes for their addresses failed", "err", err)
-			return cp, byNode, all
+	if s.engine == nil {
+		byNode = map[string]net.IP{}
+		if cp != nil {
+			all = []net.IP{cp}
 		}
-		for _, n := range nodes {
-			if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
-				byNode[n.ID] = ip
-				add(ip)
-			}
-		}
+		return cp, byNode, all
 	}
+	nodes, err := s.engine.Nodes(ctx)
+	if err != nil {
+		slog.Warn("firewall: list swarm nodes for their addresses failed", "err", err)
+	}
+	byNode, all = swarmAddrSet(cp, nodes, err)
 	return cp, byNode, all
+}
+
+// swarmAddrSet maps nodes to their swarm addresses and returns the full list
+// only when it is complete: the control plane's address is known, the node
+// listing succeeded, and every node other than a manager reporting 0.0.0.0
+// has an address.
+func swarmAddrSet(cp net.IP, nodes []docker.SwarmNode, nodesErr error) (map[string]net.IP, []net.IP) {
+	byNode := map[string]net.IP{}
+	var all []net.IP
+	seen := map[string]bool{}
+	add := func(ip net.IP) {
+		if k := ip.String(); !seen[k] {
+			seen[k] = true
+			all = append(all, ip)
+		}
+	}
+	complete := cp != nil && nodesErr == nil
+	if cp != nil {
+		add(cp)
+	}
+	for _, n := range nodes {
+		ip := net.ParseIP(n.Addr)
+		if ip == nil || ip.IsUnspecified() {
+			// A manager may report 0.0.0.0; the control plane's address is
+			// its advertise address. Any other node's address is unknown.
+			if n.Role != "manager" {
+				complete = false
+			}
+			continue
+		}
+		byNode[n.ID] = ip
+		add(ip)
+	}
+	if !complete {
+		return byNode, nil
+	}
+	return byNode, all
 }
 
 // nodeRuleset probes a node and builds the ruleset base needs on it.

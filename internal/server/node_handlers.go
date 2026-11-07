@@ -354,6 +354,15 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range rows {
 		if row.SwarmNodeID == swarmID {
+			// A locked node reloads its persisted ruleset at every boot, and
+			// once its row is gone nothing in Krill can open it again.
+			if rr, kerr := firewallRunner(row); kerr == nil {
+				if oerr := firewall.Open(r.Context(), rr); oerr != nil {
+					logFrom(r).Warn("removeNode: firewall not opened on the removed node", "err", oerr, "node", row.Name)
+				}
+			} else {
+				logFrom(r).Warn("removeNode: node ssh key unusable, firewall not opened", "err", kerr, "node", row.Name)
+			}
 			if derr := s.q.DeleteClusterNode(r.Context(), row.ID); derr != nil {
 				logFrom(r).Error("removeNode: delete row failed", "err", derr, "id", row.ID)
 			}

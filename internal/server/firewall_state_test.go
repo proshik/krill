@@ -1,9 +1,12 @@
 package server
 
 import (
+	"errors"
+	"net"
 	"reflect"
 	"testing"
 
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -65,5 +68,25 @@ func TestOverlayMTUView(t *testing.T) {
 	v = overlayMTUView(0, "krill-net", []templates.FirewallNode{{Name: "cp", Iface: "eth0", MTU: 1500}}, nil)
 	if v.TooLarge || v.Available || v.Recommended != 1450 {
 		t.Fatalf("plain: %+v", v)
+	}
+}
+
+// Binding swarm ports to the WireGuard interface needs every node's address:
+// a failed node listing or a node without one yields no list, so no binding.
+func TestSwarmAddrSetOnlyWhenComplete(t *testing.T) {
+	cp := net.ParseIP("10.8.0.1")
+	nodes := []docker.SwarmNode{{ID: "m", Role: "manager", Addr: "0.0.0.0"}, {ID: "w1", Role: "worker", Addr: "10.8.0.2"}}
+	byNode, all := swarmAddrSet(cp, nodes, nil)
+	if len(all) != 2 || byNode["w1"].String() != "10.8.0.2" {
+		t.Fatalf("complete: %v %v", all, byNode)
+	}
+	if _, all := swarmAddrSet(cp, nodes, errors.New("daemon busy")); all != nil {
+		t.Fatalf("failed listing must give no list: %v", all)
+	}
+	if _, all := swarmAddrSet(cp, append(nodes, docker.SwarmNode{ID: "w2", Role: "worker", Addr: ""}), nil); all != nil {
+		t.Fatalf("a worker without an address must give no list: %v", all)
+	}
+	if _, all := swarmAddrSet(nil, nodes, nil); all != nil {
+		t.Fatalf("an unknown control plane must give no list: %v", all)
 	}
 }

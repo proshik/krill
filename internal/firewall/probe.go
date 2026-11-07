@@ -80,6 +80,9 @@ ip -o link show 2>/dev/null | awk '{n=$2; sub(":$","",n); sub("@.*$","",n); for(
 ip -o link show type wireguard 2>/dev/null | awk '{n=$2; sub(":$","",n); print "wg", n}'
 if command -v wg >/dev/null 2>&1; then
 	echo "wgtool yes"
+	# wireguard-go and boringtun interfaces are tun devices that
+	# "ip link show type wireguard" does not list; wg knows them.
+	for i in $(wg show interfaces 2>/dev/null); do echo "wg $i"; done
 	wg show all listen-port 2>/dev/null | awk '{print "wgport", $1, $2}'
 fi
 `, shellQuote(addr), markerPrefix, revertUnit, file, bootUnit)

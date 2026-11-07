@@ -136,16 +136,21 @@ closed, the UI port open only to the gateway (`docker_gwbridge`). A node that be
 on its own, and the control plane's lockdown is reverted unless you confirm it from the page
 within two minutes.
 
-Once a node's lockdown is confirmed, the loaded table is saved to `/etc/krill/firewall.nft` and
+A confirmation that arrives after the dead-man switch already fired is refused and saves
+nothing. Once a node's lockdown is confirmed, the loaded table is saved to `/etc/krill/firewall.nft` and
 the `krill-firewall.service` unit reloads it at boot, ordered after the distribution's own
 `nftables.service` and firewalld, either of which may flush the whole ruleset when it starts.
-**Open cluster** removes both. An unconfirmed change is never saved, so a reboot during the
-two-minute window brings back the last confirmed state, not the change under test.
+**Open cluster** removes both, and so does removing a node from the cluster. An unconfirmed
+change is never saved, so a reboot during the two-minute window brings back the last confirmed
+state, not the change under test. Failing to save a confirmed ruleset does not undo the
+confirmation; the Firewall page then shows the node as not saved for boot.
 
-The firewall reads each node's WireGuard interfaces before building its ruleset. WireGuard
+The firewall reads each node's WireGuard interfaces before building its ruleset (kernel
+interfaces, and userspace ones such as wireguard-go through `wg show interfaces`). WireGuard
 listen ports are admitted from anywhere, because WireGuard drops anything that does not
 authenticate and a peer's endpoint need not be a cluster address. When a node's swarm
-address sits on a WireGuard interface whose subnet holds every node's swarm address, the
+address sits on a WireGuard interface whose subnet holds every node's swarm address — and
+every node's address is known; any doubt leaves the rule unbound — the
 swarm ports (2377, 7946, 4789) are accepted only on that interface: VXLAN has no
 authentication of its own. A node with WireGuard but no `wg` tool to read its ports is left
 unchanged rather than cut off from its tunnel.
