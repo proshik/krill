@@ -44,8 +44,8 @@ func rulesetWith(marker string) string {
 //	KRILL_FWTEST_CONTAINER=krill-fwtest [KRILL_FWTEST_ELAPSE=1] \
 //	  go test -tags=realsystemd ./internal/firewall -run TestConfirmProtocolOnRealSystemd -v
 //
-// KRILL_FWTEST_ELAPSE also waits for the real timer (2-3 minutes: a transient
-// timer's default accuracy is one minute).
+// KRILL_FWTEST_ELAPSE also waits for the real timer (about two minutes) and
+// checks it fires on time.
 func TestConfirmProtocolOnRealSystemd(t *testing.T) {
 	ctr := os.Getenv("KRILL_FWTEST_CONTAINER")
 	if ctr == "" {
@@ -146,8 +146,15 @@ func TestConfirmProtocolOnRealSystemd(t *testing.T) {
 			t.Fatalf("apply: %v", err)
 		}
 		t.Logf("armed:\n%s", units())
-		time.Sleep(RevertDelay + 8*time.Second)
+		if got := sh(`systemctl show -p AccuracyUSec --value krill-fw-revert.timer`); got != "1s" {
+			t.Fatalf("timer accuracy %q, want 1s", got)
+		}
+		time.Sleep(RevertDelay + 5*time.Second)
 		t.Logf("after the delay:\n%s", units())
+		// It fired on time: the revert is done and the transient units are gone.
+		if sh(`systemctl is-active --quiet krill-fw-revert.timer krill-fw-revert.service && echo armed`) == "armed" {
+			t.Fatalf("the switch has not fired %s after arming", RevertDelay+5*time.Second)
+		}
 		if got := live(); got != "krill_rs_aaaa" {
 			t.Fatalf("the real timer did not restore the previous table: %q", got)
 		}

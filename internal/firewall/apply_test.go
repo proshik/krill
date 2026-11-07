@@ -147,7 +147,7 @@ func TestArmScriptSnapshotReplacesTable(t *testing.T) {
 	if got := readFile(t, filepath.Join(dir, "prev.nft")); got != snapshotPrologue+table {
 		t.Fatalf("snapshot:\n%s", got)
 	}
-	if sched := readFile(t, filepath.Join(dir, "sched")); !strings.Contains(sched, "--unit=krill-fw-revert") || !strings.Contains(sched, filepath.Join(dir, "prev.nft")) {
+	if sched := readFile(t, filepath.Join(dir, "sched")); !strings.Contains(sched, "--unit=krill-fw-revert") || !strings.Contains(sched, "--timer-property=AccuracySec=1s") || !strings.Contains(sched, filepath.Join(dir, "prev.nft")) {
 		t.Fatalf("revert not scheduled against the snapshot: %s", sched)
 	}
 }

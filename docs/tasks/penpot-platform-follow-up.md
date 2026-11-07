@@ -405,8 +405,10 @@ switch, confirming while the revert runs, and the real timer elapsing. The
 second case failed at first: Confirm waited for the revert's lock, then saw
 the service inactive and the timer still active and confirmed the reverted
 change. The revert now leaves its own marker, which Confirm checks; all
-three cases pass on both versions. Observed, not changed: a transient timer
-fires up to a minute after the displayed revert time (default `AccuracySec`).
+three cases pass on both versions. A transient timer also fired up to a
+minute after the displayed revert time (systemd's default `AccuracySec`);
+the switch is now armed with `AccuracySec=1s`, and the real-timer case checks
+that it has fired five seconds after the delay, on both versions.
 
 ## Intake verification (historical)
 

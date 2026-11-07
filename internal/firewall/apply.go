@@ -86,7 +86,9 @@ mv "$prev.tmp" "$prev"
 # Neither a confirmation nor a revert of an earlier switch speaks for this one.
 rm -f "$prev.confirmed" "$prev.reverted"
 echo $(( $(date +%%s) + %[4]d )) > "$at"
-systemd-run --on-active=%[4]d --unit="$unit" sh -c '%[5]s' "$prev"
+# AccuracySec: a timer may otherwise fire up to a minute late (systemd's
+# default), past the revert time the Firewall page shows.
+systemd-run --on-active=%[4]d --timer-property=AccuracySec=1s --unit="$unit" sh -c '%[5]s' "$prev"
 echo "armed $(cat "$at")"
 `, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec, revertShell)
 }
