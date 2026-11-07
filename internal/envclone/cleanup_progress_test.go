@@ -69,7 +69,10 @@ func TestCleanupProgressSurvivesProcessRecreation(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Use the persisted timestamp precision and omit Go's monotonic clock.
-			deadline = reserved.Deadline
+			// UTC, because the intent is compared with reflect.DeepEqual after a
+			// JSON round trip, which yields UTC for a "Z" offset: a Local time
+			// would differ in its location under TZ=UTC (as on CI) though equal.
+			deadline = reserved.Deadline.UTC()
 			intent := ResourceIntent{}
 			names := []string{}
 			for i := range 3 {

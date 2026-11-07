@@ -114,6 +114,14 @@ func newNodeServer(t *testing.T) (http.Handler, *db.Queries, *org.Service, *fake
 // always reports none).
 func newNodeServerWithEngine(t *testing.T, eng docker.Engine) (http.Handler, *db.Queries, *org.Service, *fakeObsCtl) {
 	t.Helper()
+	srv, q, orgSvc, obs := newNodeServerSrv(t, eng)
+	return srv.Router(), q, orgSvc, obs
+}
+
+// newNodeServerSrv is newNodeServerWithEngine returning the Server itself, for
+// a test that needs to hold one of its locks.
+func newNodeServerSrv(t *testing.T, eng docker.Engine) (*server.Server, *db.Queries, *org.Service, *fakeObsCtl) {
+	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
 	orgSvc := org.NewService(q)
@@ -125,7 +133,7 @@ func newNodeServerWithEngine(t *testing.T, eng docker.Engine) (http.Handler, *db
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	obs := &fakeObsCtl{}
 	srv.SetObservability(obs, func(context.Context, observability.Settings) observability.Report { return observability.Report{} })
-	return srv.Router(), q, orgSvc, obs
+	return srv, q, orgSvc, obs
 }
 
 // newDeployServer is like newServer but wires a real deployer with a no-op

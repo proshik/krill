@@ -1,6 +1,10 @@
 package templates
 
 import (
+	"strconv"
+	"strings"
+	"time"
+
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -13,10 +17,81 @@ type ControlPlaneFirewall struct {
 	Pending   bool // applied but not yet confirmed: the dead-man switch will revert it
 }
 
+// FirewallNode is one node's firewall as read from the host on this render.
+type FirewallNode struct {
+	Name         string
+	ControlPlane bool
+	Managed      bool // worker: Krill recorded a confirmed lockdown
+	// State: open, locked, pending, missing (managed or persisted, but no table
+	// loaded), nft_missing, unavailable (the node could not be read).
+	State          string
+	Drift          []string // i18n keys of the differences found
+	Iface          string   // interface holding the swarm address ("" unknown)
+	MTU            int
+	WireGuard      bool
+	WireGuardPorts []int
+	LastOK         time.Time // last successful read (now, when this one succeeded)
+}
+
+// OverlayMTU is the overlay MTU diagnosis on the Firewall page.
+type OverlayMTU struct {
+	Configured   int // KRILL_OVERLAY_MTU; 0 = Docker default
+	Effective    int // what new networks get
+	MinIface     int // smallest swarm-interface MTU found (0 = none read)
+	MinIfaceNode string
+	MinIfaceName string
+	Recommended  int  // MinIface minus VXLAN overhead (0 = unknown)
+	TooLarge     bool // Effective exceeds Recommended
+	Available    bool // the engine reported network MTUs
+	Networks     []NetworkMTU
+}
+
+// NetworkMTU is one existing Krill overlay network.
+type NetworkMTU struct {
+	Name     string
+	MTU      int
+	Differs  bool // differs from what a new network would get
+	TooLarge bool // exceeds the recommended MTU
+}
+
+func firewallNet(n FirewallNode) string {
+	if n.Iface == "" {
+		return "—"
+	}
+	parts := []string{n.Iface}
+	if n.MTU > 0 {
+		parts = append(parts, "MTU "+strconv.Itoa(n.MTU))
+	}
+	if n.WireGuard {
+		parts = append(parts, "WireGuard")
+	}
+	for _, p := range n.WireGuardPorts {
+		parts = append(parts, "udp/"+strconv.Itoa(p))
+	}
+	return strings.Join(parts, " · ")
+}
+
+templ firewallBadge(state string) {
+	switch state {
+		case "locked":
+			<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.locked") }</span>
+		case "pending":
+			<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.pending") }</span>
+		case "missing":
+			<span class="k-badge k-badge-error"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.missing") }</span>
+		case "nft_missing":
+			<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.nft_missing") }</span>
+		case "unavailable":
+			<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.unavailable") }</span>
+		default:
+			<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.open") }</span>
+	}
+}
+
 // Firewall renders the cluster-firewall page: the control plane's live state,
 // the worker nodes with their firewall_managed state, and the lockdown, open
 // and confirm actions.
-templ Firewall(org db.Organization, role string, rows []db.ClusterNode, cp ControlPlaneFirewall) {
+templ Firewall(org db.Organization, role string, nodes []FirewallNode, cp ControlPlaneFirewall, mtu OverlayMTU) {
 	@Layout(i18n.T(ctx, "firewall.title"), org, role) {
 		@settingsNav(org.ID)
 		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "firewall.desc") }</p>
@@ -29,42 +104,41 @@ templ Firewall(org db.Organization, role string, rows []db.ClusterNode, cp Contr
 			</div>
 		}
 		<div class="k-card">
-			<table class="k-table">
-				<thead>
-					<tr>
-						<th>{ i18n.T(ctx, "nodes.hostname") }</th>
-						<th>{ i18n.T(ctx, "firewall.status") }</th>
-					</tr>
-				</thead>
-				<tbody>
-					<tr>
-						<td class="k-mono">control-plane</td>
-						<td>
-							if !cp.Available {
-								<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.unavailable") }</span>
-							} else if cp.Pending {
-								<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.pending") }</span>
-							} else if cp.Locked {
-								<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.locked") }</span>
-							} else {
-								<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.open") }</span>
-							}
-						</td>
-					</tr>
-					for _, n := range rows {
+			<div class="overflow-x-auto">
+				<table class="k-table">
+					<thead>
 						<tr>
-							<td class="k-mono">{ n.Name }</td>
-							<td>
-								if n.FirewallManaged {
-									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.locked") }</span>
-								} else {
-									<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "firewall.open") }</span>
-								}
-							</td>
+							<th>{ i18n.T(ctx, "nodes.hostname") }</th>
+							<th>{ i18n.T(ctx, "firewall.status") }</th>
+							<th>{ i18n.T(ctx, "firewall.network") }</th>
+							<th>{ i18n.T(ctx, "firewall.notes") }</th>
 						</tr>
-					}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						for _, n := range nodes {
+							<tr>
+								<td class="k-mono">{ n.Name }</td>
+								<td>
+									@firewallBadge(n.State)
+								</td>
+								<td class="k-mono">{ firewallNet(n) }</td>
+								<td>
+									for _, d := range n.Drift {
+										<div style="color:var(--color-warn)">{ i18n.T(ctx, d) }</div>
+									}
+									if n.State == "unavailable" {
+										if n.LastOK.IsZero() {
+											<div style="color:var(--color-muted)">{ i18n.T(ctx, "firewall.never_checked") }</div>
+										} else {
+											<div style="color:var(--color-muted)">{ i18n.Tf(ctx, "firewall.last_ok", n.LastOK.Local().Format("2006-01-02 15:04")) }</div>
+										}
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
 			if role == "owner" || role == "admin" {
 				<div class="flex items-center gap-2 mt-4">
 					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/lockdown") } data-confirm={ i18n.T(ctx, "firewall.confirm.lockdown") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
@@ -73,6 +147,67 @@ templ Firewall(org db.Organization, role string, rows []db.ClusterNode, cp Contr
 					<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/firewall/open") } data-confirm={ i18n.T(ctx, "firewall.confirm.open") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "firewall.open_action") }</button>
 					</form>
+				</div>
+			}
+		</div>
+		<div class="k-card mt-4">
+			<h2 class="mb-2" style="font-weight:600">{ i18n.T(ctx, "mtu.title") }</h2>
+			<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "mtu.desc") }</p>
+			<dl class="k-mono mb-3" style="display:grid;grid-template-columns:max-content 1fr;gap:4px 16px">
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "mtu.configured") }</dt>
+				<dd>
+					if mtu.Configured == 0 {
+						{ i18n.Tf(ctx, "mtu.default", mtu.Effective) }
+					} else {
+						{ strconv.Itoa(mtu.Configured) }
+					}
+				</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "mtu.smallest_iface") }</dt>
+				<dd>
+					if mtu.MinIface == 0 {
+						—
+					} else {
+						{ strconv.Itoa(mtu.MinIface) + " (" + mtu.MinIfaceNode + " · " + mtu.MinIfaceName + ")" }
+					}
+				</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "mtu.recommended") }</dt>
+				<dd>
+					if mtu.Recommended == 0 {
+						—
+					} else {
+						{ strconv.Itoa(mtu.Recommended) }
+					}
+				</dd>
+			</dl>
+			if mtu.TooLarge {
+				<p class="mb-3" style="color:var(--color-warn);max-width:720px">{ i18n.Tf(ctx, "mtu.too_large", mtu.Effective, mtu.MinIfaceName, mtu.MinIfaceNode, mtu.MinIface, mtu.Recommended) }</p>
+			}
+			if mtu.Available {
+				<div class="overflow-x-auto">
+					<table class="k-table">
+						<thead>
+							<tr>
+								<th>{ i18n.T(ctx, "mtu.network") }</th>
+								<th>MTU</th>
+								<th>{ i18n.T(ctx, "firewall.notes") }</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, n := range mtu.Networks {
+								<tr>
+									<td class="k-mono">{ n.Name }</td>
+									<td class="k-mono">{ strconv.Itoa(n.MTU) }</td>
+									<td>
+										if n.TooLarge {
+											<div style="color:var(--color-warn)">{ i18n.T(ctx, "mtu.net_too_large") }</div>
+										} else if n.Differs {
+											<div style="color:var(--color-muted)">{ i18n.T(ctx, "mtu.net_differs") }</div>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
 				</div>
 			}
 		</div>

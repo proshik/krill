@@ -11,7 +11,10 @@ const (
 	CodeForbidden Code = "forbidden"
 	CodeInvalid   Code = "invalid"
 	CodeConflict  Code = "conflict"
-	CodeInternal  Code = "internal"
+	// CodeUnavailable: the request was refused for now (a full deploy queue,
+	// the organization's deploy limit, a shutdown) and can be retried as is.
+	CodeUnavailable Code = "unavailable"
+	CodeInternal    Code = "internal"
 )
 
 // Error is the single error shape both adapters map from.
@@ -26,3 +29,6 @@ func NotFound(msg string) *Error  { return &Error{Code: CodeNotFound, Message: m
 func Invalid(msg string) *Error   { return &Error{Code: CodeInvalid, Message: msg} }
 func Forbidden(msg string) *Error { return &Error{Code: CodeForbidden, Message: msg} }
 func Conflict(msg string) *Error  { return &Error{Code: CodeConflict, Message: msg} }
+func Unavailable(msg string) *Error {
+	return &Error{Code: CodeUnavailable, Message: msg}
+}

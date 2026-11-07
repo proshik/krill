@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -82,11 +83,26 @@ fi
 systemctl reset-failed "$unit.timer" "$unit.service" >/dev/null 2>&1 || true
 { printf '%[3]s'; nft list table inet krill 2>/dev/null || true; } > "$prev.tmp"
 mv "$prev.tmp" "$prev"
+# Neither a confirmation nor a revert of an earlier switch speaks for this one.
+rm -f "$prev.confirmed" "$prev.reverted"
 echo $(( $(date +%%s) + %[4]d )) > "$at"
-systemd-run --on-active=%[4]d --unit="$unit" nft -f "$prev"
+# AccuracySec: a timer may otherwise fire up to a minute late (systemd's
+# default), past the revert time the Firewall page shows.
+systemd-run --on-active=%[4]d --timer-property=AccuracySec=1s --unit="$unit" sh -c '%[5]s' "$prev"
 echo "armed $(cat "$at")"
-`, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec)
+`, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec, revertShell)
 }
+
+// revertShell is what the dead-man switch runs, with the snapshot path as $0.
+// It takes the same lock as a confirmation and does nothing once the change
+// was confirmed: a timer that fires while (or after) Confirm holds the lock
+// waits for it, then finds the marker. Otherwise it leaves a "reverted"
+// marker before restoring, so a Confirm that waited for this lock knows the
+// revert ran — systemd's unit state cannot tell it: once the service has
+// finished it is inactive like one that never started, and the timer may
+// still read active. Without the lock, a confirmation could disarm a revert
+// that had already started and persist a table the revert was replacing.
+const revertShell = `exec 9>"$0.lock"; if command -v flock >/dev/null 2>&1; then flock 9; fi; [ -e "$0.confirmed" ] && exit 0; touch "$0.reverted"; exec nft -f "$0"`
 
 // Apply installs the ruleset with a dead-man switch: it first snapshots the
 // current table and schedules an auto-revert in revertDelaySec, THEN applies the
@@ -112,7 +128,7 @@ func Apply(ctx context.Context, r Runner, ruleset string) error {
 	if _, err := r.Run(ctx, ruleset, "nft -f -"); err != nil {
 		// `nft -f` is one transaction: a rejected ruleset changed nothing, so
 		// the armed switch would only block the next attempt for its full delay.
-		if cerr := Confirm(ctx, r); cerr != nil {
+		if cerr := disarm(ctx, r); cerr != nil {
 			return fmt.Errorf("apply ruleset: %w (disarming the revert also failed: %v)", err, cerr)
 		}
 		return fmt.Errorf("apply ruleset: %w", err)
@@ -138,16 +154,129 @@ func parseArmOutput(out string) (string, time.Time) {
 }
 
 // Confirm cancels the pending auto-revert after the caller has verified the node
-// is still reachable and swarm-healthy.
+// is still reachable and swarm-healthy, and persists the now-proven table so
+// the node loads it again at boot.
+//
+// It refuses with ErrRevertFired when the switch is no longer armed: the
+// revert has run (or is running), so the live table is the previous one and
+// persisting it as "confirmed" could capture the change it just undid.
+//
+// Once disarmed the change is confirmed, whatever happens next: a failure to
+// persist it is logged, not returned, so a caller never treats a ruleset that
+// is in force (with no revert left) as unconfirmed. The Firewall page reports
+// a table that is not persisted.
 func Confirm(ctx context.Context, r Runner) error {
+	out, err := r.Run(ctx, "", disarmIfArmedScript(revertSavePath))
+	if err != nil {
+		return fmt.Errorf("disarm: %w: %s", err, strings.TrimSpace(out))
+	}
+	if strings.Contains(out, "expired") {
+		return ErrRevertFired
+	}
+	if out, err := r.Run(ctx, "", persistScript(persistPath, bootUnitDir+"/"+bootUnit)); err != nil {
+		slog.Warn("firewall: confirmed ruleset not persisted for boot", "err", err, "output", strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// ErrRevertFired: Confirm found no armed dead-man switch to cancel.
+var ErrRevertFired = errors.New("firewall: the change was already reverted")
+
+// disarmIfArmedScript confirms under the switch's lock: "expired" when the
+// revert is running or has run (its own marker says so) or nothing was armed,
+// otherwise it leaves the
+// "confirmed" marker the revert checks under the same lock, stops the timer
+// and says "disarmed". The marker comes first, so a timer firing at any point
+// after the check finds it.
+func disarmIfArmedScript(savePath string) string {
+	return fmt.Sprintf(`# krill-fw-disarm
+unit=%[1]s
+prev=%[2]s
+exec 9>"$prev.lock"
+if command -v flock >/dev/null 2>&1; then flock 9; fi
+if [ -e "$prev.reverted" ] || systemctl is-active --quiet "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.timer" 2>/dev/null; then
+	echo expired
+	exit 0
+fi
+touch "$prev.confirmed"
+systemctl stop "$unit.timer" 2>/dev/null
+systemctl reset-failed "$unit" >/dev/null 2>&1
+echo disarmed
+`, revertUnit, savePath)
+}
+
+// disarm cancels the pending auto-revert without persisting anything: for a
+// ruleset nft rejected, which changed nothing.
+func disarm(ctx context.Context, r Runner) error {
 	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; systemctl reset-failed %s 2>/dev/null; true", revertUnit, revertUnit))
 	return err
 }
 
-// Open removes the lockdown table (and cancels any pending revert).
+// bootUnitText is the unit that reloads the persisted ruleset at boot. It runs
+// before the network comes up, like the distribution's own nftables.service,
+// and after it and firewalld: both may flush the whole ruleset when they
+// start, which would remove a table loaded earlier. It has no ExecStop, so
+// stopping the unit never opens the node.
+func bootUnitText(nft, file string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Krill node firewall (inet krill)
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=nftables.service firewalld.service
+Conflicts=shutdown.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=null
+ExecStart=%s -f %s
+
+[Install]
+WantedBy=sysinit.target
+`, nft, file)
+}
+
+// persistScript writes the loaded table to persistPath — prefixed with the
+// same full-replace prologue as a snapshot, so loading it replaces whatever
+// table exists — and enables the boot unit; with no table loaded it removes
+// both, so a node that is open stays open after a reboot. The file is written
+// next to its final place and renamed, so a failure never leaves a truncated
+// ruleset for the next boot.
+func persistScript(file, unit string) string {
+	return fmt.Sprintf(`set -e
+f=%[1]s
+mkdir -p "$(dirname "$f")"
+if nft list table inet krill > "$f.list" 2>/dev/null; then
+	{ printf '%[2]s'; cat "$f.list"; } > "$f.new"
+	rm -f "$f.list"
+	chmod 600 "$f.new"
+	mv "$f.new" "$f"
+	nft=$(command -v nft)
+	cat > %[3]s.new <<'UNIT'
+%[4]sUNIT
+	sed "s#__NFT__#$nft#" %[3]s.new > %[3]s.tmp && mv %[3]s.tmp %[3]s.new
+	if ! cmp -s %[3]s.new %[3]s 2>/dev/null; then mv %[3]s.new %[3]s; systemctl daemon-reload; else rm -f %[3]s.new; fi
+	systemctl enable %[5]s >/dev/null 2>&1
+	echo persisted
+else
+	rm -f "$f.list" "$f"
+	systemctl disable %[5]s >/dev/null 2>&1 || true
+	echo removed
+fi
+`, file, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), unit, bootUnitText("__NFT__", file), bootUnit)
+}
+
+// Open removes the lockdown table, cancels any pending revert and removes the
+// persisted ruleset, so the node also stays open after a reboot.
 func Open(ctx context.Context, r Runner) error {
-	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; true", revertUnit))
+	_, err := r.Run(ctx, "", fmt.Sprintf("systemctl stop %s.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; %s", revertUnit, unpersistScript()))
 	return err
+}
+
+// unpersistScript removes the persisted ruleset and disables its boot unit.
+func unpersistScript() string {
+	return fmt.Sprintf("rm -f %s; systemctl disable %s >/dev/null 2>&1; true", persistPath, bootUnit)
 }
 
 // Status reports whether the lockdown table is present on the node.

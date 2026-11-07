@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/proshik/krill/internal/cluster"
@@ -189,10 +190,12 @@ func (s *Server) controlPlaneRuleset(r *http.Request, closeDirect bool) (string,
 		logFrom(r).Error("control-plane ruleset: listen address unusable", "err", err)
 		return "", "flash.err.internal"
 	}
-	ruleset, err := firewall.BuildManagerRuleset(ips, ports.Public, ports.Gateway)
+	cpAddr, _, all := s.swarmAddrs(r.Context())
+	base := firewall.Rules{ClusterIPs: ips, PublicTCP: ports.Public, GatewayTCP: ports.Gateway}
+	ruleset, _, err := nodeRuleset(r.Context(), s.cpFirewall, cpAddr, base, all)
 	if err != nil {
 		logFrom(r).Error("control-plane ruleset: build failed", "err", err)
-		return "", "flash.err.internal"
+		return "", probeErrKey(err)
 	}
 	return ruleset, ""
 }
@@ -244,13 +247,20 @@ func (s *Server) firewallPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cp := s.controlPlaneFirewallState(r.Context())
+	nodes := s.firewallNodes(r, rows)
+	cp := templates.ControlPlaneFirewall{}
+	for _, n := range nodes {
+		if n.ControlPlane {
+			cp = templates.ControlPlaneFirewall{Available: n.State != "unavailable", Locked: n.State == "locked" || n.State == "pending", Pending: n.State == "pending"}
+		}
+	}
 	if cp.Pending {
 		// The confirmation must arrive on a connection opened AFTER the ruleset
 		// was applied, or it proves nothing — see confirmControlPlaneFirewall.
 		w.Header().Set("Connection", "close")
 	}
-	render(w, r, http.StatusOK, templates.Firewall(o, role, rows, cp))
+	mtu := overlayMTUView(s.cfg.OverlayMTU, s.cfg.Network, nodes, s.overlayMTUs(r.Context()))
+	render(w, r, http.StatusOK, templates.Firewall(o, role, nodes, cp, mtu))
 }
 
 // lockdownWorkers applies the nftables allowlist to every worker node, then to
@@ -283,11 +293,11 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	ruleset, err := firewall.BuildWorkerRuleset(ips)
-	if err != nil {
+	if len(ips) == 0 {
 		s.flashErrT(w, r, "flash.err.firewall_no_nodes")
 		return
 	}
+	_, byNode, all := s.swarmAddrs(r.Context())
 	// Build the control-plane ruleset before touching any node, so a config
 	// problem refuses the whole lockdown instead of leaving it half-applied.
 	var cpRuleset string
@@ -318,14 +328,25 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	// failed names the workers left as they were (or reverting on their own),
+	// so the operator learns which nodes the lockdown did not cover.
+	var failed []string
 	for _, n := range rows {
 		rr, kerr := firewallRunner(n)
 		if kerr != nil {
 			logFrom(r).Error("firewall lockdown: node ssh key unusable", "err", kerr, "node", n.Name)
+			failed = append(failed, n.Name)
+			continue
+		}
+		ruleset, _, err := nodeRuleset(r.Context(), rr, byNode[n.SwarmNodeID], firewall.Rules{ClusterIPs: ips}, all)
+		if err != nil {
+			logFrom(r).Warn("firewall lockdown: node ruleset unavailable; node left unchanged", "err", err, "node", n.Name)
+			failed = append(failed, n.Name)
 			continue
 		}
 		if err := firewall.Apply(r.Context(), rr, ruleset); err != nil {
 			logFrom(r).Warn("firewall apply failed", "err", err, "node", n.Name)
+			failed = append(failed, n.Name)
 			continue // dead-man switch on the node auto-reverts
 		}
 		// SSH (dport 22) is always allowed by the ruleset, so Confirm alone
@@ -335,18 +356,28 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		// switch armed so the node reverts itself.
 		if !s.nodesSwarmReady(r.Context(), logFrom(r), []string{n.SwarmNodeID}) {
 			logFrom(r).Warn("firewall lockdown: node not swarm-ready after apply; skipping confirm, auto-revert will fire", "node", n.Name)
+			failed = append(failed, n.Name)
 			continue
 		}
 		if err := firewall.Confirm(r.Context(), rr); err != nil {
 			logFrom(r).Warn("firewall confirm failed", "err", err, "node", n.Name)
+			failed = append(failed, n.Name)
 			continue
 		}
 		if err := s.q.SetClusterNodeFirewallManaged(r.Context(), db.SetClusterNodeFirewallManagedParams{ID: n.ID, FirewallManaged: true}); err != nil {
 			logFrom(r).Error("lockdownWorkers: persist firewall_managed failed", "err", err, "node", n.Name)
 		}
 	}
+	failedMsg := ""
+	if len(failed) > 0 {
+		failedMsg = i18n.Tf(r.Context(), "flash.err.firewall_nodes_failed", strings.Join(failed, ", "))
+	}
 	if s.cpFirewall == nil {
-		s.flashOK(w, r, "flash.ok.firewall_locked")
+		if failedMsg != "" {
+			s.setFlash(w, r, "err", failedMsg)
+		} else {
+			s.flashOK(w, r, "flash.ok.firewall_locked")
+		}
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
@@ -358,7 +389,13 @@ func (s *Server) lockdownWorkers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if res := s.lockdownControlPlane(r, cpRuleset); res.Err != "" {
-		s.setFlash(w, r, "err", res.message(r.Context(), ""))
+		msg := res.message(r.Context(), "")
+		if failedMsg != "" {
+			msg = failedMsg + " " + msg
+		}
+		s.setFlash(w, r, "err", msg)
+	} else if failedMsg != "" {
+		s.setFlash(w, r, "err", failedMsg+" "+i18n.T(r.Context(), "flash.ok.firewall_cp_pending"))
 	} else {
 		s.flashOK(w, r, "flash.ok.firewall_cp_pending")
 	}
@@ -490,7 +527,10 @@ func (s *Server) confirmControlPlaneFirewall(w http.ResponseWriter, r *http.Requ
 		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
 		return
 	}
-	if err := firewall.Confirm(r.Context(), s.cpFirewall); err != nil {
+	if err := firewall.Confirm(r.Context(), s.cpFirewall); errors.Is(err, firewall.ErrRevertFired) {
+		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
+		return
+	} else if err != nil {
 		logFrom(r).Error("confirm control-plane firewall failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return

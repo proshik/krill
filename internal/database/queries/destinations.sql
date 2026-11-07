@@ -18,4 +18,8 @@ DELETE FROM destinations WHERE id = $1;
 SELECT count(*) FROM destinations WHERE organization_id = $1 AND name = $2;
 
 -- name: CountBackupsByDestination :one
-SELECT count(*) FROM backups WHERE destination_id = $1;
+-- Every kind of backup that keeps a storage from being deleted (all three
+-- reference it ON DELETE RESTRICT).
+SELECT (SELECT count(*) FROM backups b WHERE b.destination_id = $1)
+     + (SELECT count(*) FROM volume_backups vb WHERE vb.destination_id = $1)
+     + (SELECT count(*) FROM bucket_backups bb WHERE bb.destination_id = $1) AS total;

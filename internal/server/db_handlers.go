@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -167,6 +169,20 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 			c.External = dbservice.PostgresExternalURL(di, dl, s.cfg.Host)
 		}
 	}
+	if (role == "owner" || role == "admin") && inst.Engine == "postgres" {
+		if pw, derr := secret.Dec(inst.SuperuserPassword); derr == nil {
+			sctx, cancel := context.WithTimeout(r.Context(), connStatsTimeout)
+			st, err := s.dbsvc.ConnectionStats(sctx, dbservice.Instance{AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: pw},
+				dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username})
+			cancel()
+			if err != nil {
+				logFrom(r).Warn("logicalDatabaseDetail: connection stats unavailable", "err", err, "ldb_id", ld.ID)
+				c.ConnErr = true
+			} else {
+				c.Conn = &st
+			}
+		}
+	}
 	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), ld.ID); err == nil {
 		c.Backups = backups
 	}
@@ -243,3 +259,6 @@ func genPassword() (string, error) {
 	}
 	return t[:16], nil
 }
+
+// connStatsTimeout bounds the connection-stats read on the database page.
+const connStatsTimeout = 5 * time.Second

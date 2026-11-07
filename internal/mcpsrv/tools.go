@@ -291,7 +291,7 @@ func registerAppLogs(srv *mcp.Server, svc *api.Service) {
 func registerListEnv(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolListEnv,
-		Description: "List an application's environment variable names and source (literal or db-link) — values are never returned.",
+		Description: "List an application's environment variable names and source (literal, db-link or bucket-link) — values are never returned.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {

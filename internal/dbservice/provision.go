@@ -133,3 +133,61 @@ func (s *Service) DropLogicalDB(ctx context.Context, inst Instance, ldb LogicalD
 	}
 	return nil
 }
+
+// ConnStats is a read-only view of a Postgres server's connection budget and
+// of what one logical database holds of it. Krill never terminates sessions:
+// this only shows what to look at.
+type ConnStats struct {
+	Max           int // max_connections
+	Total         int // client backends on the server
+	Database      int // ... connected to this database
+	Role          int // ... logged in as this database's owner role
+	IdleInTx      int // ... of this database idle in a transaction
+	OldestIdleTxS int // seconds the oldest of those has been idle in it
+	AdvisoryLocks int // advisory locks held by sessions of this database
+}
+
+// connStatsSQL reads ConnStats in one row. dbName and user are validated
+// identifiers (ValidIdent), so quoting them as literals is safe.
+func connStatsSQL(dbName, user string) string {
+	return fmt.Sprintf(`SELECT current_setting('max_connections')::int,
+ (SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend'),
+ (SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND datname = '%[1]s'),
+ (SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend' AND usename = '%[2]s'),
+ (SELECT count(*) FROM pg_stat_activity WHERE datname = '%[1]s' AND state = 'idle in transaction'),
+ (SELECT coalesce(max(extract(epoch FROM now() - state_change))::int, 0) FROM pg_stat_activity WHERE datname = '%[1]s' AND state = 'idle in transaction'),
+ (SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.locktype = 'advisory' AND a.datname = '%[1]s');
+`, dbName, user)
+}
+
+// ConnectionStats reads the connection budget of the instance and the share
+// of it one logical database uses. Engine-gated (nil engine → zero, tests).
+func (s *Service) ConnectionStats(ctx context.Context, inst Instance, ldb LogicalDB) (ConnStats, error) {
+	if s.engine == nil {
+		return ConnStats{}, nil
+	}
+	if !ValidIdent(ldb.DBName) || !ValidIdent(ldb.Username) {
+		return ConnStats{}, fmt.Errorf("invalid db or user identifier")
+	}
+	var out bytes.Buffer
+	err := s.engine.Exec(ctx, inst.AppName,
+		[]string{"psql", "-At", "-F", " ", "-v", "ON_ERROR_STOP=1", "-U", inst.Superuser, "-d", "postgres"},
+		[]string{"PGPASSWORD=" + inst.SuperuserPassword},
+		strings.NewReader(connStatsSQL(ldb.DBName, ldb.Username)), &out)
+	if err != nil {
+		return ConnStats{}, fmt.Errorf("read connection stats: %w", err)
+	}
+	return parseConnStats(out.String())
+}
+
+func parseConnStats(out string) (ConnStats, error) {
+	var c ConnStats
+	line := strings.TrimSpace(out)
+	if i := strings.LastIndex(line, "\n"); i >= 0 {
+		line = line[i+1:]
+	}
+	if _, err := fmt.Sscan(line, &c.Max, &c.Total, &c.Database, &c.Role, &c.IdleInTx, &c.OldestIdleTxS, &c.AdvisoryLocks); err != nil {
+		return ConnStats{}, fmt.Errorf("parse connection stats %q: %w", line, err)
+	}
+	return c, nil
+}

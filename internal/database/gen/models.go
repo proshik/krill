@@ -23,6 +23,15 @@ type ApiToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type AppBucketLink struct {
+	ID            int64     `json:"id"`
+	ApplicationID int64     `json:"application_id"`
+	BucketID      int64     `json:"bucket_id"`
+	VarName       string    `json:"var_name"`
+	Field         string    `json:"field"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AppDbLink struct {
 	ID                int64     `json:"id"`
 	ApplicationID     int64     `json:"application_id"`
@@ -114,6 +123,23 @@ type Backup struct {
 	LastError         string             `json:"last_error"`
 	CreatedAt         time.Time          `json:"created_at"`
 	LogicalDatabaseID int64              `json:"logical_database_id"`
+}
+
+type BucketBackup struct {
+	ID                int64              `json:"id"`
+	BucketID          int64              `json:"bucket_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	LastRestoreAt     pgtype.Timestamptz `json:"last_restore_at"`
+	LastRestoreStatus string             `json:"last_restore_status"`
+	LastRestoreError  string             `json:"last_restore_error"`
+	CreatedAt         time.Time          `json:"created_at"`
 }
 
 type ClusterNode struct {
@@ -221,6 +247,11 @@ type EnvironmentCloneReservation struct {
 	ProjectID  int64  `json:"project_id"`
 	Slug       string `json:"slug"`
 	RequestKey string `json:"request_key"`
+}
+
+type FirewallCheck struct {
+	Node      string    `json:"node"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 type GitCredential struct {
@@ -341,11 +372,38 @@ type Registry struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type S3Bucket struct {
+	ID                     int64     `json:"id"`
+	InstanceID             int64     `json:"instance_id"`
+	EnvironmentID          int64     `json:"environment_id"`
+	Name                   string    `json:"name"`
+	AccessKey              string    `json:"access_key"`
+	SecretKey              string    `json:"secret_key"`
+	PrevAccessKey          string    `json:"prev_access_key"`
+	PrevSecretKey          string    `json:"prev_secret_key"`
+	CreatedByKrill         bool      `json:"created_by_krill"`
+	AccessKeyGenerated     bool      `json:"access_key_generated"`
+	PrevAccessKeyGenerated bool      `json:"prev_access_key_generated"`
+	CreatedAt              time.Time `json:"created_at"`
+}
+
 type Session struct {
 	Token     string    `json:"token"`
 	UserID    int64     `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type System struct {
+	ID            int64     `json:"id"`
+	EnvironmentID int64     `json:"environment_id"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type SystemMember struct {
+	ApplicationID int64 `json:"application_id"`
+	SystemID      int64 `json:"system_id"`
 }
 
 type User struct {

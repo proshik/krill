@@ -574,6 +574,16 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.dbi_has_databases")
 		return
 	}
+	// Buckets are never removed along with their server: each has its own
+	// delete, which refuses while apps link to it and asks about the data.
+	if nb, err := s.q.CountS3BucketsByInstance(r.Context(), inst.ID); err != nil {
+		logFrom(r).Error("deleteDBInstance: count buckets failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	} else if nb > 0 {
+		s.flashErrT(w, r, "flash.err.dbi_has_buckets")
+		return
+	}
 	destroy := r.FormValue("destroy_data") == "on"
 
 	// Remove the instance's containers FIRST — the real-failure point — before

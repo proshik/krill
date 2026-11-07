@@ -91,12 +91,20 @@ func stubNode(t *testing.T) (dir string, run func() (string, error)) {
 	}
 	stubs := map[string]string{
 		"systemctl": `case "$1" in
-is-active) [ -e "$STATE/armed" ] ;;
+is-active)
+	for u in "$@"; do
+		case "$u" in
+		*.timer) [ -e "$STATE/armed" ] && exit 0 ;;
+		*.service) [ -e "$STATE/running" ] && exit 0 ;;
+		esac
+	done
+	exit 3 ;;
+stop) rm -f "$STATE/armed" ;;
 *) exit 0 ;;
 esac`,
 		"systemd-run": `[ -e "$STATE/fail-run" ] && { echo "Unit krill-fw-revert.timer was already loaded" >&2; exit 1; }
 echo "$@" > "$STATE/sched"; touch "$STATE/armed"; echo "Running timer as unit: krill-fw-revert.timer" >&2`,
-		"nft": `[ "$1" = list ] && [ -e "$STATE/table" ] && exec cat "$STATE/table"; exit 1`,
+		"nft": `[ "$1" = list ] && [ -e "$STATE/table" ] && exec cat "$STATE/table"; [ "$1" = -f ] && { echo "$2" > "$STATE/restored"; exit 0; }; exit 1`,
 	}
 	for name, body := range stubs {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
@@ -139,7 +147,7 @@ func TestArmScriptSnapshotReplacesTable(t *testing.T) {
 	if got := readFile(t, filepath.Join(dir, "prev.nft")); got != snapshotPrologue+table {
 		t.Fatalf("snapshot:\n%s", got)
 	}
-	if sched := readFile(t, filepath.Join(dir, "sched")); !strings.Contains(sched, "--unit=krill-fw-revert") || !strings.Contains(sched, filepath.Join(dir, "prev.nft")) {
+	if sched := readFile(t, filepath.Join(dir, "sched")); !strings.Contains(sched, "--unit=krill-fw-revert") || !strings.Contains(sched, "--timer-property=AccuracySec=1s") || !strings.Contains(sched, filepath.Join(dir, "prev.nft")) {
 		t.Fatalf("revert not scheduled against the snapshot: %s", sched)
 	}
 }

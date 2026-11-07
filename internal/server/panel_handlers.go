@@ -652,7 +652,14 @@ func (s *Server) confirmPanelDirectPort(w http.ResponseWriter, r *http.Request) 
 		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
 		return
 	}
-	if err := firewall.Confirm(r.Context(), s.cpFirewall); err != nil {
+	if err := firewall.Confirm(r.Context(), s.cpFirewall); errors.Is(err, firewall.ErrRevertFired) {
+		// The revert ran between the check above and now: the port is open.
+		if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{}); err != nil {
+			logFrom(r).Error("confirmPanelDirectPort: clear reverted close failed", "err", err)
+		}
+		s.flashErrT(w, r, "flash.err.firewall_cp_not_pending")
+		return
+	} else if err != nil {
 		logFrom(r).Error("confirmPanelDirectPort: confirm failed", "err", err)
 		s.flashErrT(w, r, "flash.err.internal")
 		return

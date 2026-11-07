@@ -18,16 +18,19 @@ const minioRegion = "us-east-1"
 type minioDriver struct{}
 
 func (minioDriver) Engine() string       { return "minio" }
-func (minioDriver) Label() string        { return "MinIO" }
+func (minioDriver) Label() string        { return "S3 (Silo)" }
 func (minioDriver) DefaultImage() string { return MinIOImage }
 
-// MinIOImage is the image a new MinIO instance runs. Docker Hub removed the
-// minio/minio repository, so the image comes from quay.io, where MinIO still
-// publishes it. The tag is pinned rather than "latest": MinIO has stopped
-// publishing new community builds, so "latest" is frozen at this release anyway,
-// and naming it keeps what an instance runs visible in the UI and reproducible.
-// Migration 000044 moves instances created earlier off the Docker Hub reference.
-const MinIOImage = "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+// MinIOImage is the image a new S3 instance (engine "minio") runs: Silo, a
+// maintained fork of MinIO, multi-arch (amd64/arm64), pulled anonymously from
+// Docker Hub. MinIO stopped publishing community builds and its last quay.io
+// tag now answers 401 to an anonymous pull. Silo keeps MinIO's API, data
+// layout and environment (MINIO_ROOT_USER/PASSWORD), its entrypoint maps the
+// `server` argument onto its own binary, and it ships `mc`, which bucket and
+// user management runs inside the container. The tag is pinned so what an
+// instance runs stays visible and reproducible. Existing instances keep
+// whatever image they were created with.
+const MinIOImage = "pgsty/silo:RELEASE.2026-10-26T00-00-00Z"
 
 // SuperuserName — unlike postgres ("postgres") and redis ("default"), MinIO's
 // root user is USER-CHOSEN at create time (MINIO_ROOT_USER); the driver has

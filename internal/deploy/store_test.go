@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -471,6 +472,19 @@ func TestResolveDBLinkValueDispatchesByEngine(t *testing.T) {
 		t.Errorf("dragonfly url = %q, ok=%v, err=%v", val, ok, rerr)
 	}
 
+	// Valkey (RESP-compatible with redis, migration 000056 admits the engine).
+	valkeyInst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "valkey", Name: "vk", AppName: "krill-valkey-disp",
+		Image: "valkey/valkey:8.1.4", Superuser: "default", SuperuserPassword: "vkpw",
+	})
+	if err != nil {
+		t.Fatalf("create valkey instance: %v", err)
+	}
+	vkRow := db.ListDBLinksByApplicationRow{InstanceID: &valkeyInst.ID, VarName: "VALKEY_URL", Scheme: "redis", Field: "url"}
+	if val, ok, rerr := s.resolveDBLinkValue(ctx, vkRow); rerr != nil || !ok || val != "redis://default:vkpw@krill-valkey-disp:6379" {
+		t.Errorf("valkey url = %q, ok=%v, err=%v", val, ok, rerr)
+	}
+
 	// MinIO: endpoint/access_key/secret_key resolve via the instance's own
 	// superuser (= access key) and decrypted password (= secret key).
 	epRow := db.ListDBLinksByApplicationRow{InstanceID: &minioInst.ID, VarName: "S3_ENDPOINT", Field: "endpoint"}
@@ -888,5 +902,84 @@ func TestGetApplicationContainerLabels(t *testing.T) {
 	if l["krill.org"] != "Acme" || l["krill.project"] != "Shop" || l["krill.env"] != "production" ||
 		l["krill.app"] != "web" || l["krill.app-id"] != strconv.FormatInt(app.ID, 10) || l["krill.org-id"] != strconv.FormatInt(o.ID, 10) {
 		t.Errorf("container labels = %v", l)
+	}
+}
+
+// A bucket link injects the bucket's restricted principal — never the S3
+// server's root credentials — and only an app with bucket links gets a bucket
+// part in Dependencies, so every other app keeps the release identity it had
+// before buckets existed.
+func TestGetApplicationInjectsBucketLinks(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	s := NewDBStore(q)
+
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "bkt@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-bkt", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "P", Slug: "p-bkt"})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "prod", Slug: "prod"})
+	mk := func(name string) db.Application {
+		a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+			EnvironmentID: e.ID, Name: name, Image: "penpot", Tag: "2", Domain: name + "-bkt.x", Port: 80,
+			EnvText: "FOO=bar", SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	backend, plain := mk("backend"), mk("plain")
+	before, err := s.GetApplication(ctx, plain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "minio", Name: "silo", AppName: "krill-minio-silo-bk",
+		Image: "pgsty/silo:x", Superuser: "rootadmin", SuperuserPassword: secret.Enc("root-pw"),
+	})
+	b, err := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: inst.ID, EnvironmentID: e.ID, Name: "penpot", AccessKey: "krill-penpot-aaaaaa", SecretKey: secret.Enc("bucket-secret"), CreatedByKrill: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"S3_ENDPOINT": "http://krill-minio-silo-bk:9000", "S3_BUCKET": "penpot",
+		"S3_KEY": "krill-penpot-aaaaaa", "S3_SECRET": "bucket-secret", "S3_REGION": "us-east-1",
+	}
+	fields := map[string]string{"S3_ENDPOINT": "endpoint", "S3_BUCKET": "bucket", "S3_KEY": "access_key", "S3_SECRET": "secret_key", "S3_REGION": "region"}
+	for v, f := range fields {
+		if _, err := q.CreateBucketLink(ctx, db.CreateBucketLinkParams{ApplicationID: backend.ID, BucketID: b.ID, VarName: v, Field: f}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.GetApplication(ctx, backend.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	for k, v := range want {
+		if got.Env[k] != v {
+			t.Errorf("%s = %q, want %q", k, got.Env[k], v)
+		}
+	}
+	for _, v := range got.Env {
+		if v == "root-pw" || v == "rootadmin" {
+			t.Fatal("a bucket link must never inject the server's root credentials")
+		}
+	}
+	if !strings.Contains(got.Dependencies, "/b") {
+		t.Fatalf("bucket links must be part of the release identity: %q", got.Dependencies)
+	}
+	after, _ := s.GetApplication(ctx, plain.ID)
+	if after.Dependencies != before.Dependencies {
+		t.Fatalf("an app without bucket links changed its release identity: %q -> %q", before.Dependencies, after.Dependencies)
+	}
+	// Rotation changes what is injected, and with it the release identity.
+	if n, err := q.RotateS3BucketKey(ctx, db.RotateS3BucketKeyParams{ID: b.ID, AccessKey: "krill-penpot-bbbbbb", SecretKey: secret.Enc("bucket-secret-2")}); err != nil || n != 1 {
+		t.Fatalf("rotate: %d %v", n, err)
+	}
+	rotated, _ := s.GetApplication(ctx, backend.ID)
+	if rotated.Env["S3_KEY"] != "krill-penpot-bbbbbb" || rotated.Env["S3_SECRET"] != "bucket-secret-2" || rotated.Dependencies == got.Dependencies {
+		t.Fatalf("rotation not reflected: key=%q deps changed=%v", rotated.Env["S3_KEY"], rotated.Dependencies != got.Dependencies)
 	}
 }

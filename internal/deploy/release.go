@@ -167,8 +167,11 @@ func (d *Deployer) EnqueueRollback(ctx context.Context, appID, sourceID int64) (
 		return 0, ErrReleaseDrift
 	}
 	expected := current.Runtime
-	id := d.enqueue(appID, TriggerManual, job{rollbackID: sourceID, skipPredeploy: true, rollbackExpected: &expected})
+	id, qerr := d.enqueue(appID, TriggerManual, job{rollbackID: sourceID, skipPredeploy: true, rollbackExpected: &expected})
 	if id == 0 {
+		if qerr != nil {
+			return 0, qerr
+		}
 		return 0, errors.New("deployment queue refused rollback")
 	}
 	return id, nil

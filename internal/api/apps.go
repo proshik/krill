@@ -69,7 +69,7 @@ type AppStatus struct {
 // EnvKey names one environment variable without ever carrying its value.
 type EnvKey struct {
 	Key    string `json:"key"`
-	Source string `json:"source"` // "literal" | "db-link"
+	Source string `json:"source"` // "literal" | "db-link" | "bucket-link"
 }
 
 // Whoami reports the caller's own resolved identity.
@@ -309,25 +309,40 @@ func (s *Service) ListEnv(ctx context.Context, id Identity, ref string) ([]EnvKe
 	if err != nil {
 		return nil, fmt.Errorf("list env: list db links: %w", err)
 	}
-	fromLink := make(map[string]bool, len(links))
+	bucketLinks, err := s.q.ListBucketLinksByApplication(ctx, app.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list env: list bucket links: %w", err)
+	}
+	// A bucket link is applied after a DB link, so it wins on the same key.
+	fromLink := make(map[string]string, len(links)+len(bucketLinks))
+	var linkOrder []string
 	for _, l := range links {
-		fromLink[l.VarName] = true
+		if _, seen := fromLink[l.VarName]; !seen {
+			linkOrder = append(linkOrder, l.VarName)
+		}
+		fromLink[l.VarName] = "db-link"
+	}
+	for _, l := range bucketLinks {
+		if _, seen := fromLink[l.VarName]; !seen {
+			linkOrder = append(linkOrder, l.VarName)
+		}
+		fromLink[l.VarName] = "bucket-link"
 	}
 
-	out := make([]EnvKey, 0, len(links)+4)
+	out := make([]EnvKey, 0, len(fromLink)+4)
 	for _, k := range envtext.Keys(app.EnvText) {
 		source := "literal"
-		if fromLink[k] {
-			source = "db-link"
+		if src, ok := fromLink[k]; ok {
+			source = src
 			delete(fromLink, k)
 		}
 		out = append(out, EnvKey{Key: k, Source: source})
 	}
-	// DB-link vars that inject a key not present in env_text at all.
-	for _, l := range links {
-		if fromLink[l.VarName] {
-			out = append(out, EnvKey{Key: l.VarName, Source: "db-link"})
-			delete(fromLink, l.VarName)
+	// Linked vars that inject a key not present in env_text at all.
+	for _, k := range linkOrder {
+		if src, ok := fromLink[k]; ok {
+			out = append(out, EnvKey{Key: k, Source: src})
+			delete(fromLink, k)
 		}
 	}
 	return out, nil

@@ -45,3 +45,20 @@ SELECT a.id AS app_id, p.organization_id AS org_id, a.name AS app_name, e.name A
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id;
+
+-- name: VolumeBackupNotifyTarget :one
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, (a.name || ' / ' || av.name)::text AS target_name
+FROM volume_backups vb
+JOIN app_volumes av ON vb.app_volume_id = av.id
+JOIN applications a ON av.application_id = a.id
+JOIN environments e ON a.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE vb.id = $1;
+
+-- name: BucketBackupNotifyTarget :one
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, b.name AS target_name
+FROM bucket_backups bb
+JOIN s3_buckets b ON bb.bucket_id = b.id
+JOIN environments e ON b.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE bb.id = $1;

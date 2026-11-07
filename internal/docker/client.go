@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -225,6 +226,54 @@ type dockerEngine struct {
 	cli            *client.Client
 	collector      *statsCollector
 	remoteProvider RemoteClientProvider
+	overlayMTU     int
+}
+
+// SetOverlayMTU implements OverlayNetworks.
+func (e *dockerEngine) SetOverlayMTU(mtu int) { e.overlayMTU = mtu }
+
+// mtuOption is the overlay driver option carrying a network's MTU. For the
+// overlay driver it is the MTU of the underlay the VXLAN packets travel on:
+// containers on the network get it minus vxlanOverhead (no option means a
+// 1500-byte underlay, hence Docker's 1450).
+const mtuOption = "com.docker.network.driver.mtu"
+
+// vxlanOverhead is what VXLAN encapsulation adds to every overlay packet.
+const vxlanOverhead = 50
+
+// overlayCreateOptions is what NetworkEnsure creates a network with; mtu is
+// the MTU containers on it should see.
+func overlayCreateOptions(mtu int) network.CreateOptions {
+	opts := network.CreateOptions{Driver: "overlay", Attachable: true}
+	if mtu > 0 {
+		opts.Options = map[string]string{mtuOption: strconv.Itoa(mtu + vxlanOverhead)}
+	}
+	return opts
+}
+
+// OverlayMTUs implements OverlayNetworks: the MTU containers on each network
+// see.
+func (e *dockerEngine) OverlayMTUs(ctx context.Context) (map[string]int, error) {
+	list, err := e.cli.NetworkList(ctx, network.ListOptions{
+		Filters: filters.NewArgs(filters.Arg("driver", "overlay"), filters.Arg("scope", "swarm")),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(list))
+	for _, n := range list {
+		out[n.Name] = networkMTU(n.Options)
+	}
+	return out, nil
+}
+
+// networkMTU is the MTU containers on an overlay network see, from its driver
+// options.
+func networkMTU(opts map[string]string) int {
+	if v, err := strconv.Atoi(opts[mtuOption]); err == nil && v > vxlanOverhead {
+		return v - vxlanOverhead
+	}
+	return DefaultOverlayMTU
 }
 
 // NewEngine creates a real Engine. If host is empty → DOCKER_HOST/the default socket is used.
@@ -253,7 +302,7 @@ func (e *dockerEngine) NetworkEnsure(ctx context.Context, name string) (bool, er
 			return false, nil
 		}
 	}
-	_, err = e.cli.NetworkCreate(ctx, name, network.CreateOptions{Driver: "overlay", Attachable: true})
+	_, err = e.cli.NetworkCreate(ctx, name, overlayCreateOptions(e.overlayMTU))
 	return err == nil, err
 }
 
@@ -1249,4 +1298,35 @@ func (e *dockerEngine) ServiceContainerLabels(ctx context.Context, name string) 
 		return map[string]string{}, true, nil
 	}
 	return svc.Spec.TaskTemplate.ContainerSpec.Labels, true, nil
+}
+
+// ServiceTaskHistory implements TaskHistory: the service's most recent tasks,
+// newest first, at most limit of them.
+func (e *dockerEngine) ServiceTaskHistory(ctx context.Context, name string, limit int) ([]TaskRecord, error) {
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{Filters: filters.NewArgs(filters.Arg("service", name))})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].Status.Timestamp.After(tasks[j].Status.Timestamp) })
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	id2name := map[string]string{}
+	if nodes, nerr := e.Nodes(ctx); nerr == nil {
+		for _, n := range nodes {
+			id2name[n.ID] = n.Hostname
+		}
+	}
+	out := make([]TaskRecord, 0, len(tasks))
+	for _, t := range tasks {
+		rec := TaskRecord{
+			ID: t.ID, NodeName: id2name[t.NodeID], State: string(t.Status.State), Desired: string(t.DesiredState),
+			Message: t.Status.Message, Err: t.Status.Err, Updated: t.Status.Timestamp,
+		}
+		if t.Status.ContainerStatus != nil {
+			rec.ExitCode = t.Status.ContainerStatus.ExitCode
+		}
+		out = append(out, rec)
+	}
+	return out, nil
 }

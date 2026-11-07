@@ -22,7 +22,13 @@ templ Layout(title string, org db.Organization, role string) {
 			<script defer src="/static/app.js"></script>
 		</head>
 		<body class="flex" hx-boost="true">
-			<aside class="k-side">
+			<div class="k-topbar">
+				<button type="button" class="k-menu-btn" aria-controls="k-side" aria-expanded="false" aria-label={ i18n.T(ctx, "nav.menu") } onclick="krillToggleNav()">☰</button>
+				<span class="k-side-brand"><span aria-hidden="true">🦐</span> Krill</span>
+				<span class="k-topbar-org">{ org.Name }</span>
+			</div>
+			<div class="k-nav-backdrop" onclick="krillToggleNav(false)"></div>
+			<aside id="k-side" class="k-side">
 				<div class="k-side-brand"><span aria-hidden="true">🦐</span> Krill</div>
 				<div class="k-org-badge">
 					<button type="button" class="k-org-switch" hx-get={ "/orgs/switcher?current=" + itoa(org.ID) } hx-target="#org-switcher" hx-swap="innerHTML" onclick="krillOpenModal('org-switcher')" title={ i18n.T(ctx, "orgs.switch_title") }>

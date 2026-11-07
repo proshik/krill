@@ -13,6 +13,7 @@ type updateBusy struct {
 	migratingInstances func(context.Context) (int64, error)
 	backups            interface{ InFlight() int }
 	volumes            interface{ InFlight() int }
+	buckets            interface{ InFlight() int }
 	clones             interface{ InFlight() int }
 }
 
@@ -31,6 +32,9 @@ func (b updateBusy) reason(ctx context.Context) string {
 		return "deploy"
 	}
 	if b.backups.InFlight() > 0 {
+		return "backup"
+	}
+	if b.buckets != nil && b.buckets.InFlight() > 0 {
 		return "backup"
 	}
 	if b.volumes.InFlight() > 0 {

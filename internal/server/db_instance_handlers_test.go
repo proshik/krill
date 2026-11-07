@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/oplock"
 )
 
@@ -88,6 +89,28 @@ func TestAdminCreatesDragonflyDBInstance(t *testing.T) {
 	}
 }
 
+func TestAdminCreatesValkeyDBInstance(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	cookie := loginAs(t, q, "o@k.local")
+
+	form := url.Values{"engine": {"valkey"}, "name": {"penpot-cache"}}
+	req := httptest.NewRequest(http.MethodPost, "/orgs/"+i64(o.ID)+"/db-servers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("admin create valkey instance want 303, got %d", rec.Code)
+	}
+	insts, _ := q.ListDBInstancesByOrg(ctx, o.ID)
+	if len(insts) != 1 || insts[0].Engine != "valkey" || insts[0].Image != "valkey/valkey:8.1.4" || insts[0].Superuser != "default" || insts[0].SuperuserPassword == "" {
+		t.Fatalf("expected 1 valkey instance with the default image and a password, got %+v", insts)
+	}
+}
+
 func TestCreateDBInstanceRejectsUnknownEngine(t *testing.T) {
 	h, q, orgSvc := newServer(t)
 	ctx := context.Background()
@@ -136,8 +159,8 @@ func TestAdminCreatesMinioDBInstance(t *testing.T) {
 	if insts[0].SuperuserPassword == "" {
 		t.Fatal("instance must get a generated password")
 	}
-	if !strings.Contains(insts[0].Image, "minio") {
-		t.Fatalf("expected default minio image, got %q", insts[0].Image)
+	if insts[0].Image != drivers.MinIOImage {
+		t.Fatalf("expected the default S3 image %q, got %q", drivers.MinIOImage, insts[0].Image)
 	}
 }
 

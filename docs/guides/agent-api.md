@@ -75,7 +75,7 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`) is always kept. The level comes from a `level=` field or a severity word (`INFO`, `WARN`, `ERROR`, …) near the start of the line, so most unstructured output has none and passes the filter. |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
 | `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. |
-| `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link`) — never values. |
+| `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link` / `bucket-link`) — never values. |
 | `POST /api/v1/apps/{app}/deploy` | write | Optional body `{"tag":"v1.2.3"}` for image apps — a bare tag, not a full image reference. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/rebuild` | write | Build without cache; Dockerfile apps only. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull (`{"action":"restart","status":"ok"}`). A stopped app is deployed instead: `{"action":"deploy","status":"running","deployment_id":…}`. |
@@ -95,6 +95,11 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
   Give each machine or agent its own token.
 - `401` means the token was rejected; `503` with `code: "unavailable"` means it couldn't be
   checked (the database is down) — retry that one rather than reissuing the token.
+- A deploy, rebuild or reload that is not accepted creates no deployment and changes nothing:
+  `409 conflict` when this app already has a deployment in progress (poll it), `503
+  unavailable` with `Retry-After` when the queue is full, the organization has
+  `KRILL_MAX_BUILDS_PER_ORG` deployments in progress, or Krill is shutting down. An accepted one
+  always returns a `deployment_id`.
 - Reading env values is deliberately impossible: everything an agent reads reaches its model
   provider. Writing a value is allowed.
 - Tokens cross the network in clear text over plain HTTP. Krill logs a warning at startup when

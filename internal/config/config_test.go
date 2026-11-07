@@ -171,3 +171,19 @@ func TestBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOverlayMTUValidation(t *testing.T) {
+	t.Setenv("KRILL_DATABASE_URL", "postgres://x")
+	t.Setenv("KRILL_ADMIN_EMAIL", "a@b.c")
+	t.Setenv("KRILL_ADMIN_PASSWORD", "x")
+	for v, ok := range map[string]bool{"": true, "0": true, "1370": true, "1280": true, "9000": true, "1279": false, "9001": false, "-1": false, "abc": false} {
+		t.Setenv("KRILL_OVERLAY_MTU", v)
+		c, err := Load()
+		if (err == nil) != ok {
+			t.Errorf("KRILL_OVERLAY_MTU=%q: err=%v, want ok=%v", v, err, ok)
+		}
+		if ok && v == "1370" && c.OverlayMTU != 1370 {
+			t.Errorf("parsed %d", c.OverlayMTU)
+		}
+	}
+}

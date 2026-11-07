@@ -453,6 +453,9 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		c.Ports = ports
 	}
+	if tab == "advanced" {
+		c.Runtime = s.runtimeView(r, c.App)
+	}
 	if tab == "deployments" {
 		deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
 		if err != nil {
@@ -520,6 +523,23 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 			c.DBLinks = append(c.DBLinks, templates.DBLinkView{
 				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Field: l.Field, Collides: collides,
 			})
+		}
+		buckets, berr := s.q.ListS3BucketsByEnvironment(r.Context(), c.Env.ID)
+		if berr != nil {
+			logFrom(r).Error("appDetail: list buckets", "err", berr, "app_id", c.App.ID)
+		}
+		c.EnvBuckets = buckets
+		bucketName := map[int64]string{}
+		for _, b := range buckets {
+			bucketName[b.ID] = b.Name
+		}
+		bLinks, blerr := s.q.ListBucketLinksByApplication(r.Context(), c.App.ID)
+		if blerr != nil {
+			logFrom(r).Error("appDetail: list bucket links", "err", blerr, "app_id", c.App.ID)
+		}
+		for _, l := range bLinks {
+			_, collides := envKeys[l.VarName]
+			c.BucketLinks = append(c.BucketLinks, templates.BucketLinkView{ID: l.ID, Bucket: bucketName[l.BucketID], VarName: l.VarName, Field: l.Field, Collides: collides})
 		}
 	}
 	if tab == "volumes" {
@@ -624,17 +644,17 @@ func (s *Server) deployApp(w http.ResponseWriter, r *http.Request) {
 	// application row only once the job is accepted: written here first, a
 	// refused deploy would leave a tag nobody deployed, and a deploy already in
 	// flight could pick it up.
-	var deployID int64
+	var err error
 	image := strings.TrimSpace(r.FormValue("image"))
 	tag := strings.TrimSpace(r.FormValue("tag"))
 	if c.App.SourceType != "dockerfile" && image != "" && tag != "" {
-		deployID = s.deployer.EnqueueImage(c.App.ID, deploy.TriggerManual, image, tag)
+		_, err = s.deployer.EnqueueImageErr(c.App.ID, deploy.TriggerManual, image, tag)
 	} else {
-		deployID = s.deployer.Enqueue(c.App.ID, deploy.TriggerManual)
+		_, err = s.deployer.EnqueueErr(c.App.ID, deploy.TriggerManual)
 	}
-	if deployID == 0 {
-		logFrom(r).Error("deployApp: deployment not accepted (queue full or shutting down)", "app_id", c.App.ID)
-		s.flashErrT(w, r, "flash.err.queue_deploy")
+	if err != nil {
+		logFrom(r).Warn("deployApp: deployment not accepted", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, deployRefusalKey(err, "flash.err.queue_deploy"))
 		return
 	}
 	logFrom(r).Info("deploy enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
@@ -649,9 +669,9 @@ func (s *Server) rebuildApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.deployer.EnqueueRebuild(c.App.ID, deploy.TriggerManual) == 0 {
-		logFrom(r).Error("rebuildApp: rebuild not accepted (queue full or shutting down)", "app_id", c.App.ID)
-		s.flashErrT(w, r, "flash.err.queue_rebuild")
+	if _, err := s.deployer.EnqueueRebuildErr(c.App.ID, deploy.TriggerManual); err != nil {
+		logFrom(r).Warn("rebuildApp: rebuild not accepted", "err", err, "app_id", c.App.ID)
+		s.flashErrT(w, r, deployRefusalKey(err, "flash.err.queue_rebuild"))
 		return
 	}
 	logFrom(r).Info("rebuild enqueued", "app_id", c.App.ID, "app_name", c.App.Name)
@@ -676,9 +696,13 @@ func (s *Server) reloadApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !st.Found || st.Desired == 0 {
-			if s.deployer == nil || s.deployer.Enqueue(c.App.ID, deploy.TriggerManual) == 0 {
-				logFrom(r).Error("reloadApp: deployment of a stopped app not accepted (already in flight, organization limit, queue full or shutting down)", "app_id", c.App.ID)
+			if s.deployer == nil {
 				s.flashErrT(w, r, "flash.err.queue_deploy")
+				return
+			}
+			if _, err := s.deployer.EnqueueErr(c.App.ID, deploy.TriggerManual); err != nil {
+				logFrom(r).Warn("reloadApp: deployment of a stopped app not accepted", "err", err, "app_id", c.App.ID)
+				s.flashErrT(w, r, deployRefusalKey(err, "flash.err.queue_deploy"))
 				return
 			}
 			logFrom(r).Info("reload of a stopped application enqueued as a deploy", "app_id", c.App.ID, "app_name", c.App.Name)
@@ -968,4 +992,55 @@ func isSlug(s string) bool {
 // depends on which occurrence a reader happens to keep.
 func parseEnv(raw string) (map[string]string, []string) {
 	return envtext.Map(raw)
+}
+
+// deployRefusalKey is the flash key saying why a deploy was not accepted;
+// fallback covers a store failure.
+func deployRefusalKey(err error, fallback string) string {
+	switch {
+	case errors.Is(err, deploy.ErrDeployInFlight):
+		return "flash.err.deploy_in_flight"
+	case errors.Is(err, deploy.ErrOrgDeployLimit):
+		return "flash.err.deploy_org_limit"
+	case errors.Is(err, deploy.ErrQueueFull):
+		return "flash.err.deploy_queue_full"
+	case errors.Is(err, deploy.ErrDeployerStopped):
+		return "flash.err.deploy_shutting_down"
+	}
+	return fallback
+}
+
+// runtimeTaskLimit bounds the task history the Advanced tab shows.
+const runtimeTaskLimit = 8
+
+// runtimeView reports the limits a deploy of app applies — its own, or the
+// instance default it falls back to — and its recent tasks.
+func (s *Server) runtimeView(r *http.Request, app db.Application) templates.RuntimeView {
+	v := templates.RuntimeView{MemSource: "none", CPUSource: "none",
+		MemDefault: strings.TrimSpace(s.cfg.DefaultMemoryLimit), CPUDefault: strings.TrimSpace(s.cfg.DefaultCPULimit)}
+	switch {
+	case app.MemoryLimit != nil && strings.TrimSpace(*app.MemoryLimit) != "":
+		v.MemLimit, v.MemSource = *app.MemoryLimit, "explicit"
+	case strings.TrimSpace(s.cfg.DefaultMemoryLimit) != "":
+		v.MemLimit, v.MemSource = s.cfg.DefaultMemoryLimit, "default"
+	}
+	switch {
+	case app.CpuLimit != nil && strings.TrimSpace(*app.CpuLimit) != "":
+		v.CPULimit, v.CPUSource = *app.CpuLimit, "explicit"
+	case strings.TrimSpace(s.cfg.DefaultCPULimit) != "":
+		v.CPULimit, v.CPUSource = s.cfg.DefaultCPULimit, "default"
+	}
+	th, ok := s.engine.(docker.TaskHistory)
+	if !ok {
+		v.TasksUnavailable = true
+		return v
+	}
+	tasks, err := th.ServiceTaskHistory(r.Context(), dockerName(app.ID), runtimeTaskLimit)
+	if err != nil {
+		logFrom(r).Warn("runtimeView: task history unavailable", "err", err, "app_id", app.ID)
+		v.TasksUnavailable = true
+		return v
+	}
+	v.Tasks = tasks
+	return v
 }

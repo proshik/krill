@@ -2,6 +2,7 @@ package templates
 
 import (
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -22,6 +23,9 @@ type LogicalDBCtx struct {
 
 	Backups      []db.ListBackupsByLogicalDBRow // configured backups
 	Destinations []db.Destination               // org S3 destinations
+
+	Conn    *dbservice.ConnStats // connection budget (admins; nil when not read)
+	ConnErr bool                 // the stats could not be read
 }
 
 templ DatabaseDetail(c LogicalDBCtx) {
@@ -58,6 +62,7 @@ templ DatabaseDetail(c LogicalDBCtx) {
 							</div>
 						}
 					</div>
+					@connSection(c)
 					@backupsSection(c)
 					<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_ldb", c.LDB.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
 						<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
@@ -154,6 +159,32 @@ templ backupsSection(c LogicalDBCtx) {
 				@backupAdvanced()
 				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button></div>
 			</form>
+		}
+	</div>
+}
+
+templ connSection(c LogicalDBCtx) {
+	<div>
+		<div class="k-label">{ i18n.T(ctx, "conn.section") }</div>
+		if c.ConnErr {
+			<p class="k-muted">{ i18n.T(ctx, "conn.unavailable") }</p>
+		} else if c.Conn != nil {
+			<dl class="k-mono text-sm" style="display:grid;grid-template-columns:max-content 1fr;gap:4px 16px">
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.server") }</dt>
+				<dd>{ i18n.Tf(ctx, "conn.of_max", c.Conn.Total, c.Conn.Max) }</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.database") }</dt>
+				<dd>{ itoa(int64(c.Conn.Database)) }</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.role") }</dt>
+				<dd>{ itoa(int64(c.Conn.Role)) }</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.idle_tx") }</dt>
+				<dd>{ itoa(int64(c.Conn.IdleInTx)) }</dd>
+				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.advisory") }</dt>
+				<dd>{ itoa(int64(c.Conn.AdvisoryLocks)) }</dd>
+			</dl>
+			for _, w := range connWarnings(ctx, *c.Conn) {
+				<p class="text-sm mt-1" style="color:var(--color-warn);max-width:720px">{ w }</p>
+			}
+			<p class="k-mono text-xs mt-1" style="color:var(--color-faint);max-width:720px">{ i18n.T(ctx, "conn.note") }</p>
 		}
 	</div>
 }

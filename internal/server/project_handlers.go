@@ -135,6 +135,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 		s.removeEnvAppVolumes(r.Context(), e.ID)
 		s.removeEnvDatabases(r.Context(), e.ID)
+		s.removeEnvBuckets(r.Context(), e.ID)
 	}
 	if err := s.q.DeleteProject(r.Context(), p.ID); err != nil {
 		logFrom(r).Error("deleteProject: delete project", "err", err, "project_id", p.ID, "org_id", o.ID)
@@ -145,6 +146,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	// and app volumes (→ volume_backups).
 	s.reloadBackupSchedules()
 	s.reloadVolumeBackupSchedules()
+	s.reloadBucketBackupSchedules()
 	logFrom(r).Info("project deleted", "project_id", p.ID, "org_id", o.ID, "slug", p.Slug)
 	s.flashOK(w, r, "flash.ok.project_deleted")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
@@ -203,6 +205,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.removeEnvAppVolumes(r.Context(), e.ID)
 	s.removeEnvDatabases(r.Context(), e.ID)
+	s.removeEnvBuckets(r.Context(), e.ID)
 	if err := s.q.DeleteEnvironment(r.Context(), e.ID); err != nil {
 		logFrom(r).Error("deleteEnvironment: delete environment", "err", err, "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID)
 		s.flashErrT(w, r, "flash.err.delete_environment")
@@ -210,6 +213,7 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.reloadBackupSchedules()
 	s.reloadVolumeBackupSchedules()
+	s.reloadBucketBackupSchedules()
 	logFrom(r).Info("environment deleted", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
 	s.flashOK(w, r, "flash.ok.env_deleted")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
@@ -259,14 +263,26 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Error("projectPage: list registries", "err", err, "org_id", o.ID)
 	}
 	var pgInsts []db.DbInstance
+	var res templates.EnvResources
 	if all, err := s.q.ListDBInstancesByOrg(r.Context(), o.ID); err == nil {
 		for _, in := range all {
-			if in.Engine == "postgres" {
+			switch in.Engine {
+			case "postgres":
 				pgInsts = append(pgInsts, in)
+			case "minio":
+				res.S3Insts = append(res.S3Insts, in)
 			}
 		}
 	} else {
 		logFrom(r).Error("projectPage: list db instances", "err", err, "org_id", o.ID)
+	}
+	if active.ID != 0 {
+		buckets, err := s.q.ListS3BucketsByEnvironment(r.Context(), active.ID)
+		if err != nil {
+			logFrom(r).Error("projectPage: list buckets", "err", err, "environment_id", active.ID)
+		}
+		res.Buckets = buckets
+		res.View = s.envView(r.Context(), o.ID, p.ID, active, apps, dbs, buckets)
 	}
 	cloneView := templates.EnvironmentCloneView{}
 	if s.cloner != nil && active.ID != 0 {
@@ -283,7 +299,7 @@ func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries, cloneView))
+	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries, res, cloneView))
 }
 
 // deriveCardStatuses replaces each app/logical-db stored status with the LIVE

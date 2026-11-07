@@ -9,8 +9,10 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/dbservice/drivers"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -133,6 +135,8 @@ func dbEngineIcon(engine string) string {
 		return "🟥"
 	case "dragonfly":
 		return "🪰"
+	case "valkey":
+		return "🔑"
 	case "minio":
 		return "🪣"
 	default:
@@ -216,4 +220,183 @@ func onOff(b bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func envBase(org db.Organization, project db.Project, env db.Environment) string {
+	return "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(env.ID)
+}
+
+func joinIDs(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = itoa(id)
+	}
+	return strings.Join(parts, " ")
+}
+
+// systemSummary is a system card's count line: apps, running, failing.
+func systemSummary(ctx context.Context, sy topology.SystemView) string {
+	s := i18n.Tf(ctx, "system.summary", len(sy.Apps), sy.Running)
+	if sy.Failing > 0 {
+		s += " · " + i18n.Tf(ctx, "system.failing", sy.Failing)
+	}
+	return s
+}
+
+// collapsedResources is the one-line resource list a collapsed card shows.
+func collapsedResources(ctx context.Context, sy topology.SystemView) string {
+	parts := make([]string, 0, len(sy.Resources))
+	for _, r := range sy.Resources {
+		p := resourceKind(r) + " " + resourceLabel(r)
+		if r.Shared {
+			p += " ⇄ " + i18n.T(ctx, "system.shared")
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func resourceKind(r topology.ResourceView) string {
+	switch r.Kind {
+	case "ldb":
+		return "PG"
+	case "bucket":
+		return "S3"
+	}
+	switch r.Engine {
+	case "redis":
+		return "Redis"
+	case "valkey":
+		return "Valkey"
+	case "dragonfly":
+		return "DragonFly"
+	case "minio":
+		return "S3"
+	}
+	return r.Engine
+}
+
+func resourceLabel(r topology.ResourceView) string {
+	if r.Kind == "instance" {
+		return r.Label
+	}
+	return r.Label + " @ " + r.Server
+}
+
+func resourceIcon(r topology.ResourceView) string {
+	if r.Kind == "bucket" {
+		return "🪣"
+	}
+	return dbEngineIcon(r.Engine)
+}
+
+// systemCandidates are the environment's apps not in system sysID: the ones
+// "Add app" can move into it.
+func systemCandidates(view topology.EnvView, sysID int64) []topology.AppView {
+	var out []topology.AppView
+	for _, s := range view.Systems {
+		if s.ID != sysID {
+			out = append(out, s.Apps...)
+		}
+	}
+	return append(out, view.Ungrouped.Apps...)
+}
+
+// resourceAria is a resource chip's accessible name: what it shows, its
+// badges, then the variables it feeds (the chip's title carries only those).
+func resourceAria(ctx context.Context, r topology.ResourceView) string {
+	s := resourceKind(r) + " " + resourceLabel(r)
+	if r.Shared {
+		s += ", " + i18n.T(ctx, "system.shared")
+	}
+	if r.Detected {
+		s += ", " + i18n.T(ctx, "system.detected")
+	}
+	if len(r.Vars) > 0 {
+		s += ": " + strings.Join(r.Vars, ", ")
+	}
+	return s
+}
+
+// limitText is an effective limit with where it comes from.
+func limitText(ctx context.Context, value, source string) string {
+	switch source {
+	case "explicit":
+		return value
+	case "default":
+		return i18n.Tf(ctx, "runtime.limit_default", value)
+	}
+	return i18n.T(ctx, "runtime.limit_none")
+}
+
+// limitPlaceholder says what a blank limit field means: the instance default
+// when one is configured, otherwise no limit.
+func limitPlaceholder(ctx context.Context, example, def string) string {
+	if def != "" {
+		return i18n.Tf(ctx, "runtime.placeholder_default", example, def)
+	}
+	return i18n.Tf(ctx, "runtime.placeholder_none", example)
+}
+
+// taskDetail is a task's own message, error and exit code in one line.
+func taskDetail(t docker.TaskRecord) string {
+	parts := []string{}
+	if t.Err != "" {
+		parts = append(parts, t.Err)
+	} else if t.Message != "" {
+		parts = append(parts, t.Message)
+	}
+	if t.ExitCode != 0 {
+		parts = append(parts, "exit "+strconv.Itoa(t.ExitCode))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// taskHint explains the task states that are easy to misread.
+func taskHint(ctx context.Context, t docker.TaskRecord) string {
+	switch {
+	case t.ExitCode == 137:
+		return i18n.T(ctx, "runtime.hint_137")
+	case t.State == "starting":
+		return i18n.T(ctx, "runtime.hint_starting")
+	}
+	return ""
+}
+
+// connWarnings are the connection-budget situations worth a closer look.
+func connWarnings(ctx context.Context, c dbservice.ConnStats) []string {
+	var out []string
+	if c.Max > 0 && c.Total*100 >= c.Max*80 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_budget", c.Total, c.Max))
+	}
+	if c.IdleInTx > 0 && c.OldestIdleTxS >= 60 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_idle_tx", c.IdleInTx, c.OldestIdleTxS))
+	}
+	if c.AdvisoryLocks > 0 {
+		out = append(out, i18n.Tf(ctx, "conn.warn_advisory", c.AdvisoryLocks))
+	}
+	return out
+}
+
+// humanBytes is a byte count in binary units.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGTPE"[exp]) + "iB"
+}
+
+// restoreName suggests a name for the bucket a snapshot is restored into.
+func restoreName(bucket string) string {
+	name := bucket + "-restored"
+	if len(name) > 63 {
+		name = name[len(name)-63:]
+	}
+	return strings.TrimLeft(name, "-")
 }

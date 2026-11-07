@@ -29,8 +29,15 @@ func (s *Server) metricsEnvTaken(ctx context.Context, app db.Application, name s
 	if err != nil {
 		return false, err
 	}
-	vars := make([]string, 0, len(links))
+	bucketLinks, err := s.q.ListBucketLinksByApplication(ctx, app.ID)
+	if err != nil {
+		return false, err
+	}
+	vars := make([]string, 0, len(links)+len(bucketLinks))
 	for _, link := range links {
+		vars = append(vars, link.VarName)
+	}
+	for _, link := range bucketLinks {
 		vars = append(vars, link.VarName)
 	}
 	return deploy.EnvNameInUse(app.EnvText, vars, name), nil

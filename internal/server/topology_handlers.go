@@ -328,6 +328,12 @@ func titleEngine(e string) string {
 		return "Postgres"
 	case "redis":
 		return "Redis"
+	case "valkey":
+		return "Valkey"
+	case "dragonfly":
+		return "DragonFly"
+	case "minio":
+		return "MinIO"
 	default:
 		return e
 	}

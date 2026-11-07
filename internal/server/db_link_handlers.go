@@ -72,7 +72,7 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		}
 		drv = d
 		switch inst.Engine {
-		case "redis", "dragonfly":
+		case "redis", "dragonfly", "valkey":
 			scheme = "redis"
 		case "minio":
 			scheme = "" // S3 access — no connection-string scheme to choose
@@ -86,15 +86,12 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_field")
 		return
 	}
-	// var must not already be set in env_text: the link would override it at
-	// deploy (see deploy.GetApplication), so reject here to avoid a silent shadow.
-	existing, _ := parseEnv(c.App.EnvText)
-	if _, dup := existing[varName]; dup {
-		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.var_in_env", varName))
-		return
-	}
-	if c.App.MetricsEnabled && varName == c.App.MetricsTokenEnv {
-		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.metrics_env_taken", varName))
+	// var must not already be set in env_text, the metrics token variable or a
+	// bucket link: the link would override or be overridden at deploy (see
+	// deploy.GetApplication), so reject here to avoid a silent shadow. A clash
+	// with another DB link is refused by the table's own UNIQUE.
+	if key := s.linkVarTaken(r, c.App, varName); key != "" {
+		s.flashErr(w, r, i18n.Tf(r.Context(), key, varName))
 		return
 	}
 	if _, err := s.q.CreateDBLink(r.Context(), db.CreateDBLinkParams{

@@ -39,15 +39,19 @@ func InstanceFeedID(id int64) int64 { return -id }
 // not import dbservice, so the instance-wide resource defaults (config-driven,
 // not known to a driver) are applied here instead when the driver's spec
 // leaves them unset. A method (not a package function) so it can read them.
-func (s *Service) instanceSpec(inst Instance, network string) docker.ServiceSpec {
-	spec := drivers.Registry.MustGet(inst.Engine).BuildSpec(inst, network)
+func (s *Service) instanceSpec(inst Instance, network string) (docker.ServiceSpec, error) {
+	d, err := drivers.Registry.Lookup(inst.Engine)
+	if err != nil {
+		return docker.ServiceSpec{}, err
+	}
+	spec := d.BuildSpec(inst, network)
 	if spec.MemoryLimitBytes == 0 {
 		spec.MemoryLimitBytes = s.defaultMemBytes
 	}
 	if spec.NanoCPUs == 0 {
 		spec.NanoCPUs = s.defaultNanoCPUs
 	}
-	return spec
+	return spec, nil
 }
 
 // PostgresURL — connection string for a logical DB over the overlay network.
@@ -179,7 +183,14 @@ func (s *Service) deployCore(ctx context.Context, id int64, out io.Writer) error
 		return err
 	}
 	fmt.Fprintf(out, "→ deploy %s\n", inst.AppName)
-	if err := s.engine.ServiceDeploy(ctx, s.instanceSpec(inst, netName)); err != nil {
+	spec, err := s.instanceSpec(inst, netName)
+	if err != nil {
+		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
+		slog.Error("db instance deploy: no driver", "err", err, "instance_id", id, "engine", inst.Engine)
+		_ = s.store.SetInstanceStatus(stCtx, id, "error")
+		return err
+	}
+	if err := s.engine.ServiceDeploy(ctx, spec); err != nil {
 		fmt.Fprintf(out, "❌ deploy failed: %v\n", err)
 		slog.Error("db instance deploy: service deploy failed", "err", err, "instance_id", id, "app_name", inst.AppName, "node", inst.NodeHostname)
 		_ = s.store.SetInstanceStatus(stCtx, id, "error")
@@ -224,7 +235,10 @@ func (s *Service) ParkInstance(ctx context.Context, id int64, replicas uint64) e
 	if err != nil {
 		return fmt.Errorf("resolve organization network: %w", err)
 	}
-	spec := s.instanceSpec(inst, netName)
+	spec, err := s.instanceSpec(inst, netName)
+	if err != nil {
+		return err
+	}
 	spec.Replicas = replicas
 	if err := s.engine.ServiceDeploy(ctx, spec); err != nil {
 		return fmt.Errorf("deploy service: %w", err)
@@ -312,6 +326,12 @@ func (s *Service) removeInstanceContainers(ctx context.Context, inst Instance, d
 	// half-removed instance; tolerate not-found (already gone) but surface a
 	// real failure so the row+credentials are kept and the delete is retryable.
 	rmCtx := context.WithoutCancel(ctx)
+	// Resolve the driver before removing anything: without it the proxies
+	// cannot be named, and a half-removed instance is worse than none removed.
+	d, err := drivers.Registry.Lookup(inst.Engine)
+	if err != nil {
+		return err
+	}
 	if err := s.engine.ServiceRemove(rmCtx, inst.AppName); err != nil && !isNotFound(err) {
 		slog.Error("delete db instance: service remove failed", "err", err, "instance_id", id, "app_name", inst.AppName)
 		return fmt.Errorf("remove service: %w", err)
@@ -320,7 +340,7 @@ func (s *Service) removeInstanceContainers(ctx context.Context, inst Instance, d
 	// a future N-target driver like minio: one per published port, e.g. data +
 	// console) — not-found is tolerated per target (proxy was never deployed
 	// for that target, or already removed).
-	for _, t := range drivers.Registry.MustGet(inst.Engine).ExternalTargets(inst) {
+	for _, t := range d.ExternalTargets(inst) {
 		name := proxyName(id) + t.Suffix
 		if err := s.engine.ServiceRemove(rmCtx, name); err != nil && !isNotFound(err) {
 			slog.Error("delete db instance: proxy remove failed", "err", err, "instance_id", id, "proxy", name)
