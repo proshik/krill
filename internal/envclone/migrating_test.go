@@ -51,11 +51,13 @@ func TestMigratingInstanceBlocksCloneCleanupAndPrune(t *testing.T) {
 					t.Error("migrating source published")
 				}
 			} else {
-				deadline := time.Now().Add(-time.Minute)
-				if _, err = s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: r.Key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: r.Name, DestinationSlug: r.Name, Deadline: deadline}); err != nil {
+				reserved, err := s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: r.Key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: r.Name, DestinationSlug: r.Name, Deadline: time.Now().Add(-time.Minute)})
+				if err != nil {
 					t.Fatal(err)
 				}
-				if err = s.journal.RecordIntent(ctx, r.Key, ResourceIntent{Databases: []DatabaseIntent{{InstanceID: inst.ID, InstanceAppName: inst.AppName, Database: dbservice.CloneDatabase{Operation: r.Key, DBName: "owned_new", Username: "owned_new", Deadline: deadline}}}}); err != nil {
+				// The intent carries the deadline as stored, like Clone does:
+				// Postgres keeps microseconds, and Linux clocks have nanoseconds.
+				if err = s.journal.RecordIntent(ctx, r.Key, ResourceIntent{Databases: []DatabaseIntent{{InstanceID: inst.ID, InstanceAppName: inst.AppName, Database: dbservice.CloneDatabase{Operation: r.Key, DBName: "owned_new", Username: "owned_new", Deadline: reserved.Deadline}}}}); err != nil {
 					t.Fatal(err)
 				}
 				if stage == "prune" {
