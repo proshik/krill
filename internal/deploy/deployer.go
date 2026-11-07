@@ -334,15 +334,23 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 			return 0
 		default:
 		}
-		if !d.queueFull() {
-			if id, _ := d.submit(appID, TriggerSystem, job{skipPredeploy: true}); id != 0 {
-				return id
-			}
-			// submit only fails for a full queue (lost the race for the slot we
-			// just saw free) or a store error. A store error will not fix itself.
-			if !d.queueFull() {
-				return 0
-			}
+		// Under admitMu like every tenant enqueue: then the queue cannot fill
+		// between a check and a send, and enqueue's own full-queue check
+		// (which refuses before writing a deployment row) stays exact.
+		d.admitMu.Lock()
+		full := d.queueFull()
+		var id int64
+		if !full {
+			id, _ = d.submit(appID, TriggerSystem, job{skipPredeploy: true})
+		}
+		d.admitMu.Unlock()
+		if id != 0 {
+			return id
+		}
+		if !full {
+			// The queue had room, so submit failed on the store; that will
+			// not fix itself.
+			return 0
 		}
 		select {
 		case <-d.done:
@@ -394,10 +402,11 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) (int64, error)
 			return 0, ErrOrgDeployLimit
 		}
 	}
-	// Only enqueue adds to the queue while admitMu is held, so a queue seen
-	// full here is still full when submit would send: refuse before a
-	// deployment row exists, instead of recording a failed deployment and
-	// marking an app that may be running fine as errored.
+	// Every sender (enqueue and EnqueueSystem) adds to the queue only while
+	// holding admitMu, so a queue seen with room here still has it when
+	// submit sends: refuse before a deployment row exists, instead of
+	// recording a failed deployment and marking an app that may be running
+	// fine as errored.
 	if d.queueFull() {
 		slog.Warn("deploy rejected, the queue is full", "app", appID)
 		return 0, ErrQueueFull
