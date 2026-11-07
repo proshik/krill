@@ -4,12 +4,6 @@ What is done, what is waiting for live verification, and what is open.
 [README.md](README.md) gives an overview of the features, and [docs/](docs/)
 describes them in detail.
 
-## Planned intake
-
-- [Penpot platform follow-up](docs/tasks/penpot-platform-follow-up.md): network/firewall,
-  native S3/Valkey and environment systems. Implementation awaits owner decisions
-  and UI approval.
-
 ## Done
 
 - **Apps:** deploy from an image or a Dockerfile (Git clone + local build), deployment
@@ -28,20 +22,35 @@ describes them in detail.
   the background, all organizations submitted before any is waited on), and
   self-service password changes
   (forced for anyone newly added to an organization).
-- **Managed databases:** org-level Postgres, Redis, DragonFly and MinIO instances;
-  logical Postgres databases per environment; connection values injected into app
-  env vars; external ports; Postgres backups to S3 with schedule presets, retention
-  and restore.
+- **Managed databases:** org-level Postgres, Redis, Valkey, DragonFly and S3 (Silo)
+  instances; logical Postgres databases per environment; connection values injected
+  into app env vars; external ports; Postgres backups to S3 with schedule presets,
+  retention and restore. A database server with an engine the running release does
+  not know is refused with an error instead of crashing Krill.
+- **Buckets (v0.7.0):** env-scoped buckets on an S3 server, each with its own policy and
+  access key; bucket links inject endpoint, bucket, key and region, never the root
+  credentials; import of an existing bucket and key, key rotation with an explicit
+  revoke, and scheduled bucket snapshots with a SHA-256 manifest, count-based retention
+  and restore into a new empty bucket. See [Buckets](docs/guides/buckets.md).
+- **Systems (v0.7.0):** an environment's apps grouped into systems, with the databases,
+  buckets and servers each component uses. See [Systems](docs/guides/systems.md).
 - **Routing:** multiple domains per app with per-domain Let's Encrypt, internal by
   default, per-domain public-path allow-lists, basic auth and IP allow-lists.
 - **Shared hosts:** apps of one environment can share a domain on disjoint segment paths,
   with one catch-all, explicit router priorities and host-wide HTTPS. Domain claims,
   primary app creation and panel reservation use the same per-host database lock.
 - **Operations:** live structured logs, web terminal, CPU/memory monitoring across
-  all nodes, Telegram alerts, a visual cluster topology page.
+  all nodes, Telegram alerts, a visual cluster topology page. Since v0.7.0 a refused
+  deploy says why (UI, REST, MCP), the Advanced tab shows effective limits and recent
+  tasks with out-of-memory and slow-start hints, a logical database's page shows its
+  connection budget and advisory locks, and the sidebar becomes a menu on narrow screens.
 - **Multi-node:** worker nodes joined over SSH, placement (any / pinned / global),
   database instances pinned to a node, firewall lockdown of every node, moving a
-  database instance's volume between nodes.
+  database instance's volume between nodes. Since v0.7.0 a confirmed lockdown is
+  persisted and reloaded at boot, WireGuard listen ports are allowed and swarm ports
+  bound to the WireGuard interface, the Firewall page shows per-node drift, and
+  `KRILL_OVERLAY_MTU` sets the container MTU of overlay networks Krill creates (the
+  Network page shows interface MTUs and probe results).
 - **Automation:** GitHub push webhook and CI deploy hook, an agent API (REST +
   MCP) with org-scoped tokens, and `krill-cli` to build locally and deploy.
 - **Install:** one-line `install.sh` (host binary + systemd), optionally against an
@@ -131,6 +140,14 @@ Verified in code and tests, but not yet exercised on a real environment:
 
 14. Shared host: a frontend catch-all and API at `/api` on one real domain, including
     Let's Encrypt issuance and toggling HTTPS for all apps sharing the host.
+15. The v0.7.0 platform work on a real cluster, planned with the Penpot adoption
+    ([follow-up plan](docs/tasks/penpot-platform-follow-up.md#phased-implementation-and-safe-penpot-adoption)):
+    importing an existing bucket and key and switching an app to bucket links, a bucket
+    snapshot and its restore, managed Valkey replacing a Valkey app, systems, the
+    persisted firewall surviving a reboot with WireGuard and the drift view, and the
+    overlay MTU on a newly created network. Covered so far by integration tests against
+    the real Silo, Valkey and Traefik images and by the firewall confirmation protocol
+    checked on real systemd 252 and 257.
 
 ## Open
 
@@ -143,9 +160,12 @@ Verified in code and tests, but not yet exercised on a real environment:
   registry — designed, not implemented; the CLI refuses the mode for now.
 - **Email and Slack** notification channels (Telegram ships today).
 - A Homebrew tap for `krill-cli`.
-- **MinIO no longer publishes community builds.** Managed MinIO instances run a pinned
-  `quay.io/minio/minio` release that will not receive updates, security fixes included.
-  Decide between an actively maintained S3-compatible engine and building MinIO from source.
+- **Existing MinIO instances.** New S3 servers run Silo, a maintained MinIO fork, since
+  v0.7.0; instances created earlier keep the pinned `quay.io/minio/minio` release, which
+  receives no updates. Moving one onto Silo in place has not been documented or verified.
+- **Existing overlay networks keep their MTU.** `KRILL_OVERLAY_MTU` applies only to networks
+  created after it is set; recreating existing ones is a manual procedure
+  ([Overlay MTU](docs/architecture.md#overlay-mtu)), not automated.
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
 - **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
@@ -154,8 +174,8 @@ Verified in code and tests, but not yet exercised on a real environment:
 
 - Federation across data centers with GeoDNS, as disaster recovery — strictly after
   the resilience work.
-- OpenSearch as a managed engine; env-scoped buckets and indices; a domain for the
-  MinIO console; backups for MinIO and DragonFly.
+- OpenSearch as a managed engine and env-scoped indices; a domain for the S3 console;
+  backups for Valkey and DragonFly.
 - Encrypted node-to-node traffic (WireGuard); database replication.
 - GitHub OAuth / GitHub App instead of webhook + token; SSH deploy keys.
 - **Landing page:** a public site for Krill (what it is, screenshots, quick start, links
