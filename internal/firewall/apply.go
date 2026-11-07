@@ -83,8 +83,8 @@ fi
 systemctl reset-failed "$unit.timer" "$unit.service" >/dev/null 2>&1 || true
 { printf '%[3]s'; nft list table inet krill 2>/dev/null || true; } > "$prev.tmp"
 mv "$prev.tmp" "$prev"
-# A confirmation of an earlier switch must not cancel this one.
-rm -f "$prev.confirmed"
+# Neither a confirmation nor a revert of an earlier switch speaks for this one.
+rm -f "$prev.confirmed" "$prev.reverted"
 echo $(( $(date +%%s) + %[4]d )) > "$at"
 systemd-run --on-active=%[4]d --unit="$unit" sh -c '%[5]s' "$prev"
 echo "armed $(cat "$at")"
@@ -94,10 +94,13 @@ echo "armed $(cat "$at")"
 // revertShell is what the dead-man switch runs, with the snapshot path as $0.
 // It takes the same lock as a confirmation and does nothing once the change
 // was confirmed: a timer that fires while (or after) Confirm holds the lock
-// waits for it, then finds the marker. Without the lock, a confirmation could
-// disarm a revert that had already started and persist a table the revert
-// was in the middle of replacing.
-const revertShell = `exec 9>"$0.lock"; if command -v flock >/dev/null 2>&1; then flock 9; fi; [ -e "$0.confirmed" ] && exit 0; exec nft -f "$0"`
+// waits for it, then finds the marker. Otherwise it leaves a "reverted"
+// marker before restoring, so a Confirm that waited for this lock knows the
+// revert ran — systemd's unit state cannot tell it: once the service has
+// finished it is inactive like one that never started, and the timer may
+// still read active. Without the lock, a confirmation could disarm a revert
+// that had already started and persist a table the revert was replacing.
+const revertShell = `exec 9>"$0.lock"; if command -v flock >/dev/null 2>&1; then flock 9; fi; [ -e "$0.confirmed" ] && exit 0; touch "$0.reverted"; exec nft -f "$0"`
 
 // Apply installs the ruleset with a dead-man switch: it first snapshots the
 // current table and schedules an auto-revert in revertDelaySec, THEN applies the
@@ -178,7 +181,8 @@ func Confirm(ctx context.Context, r Runner) error {
 var ErrRevertFired = errors.New("firewall: the change was already reverted")
 
 // disarmIfArmedScript confirms under the switch's lock: "expired" when the
-// revert is running or has run (or nothing was armed), otherwise it leaves the
+// revert is running or has run (its own marker says so) or nothing was armed,
+// otherwise it leaves the
 // "confirmed" marker the revert checks under the same lock, stops the timer
 // and says "disarmed". The marker comes first, so a timer firing at any point
 // after the check finds it.
@@ -188,7 +192,7 @@ unit=%[1]s
 prev=%[2]s
 exec 9>"$prev.lock"
 if command -v flock >/dev/null 2>&1; then flock 9; fi
-if systemctl is-active --quiet "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.timer" 2>/dev/null; then
+if [ -e "$prev.reverted" ] || systemctl is-active --quiet "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.timer" 2>/dev/null; then
 	echo expired
 	exit 0
 fi

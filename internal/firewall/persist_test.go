@@ -338,6 +338,16 @@ func TestConfirmAndRevertShareOneProtocol(t *testing.T) {
 	if !exists(filepath.Join(dir, "restored")) {
 		t.Fatal("an unconfirmed change must be reverted")
 	}
+	// The revert finished and its service is gone, but the timer still reads
+	// active (as systemd shows it when the service was started by hand): the
+	// revert's own marker, not the unit state, makes the confirmation too late.
+	if got := run(dir, disarmIfArmedScript(prev)); got != "expired" || exists(prev+".confirmed") {
+		t.Fatalf("finished revert: %q", got)
+	}
+	os.Remove(filepath.Join(dir, "armed")) // the stub timer does not end by itself
+	if out, err := arm(); err != nil || !strings.Contains(out, "armed ") || exists(prev+".reverted") {
+		t.Fatalf("re-arm after a revert: %q %v, reverted marker %v", out, err, exists(prev+".reverted"))
+	}
 
 	// A revert already running: the confirmation is too late.
 	dir2, arm2 := stubNode(t)

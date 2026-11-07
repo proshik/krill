@@ -398,6 +398,16 @@ was the last round the review budget allows; no further rounds.
 Found while fixing: a successful import logged a spurious "probe not removed"
 warning (the principal had already removed it); the second removal is skipped.
 
+Checked afterwards on real systemd, nft and flock in a privileged container
+(Debian 12 / systemd 252 and Debian 13 / systemd 257,
+`TestConfirmProtocolOnRealSystemd`, `-tags=realsystemd`): confirming a waiting
+switch, confirming while the revert runs, and the real timer elapsing. The
+second case failed at first: Confirm waited for the revert's lock, then saw
+the service inactive and the timer still active and confirmed the reverted
+change. The revert now leaves its own marker, which Confirm checks; all
+three cases pass on both versions. Observed, not changed: a transient timer
+fires up to a minute after the displayed revert time (default `AccuracySec`).
+
 ## Intake verification (historical)
 
 The intake's `make test` failed in the backup, server and volume packages because
