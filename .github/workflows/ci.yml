@@ -56,8 +56,10 @@ jobs:
       # Default suite only. Integration tests are behind the `integration` build
       # tag (-tags=integration) and are intentionally NOT run here.
       # testcontainers spins up Postgres on demand against the native daemon.
+      # internal/server starts a database per test and takes over ten minutes,
+      # go test's default per-package timeout, on a hosted runner.
       - name: Test
-        run: go test ./...
+        run: go test -timeout 30m ./...
 
       # The CLI may import the server's packages; the server must never
       # import the CLI's. internal/api in particular is imported by
