@@ -253,6 +253,41 @@ func TestRemoveNodeTriggersObservabilityReconcile(t *testing.T) {
 	}
 }
 
+// TestRemoveNodeWaitsForFirewallChanges: removing a node opens its firewall and
+// deletes its row; a lockdown running at the same time could apply its ruleset
+// to the node after that, leaving it locked with no row to open it from. So a
+// removal while the firewall lock is held is refused and changes nothing.
+func TestRemoveNodeWaitsForFirewallChanges(t *testing.T) {
+	srv, q, orgSvc, _ := newNodeServerSrv(t, noopEngine{})
+	h := srv.Router()
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "nodes-fw-busy@k.local", "OrgNodesFwBusy")
+	ctx := context.Background()
+	if _, err := q.CreateClusterNode(ctx, db.CreateClusterNodeParams{
+		Name: "worker-1", SshHost: "10.0.0.9", SshPort: 22, SshUser: "root",
+		SshKey: "enc-key", HostKey: "hostkey", SwarmNodeID: "node-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	unlock := srv.LockFirewallForTest()
+	rec := postForm(t, h, base+"/nodes/node-1/remove", cookie, url.Values{"force": {"1"}})
+	unlock()
+	if !hasErrFlash(rec) {
+		t.Fatalf("remove during a firewall change: want an error flash, got %d", rec.Code)
+	}
+	rows, err := q.ListClusterNodes(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("node row must stay: %d rows, %v", len(rows), err)
+	}
+
+	rec = postForm(t, h, base+"/nodes/node-1/remove", cookie, url.Values{"force": {"1"}})
+	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
+		t.Fatalf("remove once the lock is free: %d (err flash %v)", rec.Code, hasErrFlash(rec))
+	}
+	if rows, _ := q.ListClusterNodes(ctx); len(rows) != 0 {
+		t.Fatalf("node row must be gone, %d left", len(rows))
+	}
+}
+
 // TestNodesAdminGateDoesNotTriggerObservability proves a rejected (404) node
 // mutation by a non-operator never reaches the point of asking for a
 // reconcile pass.

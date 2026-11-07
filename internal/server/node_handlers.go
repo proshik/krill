@@ -343,6 +343,13 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Held through the firewall Open and the row delete: a lockdown running
+	// meanwhile could otherwise apply its ruleset to this node after Open
+	// stopped its revert timer, leaving it locked with no row to open it from.
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
 	if s.engine != nil {
 		if err := s.engine.NodeRemove(r.Context(), swarmID, true); err != nil {
 			logFrom(r).Warn("removeNode: swarm remove failed (deleting row anyway)", "err", err, "node", swarmID)

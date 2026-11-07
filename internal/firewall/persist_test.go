@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -300,17 +301,56 @@ func TestConfirmSucceedsWhenOnlyPersistingFails(t *testing.T) {
 	}
 }
 
-// The disarm script itself, against a stubbed systemctl.
-func TestDisarmScriptReportsState(t *testing.T) {
-	for armed, want := range map[bool]string{true: "disarmed", false: "expired"} {
-		dir, _ := stubNode(t)
-		if armed {
-			os.WriteFile(filepath.Join(dir, "armed"), nil, 0o644)
+// The confirmation protocol against a stubbed systemd: a confirmation of a
+// waiting switch leaves the marker that makes the revert a no-op; a running
+// or finished revert makes it "expired"; arming again clears the marker.
+func TestConfirmAndRevertShareOneProtocol(t *testing.T) {
+	run := func(dir, script string, args ...string) string {
+		t.Helper()
+		cmd := append([]string{"-c", script}, args...)
+		out, err := exec.Command("sh", cmd...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %s", err, out)
 		}
-		out, err := LocalRunner{Timeout: 10 * time.Second}.Run(context.Background(), "", disarmIfArmedScript())
-		if err != nil || strings.TrimSpace(out) != want {
-			t.Fatalf("armed=%v: %q %v", armed, out, err)
-		}
+		return strings.TrimSpace(string(out))
+	}
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	dir, arm := stubNode(t)
+	prev := filepath.Join(dir, "prev.nft")
+	if out, err := arm(); err != nil || !strings.Contains(out, "armed ") {
+		t.Fatalf("arm: %q %v", out, err)
+	}
+	if got := run(dir, disarmIfArmedScript(prev)); got != "disarmed" || !exists(prev+".confirmed") {
+		t.Fatalf("waiting switch: %q, marker %v", got, exists(prev+".confirmed"))
+	}
+	// The timer fires anyway (it was already due): the revert must do nothing.
+	run(dir, revertShell, prev)
+	if exists(filepath.Join(dir, "restored")) {
+		t.Fatal("a confirmed change was reverted")
+	}
+
+	// Arming again clears the marker, so the new switch really reverts.
+	if out, err := arm(); err != nil || !strings.Contains(out, "armed ") || exists(prev+".confirmed") {
+		t.Fatalf("re-arm: %q %v marker %v", out, err, exists(prev+".confirmed"))
+	}
+	run(dir, revertShell, prev)
+	if !exists(filepath.Join(dir, "restored")) {
+		t.Fatal("an unconfirmed change must be reverted")
+	}
+
+	// A revert already running: the confirmation is too late.
+	dir2, arm2 := stubNode(t)
+	prev2 := filepath.Join(dir2, "prev.nft")
+	arm2()
+	os.WriteFile(filepath.Join(dir2, "running"), nil, 0o644)
+	if got := run(dir2, disarmIfArmedScript(prev2)); got != "expired" || exists(prev2+".confirmed") {
+		t.Fatalf("running revert: %q", got)
+	}
+	// Nothing armed at all.
+	dir3, _ := stubNode(t)
+	if got := run(dir3, disarmIfArmedScript(filepath.Join(dir3, "prev.nft"))); got != "expired" {
+		t.Fatalf("nothing armed: %q", got)
 	}
 }
 

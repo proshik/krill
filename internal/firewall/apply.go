@@ -83,11 +83,21 @@ fi
 systemctl reset-failed "$unit.timer" "$unit.service" >/dev/null 2>&1 || true
 { printf '%[3]s'; nft list table inet krill 2>/dev/null || true; } > "$prev.tmp"
 mv "$prev.tmp" "$prev"
+# A confirmation of an earlier switch must not cancel this one.
+rm -f "$prev.confirmed"
 echo $(( $(date +%%s) + %[4]d )) > "$at"
-systemd-run --on-active=%[4]d --unit="$unit" nft -f "$prev"
+systemd-run --on-active=%[4]d --unit="$unit" sh -c '%[5]s' "$prev"
 echo "armed $(cat "$at")"
-`, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec)
+`, revertUnit, savePath, strings.ReplaceAll(snapshotPrologue, "\n", `\n`), revertDelaySec, revertShell)
 }
+
+// revertShell is what the dead-man switch runs, with the snapshot path as $0.
+// It takes the same lock as a confirmation and does nothing once the change
+// was confirmed: a timer that fires while (or after) Confirm holds the lock
+// waits for it, then finds the marker. Without the lock, a confirmation could
+// disarm a revert that had already started and persist a table the revert
+// was in the middle of replacing.
+const revertShell = `exec 9>"$0.lock"; if command -v flock >/dev/null 2>&1; then flock 9; fi; [ -e "$0.confirmed" ] && exit 0; exec nft -f "$0"`
 
 // Apply installs the ruleset with a dead-man switch: it first snapshots the
 // current table and schedules an auto-revert in revertDelaySec, THEN applies the
@@ -151,7 +161,7 @@ func parseArmOutput(out string) (string, time.Time) {
 // is in force (with no revert left) as unconfirmed. The Firewall page reports
 // a table that is not persisted.
 func Confirm(ctx context.Context, r Runner) error {
-	out, err := r.Run(ctx, "", disarmIfArmedScript())
+	out, err := r.Run(ctx, "", disarmIfArmedScript(revertSavePath))
 	if err != nil {
 		return fmt.Errorf("disarm: %w: %s", err, strings.TrimSpace(out))
 	}
@@ -167,19 +177,26 @@ func Confirm(ctx context.Context, r Runner) error {
 // ErrRevertFired: Confirm found no armed dead-man switch to cancel.
 var ErrRevertFired = errors.New("firewall: the change was already reverted")
 
-// disarmIfArmedScript stops the revert timer if it is still waiting and says
-// which: "disarmed", or "expired" when it has already fired (or was never
-// armed).
-func disarmIfArmedScript() string {
+// disarmIfArmedScript confirms under the switch's lock: "expired" when the
+// revert is running or has run (or nothing was armed), otherwise it leaves the
+// "confirmed" marker the revert checks under the same lock, stops the timer
+// and says "disarmed". The marker comes first, so a timer firing at any point
+// after the check finds it.
+func disarmIfArmedScript(savePath string) string {
 	return fmt.Sprintf(`# krill-fw-disarm
-if systemctl is-active --quiet %[1]s.timer 2>/dev/null; then
-	systemctl stop %[1]s.timer 2>/dev/null
-	systemctl reset-failed %[1]s >/dev/null 2>&1
-	echo disarmed
-else
+unit=%[1]s
+prev=%[2]s
+exec 9>"$prev.lock"
+if command -v flock >/dev/null 2>&1; then flock 9; fi
+if systemctl is-active --quiet "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.timer" 2>/dev/null; then
 	echo expired
+	exit 0
 fi
-`, revertUnit)
+touch "$prev.confirmed"
+systemctl stop "$unit.timer" 2>/dev/null
+systemctl reset-failed "$unit" >/dev/null 2>&1
+echo disarmed
+`, revertUnit, savePath)
 }
 
 // disarm cancels the pending auto-revert without persisting anything: for a
