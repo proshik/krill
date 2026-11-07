@@ -39,6 +39,10 @@ var (
 
 const manifestName = "manifest.json"
 
+// MaxObjects bounds a snapshot: the listing and the manifest live in Krill's
+// memory, so a bucket past it fails its backup instead of the process.
+const MaxObjects = 200000
+
 // tsLayout names a snapshot directory; tsRe validates one coming from a form.
 const tsLayout = "2006-01-02T15-04-05Z"
 
@@ -105,8 +109,9 @@ type Store interface {
 }
 
 // Notifier is the optional failure sink (implemented by *notify.Service).
+// The id is a bucket_backups id, resolved by the notifier against that table.
 type Notifier interface {
-	BackupFailed(ctx context.Context, backupID int64, reason string)
+	BucketBackupFailed(ctx context.Context, bucketBackupID int64, reason string)
 }
 
 // ManifestObject is one object of a snapshot.
@@ -386,7 +391,7 @@ func (s *Service) StartRestore(ctx context.Context, id int64, ts string, target 
 			slog.Error("bucket restore failed", "err", err, "bucket_backup_id", id, "snapshot", ts)
 			_ = s.store.SetRestoreResult(context.WithoutCancel(rctx), id, now, "error", err.Error())
 			if s.notifier != nil {
-				s.notifier.BackupFailed(rctx, id, "restore: "+err.Error())
+				s.notifier.BucketBackupFailed(rctx, id, "restore: "+err.Error())
 			}
 			return
 		}
@@ -501,7 +506,7 @@ func (s *Service) resolve(ctx context.Context, id int64) (Row, Target, backup.De
 func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) error {
 	_ = s.store.SetBackupResult(context.WithoutCancel(ctx), id, now, "error", err.Error())
 	if s.notifier != nil {
-		s.notifier.BackupFailed(ctx, id, err.Error())
+		s.notifier.BucketBackupFailed(ctx, id, err.Error())
 	}
 	return err
 }

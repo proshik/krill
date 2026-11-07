@@ -975,8 +975,8 @@ func TestGetApplicationInjectsBucketLinks(t *testing.T) {
 		t.Fatalf("an app without bucket links changed its release identity: %q -> %q", before.Dependencies, after.Dependencies)
 	}
 	// Rotation changes what is injected, and with it the release identity.
-	if err := q.RotateS3BucketKey(ctx, db.RotateS3BucketKeyParams{ID: b.ID, AccessKey: "krill-penpot-bbbbbb", SecretKey: secret.Enc("bucket-secret-2")}); err != nil {
-		t.Fatal(err)
+	if n, err := q.RotateS3BucketKey(ctx, db.RotateS3BucketKeyParams{ID: b.ID, AccessKey: "krill-penpot-bbbbbb", SecretKey: secret.Enc("bucket-secret-2")}); err != nil || n != 1 {
+		t.Fatalf("rotate: %d %v", n, err)
 	}
 	rotated, _ := s.GetApplication(ctx, backend.ID)
 	if rotated.Env["S3_KEY"] != "krill-penpot-bbbbbb" || rotated.Env["S3_SECRET"] != "bucket-secret-2" || rotated.Dependencies == got.Dependencies {

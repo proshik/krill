@@ -140,3 +140,65 @@ func mkUser(t *testing.T, q *db.Queries, email string) int64 {
 	}
 	return u.ID
 }
+
+// Each kind of backup resolves its owner through its own table. Their ids are
+// independent sequences, so in a fresh database the first DB, volume and
+// bucket backups all have id 1 — here in three different organizations, and a
+// lookup through the wrong table would alert the wrong one.
+func TestBackupTargetsResolveThroughTheirOwnTables(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	ctx := context.Background()
+	mk := func(name string) (int64, int64, int64) {
+		uid := mkUser(t, q, name+"@k.local")
+		o, _ := orgSvc.CreateOrg(ctx, uid, name)
+		p, _ := orgSvc.CreateProject(ctx, o.ID, "P-"+name, "")
+		e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "prod")
+		d, err := q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: o.ID, Name: "s3", Endpoint: "http://m:9000", Bucket: "b", Region: "us-east-1", AccessKey: "k", SecretKey: "s"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o.ID, e.ID, d.ID
+	}
+	dbOrg, dbEnv, dbDest := mk("dborg")
+	inst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: dbOrg, Engine: "postgres", Name: "pg", AppName: "krill-postgres-pg-nt2", Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "x"})
+	ldb, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{InstanceID: inst.ID, EnvironmentID: dbEnv, Name: "app", DbName: "app", Username: "app", Password: "x"})
+	dbb, err := q.CreateBackup(ctx, db.CreateBackupParams{LogicalDatabaseID: ldb.ID, DestinationID: dbDest, Schedule: "0 3 * * *", Retention: 7, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	volOrg, volEnv, volDest := mk("volorg")
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{EnvironmentID: volEnv, Name: "web", Image: "nginx", Tag: "1", Domain: "w-nt.x", Port: 80, SourceType: "image", GitUrl: "", GitBranch: "", DockerfilePath: "Dockerfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol, _ := q.CreateVolume(ctx, db.CreateVolumeParams{ApplicationID: app.ID, Name: "data", MountPath: "/data"})
+	vb, err := q.CreateVolumeBackup(ctx, db.CreateVolumeBackupParams{AppVolumeID: vol.ID, DestinationID: volDest, Schedule: "0 3 * * *", Retention: 7, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bktOrg, bktEnv, bktDest := mk("bktorg")
+	s3, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: bktOrg, Engine: "minio", Name: "silo", AppName: "krill-minio-silo-nt3", Image: "x", Superuser: "r", SuperuserPassword: "x"})
+	bucket, _ := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: s3.ID, EnvironmentID: bktEnv, Name: "assets", AccessKey: "k", SecretKey: "x", CreatedByKrill: true})
+	bb, err := q.CreateBucketBackup(ctx, db.CreateBucketBackupParams{BucketID: bucket.ID, DestinationID: bktDest, Schedule: "0 3 * * *", Retention: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dbb.ID != vb.ID || vb.ID != bb.ID {
+		t.Fatalf("setup: the ids should coincide (%d %d %d)", dbb.ID, vb.ID, bb.ID)
+	}
+
+	st := notify.NewDBStore(q)
+	if tgt, err := st.BackupTarget(ctx, dbb.ID); err != nil || tgt.OrgID != dbOrg {
+		t.Fatalf("db backup: %+v %v", tgt, err)
+	}
+	if tgt, err := st.VolumeBackupTarget(ctx, vb.ID); err != nil || tgt.OrgID != volOrg || tgt.Name != "web / data" {
+		t.Fatalf("volume backup: %+v %v", tgt, err)
+	}
+	if tgt, err := st.BucketBackupTarget(ctx, bb.ID); err != nil || tgt.OrgID != bktOrg || tgt.Name != "assets" {
+		t.Fatalf("bucket backup: %+v %v", tgt, err)
+	}
+}

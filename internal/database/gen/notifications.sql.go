@@ -65,6 +65,34 @@ func (q *Queries) BackupNotifyTarget(ctx context.Context, id int64) (BackupNotif
 	return i, err
 }
 
+const bucketBackupNotifyTarget = `-- name: BucketBackupNotifyTarget :one
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, b.name AS target_name
+FROM bucket_backups bb
+JOIN s3_buckets b ON bb.bucket_id = b.id
+JOIN environments e ON b.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE bb.id = $1
+`
+
+type BucketBackupNotifyTargetRow struct {
+	OrgID       int64  `json:"org_id"`
+	ProjectName string `json:"project_name"`
+	EnvName     string `json:"env_name"`
+	TargetName  string `json:"target_name"`
+}
+
+func (q *Queries) BucketBackupNotifyTarget(ctx context.Context, id int64) (BucketBackupNotifyTargetRow, error) {
+	row := q.db.QueryRow(ctx, bucketBackupNotifyTarget, id)
+	var i BucketBackupNotifyTargetRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.ProjectName,
+		&i.EnvName,
+		&i.TargetName,
+	)
+	return i, err
+}
+
 const channelsForOrg = `-- name: ChannelsForOrg :many
 SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at
 FROM notification_channels WHERE org_id = $1 AND enabled
@@ -234,6 +262,35 @@ func (q *Queries) UpsertNotificationChannel(ctx context.Context, arg UpsertNotif
 		&i.NotifyHealth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const volumeBackupNotifyTarget = `-- name: VolumeBackupNotifyTarget :one
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, (a.name || ' / ' || av.name)::text AS target_name
+FROM volume_backups vb
+JOIN app_volumes av ON vb.app_volume_id = av.id
+JOIN applications a ON av.application_id = a.id
+JOIN environments e ON a.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE vb.id = $1
+`
+
+type VolumeBackupNotifyTargetRow struct {
+	OrgID       int64  `json:"org_id"`
+	ProjectName string `json:"project_name"`
+	EnvName     string `json:"env_name"`
+	TargetName  string `json:"target_name"`
+}
+
+func (q *Queries) VolumeBackupNotifyTarget(ctx context.Context, id int64) (VolumeBackupNotifyTargetRow, error) {
+	row := q.db.QueryRow(ctx, volumeBackupNotifyTarget, id)
+	var i VolumeBackupNotifyTargetRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.ProjectName,
+		&i.EnvName,
+		&i.TargetName,
 	)
 	return i, err
 }

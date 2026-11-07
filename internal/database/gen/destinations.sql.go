@@ -10,14 +10,18 @@ import (
 )
 
 const countBackupsByDestination = `-- name: CountBackupsByDestination :one
-SELECT count(*) FROM backups WHERE destination_id = $1
+SELECT (SELECT count(*) FROM backups b WHERE b.destination_id = $1)
+     + (SELECT count(*) FROM volume_backups vb WHERE vb.destination_id = $1)
+     + (SELECT count(*) FROM bucket_backups bb WHERE bb.destination_id = $1) AS total
 `
 
-func (q *Queries) CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error) {
+// Every kind of backup that keeps a storage from being deleted (all three
+// reference it ON DELETE RESTRICT).
+func (q *Queries) CountBackupsByDestination(ctx context.Context, destinationID int64) (int32, error) {
 	row := q.db.QueryRow(ctx, countBackupsByDestination, destinationID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	var total int32
+	err := row.Scan(&total)
+	return total, err
 }
 
 const countDestinationsByName = `-- name: CountDestinationsByName :one

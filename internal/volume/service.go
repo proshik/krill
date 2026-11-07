@@ -32,8 +32,9 @@ type VolEngine interface {
 }
 
 // Notifier is the optional backup-failure sink (implemented by *notify.Service).
+// The id is a volume_backups id, resolved by the notifier against that table.
 type Notifier interface {
-	BackupFailed(ctx context.Context, backupID int64, reason string)
+	VolumeBackupFailed(ctx context.Context, volumeBackupID int64, reason string)
 }
 
 type VolumeService struct {
@@ -189,7 +190,7 @@ func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, 
 func (s *VolumeService) fail(ctx context.Context, id int64, now time.Time, err error) error {
 	_ = s.store.SetVolumeBackupResult(ctx, id, now, "error", err.Error())
 	if s.notifier != nil {
-		s.notifier.BackupFailed(ctx, id, err.Error())
+		s.notifier.VolumeBackupFailed(ctx, id, err.Error())
 	}
 	return err
 }
@@ -233,7 +234,7 @@ func (s *VolumeService) restoreByID(ctx context.Context, volBackupID int64, key 
 	if !strings.HasPrefix(key, prefixDir(b.Prefix, volKey(t.AppID, t.VolumeName))) {
 		return ErrKeyOutsideVolumeBackup
 	}
-	return s.Restore(ctx, dst, t, key)
+	return s.restore(ctx, volBackupID, dst, t, key)
 }
 
 func (s *VolumeService) resolve(ctx context.Context, volBackupID int64) (VolBackupRow, VolTarget, backup.Destination, error) {
@@ -256,6 +257,12 @@ func (s *VolumeService) resolve(ctx context.Context, volBackupID int64) (VolBack
 // into the volume, then scales back. The scale-back runs even on failure, with
 // retries + an alert, so the app is never left down.
 func (s *VolumeService) Restore(ctx context.Context, dst backup.Destination, t VolTarget, key string) error {
+	return s.restore(ctx, 0, dst, t, key)
+}
+
+// restore is Restore with the volume backup id the alert of a failed
+// scale-up is filed under (0: no alert target known).
+func (s *VolumeService) restore(ctx context.Context, volBackupID int64, dst backup.Destination, t VolTarget, key string) error {
 	if err := s.eng.ServiceScale(ctx, t.ServiceName, 0); err != nil {
 		return err
 	}
@@ -267,10 +274,12 @@ func (s *VolumeService) Restore(ctx context.Context, dst backup.Destination, t V
 			time.Sleep(2 * time.Second)
 		}
 		slog.Error("volume restore: app left scaled to 0 (scale-up failed)", "service", t.ServiceName, "replicas", t.Replicas)
-		if s.notifier != nil {
+		if s.notifier != nil && volBackupID != 0 {
 			// WithoutCancel: this alert matters most exactly when the parent ctx
 			// is already dead (the restore timed out / client disconnected).
-			s.notifier.BackupFailed(context.WithoutCancel(ctx), t.AppVolumeID, "volume restore: scale-up failed, app is down")
+			// The id is the volume backup's: the notifier resolves the owner
+			// from volume_backups (it used to get the app volume's id).
+			s.notifier.VolumeBackupFailed(context.WithoutCancel(ctx), volBackupID, "volume restore: scale-up failed, app is down")
 		}
 	}()
 

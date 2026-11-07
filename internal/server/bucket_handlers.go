@@ -7,12 +7,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
@@ -20,11 +20,6 @@ import (
 
 // bucketLinkFields are the values a bucket link can inject.
 var bucketLinkFields = []string{"endpoint", "bucket", "access_key", "secret_key", "region"}
-
-// generatedKeyRe matches the access keys Krill generates for a bucket
-// (krill-<bucket>-<6 hex>). Only those are removed when a bucket is deleted or
-// its environment goes away: an imported principal belongs to whoever made it.
-var generatedKeyRe = regexp.MustCompile(`^krill-[a-z0-9-]+-[0-9a-f]{6}$`)
 
 // newBucketKey generates a principal for bucket: krill-<bucket>-<6 hex>.
 func newBucketKey(bucket string) (string, string, error) {
@@ -166,7 +161,7 @@ func (s *Server) newKrillBucket(r *http.Request, di dbservice.Instance, envID in
 func (s *Server) addBucket(r *http.Request, di dbservice.Instance, envID int64, name, accessKey, secretKey string, create bool) (db.S3Bucket, error) {
 	row, err := s.q.CreateS3Bucket(r.Context(), db.CreateS3BucketParams{
 		InstanceID: di.ID, EnvironmentID: envID, Name: name, AccessKey: accessKey,
-		SecretKey: secret.Enc(secretKey), CreatedByKrill: create,
+		SecretKey: secret.Enc(secretKey), CreatedByKrill: create, AccessKeyGenerated: create,
 	})
 	if err != nil {
 		logFrom(r).Info("addBucket: insert refused", "err", err, "instance_id", di.ID, "bucket", name)
@@ -275,6 +270,10 @@ func (s *Server) rotateBucketKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockBucket(w, r, c) {
+		return
+	}
+	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
 	if c.Bucket.PrevAccessKey != "" {
 		s.flashErrT(w, r, "flash.err.bucket_rotation_pending")
 		http.Redirect(w, r, c.url(), http.StatusSeeOther)
@@ -296,12 +295,19 @@ func (s *Server) rotateBucketKey(w http.ResponseWriter, r *http.Request) {
 		s.bucketErr(w, r, err)
 		return
 	}
-	if err := s.q.RotateS3BucketKey(r.Context(), db.RotateS3BucketKeyParams{ID: c.Bucket.ID, AccessKey: ak, SecretKey: secret.Enc(sk)}); err != nil {
-		logFrom(r).Error("rotateBucketKey: save failed; removing the new principal", "err", err, "bucket_id", c.Bucket.ID)
+	// Conditional on no pending previous key: a rotation that lost a race
+	// would otherwise overwrite the record of the key still in use.
+	n, err := s.q.RotateS3BucketKey(r.Context(), db.RotateS3BucketKeyParams{ID: c.Bucket.ID, AccessKey: ak, SecretKey: secret.Enc(sk)})
+	if err != nil || n == 0 {
+		logFrom(r).Error("rotateBucketKey: not recorded; removing the new principal", "err", err, "rows", n, "bucket_id", c.Bucket.ID)
 		if rerr := s.dbsvc.RemovePrincipal(context.WithoutCancel(r.Context()), di, ak); rerr != nil {
 			logFrom(r).Error("rotateBucketKey: compensating removal failed", "err", rerr, "bucket_id", c.Bucket.ID, "access_key", ak)
 		}
-		s.flashErrT(w, r, "flash.err.internal")
+		if err == nil {
+			s.flashErrT(w, r, "flash.err.bucket_rotation_pending")
+		} else {
+			s.flashErrT(w, r, "flash.err.internal")
+		}
 		return
 	}
 	logFrom(r).Info("bucket key rotated", "bucket_id", c.Bucket.ID, "access_key", ak)
@@ -315,6 +321,10 @@ func (s *Server) revokeBucketPrevKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.lockBucket(w, r, c) {
+		return
+	}
+	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
 	if c.Bucket.PrevAccessKey == "" {
 		http.Redirect(w, r, c.url(), http.StatusSeeOther)
 		return
@@ -348,6 +358,12 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Held through the link check, the server-side cleanup and the row
+	// delete, so a link created meanwhile cannot outlive the bucket's data.
+	if !s.lockBucket(w, r, c) {
+		return
+	}
+	defer oplock.Release(oplock.Bucket(c.Bucket.ID))
 	links, err := s.q.ListBucketLinksByBucket(r.Context(), c.Bucket.ID)
 	if err != nil {
 		logFrom(r).Error("deleteBucket: list links", "err", err, "bucket_id", c.Bucket.ID)
@@ -388,17 +404,32 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)
 }
 
-// removeGeneratedPrincipals removes the bucket's principals Krill generated.
+// removeGeneratedPrincipals removes the bucket's principals Krill generated,
+// as recorded on the row — never by their name, since an imported key can
+// look like a generated one.
 func (s *Server) removeGeneratedPrincipals(ctx context.Context, di dbservice.Instance, b db.S3Bucket) error {
-	for _, k := range []string{b.AccessKey, b.PrevAccessKey} {
-		if k == "" || !generatedKeyRe.MatchString(k) {
+	for _, k := range []struct {
+		key       string
+		generated bool
+	}{{b.AccessKey, b.AccessKeyGenerated}, {b.PrevAccessKey, b.PrevAccessKeyGenerated}} {
+		if k.key == "" || !k.generated {
 			continue
 		}
-		if err := s.dbsvc.RemovePrincipal(ctx, di, k); err != nil {
+		if err := s.dbsvc.RemovePrincipal(ctx, di, k.key); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// lockBucket takes the bucket's lock or flashes "busy"; the caller releases.
+func (s *Server) lockBucket(w http.ResponseWriter, r *http.Request, c bucketCtx) bool {
+	if oplock.TryAcquire(oplock.Bucket(c.Bucket.ID)) {
+		return true
+	}
+	s.flashErrT(w, r, "flash.err.bucket_busy")
+	http.Redirect(w, r, c.url(), http.StatusSeeOther)
+	return false
 }
 
 // removeEnvBuckets runs when an environment is deleted: its buckets' rows go
@@ -426,7 +457,8 @@ func (s *Server) removeEnvBuckets(ctx context.Context, envID int64) {
 			continue
 		}
 		di := dbservice.Instance{ID: inst.ID, AppName: inst.AppName, Superuser: inst.Superuser, SuperuserPassword: pw}
-		row := db.S3Bucket{AccessKey: b.AccessKey, PrevAccessKey: b.PrevAccessKey}
+		row := db.S3Bucket{AccessKey: b.AccessKey, PrevAccessKey: b.PrevAccessKey,
+			AccessKeyGenerated: b.AccessKeyGenerated, PrevAccessKeyGenerated: b.PrevAccessKeyGenerated}
 		if err := s.removeGeneratedPrincipals(ctx, di, row); err != nil {
 			slog.Error("removeEnvBuckets: principal removal failed (left in place)", "bucket_id", b.ID, "err", err)
 		}
@@ -448,6 +480,19 @@ func (s *Server) addBucketLink(w http.ResponseWriter, r *http.Request) {
 	b, err := s.q.GetS3Bucket(r.Context(), bucketID)
 	if err != nil || b.EnvironmentID != c.Env.ID {
 		logFrom(r).Info("addBucketLink: bucket not in app environment", "bucket_id", bucketID, "app_id", c.App.ID)
+		http.NotFound(w, r)
+		return
+	}
+	// The bucket's lock: a delete checks for links and then removes the data,
+	// and a link created in between would survive its bucket.
+	if !oplock.TryAcquire(oplock.Bucket(b.ID)) {
+		s.flashErrT(w, r, "flash.err.bucket_busy")
+		return
+	}
+	defer oplock.Release(oplock.Bucket(b.ID))
+	// Re-read under the lock: a delete that held it a moment ago may have
+	// removed the bucket after the first read.
+	if _, err := s.q.GetS3Bucket(r.Context(), b.ID); err != nil {
 		http.NotFound(w, r)
 		return
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 const clearS3BucketPrevKey = `-- name: ClearS3BucketPrevKey :exec
-UPDATE s3_buckets SET prev_access_key = '', prev_secret_key = '' WHERE id = $1
+UPDATE s3_buckets SET prev_access_key = '', prev_secret_key = '', prev_access_key_generated = false WHERE id = $1
 `
 
 func (q *Queries) ClearS3BucketPrevKey(ctx context.Context, id int64) error {
@@ -62,17 +62,18 @@ func (q *Queries) CreateBucketLink(ctx context.Context, arg CreateBucketLinkPara
 }
 
 const createS3Bucket = `-- name: CreateS3Bucket :one
-INSERT INTO s3_buckets (instance_id, environment_id, name, access_key, secret_key, created_by_krill)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, created_at
+INSERT INTO s3_buckets (instance_id, environment_id, name, access_key, secret_key, created_by_krill, access_key_generated)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, access_key_generated, prev_access_key_generated, created_at
 `
 
 type CreateS3BucketParams struct {
-	InstanceID     int64  `json:"instance_id"`
-	EnvironmentID  int64  `json:"environment_id"`
-	Name           string `json:"name"`
-	AccessKey      string `json:"access_key"`
-	SecretKey      string `json:"secret_key"`
-	CreatedByKrill bool   `json:"created_by_krill"`
+	InstanceID         int64  `json:"instance_id"`
+	EnvironmentID      int64  `json:"environment_id"`
+	Name               string `json:"name"`
+	AccessKey          string `json:"access_key"`
+	SecretKey          string `json:"secret_key"`
+	CreatedByKrill     bool   `json:"created_by_krill"`
+	AccessKeyGenerated bool   `json:"access_key_generated"`
 }
 
 func (q *Queries) CreateS3Bucket(ctx context.Context, arg CreateS3BucketParams) (S3Bucket, error) {
@@ -83,6 +84,7 @@ func (q *Queries) CreateS3Bucket(ctx context.Context, arg CreateS3BucketParams) 
 		arg.AccessKey,
 		arg.SecretKey,
 		arg.CreatedByKrill,
+		arg.AccessKeyGenerated,
 	)
 	var i S3Bucket
 	err := row.Scan(
@@ -95,6 +97,8 @@ func (q *Queries) CreateS3Bucket(ctx context.Context, arg CreateS3BucketParams) 
 		&i.PrevAccessKey,
 		&i.PrevSecretKey,
 		&i.CreatedByKrill,
+		&i.AccessKeyGenerated,
+		&i.PrevAccessKeyGenerated,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -137,7 +141,7 @@ func (q *Queries) GetBucketLink(ctx context.Context, id int64) (AppBucketLink, e
 }
 
 const getS3Bucket = `-- name: GetS3Bucket :one
-SELECT id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, created_at FROM s3_buckets WHERE id = $1
+SELECT id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, access_key_generated, prev_access_key_generated, created_at FROM s3_buckets WHERE id = $1
 `
 
 func (q *Queries) GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error) {
@@ -153,6 +157,8 @@ func (q *Queries) GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error) {
 		&i.PrevAccessKey,
 		&i.PrevSecretKey,
 		&i.CreatedByKrill,
+		&i.AccessKeyGenerated,
+		&i.PrevAccessKeyGenerated,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -265,26 +271,28 @@ func (q *Queries) ListBucketLinksByBucket(ctx context.Context, bucketID int64) (
 }
 
 const listS3BucketsByEnvironment = `-- name: ListS3BucketsByEnvironment :many
-SELECT b.id, b.instance_id, b.environment_id, b.name, b.access_key, b.secret_key, b.prev_access_key, b.prev_secret_key, b.created_by_krill, b.created_at, di.name AS instance_name, di.app_name AS instance_app_name, di.status AS instance_status
+SELECT b.id, b.instance_id, b.environment_id, b.name, b.access_key, b.secret_key, b.prev_access_key, b.prev_secret_key, b.created_by_krill, b.access_key_generated, b.prev_access_key_generated, b.created_at, di.name AS instance_name, di.app_name AS instance_app_name, di.status AS instance_status
 FROM s3_buckets b
 JOIN db_instances di ON di.id = b.instance_id
 WHERE b.environment_id = $1 ORDER BY b.created_at
 `
 
 type ListS3BucketsByEnvironmentRow struct {
-	ID              int64     `json:"id"`
-	InstanceID      int64     `json:"instance_id"`
-	EnvironmentID   int64     `json:"environment_id"`
-	Name            string    `json:"name"`
-	AccessKey       string    `json:"access_key"`
-	SecretKey       string    `json:"secret_key"`
-	PrevAccessKey   string    `json:"prev_access_key"`
-	PrevSecretKey   string    `json:"prev_secret_key"`
-	CreatedByKrill  bool      `json:"created_by_krill"`
-	CreatedAt       time.Time `json:"created_at"`
-	InstanceName    string    `json:"instance_name"`
-	InstanceAppName string    `json:"instance_app_name"`
-	InstanceStatus  string    `json:"instance_status"`
+	ID                     int64     `json:"id"`
+	InstanceID             int64     `json:"instance_id"`
+	EnvironmentID          int64     `json:"environment_id"`
+	Name                   string    `json:"name"`
+	AccessKey              string    `json:"access_key"`
+	SecretKey              string    `json:"secret_key"`
+	PrevAccessKey          string    `json:"prev_access_key"`
+	PrevSecretKey          string    `json:"prev_secret_key"`
+	CreatedByKrill         bool      `json:"created_by_krill"`
+	AccessKeyGenerated     bool      `json:"access_key_generated"`
+	PrevAccessKeyGenerated bool      `json:"prev_access_key_generated"`
+	CreatedAt              time.Time `json:"created_at"`
+	InstanceName           string    `json:"instance_name"`
+	InstanceAppName        string    `json:"instance_app_name"`
+	InstanceStatus         string    `json:"instance_status"`
 }
 
 func (q *Queries) ListS3BucketsByEnvironment(ctx context.Context, environmentID int64) ([]ListS3BucketsByEnvironmentRow, error) {
@@ -306,6 +314,8 @@ func (q *Queries) ListS3BucketsByEnvironment(ctx context.Context, environmentID 
 			&i.PrevAccessKey,
 			&i.PrevSecretKey,
 			&i.CreatedByKrill,
+			&i.AccessKeyGenerated,
+			&i.PrevAccessKeyGenerated,
 			&i.CreatedAt,
 			&i.InstanceName,
 			&i.InstanceAppName,
@@ -322,7 +332,7 @@ func (q *Queries) ListS3BucketsByEnvironment(ctx context.Context, environmentID 
 }
 
 const listS3BucketsByInstance = `-- name: ListS3BucketsByInstance :many
-SELECT id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, created_at FROM s3_buckets WHERE instance_id = $1 ORDER BY created_at
+SELECT id, instance_id, environment_id, name, access_key, secret_key, prev_access_key, prev_secret_key, created_by_krill, access_key_generated, prev_access_key_generated, created_at FROM s3_buckets WHERE instance_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListS3BucketsByInstance(ctx context.Context, instanceID int64) ([]S3Bucket, error) {
@@ -344,6 +354,8 @@ func (q *Queries) ListS3BucketsByInstance(ctx context.Context, instanceID int64)
 			&i.PrevAccessKey,
 			&i.PrevSecretKey,
 			&i.CreatedByKrill,
+			&i.AccessKeyGenerated,
+			&i.PrevAccessKeyGenerated,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -356,10 +368,12 @@ func (q *Queries) ListS3BucketsByInstance(ctx context.Context, instanceID int64)
 	return items, nil
 }
 
-const rotateS3BucketKey = `-- name: RotateS3BucketKey :exec
+const rotateS3BucketKey = `-- name: RotateS3BucketKey :execrows
 UPDATE s3_buckets
-SET prev_access_key = access_key, prev_secret_key = secret_key, access_key = $2, secret_key = $3
-WHERE id = $1
+SET prev_access_key = access_key, prev_secret_key = secret_key,
+    prev_access_key_generated = access_key_generated,
+    access_key = $2, secret_key = $3, access_key_generated = true
+WHERE id = $1 AND prev_access_key = ''
 `
 
 type RotateS3BucketKeyParams struct {
@@ -368,7 +382,12 @@ type RotateS3BucketKeyParams struct {
 	SecretKey string `json:"secret_key"`
 }
 
-func (q *Queries) RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) error {
-	_, err := q.db.Exec(ctx, rotateS3BucketKey, arg.ID, arg.AccessKey, arg.SecretKey)
-	return err
+// A rotation always installs a generated principal. It applies only while no
+// previous key is pending, so of two concurrent rotations one wins.
+func (q *Queries) RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rotateS3BucketKey, arg.ID, arg.AccessKey, arg.SecretKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

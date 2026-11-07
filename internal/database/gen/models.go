@@ -373,16 +373,18 @@ type Registry struct {
 }
 
 type S3Bucket struct {
-	ID             int64     `json:"id"`
-	InstanceID     int64     `json:"instance_id"`
-	EnvironmentID  int64     `json:"environment_id"`
-	Name           string    `json:"name"`
-	AccessKey      string    `json:"access_key"`
-	SecretKey      string    `json:"secret_key"`
-	PrevAccessKey  string    `json:"prev_access_key"`
-	PrevSecretKey  string    `json:"prev_secret_key"`
-	CreatedByKrill bool      `json:"created_by_krill"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                     int64     `json:"id"`
+	InstanceID             int64     `json:"instance_id"`
+	EnvironmentID          int64     `json:"environment_id"`
+	Name                   string    `json:"name"`
+	AccessKey              string    `json:"access_key"`
+	SecretKey              string    `json:"secret_key"`
+	PrevAccessKey          string    `json:"prev_access_key"`
+	PrevSecretKey          string    `json:"prev_secret_key"`
+	CreatedByKrill         bool      `json:"created_by_krill"`
+	AccessKeyGenerated     bool      `json:"access_key_generated"`
+	PrevAccessKeyGenerated bool      `json:"prev_access_key_generated"`
+	CreatedAt              time.Time `json:"created_at"`
 }
 
 type Session struct {

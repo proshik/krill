@@ -2,10 +2,13 @@ package server_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -31,7 +34,7 @@ type bucketFixture struct {
 
 func newBucketFixture(t *testing.T, email string) bucketFixture {
 	t.Helper()
-	h, q, orgSvc, _ := newDeployServer(t)
+	h, q, orgSvc, _, _ := buildDeployServer(t, nil, mcEngine{})
 	ctx := context.Background()
 	uid := mkUser(t, q, email)
 	o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
@@ -303,4 +306,100 @@ func TestBucketBackupConfig(t *testing.T) {
 	if rows, _ := f.q.ListBucketBackupsByBucket(ctx, b.ID); len(rows) != 0 {
 		t.Fatalf("left: %+v", rows)
 	}
+}
+
+// Two rotations racing must not lose the key in use: one wins, the other is
+// refused, and the previous key recorded is still the original.
+func TestBucketConcurrentRotationKeepsTheOriginalKey(t *testing.T) {
+	f := newBucketFixture(t, "bkt-race@k.local")
+	ctx := context.Background()
+	b, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "original-key", SecretKey: secret.Enc("s1-secret"), CreatedByKrill: true})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/rotate", f.cookie, url.Values{})
+		}()
+	}
+	wg.Wait()
+	got, _ := f.q.GetS3Bucket(ctx, b.ID)
+	if got.PrevAccessKey != "original-key" || got.AccessKey == "original-key" || !got.AccessKeyGenerated || got.PrevAccessKeyGenerated {
+		t.Fatalf("after racing rotations: current %q (generated %v), previous %q (generated %v)", got.AccessKey, got.AccessKeyGenerated, got.PrevAccessKey, got.PrevAccessKeyGenerated)
+	}
+}
+
+// Ownership of a key is recorded, not guessed from its name: an imported key
+// that looks generated stays "not generated", so cleanup never removes it.
+func TestImportedKeyIsNeverMarkedGenerated(t *testing.T) {
+	f := newBucketFixture(t, "bkt-own@k.local")
+	ctx := context.Background()
+	rec := postForm(t, f.h, f.envBase+"/buckets", f.cookie, url.Values{
+		"instance_id": {i64(f.inst.ID)}, "name": {"assets"}, "mode": {"import"},
+		"access_key": {"krill-assets-abcdef"}, "secret_key": {"imported-secret"},
+	})
+	if hasErrFlash(rec) {
+		t.Fatalf("import: %q", flashCookieValue(rec))
+	}
+	bs, _ := f.q.ListS3BucketsByEnvironment(ctx, f.env.ID)
+	if len(bs) != 1 || bs[0].AccessKeyGenerated {
+		t.Fatalf("an imported key must not be marked generated: %+v", bs)
+	}
+	postForm(t, f.h, f.envBase+"/buckets", f.cookie, url.Values{"instance_id": {i64(f.inst.ID)}, "name": {"fresh"}})
+	bs, _ = f.q.ListS3BucketsByEnvironment(ctx, f.env.ID)
+	if len(bs) != 2 || !bs[1].AccessKeyGenerated {
+		t.Fatalf("a created bucket's key is generated: %+v", bs)
+	}
+}
+
+// Storage is compared by where it writes, not by the destination's id, and a
+// storage referenced by a bucket backup cannot be deleted from under it.
+func TestBucketBackupStorageIdentity(t *testing.T) {
+	f := newBucketFixture(t, "bkt-store@k.local")
+	ctx := context.Background()
+	b, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "k", SecretKey: "x", CreatedByKrill: true})
+	d1, _ := f.q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: f.org.ID, Name: "b2", Endpoint: "https://s3.example.com", Bucket: "bk", Region: "us-east-1", AccessKey: "a", SecretKey: "s"})
+	d2, _ := f.q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: f.org.ID, Name: "b2-again", Endpoint: "HTTPS://s3.example.com/", Bucket: "bk", Region: "us-east-1", AccessKey: "a", SecretKey: "s"})
+	base := f.envBase + "/buckets/" + i64(b.ID) + "/backups"
+	if rec := postForm(t, f.h, base, f.cookie, url.Values{"destination_id": {i64(d1.ID)}, "schedule_preset": {"daily"}, "retention": {"3"}}); hasErrFlash(rec) {
+		t.Fatalf("first: %q", flashCookieValue(rec))
+	}
+	if rec := postForm(t, f.h, base, f.cookie, url.Values{"destination_id": {i64(d2.ID)}, "schedule_preset": {"daily"}, "retention": {"1"}}); !hasErrFlash(rec) {
+		t.Fatal("a second destination naming the same storage must be refused")
+	}
+	rec := postForm(t, f.h, "/orgs/"+i64(f.org.ID)+"/destinations/"+i64(d1.ID)+"/delete", f.cookie, url.Values{})
+	if msg, _ := url.QueryUnescape(flashCookieValue(rec)); !hasErrFlash(rec) || strings.Contains(msg, "violates") {
+		t.Fatalf("deleting storage in use must be refused cleanly, got %q", msg)
+	}
+}
+
+// The metrics token variable may not take a name a bucket link injects.
+func TestMetricsTokenEnvRefusesBucketLinkVar(t *testing.T) {
+	f := newBucketFixture(t, "bkt-metrics@k.local")
+	ctx := context.Background()
+	b, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "k", SecretKey: "x", CreatedByKrill: true})
+	f.q.CreateBucketLink(ctx, db.CreateBucketLinkParams{ApplicationID: f.app.ID, BucketID: b.ID, VarName: "AWS_SECRET_ACCESS_KEY", Field: "secret_key"})
+	rec := postForm(t, f.h, f.appBase+"/metrics/token-env", f.cookie, url.Values{"name": {"AWS_SECRET_ACCESS_KEY"}})
+	if !hasErrFlash(rec) {
+		t.Fatal("the metrics token must not shadow a bucket link")
+	}
+}
+
+// mcEngine answers the mc commands bucket management runs like a real S3
+// server with an empty bucket would: a probe object does not exist until it
+// is written, and reads back what was written.
+type mcEngine struct{ noopEngine }
+
+func (mcEngine) Exec(_ context.Context, _ string, cmd []string, _ []string, _ io.Reader, out io.Writer) error {
+	joined := strings.Join(cmd, " ")
+	switch {
+	case strings.Contains(joined, " stat ") && strings.Contains(joined, ".krill-import-check-"):
+		io.WriteString(out, `{"status":"error","error":{"message":"Unable to stat","cause":{"message":"Object does not exist"}}}`+"\n")
+		return errors.New("exited 1")
+	case len(cmd) >= 2 && cmd[0] == "mc" && cmd[1] == "cat":
+		io.WriteString(out, "krill")
+	default:
+		io.WriteString(out, `{"status":"success"}`+"\n")
+	}
+	return nil
 }

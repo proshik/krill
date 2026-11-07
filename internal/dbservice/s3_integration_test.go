@@ -3,6 +3,7 @@
 package dbservice_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -85,6 +86,36 @@ func TestBucketLifecycleOnSilo(t *testing.T) {
 	}
 	if err := svc.ImportBucket(ctx, inst, assets); err != nil {
 		t.Fatalf("a failed duplicate create must not touch the existing bucket: %v", err)
+	}
+
+	// Import never touches existing objects, including one named like the old
+	// fixed probe.
+	for _, k := range []string{".krill-import-check", "keep.txt"} {
+		if err := svc.WriteObject(ctx, inst, "penpot", k, bytes.NewReader([]byte("user data "+k))); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+	if err := svc.ImportBucket(ctx, inst, assets); err != nil {
+		t.Fatalf("import over existing objects: %v", err)
+	}
+	for _, k := range []string{".krill-import-check", "keep.txt"} {
+		var got bytes.Buffer
+		if err := svc.ReadObject(ctx, inst, "penpot", k, &got); err != nil || got.String() != "user data "+k {
+			t.Fatalf("import changed %s: %q %v", k, got.String(), err)
+		}
+	}
+	if objs, err := svc.ListObjects(ctx, inst, "penpot", 10); err != nil || len(objs) != 2 {
+		t.Fatalf("import must leave no probe behind: %+v %v", objs, err)
+	}
+	if _, err := svc.ListObjects(ctx, inst, "penpot", 1); !errors.Is(err, dbservice.ErrTooManyObjects) {
+		t.Fatalf("listing past its limit: %v", err)
+	}
+	// Undoing a bucket only ever removes an empty one.
+	if err := svc.RemoveEmptyBucket(ctx, inst, "penpot"); err == nil {
+		t.Fatal("a non-empty bucket must not be removed by RemoveEmptyBucket")
+	}
+	if err := svc.ReadObject(ctx, inst, "penpot", "keep.txt", io.Discard); err != nil {
+		t.Fatalf("data gone after a refused removal: %v", err)
 	}
 
 	// Rotation: a second principal for the same bucket, then the first revoked.

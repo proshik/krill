@@ -112,8 +112,16 @@ func (s *Server) addBucketBackup(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	// Compare where the snapshots land, not the destination's id: two
+	// destinations of the org can name the same endpoint and bucket.
 	for _, e := range existing {
-		if e.DestinationID == destID && e.Prefix == prefix {
+		other, err := s.q.GetDestination(r.Context(), e.DestinationID)
+		if err != nil {
+			logFrom(r).Error("addBucketBackup: read destination", "err", err, "destination_id", e.DestinationID)
+			s.flashErrT(w, r, "flash.err.internal")
+			return
+		}
+		if sameStorage(other, dest) && e.Prefix == prefix {
 			s.flashErrT(w, r, "flash.err.backup_duplicate")
 			return
 		}
@@ -259,10 +267,12 @@ func (s *Server) restoreBucketBackup(w http.ResponseWriter, r *http.Request) {
 	t := bucketbackup.Target{Server: di.AppName, Bucket: target.Name, RootUser: di.Superuser, RootPass: di.SuperuserPassword}
 	if err := s.bucketBackups.StartRestore(r.Context(), b.ID, snapshot, t, bucketBackupTimeout); err != nil {
 		logFrom(r).Warn("restoreBucketBackup: refused", "err", err, "bucket_backup_id", b.ID, "snapshot", snapshot)
-		// The target was created for this restore and is still empty.
+		// The target was created for this restore. Undo it only while it is
+		// still empty: anything a client wrote into it meanwhile stays, and so
+		// does the bucket in Krill.
 		cctx := context.WithoutCancel(r.Context())
-		if rerr := s.dbsvc.RemoveBucket(cctx, di, target.Name); rerr != nil {
-			logFrom(r).Error("restoreBucketBackup: remove unused target bucket", "err", rerr, "bucket", target.Name)
+		if rerr := s.dbsvc.RemoveEmptyBucket(cctx, di, target.Name); rerr != nil {
+			logFrom(r).Warn("restoreBucketBackup: unused target bucket kept (not empty or not removable)", "err", rerr, "bucket", target.Name)
 		} else if rerr := s.removeGeneratedPrincipals(cctx, di, target); rerr != nil {
 			logFrom(r).Error("restoreBucketBackup: remove unused target key", "err", rerr, "bucket", target.Name)
 		} else if derr := s.q.DeleteS3Bucket(cctx, target.ID); derr != nil {
@@ -281,4 +291,14 @@ func (s *Server) restoreBucketBackup(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("bucket restore started", "bucket_backup_id", b.ID, "snapshot", snapshot, "target_bucket_id", target.ID)
 	s.flashOK(w, r, "flash.ok.bucket_restore_started")
 	http.Redirect(w, r, c.url(), http.StatusSeeOther)
+}
+
+// sameStorage reports whether two destinations write into the same S3 bucket.
+func sameStorage(a, b db.Destination) bool {
+	norm := func(endpoint string) string {
+		e := strings.ToLower(strings.TrimSpace(endpoint))
+		e = strings.TrimPrefix(strings.TrimPrefix(e, "https://"), "http://")
+		return strings.TrimRight(e, "/")
+	}
+	return norm(a.Endpoint) == norm(b.Endpoint) && strings.EqualFold(strings.TrimSpace(a.Bucket), strings.TrimSpace(b.Bucket))
 }

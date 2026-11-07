@@ -16,8 +16,9 @@ Open the environment, then **Buckets → New bucket** (organization admins and o
 - **Create** makes the bucket, a policy granting every S3 action on that bucket only
   (`krill-bucket-<name>`), and a user `krill-<name>-<random>` holding that policy.
 - **Import** adopts a bucket that already exists, with a key you already use for it. Nothing is
-  recreated: Krill writes, reads and deletes one probe object with that key to prove it works,
-  then records the bucket as *imported*.
+  recreated: Krill writes, reads back and deletes one probe object with a random name (checked
+  to be free first, so no existing object is touched) to prove the key works, then records the
+  bucket as *imported*.
 
 The bucket page shows the endpoint, bucket and access key to everyone in the organization and
 the secret key to admins only.
@@ -44,8 +45,10 @@ second rotation is refused until the previous key is revoked.
 A bucket that apps still link to cannot be removed, and an S3 server that still holds buckets
 cannot be deleted. **Remove bucket** forgets the bucket in Krill and removes the users Krill
 generated for it; the bucket and its objects stay on the server and can be imported again.
-Tick **Also delete its data** to empty and remove the bucket. An imported key is never removed
-by Krill except through **Revoke** after a rotation.
+Tick **Also delete its data** to empty and remove the bucket. Krill records which keys it
+generated; an imported key — whatever its name — is never removed by Krill except through
+**Revoke** after a rotation. Rotating, revoking, removing a bucket and linking it to an app are
+serialized per bucket: a second one at the same moment is refused with "try again".
 
 Deleting an environment removes the users Krill generated for its buckets but keeps the
 buckets and their objects on the server. Cloning an environment does not copy buckets or
@@ -64,11 +67,16 @@ point-in-time image — stop writers first when you need one.
 
 Objects travel through Krill: each one is read with `mc cat` inside the server's container and
 uploaded to the storage, so a large bucket takes a while and adds traffic to the control plane.
+A snapshot holds at most 200,000 objects (the listing and manifest live in Krill's memory); a
+bucket with more fails its backup with that reason instead of straining the process. Two backup
+configurations of one bucket may not write to the same storage location and prefix, even
+through two differently named storage entries.
 
 **Restore into new bucket** creates a bucket on the same server and in the same environment,
 with its own key, and copies the snapshot into it, checking every object against the
 manifest's SHA-256 and the final listing against the manifest. A snapshot is never restored
-over an existing bucket. The outcome shows under **Last restore**; pointing apps at the
+over an existing bucket. If the restore cannot start after the bucket was created, the bucket
+is removed again only while it is still empty. The outcome shows under **Last restore**; pointing apps at the
 restored bucket (its links) is your own step. A manifest key that would leave the bucket
 (`..`, an absolute path) stops the restore before anything is written, since the storage could
 have been edited by anyone holding its credentials.

@@ -43,6 +43,11 @@ func Held(name string) bool {
 	return held[name] != nil
 }
 
+// Bucket serialises changes to one bucket's principals and links (rotate,
+// revoke, delete, link): each reads state, changes the S3 server and records
+// the result as separate steps.
+func Bucket(id int64) string { return "bucket:" + strconv.FormatInt(id, 10) }
+
 // DBInstance is the lock name for a DB instance, keyed by its unique AppName
 // (both dbservice and backup have it without extra queries).
 func DBInstance(appName string) string { return "dbinst:" + appName }

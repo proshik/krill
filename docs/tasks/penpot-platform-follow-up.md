@@ -304,7 +304,8 @@ Stages, each a local commit series with its own checks:
   manifest, retention by count, restore only into a new empty bucket.
 - [x] **Responsive shell** (owner request 2026-11-07): off-canvas sidebar below
   768px with a top bar; no horizontal scroll at 390px.
-- [ ] Review: Claude subagent + revust, findings merged and resolved.
+- [x] Review: Claude subagent + revust (codex-only profile, gpt-6.1-sol, 4/4
+  sources reported), findings merged and resolved — see the review log below.
 - [ ] Separate production migration approval with measured downtime and
   rollback deadline. This plan grants none.
 
@@ -350,6 +351,34 @@ Local and disposable only; nothing touched production.
   buckets, root-credential marking, Firewall page with the MTU section).
 - `make test`-equivalent: the earlier MinIO 401 baseline is gone with the Silo
   test image.
+
+## Review log (2026-11-07)
+
+Both reviews read `70c329c..fe75d7d`. Every finding was checked against the
+source before changing anything; all of these were confirmed and fixed with a
+regression test unless noted.
+
+| Finding | Source | Outcome |
+| --- | --- | --- |
+| Bucket and volume backup alerts resolved the owner through the DB-backup table (wrong organization, or no alert) | both | fixed; volume part was pre-existing |
+| Volume restore scale-up alert passed an app-volume id | found while fixing the above | fixed (pre-existing) |
+| Metrics token variable could shadow a bucket link | both | fixed |
+| Import probe overwrote/deleted an object with the fixed probe name; no read check | revust | random, checked-free probe name, read-back |
+| Concurrent rotations lost track of the active key | revust | per-bucket lock + conditional update |
+| Link created between delete's check and data removal | revust | per-bucket lock over check, cleanup and row delete |
+| Cleanup removed imported keys whose names looked generated | revust | ownership recorded on the row (migration 000057, unreleased) |
+| Refused restore removed a target a client had written to | revust | `RemoveEmptyBucket` only |
+| Two destinations naming one storage bypassed the duplicate check | revust | compared by endpoint and bucket |
+| Unbounded object listing in Krill's memory | revust | streamed listing, 200,000-object limit |
+| Rollback guide silent about bucket links | revust | documented in `docs/install.md` |
+| Persist failure after disarm reported as unconfirmed | Claude | Confirm succeeds once disarmed; drift shows it |
+| Confirm racing a fired revert could persist the reverted ruleset | Claude | Confirm refuses unless the timer still waits |
+| Removed node kept its persisted firewall | Claude | `removeNode` opens it |
+| Incomplete node addresses made WireGuard binding more likely | Claude | bind only with a complete list |
+| Userspace WireGuard not detected | Claude | `wg show interfaces` |
+| System redeploys could still fill the queue after the pre-check | Claude | `EnqueueSystem` under `admitMu` |
+| Deleting storage used by a bucket/volume backup flashed a raw FK error | Claude | counted in `CountBackupsByDestination` |
+| Environment clone silently drops bucket links | Claude | stated in the clone notice (buckets are per environment) |
 
 ## Intake verification (historical)
 

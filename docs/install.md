@@ -186,6 +186,12 @@ or delete a Valkey instance from it — on those releases the action crashes Kri
 its own). Apps keep the connection values injected by their last deploy. Releases from this one
 on refuse such an action with an error instead.
 
+The same releases do not know bucket links (or buckets, systems and bucket backups, which they
+simply do not show). A container keeps the bucket values it was started with, but redeploying a
+bucket-linked app from such a release starts it **without** them. Do not redeploy those apps
+until you upgrade again, or put the values into the app's environment by hand first (read them
+on the bucket page; the secret key is shown to admins).
+
 Rolling back to a release without the [observability agent](guides/observability.md) leaves
 the agent running with nothing managing it; remove it with `docker service rm krill-alloy-node`
 and its configs and secrets labelled `krill.observability=node-agent` (see

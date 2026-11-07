@@ -14,6 +14,7 @@ type Querier interface {
 	AdvanceEnvironmentCloneCleanup(ctx context.Context, arg AdvanceEnvironmentCloneCleanupParams) (string, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
+	BucketBackupNotifyTarget(ctx context.Context, id int64) (BucketBackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
 	ClearS3BucketPrevKey(ctx context.Context, id int64) error
@@ -24,7 +25,9 @@ type Querier interface {
 	CountApplicationsByGitCredential(ctx context.Context, gitCredentialID *int64) (int64, error)
 	CountApplicationsByProject(ctx context.Context, projectID int64) (int64, error)
 	CountApplicationsByRegistry(ctx context.Context, registryID *int64) (int64, error)
-	CountBackupsByDestination(ctx context.Context, destinationID int64) (int64, error)
+	// Every kind of backup that keeps a storage from being deleted (all three
+	// reference it ON DELETE RESTRICT).
+	CountBackupsByDestination(ctx context.Context, destinationID int64) (int32, error)
 	CountClusterNodes(ctx context.Context) (int64, error)
 	CountClusterNodesByName(ctx context.Context, name string) (int64, error)
 	// Checks BOTH host-published columns: external_port and console_external_port
@@ -279,7 +282,9 @@ type Querier interface {
 	// honest: the job died mid-copy and the service was left scaled to 0.
 	ResetMigratingInstances(ctx context.Context) error
 	RestoreReleaseRuntime(ctx context.Context, arg RestoreReleaseRuntimeParams) (int64, error)
-	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) error
+	// A rotation always installs a generated principal. It applies only while no
+	// previous key is pending, so of two concurrent rotations one wins.
+	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error)
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
@@ -339,6 +344,7 @@ type Querier interface {
 	UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
+	VolumeBackupNotifyTarget(ctx context.Context, id int64) (VolumeBackupNotifyTargetRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

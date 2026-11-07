@@ -92,7 +92,7 @@ func (m MCIO) inst(t Target) dbservice.Instance {
 }
 
 func (m MCIO) List(ctx context.Context, t Target) ([]Entry, error) {
-	objs, err := m.Svc.ListObjects(ctx, m.inst(t), t.Bucket)
+	objs, err := m.Svc.ListObjects(ctx, m.inst(t), t.Bucket, MaxObjects)
 	if err != nil {
 		return nil, err
 	}

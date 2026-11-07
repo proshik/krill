@@ -1,7 +1,10 @@
 package dbservice
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"context"
 	"encoding/json"
 	"errors"
@@ -228,7 +231,8 @@ func (s *Service) RemovePrincipal(ctx context.Context, inst Instance, accessKey 
 
 // ImportBucket adopts an existing bucket and principal without recreating
 // either: the bucket must exist, and the principal must be able to write,
-// read and delete an object in it.
+// read back and delete an object in it. The probe object has a random name
+// checked to be free first, so no existing object is touched.
 func (s *Service) ImportBucket(ctx context.Context, inst Instance, b Bucket) error {
 	if s.engine == nil {
 		return nil
@@ -243,13 +247,35 @@ func (s *Service) ImportBucket(ctx context.Context, inst Instance, b Bucket) err
 		}
 		return err
 	}
-	probe := "k/" + b.Name + "/.krill-import-check"
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return err
+	}
+	probe := "k/" + b.Name + "/.krill-import-check-" + hex.EncodeToString(rnd[:])
+	if exists, err := s.mcObjectExists(ctx, inst, probe); err != nil {
+		return err
+	} else if exists {
+		return errors.New("import probe name already taken; retry")
+	}
 	if err := s.mcAs(ctx, inst, b.AccessKey, b.SecretKey, "pipe", strings.NewReader("krill"), "pipe", probe); err != nil {
 		var me *mcError
 		if errors.As(err, &me) {
 			return ErrBucketCredentials
 		}
 		return err
+	}
+	// Whatever the read shows, the probe goes again: it is ours alone.
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisionCompensateTimeout)
+		defer cancel()
+		if err := s.mc(cctx, inst, "rm probe", nil, "rm", probe); err != nil {
+			slog.Warn("import bucket: probe object not removed", "bucket", b.Name, "err", err)
+		}
+	}()
+	var got bytes.Buffer
+	if err := s.engine.Exec(ctx, inst.AppName, []string{"mc", "cat", probe},
+		[]string{"MC_HOST_k=" + mcHost(b.AccessKey, b.SecretKey)}, nil, &got); err != nil || got.String() != "krill" {
+		return ErrBucketCredentials
 	}
 	if err := s.mcAs(ctx, inst, b.AccessKey, b.SecretKey, "rm", nil, "rm", probe); err != nil {
 		var me *mcError
@@ -259,6 +285,39 @@ func (s *Service) ImportBucket(ctx context.Context, inst Instance, b Bucket) err
 		return err
 	}
 	return nil
+}
+
+// mcObjectExists reports whether an object exists, from mc's own answer: a
+// "success" status is yes, "Object does not exist" is no, anything else is an
+// error — never a guess, since a wrong "no" would overwrite someone's object.
+func (s *Service) mcObjectExists(ctx context.Context, inst Instance, path string) (bool, error) {
+	var out bytes.Buffer
+	err := s.engine.Exec(ctx, inst.AppName, []string{"mc", "--json", "stat", path},
+		[]string{"MC_HOST_k=" + mcHost(inst.Superuser, inst.SuperuserPassword)}, nil, &out)
+	res, parsed := lastMCResult(out.Bytes())
+	switch {
+	case parsed && res.Status == "success" && err == nil:
+		return true, nil
+	case parsed && res.Status == "error" && strings.Contains(res.Error.Cause.Message, "does not exist"):
+		return false, nil
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return false, cerr
+	}
+	return false, &mcError{Op: "stat", Message: "could not tell whether the probe object exists"}
+}
+
+// RemoveEmptyBucket removes a bucket only if it holds no objects (mc rb
+// without --force): for undoing a bucket Krill just created, where anything
+// written into it meanwhile must survive.
+func (s *Service) RemoveEmptyBucket(ctx context.Context, inst Instance, bucket string) error {
+	if s.engine == nil {
+		return nil
+	}
+	if !ValidBucketName(bucket) {
+		return errors.New("invalid bucket name")
+	}
+	return s.mc(ctx, inst, "rb", nil, "rb", "k/"+bucket)
 }
 
 // RemoveBucket deletes the bucket with every object in it.
@@ -278,17 +337,32 @@ type ObjectEntry struct {
 	Size int64
 }
 
-// ListObjects lists every object of a bucket (mc ls --recursive).
-func (s *Service) ListObjects(ctx context.Context, inst Instance, bucket string) ([]ObjectEntry, error) {
+// ErrTooManyObjects is returned by ListObjects past its limit.
+var ErrTooManyObjects = errors.New("the bucket holds more objects than a snapshot may")
+
+// ListObjects lists every object of a bucket (mc ls --recursive), parsing the
+// listing as it streams in and failing once it passes limit objects, so a
+// huge bucket costs a bounded amount of memory in Krill.
+func (s *Service) ListObjects(ctx context.Context, inst Instance, bucket string, limit int) ([]ObjectEntry, error) {
 	if !ValidBucketName(bucket) {
 		return nil, errors.New("invalid bucket name")
 	}
-	var out bytes.Buffer
-	err := s.engine.Exec(ctx, inst.AppName, []string{"mc", "--json", "ls", "--recursive", "k/" + bucket},
-		[]string{"MC_HOST_k=" + mcHost(inst.Superuser, inst.SuperuserPassword)}, nil, &out)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := s.engine.Exec(ctx, inst.AppName, []string{"mc", "--json", "ls", "--recursive", "k/" + bucket},
+			[]string{"MC_HOST_k=" + mcHost(inst.Superuser, inst.SuperuserPassword)}, nil, pw)
+		pw.CloseWithError(err)
+		done <- err
+	}()
 	var entries []ObjectEntry
-	for _, line := range bytes.Split(out.Bytes(), []byte("\n")) {
-		line = bytes.TrimSpace(line)
+	var listErr error
+	sc := bufio.NewScanner(pr)
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 || line[0] != '{' {
 			continue
 		}
@@ -303,13 +377,27 @@ func (s *Service) ListObjects(ctx context.Context, inst Instance, bucket string)
 		}
 		if e.Status == "error" {
 			res, _ := lastMCResult(line)
-			return nil, &mcError{Op: "ls", Message: res.Error.Message + ": " + res.Error.Cause.Message, Code: res.Error.Cause.Error.Code}
+			listErr = &mcError{Op: "ls", Message: res.Error.Message + ": " + res.Error.Cause.Message, Code: res.Error.Cause.Error.Code}
+			break
 		}
 		if e.Type == "file" {
+			if len(entries) >= limit {
+				listErr = fmt.Errorf("%w (%d)", ErrTooManyObjects, limit)
+				break
+			}
 			entries = append(entries, ObjectEntry{Key: e.Key, Size: e.Size})
 		}
 	}
-	if err != nil {
+	if listErr == nil {
+		listErr = sc.Err()
+	}
+	if listErr != nil {
+		cancel()
+		pr.CloseWithError(listErr)
+		<-done
+		return nil, listErr
+	}
+	if err := <-done; err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
 		}

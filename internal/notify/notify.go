@@ -85,7 +85,14 @@ func (s *Service) appEvent(ctx context.Context, kind EventKind, appID int64, det
 }
 
 func (s *Service) backupEvent(ctx context.Context, backupID int64, detail string) (Event, bool) {
-	tgt, err := s.store.BackupTarget(ctx, backupID)
+	return s.backupEventFrom(ctx, s.store.BackupTarget, backupID, detail)
+}
+
+// backupEventFrom resolves a failed backup's owner through lookup: each kind
+// of backup has its own table and id sequence, so an id is only meaningful
+// with the lookup of its own kind.
+func (s *Service) backupEventFrom(ctx context.Context, lookup func(context.Context, int64) (Target, error), backupID int64, detail string) (Event, bool) {
+	tgt, err := lookup(ctx, backupID)
 	if err != nil {
 		s.log.Warn("notify: backup target lookup failed", "backup", backupID, "err", err)
 		return Event{}, false
@@ -117,6 +124,17 @@ func (s *Service) DeployFailed(_ context.Context, appID int64, reason string) {
 // BackupFailed implements backup.Notifier.
 func (s *Service) BackupFailed(_ context.Context, backupID int64, reason string) {
 	s.async(func(ctx context.Context) (Event, bool) { return s.backupEvent(ctx, backupID, reason) })
+}
+
+// VolumeBackupFailed is BackupFailed for a volume backup (a volume_backups id).
+func (s *Service) VolumeBackupFailed(_ context.Context, id int64, reason string) {
+	s.async(func(ctx context.Context) (Event, bool) { return s.backupEventFrom(ctx, s.store.VolumeBackupTarget, id, reason) })
+}
+
+// BucketBackupFailed is BackupFailed for a bucket backup or restore (a
+// bucket_backups id).
+func (s *Service) BucketBackupFailed(_ context.Context, id int64, reason string) {
+	s.async(func(ctx context.Context) (Event, bool) { return s.backupEventFrom(ctx, s.store.BucketBackupTarget, id, reason) })
 }
 
 // AppDown is emitted by the health watcher when an app becomes unreachable.

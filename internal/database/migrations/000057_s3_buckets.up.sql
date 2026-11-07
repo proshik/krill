@@ -15,6 +15,11 @@ CREATE TABLE s3_buckets (
     prev_secret_key TEXT NOT NULL DEFAULT '',
     -- false: an imported bucket whose data Krill must never destroy on its own.
     created_by_krill BOOLEAN NOT NULL DEFAULT true,
+    -- Whether Krill generated the current / previous principal. Only those are
+    -- removed with the bucket or its environment; an imported key may serve
+    -- other consumers whatever its name looks like.
+    access_key_generated BOOLEAN NOT NULL DEFAULT false,
+    prev_access_key_generated BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (instance_id, name)
 );

@@ -13,6 +13,8 @@ type fakeStore struct {
 	targets   map[int64]Target // appID -> target
 	backups   map[int64]Target // backupID -> target
 	dbTargets map[int64]Target // instanceID -> target
+
+	volumeBackups, bucketBackups map[int64]Target
 	watched   []WatchedApp
 	health    int
 }
@@ -25,6 +27,12 @@ func (f *fakeStore) AppTarget(_ context.Context, appID int64) (Target, error) {
 }
 func (f *fakeStore) BackupTarget(_ context.Context, id int64) (Target, error) {
 	return f.backups[id], nil
+}
+func (f *fakeStore) VolumeBackupTarget(_ context.Context, id int64) (Target, error) {
+	return f.volumeBackups[id], nil
+}
+func (f *fakeStore) BucketBackupTarget(_ context.Context, id int64) (Target, error) {
+	return f.bucketBackups[id], nil
 }
 func (f *fakeStore) DBInstanceTarget(_ context.Context, id int64) (Target, error) {
 	return f.dbTargets[id], nil
