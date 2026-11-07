@@ -72,6 +72,7 @@ var ru = map[string]string{
 	"nav.projects":                         "Проекты",
 	"nav.members":                          "Участники",
 	"nav.settings":                         "Настройки",
+	"nav.menu":                             "Меню",
 	"nav.logout":                           "Выйти",
 	"settings.language":                    "Язык",
 	"login.page_title":                     "Вход",

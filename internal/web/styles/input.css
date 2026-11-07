@@ -155,6 +155,27 @@
   .k-nav:hover { background:var(--color-surface-2); color:var(--color-fg); }
   .k-nav-active { color:var(--color-fg); background:rgba(190,242,100,.07); border-left:2px solid var(--color-accent); padding-left:9px; }
   .k-nav-badge { display:inline-block; margin-left:6px; padding:0 6px; border-radius:999px; font-size:11px; line-height:16px; font-weight:700; background:rgba(190,242,100,.15); color:var(--color-accent); vertical-align:middle; }
+  /* Below 768px the sidebar is an off-canvas menu behind a top bar. Closed it
+     is visibility:hidden, so its links leave the tab order too. */
+  .k-topbar, .k-nav-backdrop { display:none; }
+  @media (max-width: 767px) {
+    body { flex-direction:column; }
+    .k-topbar { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--color-border); background:#0c0c0c; position:sticky; top:0; z-index:40; }
+    .k-topbar .k-side-brand { margin:0; font-size:16px; }
+    .k-topbar-org { margin-left:auto; color:var(--color-muted); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:45vw; }
+    .k-menu-btn { width:40px; height:40px; border-radius:8px; border:1px solid var(--color-border-strong); background:transparent; color:var(--color-fg); font-size:18px; cursor:pointer; }
+    .k-menu-btn:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+    .k-side { position:fixed; top:0; left:0; bottom:0; z-index:50; width:min(80vw, 280px); min-height:0; overflow-y:auto; transform:translateX(-100%); visibility:hidden; transition:transform .2s ease, visibility 0s linear .2s; }
+    /* Visible at once on open (so focus can move in), hidden only after the slide-out on close. */
+    body.k-nav-open .k-side { transform:none; visibility:visible; transition:transform .2s ease, visibility 0s; }
+    body.k-nav-open .k-nav-backdrop { display:block; position:fixed; inset:0; z-index:45; background:rgba(0,0,0,.55); }
+    body.k-nav-open { overflow:hidden; }
+    .k-content { padding:1rem; }
+    .k-panel-head { padding:1rem; }
+  }
+  @media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+    .k-side { transition:none; }
+  }
   .k-org-badge { margin:10px 0 16px; padding:8px 10px; background:var(--color-surface); border-radius:8px; }
   .k-org-badge a { font-weight:600; color:var(--color-fg); }
   .k-org-badge .role { display:block; font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--color-faint); margin-top:2px; }

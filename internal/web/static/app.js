@@ -991,3 +991,26 @@ window.krillEnhance();
     if (e.key === "Escape") document.querySelectorAll("[data-sys].k-sys-active").forEach(clear);
   });
 })();
+
+// Mobile navigation: the sidebar opens over the page below 768px. Opening
+// moves focus into it, closing (button, backdrop, Escape) returns focus to
+// the menu button. A boosted navigation replaces the body and so closes it.
+window.krillToggleNav = function (force) {
+  var open = typeof force === "boolean" ? force : !document.body.classList.contains("k-nav-open");
+  document.body.classList.toggle("k-nav-open", open);
+  var btn = document.querySelector(".k-menu-btn");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    // The panel is visibility:hidden until its style recalculates; an element
+    // under it cannot take focus yet.
+    requestAnimationFrame(function () {
+      var first = document.querySelector("#k-side a, #k-side button");
+      if (first) first.focus();
+    });
+  } else if (btn && document.getElementById("k-side").contains(document.activeElement)) {
+    btn.focus();
+  }
+};
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && document.body.classList.contains("k-nav-open")) window.krillToggleNav(false);
+});

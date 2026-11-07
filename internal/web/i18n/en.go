@@ -72,6 +72,7 @@ var en = map[string]string{
 	"nav.projects":                         "Projects",
 	"nav.members":                          "Members",
 	"nav.settings":                         "Settings",
+	"nav.menu":                             "Menu",
 	"nav.logout":                           "Log out",
 	"settings.language":                    "Language",
 	"login.page_title":                     "Sign in",

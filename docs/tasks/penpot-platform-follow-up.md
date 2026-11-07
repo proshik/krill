@@ -302,6 +302,9 @@ Stages, each a local commit series with its own checks:
   killing).
 - [x] **S7 bucket backup/restore** — owner contract: full snapshot with a sha256
   manifest, retention by count, restore only into a new empty bucket.
+- [x] **Responsive shell** (owner request 2026-11-07): off-canvas sidebar below
+  768px with a top bar; no horizontal scroll at 390px.
+- [ ] Review: Claude subagent + revust, findings merged and resolved.
 - [ ] Separate production migration approval with measured downtime and
   rollback deadline. This plan grants none.
 
