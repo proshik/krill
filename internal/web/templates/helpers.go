@@ -377,3 +377,26 @@ func connWarnings(ctx context.Context, c dbservice.ConnStats) []string {
 	}
 	return out
 }
+
+// humanBytes is a byte count in binary units.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return strconv.FormatFloat(float64(n)/float64(div), 'f', 1, 64) + " " + string("KMGTPE"[exp]) + "iB"
+}
+
+// restoreName suggests a name for the bucket a snapshot is restored into.
+func restoreName(bucket string) string {
+	name := bucket + "-restored"
+	if len(name) > 63 {
+		name = name[len(name)-63:]
+	}
+	return strings.TrimLeft(name, "-")
+}

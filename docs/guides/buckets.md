@@ -51,4 +51,24 @@ Deleting an environment removes the users Krill generated for its buckets but ke
 buckets and their objects on the server. Cloning an environment does not copy buckets or
 bucket links.
 
-Buckets are not backed up yet; see [Backups](backups.md).
+## Back up and restore a bucket
+
+On the bucket page, **Backups** (admins) takes snapshots on a schedule or with **Backup now**,
+into any storage the organization has configured for backups. A snapshot lives under
+`<prefix>/<server>/<bucket>/<timestamp>/`: every object under `objects/`, and a `manifest.json`
+listing each object's key, size and SHA-256, written last. Only snapshots with a manifest are
+complete and offered for restore; **Keep last N** counts complete snapshots, and a snapshot a
+failed run left half-written is removed once a newer one completes. Objects written while a
+run is in progress may or may not be in it: a snapshot is a copy taken over time, not a
+point-in-time image — stop writers first when you need one.
+
+Objects travel through Krill: each one is read with `mc cat` inside the server's container and
+uploaded to the storage, so a large bucket takes a while and adds traffic to the control plane.
+
+**Restore into new bucket** creates a bucket on the same server and in the same environment,
+with its own key, and copies the snapshot into it, checking every object against the
+manifest's SHA-256 and the final listing against the manifest. A snapshot is never restored
+over an existing bucket. The outcome shows under **Last restore**; pointing apps at the
+restored bucket (its links) is your own step. A manifest key that would leave the bucket
+(`..`, an absolute path) stops the restore before anything is written, since the storage could
+have been edited by anyone holding its credentials.

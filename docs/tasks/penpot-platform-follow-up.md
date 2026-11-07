@@ -153,10 +153,12 @@ intake, each checked in code:
 3. **S3 admin: `mc` through Engine.Exec** (revised once the Silo image was found
    to ship `mc`; the first choice, an own admin-API client, would have needed
    madmin's body encryption). Silo remains the chosen product.
-4. Still open, decided at their stage: bucket snapshot RPO/retention/overwrite
-   contract; automated existing-network MTU migration versus a documented
-   procedure; ownership scope of buckets (proposal: env-scoped like logical
-   databases, inside an org-scoped instance).
+4. Decided 2026-11-07: bucket backups are full snapshots with a sha256 manifest,
+   count-based retention, restore only into a new empty bucket; existing-network
+   MTU stays a documented manual procedure; the app shell gets a responsive
+   sidebar in this task; the branch is reviewed by a Claude subagent and by
+   revust, with the findings merged. Buckets are env-scoped inside an
+   org-scoped server, like logical databases.
 
 ## Proposed work packages and acceptance scenarios
 
@@ -298,7 +300,8 @@ Stages, each a local commit series with its own checks:
   and advisory locks on the logical database page; effective
   limits, OOM and readiness on the app page; connection-budget hints (no session
   killing).
-- [ ] **S7 bucket backup/restore** — after the recovery contract is decided.
+- [x] **S7 bucket backup/restore** — owner contract: full snapshot with a sha256
+  manifest, retention by count, restore only into a new empty bucket.
 - [ ] Separate production migration approval with measured downtime and
   rollback deadline. This plan grants none.
 

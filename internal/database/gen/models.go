@@ -125,6 +125,23 @@ type Backup struct {
 	LogicalDatabaseID int64              `json:"logical_database_id"`
 }
 
+type BucketBackup struct {
+	ID                int64              `json:"id"`
+	BucketID          int64              `json:"bucket_id"`
+	DestinationID     int64              `json:"destination_id"`
+	Schedule          string             `json:"schedule"`
+	Prefix            string             `json:"prefix"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	LastRestoreAt     pgtype.Timestamptz `json:"last_restore_at"`
+	LastRestoreStatus string             `json:"last_restore_status"`
+	LastRestoreError  string             `json:"last_restore_error"`
+	CreatedAt         time.Time          `json:"created_at"`
+}
+
 type ClusterNode struct {
 	ID              int64     `json:"id"`
 	Name            string    `json:"name"`

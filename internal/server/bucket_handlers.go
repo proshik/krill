@@ -121,35 +121,18 @@ func (s *Server) createBucket(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, key)
 		return
 	}
-	if !importing {
-		if accessKey, secretKey, err = newBucketKey(name); err != nil {
-			logFrom(r).Error("createBucket: key generation failed", "err", err)
-			s.flashErrT(w, r, "flash.err.internal")
-			return
-		}
+	var row db.S3Bucket
+	if importing {
+		row, err = s.addBucket(r, di, e.ID, name, accessKey, secretKey, false)
+	} else {
+		row, err = s.newKrillBucket(r, di, e.ID, name)
 	}
-	// The row first: its UNIQUE(instance_id, name) refuses a second claim on
-	// the bucket before anything touches the server.
-	row, err := s.q.CreateS3Bucket(r.Context(), db.CreateS3BucketParams{
-		InstanceID: di.ID, EnvironmentID: e.ID, Name: name, AccessKey: accessKey,
-		SecretKey: secret.Enc(secretKey), CreatedByKrill: !importing,
-	})
-	if err != nil {
-		logFrom(r).Info("createBucket: insert refused", "err", err, "instance_id", di.ID, "bucket", name)
+	if errors.Is(err, errBucketTaken) {
 		s.flashErrT(w, r, "flash.err.bucket_exists")
 		return
 	}
-	b := dbservice.Bucket{Name: name, AccessKey: accessKey, SecretKey: secretKey}
-	if importing {
-		err = s.dbsvc.ImportBucket(r.Context(), di, b)
-	} else {
-		err = s.dbsvc.CreateBucket(r.Context(), di, b)
-	}
 	if err != nil {
-		if derr := s.q.DeleteS3Bucket(context.WithoutCancel(r.Context()), row.ID); derr != nil {
-			logFrom(r).Error("createBucket: rollback row failed", "err", derr, "bucket_id", row.ID)
-		}
-		logFrom(r).Warn("createBucket: server refused", "err", err, "instance_id", di.ID, "bucket", name, "import", importing)
+		logFrom(r).Warn("createBucket: refused", "err", err, "instance_id", di.ID, "bucket", name, "import", importing)
 		s.bucketErr(w, r, err)
 		return
 	}
@@ -160,6 +143,48 @@ func (s *Server) createBucket(w http.ResponseWriter, r *http.Request) {
 		s.flashOK(w, r, "flash.ok.bucket_created")
 	}
 	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"/buckets/"+strconv.FormatInt(row.ID, 10), http.StatusSeeOther)
+}
+
+// errBucketTaken: Krill already has a bucket of that name on that server.
+var errBucketTaken = errors.New("bucket already in Krill")
+
+// newKrillBucket creates a bucket and a generated principal on the server and
+// records it for envID.
+func (s *Server) newKrillBucket(r *http.Request, di dbservice.Instance, envID int64, name string) (db.S3Bucket, error) {
+	ak, sk, err := newBucketKey(name)
+	if err != nil {
+		return db.S3Bucket{}, err
+	}
+	return s.addBucket(r, di, envID, name, ak, sk, true)
+}
+
+// addBucket records a bucket, then creates it on the server (create) or checks
+// the given principal against the existing one (import), dropping the row
+// again when the server refuses. The row goes first: its UNIQUE(instance_id,
+// name) refuses a second claim on the bucket before anything touches the
+// server.
+func (s *Server) addBucket(r *http.Request, di dbservice.Instance, envID int64, name, accessKey, secretKey string, create bool) (db.S3Bucket, error) {
+	row, err := s.q.CreateS3Bucket(r.Context(), db.CreateS3BucketParams{
+		InstanceID: di.ID, EnvironmentID: envID, Name: name, AccessKey: accessKey,
+		SecretKey: secret.Enc(secretKey), CreatedByKrill: create,
+	})
+	if err != nil {
+		logFrom(r).Info("addBucket: insert refused", "err", err, "instance_id", di.ID, "bucket", name)
+		return db.S3Bucket{}, errBucketTaken
+	}
+	b := dbservice.Bucket{Name: name, AccessKey: accessKey, SecretKey: secretKey}
+	if create {
+		err = s.dbsvc.CreateBucket(r.Context(), di, b)
+	} else {
+		err = s.dbsvc.ImportBucket(r.Context(), di, b)
+	}
+	if err != nil {
+		if derr := s.q.DeleteS3Bucket(context.WithoutCancel(r.Context()), row.ID); derr != nil {
+			logFrom(r).Error("addBucket: rollback row failed", "err", derr, "bucket_id", row.ID)
+		}
+		return db.S3Bucket{}, err
+	}
+	return row, nil
 }
 
 // bucketCtx is a bucket loaded through the org→project→environment chain.
@@ -229,6 +254,10 @@ func (s *Server) bucketDetail(w http.ResponseWriter, r *http.Request) {
 		v.Links = append(v.Links, templates.BucketLinkUse{App: l.AppName, VarName: l.VarName, Field: l.Field})
 	}
 	if c.Role == "owner" || c.Role == "admin" {
+		v.Backups = s.bucketBackupViews(r, c.Bucket.ID)
+		if dests, err := s.q.ListDestinationsByOrg(r.Context(), c.Org.ID); err == nil {
+			v.Destinations = dests
+		}
 		if sk, derr := secret.Dec(c.Bucket.SecretKey); derr != nil {
 			logFrom(r).Error("bucketDetail: secret undecryptable", "err", derr, "bucket_id", c.Bucket.ID)
 		} else {
@@ -353,6 +382,7 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
+	s.reloadBucketBackupSchedules() // its backup configurations cascaded away
 	logFrom(r).Info("bucket removed", "bucket_id", c.Bucket.ID, "bucket", c.Bucket.Name, "destroy_data", destroy)
 	s.flashOK(w, r, "flash.ok.bucket_deleted")
 	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)

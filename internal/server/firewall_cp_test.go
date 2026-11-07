@@ -23,12 +23,12 @@ import (
 // hostFirewall simulates the nft/systemd state of the control-plane host, keyed
 // off the commands internal/firewall sends.
 type hostFirewall struct {
-	mu       sync.Mutex
-	locked   bool
-	pending  bool
-	confirms int
-	refused  int // Applies refused because a switch was already armed
-	rulesets []string
+	mu        sync.Mutex
+	locked    bool
+	pending   bool
+	confirms  int
+	refused   int // Applies refused because a switch was already armed
+	rulesets  []string
 	persisted string // ruleset saved for boot ("" = none)
 }
 

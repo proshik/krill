@@ -13,6 +13,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
+	"github.com/proshik/krill/internal/bucketbackup"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
@@ -50,6 +51,8 @@ type Server struct {
 
 	volumeSvc           *volume.VolumeService
 	reloadVolumeBackups func()
+	bucketBackups       *bucketbackup.Service
+	reloadBucketBackups func()
 
 	notify  *notify.Service
 	metrics metrics.Store
@@ -496,6 +499,11 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/rotate", s.rotateBucketKey)
 				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/revoke-previous", s.revokeBucketPrevKey)
 				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/delete", s.deleteBucket)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/backups", s.addBucketBackup)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/backups/{bbID}/toggle", s.toggleBucketBackup)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/backups/{bbID}/delete", s.deleteBucketBackup)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/backups/{bbID}/run", s.runBucketBackupNow)
+				r.Post("/projects/{projID}/environments/{envID}/buckets/{bucketID}/backups/{bbID}/restore", s.restoreBucketBackup)
 				r.Post("/projects/{projID}/environments/{envID}/databases", s.createLogicalDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{dbID}/delete", s.deleteLogicalDatabase)
 				r.Post("/projects/{projID}/environments/{envID}/databases/{dbID}/backups", s.addBackup)

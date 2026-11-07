@@ -73,6 +73,7 @@ type Querier interface {
 	CreateAppPort(ctx context.Context, arg CreateAppPortParams) (AppPort, error)
 	CreateApplication(ctx context.Context, arg CreateApplicationParams) (Application, error)
 	CreateBackup(ctx context.Context, arg CreateBackupParams) (CreateBackupRow, error)
+	CreateBucketBackup(ctx context.Context, arg CreateBucketBackupParams) (BucketBackup, error)
 	CreateBucketLink(ctx context.Context, arg CreateBucketLinkParams) (AppBucketLink, error)
 	CreateCloneApplication(ctx context.Context, arg CreateCloneApplicationParams) (Application, error)
 	CreateClusterNode(ctx context.Context, arg CreateClusterNodeParams) (CreateClusterNodeRow, error)
@@ -104,6 +105,7 @@ type Querier interface {
 	DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
+	DeleteBucketBackup(ctx context.Context, id int64) error
 	DeleteBucketLink(ctx context.Context, id int64) error
 	DeleteClusterNode(ctx context.Context, id int64) error
 	DeleteDBInstance(ctx context.Context, id int64) error
@@ -148,6 +150,7 @@ type Querier interface {
 	GetApplicationMetrics(ctx context.Context, id int64) (GetApplicationMetricsRow, error)
 	GetApplicationPlacement(ctx context.Context, id int64) (GetApplicationPlacementRow, error)
 	GetBackup(ctx context.Context, id int64) (GetBackupRow, error)
+	GetBucketBackup(ctx context.Context, id int64) (BucketBackup, error)
 	GetBucketLink(ctx context.Context, id int64) (AppBucketLink, error)
 	GetClusterNode(ctx context.Context, id int64) (GetClusterNodeRow, error)
 	GetClusterNodeBySwarmID(ctx context.Context, swarmNodeID string) (GetClusterNodeBySwarmIDRow, error)
@@ -193,6 +196,7 @@ type Querier interface {
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
+	ListBucketBackupsByBucket(ctx context.Context, bucketID int64) ([]BucketBackup, error)
 	ListBucketLinksByApplication(ctx context.Context, applicationID int64) ([]AppBucketLink, error)
 	ListBucketLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]AppBucketLink, error)
 	ListBucketLinksByBucket(ctx context.Context, bucketID int64) ([]ListBucketLinksByBucketRow, error)
@@ -219,6 +223,7 @@ type Querier interface {
 	// Batched form for the topology view (one query instead of one per app).
 	ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]Domain, error)
 	ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsRow, error)
+	ListEnabledBucketBackups(ctx context.Context) ([]BucketBackup, error)
 	ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup, error)
 	ListEnvironmentCloneRecovery(ctx context.Context) ([]EnvironmentClone, error)
 	ListEnvironments(ctx context.Context, projectID int64) ([]Environment, error)
@@ -288,6 +293,9 @@ type Querier interface {
 	SetApplicationWebhookSecret(ctx context.Context, arg SetApplicationWebhookSecretParams) error
 	SetBackupEnabled(ctx context.Context, arg SetBackupEnabledParams) error
 	SetBackupResult(ctx context.Context, arg SetBackupResultParams) error
+	SetBucketBackupEnabled(ctx context.Context, arg SetBucketBackupEnabledParams) error
+	SetBucketBackupResult(ctx context.Context, arg SetBucketBackupResultParams) error
+	SetBucketRestoreResult(ctx context.Context, arg SetBucketRestoreResultParams) error
 	SetClusterNodeFirewallManaged(ctx context.Context, arg SetClusterNodeFirewallManagedParams) error
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error

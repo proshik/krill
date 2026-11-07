@@ -243,3 +243,64 @@ func TestDeployRefusalSaysWhy(t *testing.T) {
 		t.Fatalf("flash: %q", flashCookieValue(rec))
 	}
 }
+
+// Bucket backup configurations: created with the org's own storage only,
+// paused and deleted by admins, and a member can touch none of it.
+func TestBucketBackupConfig(t *testing.T) {
+	f := newBucketFixture(t, "bkt-backup@k.local")
+	ctx := context.Background()
+	b, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "krill-penpot-dddddd", SecretKey: "x", CreatedByKrill: true})
+	dest, err := f.q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: f.org.ID, Name: "b2", Endpoint: "https://s3.example.com", Bucket: "bk", Region: "us-east-1", AccessKey: "a", SecretKey: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider := mkUser(t, f.q, "bkt-backup-out@k.local")
+	o2, _ := f.q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "O2", Slug: "o2-bkb", OwnerID: outsider})
+	foreign, _ := f.q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: o2.ID, Name: "theirs", Endpoint: "https://s3.example.com", Bucket: "x", Region: "us-east-1", AccessKey: "a", SecretKey: "s"})
+	base := f.envBase + "/buckets/" + i64(b.ID)
+
+	form := url.Values{"destination_id": {i64(dest.ID)}, "schedule_preset": {"daily"}, "retention": {"5"}}
+	if rec := postForm(t, f.h, base+"/backups", f.cookie, form); hasErrFlash(rec) {
+		t.Fatalf("create: %q", flashCookieValue(rec))
+	}
+	if rec := postForm(t, f.h, base+"/backups", f.cookie, form); !hasErrFlash(rec) {
+		t.Fatal("the same storage and prefix twice must be refused")
+	}
+	if rec := postForm(t, f.h, base+"/backups", f.cookie, url.Values{"destination_id": {i64(foreign.ID)}, "schedule_preset": {"daily"}, "retention": {"5"}}); !hasErrFlash(rec) {
+		t.Fatal("another organization's storage must be refused")
+	}
+	rows, _ := f.q.ListBucketBackupsByBucket(ctx, b.ID)
+	if len(rows) != 1 || rows[0].Retention != 5 || !rows[0].Enabled {
+		t.Fatalf("rows: %+v", rows)
+	}
+	bb := base + "/backups/" + i64(rows[0].ID)
+	postForm(t, f.h, bb+"/toggle", f.cookie, url.Values{"enabled": {"0"}})
+	if r, _ := f.q.GetBucketBackup(ctx, rows[0].ID); r.Enabled {
+		t.Fatal("pause did not stick")
+	}
+
+	// Without a bucket-backup service (no engine) a restore refuses and
+	// creates no bucket.
+	if rec := postForm(t, f.h, bb+"/restore", f.cookie, url.Values{"snapshot": {"2026-11-07T10-00-00Z"}, "target": {"penpot-restored"}}); !hasErrFlash(rec) {
+		t.Fatal("restore without the service must refuse")
+	}
+	if n, _ := f.q.CountS3BucketsByInstance(ctx, f.inst.ID); n != 1 {
+		t.Fatalf("a refused restore created a bucket: %d", n)
+	}
+
+	memberID := mkUser(t, f.q, "bkt-backup-member@k.local")
+	f.q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: f.org.ID, UserID: memberID, Role: "member"})
+	member := loginAs(t, f.q, "bkt-backup-member@k.local")
+	for _, p := range []string{"/backups", "/backups/" + i64(rows[0].ID) + "/run", "/backups/" + i64(rows[0].ID) + "/restore", "/backups/" + i64(rows[0].ID) + "/delete"} {
+		if rec := postForm(t, f.h, base+p, member, form); rec.Code != http.StatusForbidden {
+			t.Fatalf("member POST %s: %d", p, rec.Code)
+		}
+	}
+	// Deleting the bucket takes its backup configurations with it.
+	if rec := postForm(t, f.h, bb+"/delete", f.cookie, url.Values{}); hasErrFlash(rec) {
+		t.Fatalf("delete: %q", flashCookieValue(rec))
+	}
+	if rows, _ := f.q.ListBucketBackupsByBucket(ctx, b.ID); len(rows) != 0 {
+		t.Fatalf("left: %+v", rows)
+	}
+}

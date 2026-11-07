@@ -20,6 +20,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
+	"github.com/proshik/krill/internal/bucketbackup"
 	"github.com/proshik/krill/internal/builder"
 	"github.com/proshik/krill/internal/buildinfo"
 	"github.com/proshik/krill/internal/cluster"
@@ -455,6 +456,24 @@ func run() error {
 	}
 	defer volSched.Stop()
 
+	// Bucket backups: snapshots of managed S3 buckets, a third scheduler.
+	bucketStore := bucketbackup.NewDBStore(q)
+	bucketSvc := bucketbackup.New(bucketbackup.MCIO{Svc: dbSvc}, bucketStore, cfg.AllowPrivateEgress)
+	bucketSvc.SetNotifier(notifySvc)
+	bucketSched := backup.NewScheduler(bucketStore, func(ctx context.Context, id int64) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Hour)
+		defer cancel()
+		if err := bucketSvc.RunBackup(ctx, id, time.Now()); errors.Is(err, bucketbackup.ErrRunning) {
+			slog.Warn("scheduled bucket backup skipped — previous run still in flight", "bucket_backup", id)
+		} else if err != nil {
+			slog.Error("scheduled bucket backup failed", "bucket_backup", id, "err", err)
+		}
+	})
+	if err := bucketSched.Reload(); err != nil {
+		slog.Warn("bucket backup scheduler reload failed", "err", err)
+	}
+	defer bucketSched.Stop()
+
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
 	app.SetHostShare(hostshare.NewStore(pool))
@@ -476,6 +495,11 @@ func run() error {
 			slog.Error("volume backup scheduler reload failed", "err", err)
 		}
 	})
+	app.SetBucketBackups(bucketSvc, func() {
+		if err := bucketSched.Reload(); err != nil {
+			slog.Error("bucket backup scheduler reload failed", "err", err)
+		}
+	})
 	app.SetNotify(notifySvc)
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
@@ -491,6 +515,7 @@ func run() error {
 			migratingInstances: q.CountMigratingDBInstances,
 			backups:            backupSvc,
 			volumes:            volSvc,
+			buckets:            bucketSvc,
 			clones:             cloner,
 		}.reason)
 	app.SetSelfUpdate(updateChecker, updater)

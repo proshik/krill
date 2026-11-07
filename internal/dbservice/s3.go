@@ -271,3 +271,66 @@ func (s *Service) RemoveBucket(ctx context.Context, inst Instance, bucket string
 	}
 	return s.mc(ctx, inst, "rb", nil, "rb", "--force", "k/"+bucket)
 }
+
+// ObjectEntry is one object of a bucket.
+type ObjectEntry struct {
+	Key  string
+	Size int64
+}
+
+// ListObjects lists every object of a bucket (mc ls --recursive).
+func (s *Service) ListObjects(ctx context.Context, inst Instance, bucket string) ([]ObjectEntry, error) {
+	if !ValidBucketName(bucket) {
+		return nil, errors.New("invalid bucket name")
+	}
+	var out bytes.Buffer
+	err := s.engine.Exec(ctx, inst.AppName, []string{"mc", "--json", "ls", "--recursive", "k/" + bucket},
+		[]string{"MC_HOST_k=" + mcHost(inst.Superuser, inst.SuperuserPassword)}, nil, &out)
+	var entries []ObjectEntry
+	for _, line := range bytes.Split(out.Bytes(), []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var e struct {
+			Status string `json:"status"`
+			Type   string `json:"type"`
+			Key    string `json:"key"`
+			Size   int64  `json:"size"`
+		}
+		if json.Unmarshal(line, &e) != nil {
+			continue
+		}
+		if e.Status == "error" {
+			res, _ := lastMCResult(line)
+			return nil, &mcError{Op: "ls", Message: res.Error.Message + ": " + res.Error.Cause.Message, Code: res.Error.Cause.Error.Code}
+		}
+		if e.Type == "file" {
+			entries = append(entries, ObjectEntry{Key: e.Key, Size: e.Size})
+		}
+	}
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		return nil, fmt.Errorf("mc ls: %w", err)
+	}
+	return entries, nil
+}
+
+// ReadObject streams one object of a bucket to w (mc cat).
+func (s *Service) ReadObject(ctx context.Context, inst Instance, bucket, key string, w io.Writer) error {
+	if !ValidBucketName(bucket) {
+		return errors.New("invalid bucket name")
+	}
+	return s.engine.Exec(ctx, inst.AppName, []string{"mc", "cat", "k/" + bucket + "/" + key},
+		[]string{"MC_HOST_k=" + mcHost(inst.Superuser, inst.SuperuserPassword)}, nil, w)
+}
+
+// WriteObject stores r as one object of a bucket (mc pipe).
+func (s *Service) WriteObject(ctx context.Context, inst Instance, bucket, key string, r io.Reader) error {
+	if !ValidBucketName(bucket) {
+		return errors.New("invalid bucket name")
+	}
+	return s.mc(ctx, inst, "pipe", r, "pipe", "k/"+bucket+"/"+key)
+}

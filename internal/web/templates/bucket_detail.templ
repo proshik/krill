@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"github.com/proshik/krill/internal/bucketbackup"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -20,6 +21,17 @@ type BucketView struct {
 	SecretKey     string // decrypted; "" for members and when undecryptable
 	PrevAccessKey string // the principal a rotation replaced, until revoked
 	Links         []BucketLinkUse
+
+	Backups      []BucketBackupView
+	Destinations []db.Destination
+}
+
+// BucketBackupView is one backup configuration of a bucket with its snapshots.
+type BucketBackupView struct {
+	Row                  db.BucketBackup
+	Destination          string
+	Snapshots            []bucketbackup.Snapshot
+	SnapshotsUnavailable bool
 }
 
 // BucketLinkUse is one app variable fed from the bucket.
@@ -92,6 +104,7 @@ templ BucketDetail(v BucketView) {
 						}
 					</div>
 					if v.admin() {
+						@bucketBackups(v)
 						<div class="k-card">
 							<div class="k-label">{ i18n.T(ctx, "bucket.rotation") }</div>
 							if v.PrevAccessKey == "" {
@@ -118,4 +131,105 @@ templ BucketDetail(v BucketView) {
 			</div>
 		</div>
 	}
+}
+
+templ bucketBackups(v BucketView) {
+	<div class="k-card">
+		<div class="k-label">{ i18n.T(ctx, "backup.section") }</div>
+		<p class="k-panel-desc mb-3" style="max-width:720px">{ i18n.T(ctx, "bbackup.desc") }</p>
+		for _, b := range v.Backups {
+			<div class="mb-4" style="border-top:1px solid var(--color-border);padding-top:12px">
+				<div class="flex items-center gap-3 flex-wrap">
+					<span class="k-mono">{ b.Destination }</span>
+					<span class="k-mono text-xs" style="color:var(--color-muted)">{ scheduleLabel(ctx, b.Row.Schedule) + " · " + i18n.Tf(ctx, "bbackup.keep", b.Row.Retention) }</span>
+					if b.Row.Enabled {
+						<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "backup.enabled") }</span>
+					} else {
+						<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "backup.paused") }</span>
+					}
+				</div>
+				<div class="text-sm mt-1">{ i18n.T(ctx, "backup.last_run") }: { tsStr(b.Row.LastRunAt) } { b.Row.LastStatus }</div>
+				if b.Row.LastError != "" {
+					<div class="text-xs" style="color:var(--color-err)">{ b.Row.LastError }</div>
+				}
+				if b.Row.LastRestoreStatus != "" {
+					<div class="text-sm">{ i18n.T(ctx, "bbackup.last_restore") }: { tsStr(b.Row.LastRestoreAt) } { b.Row.LastRestoreStatus }</div>
+					if b.Row.LastRestoreError != "" {
+						<div class="text-xs" style="color:var(--color-err)">{ b.Row.LastRestoreError }</div>
+					}
+				}
+				<div class="flex items-center gap-2 flex-wrap mt-2">
+					<form method="post" action={ templ.SafeURL(v.Base + "/backups/" + itoa(b.Row.ID) + "/run") } class="inline">
+						<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
+					</form>
+					<form method="post" action={ templ.SafeURL(v.Base + "/backups/" + itoa(b.Row.ID) + "/toggle") } class="inline">
+						<input type="hidden" name="enabled" value={ onOff(!b.Row.Enabled) }/>
+						if b.Row.Enabled {
+							<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.pause") }</button>
+						} else {
+							<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.resume") }</button>
+						}
+					</form>
+					<form method="post" hx-boost="false" action={ templ.SafeURL(v.Base + "/backups/" + itoa(b.Row.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "bbackup.confirm_delete", b.Destination) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="inline">
+						<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
+					</form>
+				</div>
+				<div class="k-label mt-3">{ i18n.T(ctx, "bbackup.snapshots") }</div>
+				if b.SnapshotsUnavailable {
+					<p class="k-muted text-sm">{ i18n.T(ctx, "bbackup.snapshots_unavailable") }</p>
+				} else if len(b.Snapshots) == 0 {
+					<p class="k-muted text-sm">{ i18n.T(ctx, "bbackup.no_snapshots") }</p>
+				} else {
+					<div class="overflow-x-auto">
+						<table class="k-table">
+							<thead><tr><th>{ i18n.T(ctx, "runtime.when") }</th><th>{ i18n.T(ctx, "bbackup.objects") }</th><th>{ i18n.T(ctx, "bbackup.restore") }</th></tr></thead>
+							<tbody>
+								for _, sn := range b.Snapshots {
+									<tr>
+										<td class="k-mono text-xs">{ sn.Timestamp }</td>
+										<td class="k-mono text-xs">{ i18n.Tf(ctx, "bbackup.objects_bytes", sn.Objects, humanBytes(sn.Bytes)) }</td>
+										<td>
+											if sn.Complete {
+												<form method="post" hx-boost="false" action={ templ.SafeURL(v.Base + "/backups/" + itoa(b.Row.ID) + "/restore") } class="flex items-end gap-2 flex-wrap" data-confirm={ i18n.T(ctx, "bbackup.confirm_restore") } onsubmit="return krillConfirm(this, this.dataset.confirm)">
+													<input type="hidden" name="snapshot" value={ sn.Timestamp }/>
+													<label class="sr-only" for={ "restore-" + itoa(b.Row.ID) + "-" + sn.Timestamp }>{ i18n.T(ctx, "bbackup.target") }</label>
+													<input id={ "restore-" + itoa(b.Row.ID) + "-" + sn.Timestamp } class="k-input k-mono" name="target" required value={ restoreName(v.Bucket.Name) } aria-describedby="bbackup-target-hint"/>
+													<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "bbackup.restore_new") }</button>
+												</form>
+											} else {
+												<span class="k-muted text-xs">{ i18n.T(ctx, "bbackup.incomplete") }</span>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					</div>
+					<p id="bbackup-target-hint" class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "bbackup.target_hint") }</p>
+				}
+			</div>
+		}
+		if len(v.Destinations) == 0 {
+			<p class="k-muted">{ i18n.T(ctx, "backup.no_destinations") }</p>
+			@inlineDestinationForm(v.Org.ID, v.Base)
+		} else {
+			<form method="post" action={ templ.SafeURL(v.Base + "/backups") } class="mt-2 flex flex-col gap-2">
+				<div>
+					<label class="k-label" for="bbackup-dest">{ i18n.T(ctx, "backup.destination") }</label>
+					<select id="bbackup-dest" class="k-select" name="destination_id">
+						for _, d := range v.Destinations {
+							<option value={ itoa(d.ID) }>{ d.Name }</option>
+						}
+					</select>
+				</div>
+				@scheduleSelect()
+				<div>
+					<label class="k-label" for="bbackup-retention">{ i18n.T(ctx, "backup.retention") }</label>
+					<input id="bbackup-retention" class="k-input" name="retention" type="number" value="7" min="1"/>
+				</div>
+				@backupAdvanced()
+				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button></div>
+			</form>
+		}
+	</div>
 }
