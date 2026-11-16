@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,8 +24,9 @@ import (
 // TestMCPStreamEndsOnShutdown pins the cause of a self-update stop that hit
 // its deadline: an MCP client's standalone GET /mcp stream stays open until
 // the client goes away, and http.Server.Shutdown waits for it. With
-// StopStreams registered on the server, Shutdown must finish promptly and the
-// stream must end cleanly while the client is still connected.
+// StopStreams registered on the server, the stream must end cleanly as soon
+// as Shutdown starts, while a tool call that is still running gets to finish
+// and return its full result.
 func TestMCPStreamEndsOnShutdown(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -43,9 +45,16 @@ func TestMCPStreamEndsOnShutdown(t *testing.T) {
 
 	router := app.Router()
 	streamOpen := make(chan struct{}, 1)
+	callHeld := make(chan struct{}, 1)
+	releaseCall := make(chan struct{})
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/mcp" {
 			streamOpen <- struct{}{}
+		}
+		if r.Header.Get("X-Test-Hold") != "" {
+			// A tool call still in progress when Shutdown starts.
+			callHeld <- struct{}{}
+			<-releaseCall
 		}
 		router.ServeHTTP(w, r)
 	}))
@@ -113,21 +122,84 @@ func TestMCPStreamEndsOnShutdown(t *testing.T) {
 	default:
 	}
 
+	type callResult struct {
+		status int
+		body   []byte
+		err    error
+	}
+	callDone := make(chan callResult, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(clientCtx, http.MethodPost, ts.URL+"/mcp",
+			strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"krill_whoami","arguments":{}}}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Mcp-Session-Id", sid)
+		req.Header.Set("MCP-Protocol-Version", "2025-06-18")
+		req.Header.Set("X-Test-Hold", "1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			callDone <- callResult{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		callDone <- callResult{status: resp.StatusCode, body: body, err: err}
+	}()
+	select {
+	case <-callHeld:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the tool call never reached the server")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	start := time.Now()
-	if err := ts.Config.Shutdown(ctx); err != nil {
-		t.Fatalf("Shutdown with an open MCP stream: %v after %s", err, time.Since(start))
-	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("Shutdown took %s; the MCP stream should end at once", d)
-	}
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- ts.Config.Shutdown(ctx) }()
+
 	select {
 	case err := <-streamDone:
 		if err != nil {
 			t.Fatalf("the stream should end cleanly, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("the client's stream did not end after Shutdown")
+		t.Fatal("the client's stream did not end once Shutdown started")
+	}
+
+	// The tool call reaches the MCP handler only now, after StopStreams ran:
+	// it must still be served in full.
+	close(releaseCall)
+	select {
+	case res := <-callDone:
+		if res.err != nil || res.status != http.StatusOK {
+			t.Fatalf("tool call during shutdown: status %d, err %v, body %q", res.status, res.err, res.body)
+		}
+		var env struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(res.body, &env); err != nil || env.Result.IsError || len(env.Result.Content) == 0 {
+			t.Fatalf("tool call during shutdown returned no result (err=%v): %q", err, res.body)
+		}
+		var who api.WhoamiResult
+		if err := json.Unmarshal([]byte(env.Result.Content[0].Text), &who); err != nil || who.OrgID != o.ID {
+			t.Fatalf("tool call during shutdown: unexpected whoami %q (err=%v)", env.Result.Content[0].Text, err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the tool call did not finish during shutdown")
+	}
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("Shutdown with an open MCP stream: %v after %s", err, time.Since(start))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not return")
 	}
 }

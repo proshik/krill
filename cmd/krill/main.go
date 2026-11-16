@@ -104,8 +104,10 @@ func run() error {
 	gate := server.NewStartupGate()
 	inflight := server.NewInflight()
 	srv := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: inflight.Wrap(gate),
+		Addr:        cfg.ListenAddr,
+		Handler:     inflight.Wrap(gate),
+		ConnContext: inflight.ConnContext,
+		ConnState:   inflight.ConnState,
 		// Slowloris guard on the request line/headers only; body/stream reads and
 		// writes stay unbounded (long-lived WS: deploy logs, log viewer, terminal).
 		// Do NOT set ReadTimeout/WriteTimeout — those would cut those streams.
