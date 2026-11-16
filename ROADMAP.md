@@ -157,6 +157,12 @@ Verified in code and tests, but not yet exercised on a real environment:
     obtaining and renewing its Let's Encrypt certificate (HTTP-01 through the redirect
     host) and the redirect from the old host after **Make primary**. Checked so far
     against the pinned Traefik locally with plain HTTP and a self-signed certificate.
+    On 2026-11-16 a real three-node cluster self-updated from v0.7.0 to v0.8.0, and two TLS
+    redirecting domains on it got Let's Encrypt certificates on the first try. Both answer
+    `301` to `GET` and `308` to `POST` with the path and query kept, and plain HTTP goes to
+    the target in one hop. Still open: certificate renewal (due in about two months) and the
+    redirect after **Make primary** on a live install, since those primaries were set at app
+    creation.
 
 ## Open
 
