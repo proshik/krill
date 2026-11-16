@@ -230,3 +230,67 @@ func TestDeleteNonPrimaryDomainAfterMakePrimary(t *testing.T) {
 		t.Fatal("primary lost")
 	}
 }
+
+// Deleting the application while a primary change is in flight must not
+// deadlock: the delete locks the application row and then (cascade) every
+// domains row, the primary change must take them in the same order.
+func TestStoreMakePrimaryVersusApplicationDelete(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	web := f.appWithPrimary(t, f.envID, "web")
+	var ids []int64
+	for _, host := range []string{"d.test", "b.test"} {
+		d, err := f.store.Add(ctx, AddParams{AppID: web.ID, Host: host})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, d.ID)
+	}
+	waitFor := func(n int) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			var waiting int
+			if err := f.store.pool.QueryRow(ctx,
+				"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()").Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+			if waiting >= n {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("want %d waiting sessions, have %d", n, waiting)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	blocker, err := f.store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(ctx) }()
+	if _, err := blocker.Exec(ctx, "SELECT id FROM domains WHERE id = $1 FOR UPDATE", ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	makeErr := make(chan error, 1)
+	go func() { makeErr <- f.store.MakePrimary(ctx, ids[1]) }()
+	waitFor(1) // parked on row d while holding everything it took before
+	delErr := make(chan error, 1)
+	go func() {
+		_, err := f.store.pool.Exec(ctx, "DELETE FROM applications WHERE id = $1", web.ID)
+		delErr <- err
+	}()
+	waitFor(2)
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-makeErr; err != nil {
+		t.Fatalf("make primary: %v", err)
+	}
+	if err := <-delErr; err != nil {
+		t.Fatalf("delete application: %v", err)
+	}
+	if _, err := f.q.GetApplication(ctx, web.ID); err == nil {
+		t.Fatal("application survived its delete")
+	}
+}

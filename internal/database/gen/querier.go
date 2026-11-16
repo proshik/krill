@@ -267,6 +267,9 @@ type Querier interface {
 	// Returns ALL apps across ALL orgs; used only by the internal health watcher.
 	// Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
 	ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, error)
+	// Taken before any domains row: deleting an application locks it first and
+	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
+	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error

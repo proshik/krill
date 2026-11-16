@@ -93,7 +93,9 @@ CHECK), and **Make primary** (the first way to change `is_primary` after creatio
 for a redirecting domain and for a host other apps share, rewrites `is_primary` for every row
 of the app and `applications.domain`; it takes an application advisory lock
 (`krill.domain-primary:<appID>`) BEFORE the host lock — two primary changes on different
-hosts would otherwise deadlock on each other's target row (`TestStoreConcurrentMakePrimary`).
+hosts would otherwise deadlock on each other's target row (`TestStoreConcurrentMakePrimary`),
+and then locks the `applications` row before any `domains` row (`LockApplicationRow`) — an app
+delete takes them in that order via ON DELETE CASCADE (`TestStoreMakePrimaryVersusApplicationDelete`).
 Since the primary can now move, `deleteDomain` deletes with `DeleteNonPrimaryDomain`
 (`AND NOT is_primary`, 0 rows ⇒ refused), and `CountExposedDomainsByApplication` ignores
 redirecting rows. Traefik drops routers of a service without running

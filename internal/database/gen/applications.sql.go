@@ -427,6 +427,18 @@ func (q *Queries) ListPinnedApplications(ctx context.Context) ([]ListPinnedAppli
 	return items, nil
 }
 
+const lockApplicationRow = `-- name: LockApplicationRow :one
+SELECT id FROM applications WHERE id = $1 FOR UPDATE
+`
+
+// Taken before any domains row: deleting an application locks it first and
+// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
+func (q *Queries) LockApplicationRow(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockApplicationRow, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setApplicationAutoDeploy = `-- name: SetApplicationAutoDeploy :exec
 UPDATE applications SET auto_deploy = $2, updated_at = now() WHERE id = $1
 `

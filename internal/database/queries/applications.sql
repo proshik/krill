@@ -103,3 +103,8 @@ SELECT placement_mode, placement_nodes FROM applications WHERE id = $1;
 
 -- name: SetApplicationDomain :exec
 UPDATE applications SET domain = $2, updated_at = now() WHERE id = $1;
+
+-- name: LockApplicationRow :one
+-- Taken before any domains row: deleting an application locks it first and
+-- then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
+SELECT id FROM applications WHERE id = $1 FOR UPDATE;

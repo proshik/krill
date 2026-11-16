@@ -222,10 +222,12 @@ func (s *Store) SetRedirect(ctx context.Context, domainID int64, on bool) error 
 // redirecting domain and for a host another application also claims, since a
 // primary host is exclusive (ReservePrimaryHost).
 //
-// Two primary changes of one application are serialized by an application
-// lock taken BEFORE the host lock: each rewrites every row of the app after
-// locking its own target row, so two of them on different hosts would
-// otherwise deadlock on each other's target row.
+// Lock order: an application advisory lock, the host lock, the application
+// row, then domains rows. Two primary changes of one app each lock their own
+// target row and then rewrite every row of the app, so without the
+// application lock two of them on different hosts would deadlock. An
+// application delete locks the application row and then (cascade) its
+// domains, so that row comes before any domains row here.
 func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 	d, err := db.New(s.pool).GetDomain(ctx, domainID)
 	if err != nil {
@@ -233,6 +235,11 @@ func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 	}
 	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), "krill.domain-host:" + d.Host}
 	return s.inLockedTx(ctx, keys, func(q *db.Queries) error {
+		// Application row before domains rows, in the order an application
+		// delete (and its cascade) takes them. A deleted app is ErrNoRows.
+		if _, err := q.LockApplicationRow(ctx, d.ApplicationID); err != nil {
+			return err
+		}
 		if err := panelAvailable(ctx, q, d.Host); err != nil {
 			return err
 		}
