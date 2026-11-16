@@ -91,7 +91,12 @@ redirect without a primary in the list is not routed. Every label writer convert
 in `Check`, `flash.err.host_redirects`), is refused on the primary (conditional UPDATE + the
 CHECK), and **Make primary** (the first way to change `is_primary` after creation) is refused
 for a redirecting domain and for a host other apps share, rewrites `is_primary` for every row
-of the app and `applications.domain`. Traefik drops routers of a service without running
+of the app and `applications.domain`; it takes an application advisory lock
+(`krill.domain-primary:<appID>`) BEFORE the host lock — two primary changes on different
+hosts would otherwise deadlock on each other's target row (`TestStoreConcurrentMakePrimary`).
+Since the primary can now move, `deleteDomain` deletes with `DeleteNonPrimaryDomain`
+(`AND NOT is_primary`, 0 rows ⇒ refused), and `CountExposedDomainsByApplication` ignores
+redirecting rows. Traefik drops routers of a service without running
 tasks (`allowEmptyServices=false`), so a stopped app's redirect 404s — documented, not changed.
 
 ## 2. Build / run / test (exact commands)

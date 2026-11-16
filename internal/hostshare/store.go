@@ -35,13 +35,21 @@ type AddParams struct {
 }
 
 func (s *Store) inHostTx(ctx context.Context, host string, fn func(q *db.Queries) error) error {
+	return s.inLockedTx(ctx, []string{"krill.domain-host:" + host}, fn)
+}
+
+// inLockedTx takes the transaction-scoped advisory locks in the given order,
+// then runs fn. Every caller taking several locks must use the same order.
+func (s *Store) inLockedTx(ctx context.Context, keys []string, fn func(q *db.Queries) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "krill.domain-host:"+host); err != nil {
-		return fmt.Errorf("lock host: %w", err)
+	for _, key := range keys {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", key); err != nil {
+			return fmt.Errorf("lock %s: %w", key, err)
+		}
 	}
 	if err := fn(db.New(tx)); err != nil {
 		return err
@@ -213,12 +221,18 @@ func (s *Store) SetRedirect(ctx context.Context, domainID int64, on bool) error 
 // and applications.domain follows. Already primary is a no-op. Refused for a
 // redirecting domain and for a host another application also claims, since a
 // primary host is exclusive (ReservePrimaryHost).
+//
+// Two primary changes of one application are serialized by an application
+// lock taken BEFORE the host lock: each rewrites every row of the app after
+// locking its own target row, so two of them on different hosts would
+// otherwise deadlock on each other's target row.
 func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 	d, err := db.New(s.pool).GetDomain(ctx, domainID)
 	if err != nil {
 		return fmt.Errorf("load domain: %w", err)
 	}
-	return s.inHostTx(ctx, d.Host, func(q *db.Queries) error {
+	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), "krill.domain-host:" + d.Host}
+	return s.inLockedTx(ctx, keys, func(q *db.Queries) error {
 		if err := panelAvailable(ctx, q, d.Host); err != nil {
 			return err
 		}

@@ -94,6 +94,11 @@ primary domain's HTTPS setting. Traefik answers `301 Moved Permanently` to `GET`
   so a stopped app's redirect answers 404. To keep only the redirect, deploy something
   small in the app instead of stopping it.
 
+**Rolling back to a release without redirects:** turn the redirects off first. An older
+release ignores the setting: at its next deploy or domain edit the domain goes back to its
+own exposure and paths, serving the app instead of redirecting, and other apps may claim
+its host again.
+
 ## Protect a domain
 
 **Access protection** on an exposed domain adds two independent checks:

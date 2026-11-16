@@ -39,6 +39,7 @@ type Querier interface {
 	CountDomainsByHost(ctx context.Context, host string) (int64, error)
 	CountEnabledHealthChannels(ctx context.Context) (int64, error)
 	CountEnvironments(ctx context.Context, projectID int64) (int64, error)
+	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
@@ -122,6 +123,9 @@ type Querier interface {
 	DeleteMember(ctx context.Context, id int64) error
 	DeleteMetricsEndpoint(ctx context.Context, arg DeleteMetricsEndpointParams) error
 	DeleteNodeLabel(ctx context.Context, swarmNodeID string) error
+	// The primary can move between the handler's read and this write (Make
+	// primary); the row lock makes the condition see the committed value.
+	DeleteNonPrimaryDomain(ctx context.Context, id int64) (int64, error)
 	DeleteOrganization(ctx context.Context, id int64) error
 	DeleteProject(ctx context.Context, id int64) error
 	DeleteRegistry(ctx context.Context, id int64) error

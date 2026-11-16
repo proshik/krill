@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 )
@@ -148,5 +149,84 @@ func TestStoreMakePrimaryRefusesASharedHost(t *testing.T) {
 	wantKey(t, f.store.MakePrimary(ctx, mine.ID), KeyPrimaryShared)
 	if primaryOf(t, f, web.ID).Host != "web.primary.test" {
 		t.Fatal("primary moved despite the refusal")
+	}
+}
+
+// Two primary changes of one app to different hosts must not deadlock: each
+// locks its own target row, then rewrites every row of the app. A third
+// transaction holding row D (stored before B and C) parks both changes after
+// they locked their targets; releasing it would let them deadlock without the
+// application lock.
+func TestStoreConcurrentMakePrimary(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	web := f.appWithPrimary(t, f.envID, "web")
+	var ids []int64
+	for _, host := range []string{"d.test", "b.test", "c.test"} {
+		d, err := f.store.Add(ctx, AddParams{AppID: web.ID, Host: host})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, d.ID)
+	}
+	blocker, err := f.store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(ctx) }()
+	if _, err := blocker.Exec(ctx, "SELECT id FROM domains WHERE id = $1 FOR UPDATE", ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 2)
+	for _, id := range ids[1:] {
+		go func(id int64) { errs <- f.store.MakePrimary(ctx, id) }(id)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err := f.store.pool.QueryRow(ctx,
+			"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()").Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("both primary changes never waited (%d waiting)", waiting)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for k := 0; k < 2; k++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent make primary: %v", err)
+		}
+	}
+	p := primaryOf(t, f, web.ID)
+	app, _ := f.q.GetApplication(ctx, web.ID)
+	if app.Domain != p.Host {
+		t.Fatalf("applications.domain %s, primary row %s", app.Domain, p.Host)
+	}
+}
+
+// A delete that read the row before it became primary removes nothing.
+func TestDeleteNonPrimaryDomainAfterMakePrimary(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	web := f.appWithPrimary(t, f.envID, "web")
+	b, err := f.store.Add(ctx, AddParams{AppID: web.ID, Host: "b.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.MakePrimary(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.q.DeleteNonPrimaryDomain(ctx, b.ID); err != nil || n != 0 {
+		t.Fatalf("deleted %d rows (err %v): the primary must survive", n, err)
+	}
+	if primaryOf(t, f, web.ID).ID != b.ID {
+		t.Fatal("primary lost")
 	}
 }

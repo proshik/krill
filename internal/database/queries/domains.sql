@@ -17,6 +17,11 @@ UPDATE domains SET tls = $2 WHERE id = $1;
 -- name: DeleteDomain :exec
 DELETE FROM domains WHERE id = $1;
 
+-- name: DeleteNonPrimaryDomain :execrows
+-- The primary can move between the handler's read and this write (Make
+-- primary); the row lock makes the condition see the committed value.
+DELETE FROM domains WHERE id = $1 AND NOT is_primary;
+
 -- name: CountDomainsByApplication :one
 SELECT count(*) FROM domains WHERE application_id = $1;
 
@@ -27,7 +32,8 @@ SELECT count(*) FROM domains WHERE host = $1;
 UPDATE domains SET exposed = $2, paths = $3 WHERE id = $1;
 
 -- name: CountExposedDomainsByApplication :one
-SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true;
+-- A redirecting domain never serves the app, whatever its exposed flag says.
+SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true AND NOT redirect_to_primary;
 
 -- name: SetDomainBasicAuth :exec
 UPDATE domains SET basic_auth_users = $2 WHERE id = $1;

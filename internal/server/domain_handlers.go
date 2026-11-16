@@ -256,9 +256,16 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.delete_last_domain")
 		return
 	}
-	if err := s.q.DeleteDomain(r.Context(), d.ID); err != nil {
+	n, err := s.q.DeleteNonPrimaryDomain(r.Context(), d.ID)
+	if err != nil {
 		logFrom(r).Error("deleteDomain: delete failed", "err", err, "domain_id", d.ID)
 		s.flashErrT(w, r, "flash.err.delete_domain")
+		return
+	}
+	if n == 0 {
+		// Became primary (or was deleted) after loadDomain read it.
+		logFrom(r).Info("deleteDomain: domain is primary now or gone", "app_id", c.App.ID, "domain_id", d.ID)
+		s.flashErrT(w, r, "flash.err.delete_primary_domain")
 		return
 	}
 	logFrom(r).Info("domain deleted", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host)

@@ -41,44 +41,53 @@ func TestDomainRedirectLabelsFollowThePrimary(t *testing.T) {
 	ctx := context.Background()
 	primary, _ := q.GetDomain(ctx, primaryID)
 	other, _ := q.GetDomain(ctx, otherID)
+	redir, err := q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: appID, Host: "third-" + i64(appID) + ".rd.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rows are listed primary first, then by creation: redir is always d2.
+	svc := "krill-" + i64(appID)
+	replacement := func() string {
+		return eng.labelsOf(svc)["traefik.http.middlewares."+svc+"-d2-toprimary.redirectregex.replacement"]
+	}
 
-	rec := postForm(t, h, base+"/domains/"+i64(otherID)+"/redirect", cookie, url.Values{"redirect": {"on"}})
+	rec := postForm(t, h, base+"/domains/"+i64(redir.ID)+"/redirect", cookie, url.Values{"redirect": {"on"}})
 	if hasErrFlash(rec) {
 		t.Fatalf("redirect refused: %q", flashText(rec))
 	}
-	svc := "krill-" + i64(appID)
-	l := eng.labelsOf(svc)
-	key := "traefik.http.middlewares." + svc + "-d1-toprimary.redirectregex.replacement"
-	if got := l[key]; got != "http://"+primary.Host+"${1}" {
-		t.Fatalf("replacement = %q (labels %v)", got, l)
+	if got := replacement(); got != "http://"+primary.Host+"${1}" {
+		t.Fatalf("replacement = %q (labels %v)", got, eng.labelsOf(svc))
+	}
+	if got := eng.labelsOf(svc)["traefik.http.routers."+svc+"-d2.rule"]; got != "Host(`"+redir.Host+"`)" {
+		t.Fatalf("redirect rule = %q", got)
 	}
 
-	// Moving the primary is refused for a redirecting domain ...
-	rec = postForm(t, h, base+"/domains/"+i64(otherID)+"/primary", cookie, nil)
-	if !hasErrFlash(rec) {
-		t.Fatal("a redirecting domain became primary")
-	}
-	// ... and once it is plain again, the old primary can redirect to it.
-	postForm(t, h, base+"/domains/"+i64(otherID)+"/redirect", cookie, url.Values{})
+	// Make primary alone re-applies the labels: the existing redirect follows.
 	rec = postForm(t, h, base+"/domains/"+i64(otherID)+"/primary", cookie, nil)
 	if hasErrFlash(rec) {
 		t.Fatalf("make primary refused: %q", flashText(rec))
+	}
+	if got := replacement(); got != "http://"+other.Host+"${1}" {
+		t.Fatalf("after primary change replacement = %q", got)
 	}
 	app, _ := q.GetApplication(ctx, appID)
 	if app.Domain != other.Host {
 		t.Fatalf("applications.domain = %s", app.Domain)
 	}
+
+	// A redirecting domain cannot become primary, nor be deleted as one.
+	rec = postForm(t, h, base+"/domains/"+i64(redir.ID)+"/primary", cookie, nil)
+	if !hasErrFlash(rec) {
+		t.Fatal("a redirecting domain became primary")
+	}
+	// The former primary is an ordinary domain now and can redirect too.
 	rec = postForm(t, h, base+"/domains/"+i64(primaryID)+"/redirect", cookie, url.Values{"redirect": {"on"}})
 	if hasErrFlash(rec) {
 		t.Fatalf("redirect of the former primary refused: %q", flashText(rec))
 	}
-	l = eng.labelsOf(svc)
-	// Rows are listed primary first: the new primary is d0, the old one d1.
-	if got := l["traefik.http.middlewares."+svc+"-d1-toprimary.redirectregex.replacement"]; got != "http://"+other.Host+"${1}" {
-		t.Fatalf("after primary change replacement = %q", got)
-	}
-	if got := l["traefik.http.routers."+svc+"-d1.rule"]; got != "Host(`"+primary.Host+"`)" {
-		t.Fatalf("redirect rule = %q", got)
+	rec = postForm(t, h, base+"/domains/"+i64(otherID)+"/delete", cookie, nil)
+	if !hasErrFlash(rec) {
+		t.Fatal("the new primary was deleted")
 	}
 
 	page := getWithCookie(t, h, base+"?tab=domains", cookie).Body.String()

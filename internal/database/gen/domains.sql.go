@@ -32,9 +32,10 @@ func (q *Queries) CountDomainsByHost(ctx context.Context, host string) (int64, e
 }
 
 const countExposedDomainsByApplication = `-- name: CountExposedDomainsByApplication :one
-SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true
+SELECT count(*) FROM domains WHERE application_id = $1 AND exposed = true AND NOT redirect_to_primary
 `
 
+// A redirecting domain never serves the app, whatever its exposed flag says.
 func (q *Queries) CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, countExposedDomainsByApplication, applicationID)
 	var count int64
@@ -90,6 +91,20 @@ DELETE FROM domains WHERE id = $1
 func (q *Queries) DeleteDomain(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, deleteDomain, id)
 	return err
+}
+
+const deleteNonPrimaryDomain = `-- name: DeleteNonPrimaryDomain :execrows
+DELETE FROM domains WHERE id = $1 AND NOT is_primary
+`
+
+// The primary can move between the handler's read and this write (Make
+// primary); the row lock makes the condition see the committed value.
+func (q *Queries) DeleteNonPrimaryDomain(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNonPrimaryDomain, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getDomain = `-- name: GetDomain :one
