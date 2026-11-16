@@ -39,6 +39,11 @@ describes them in detail.
 - **Shared hosts:** apps of one environment can share a domain on disjoint segment paths,
   with one catch-all, explicit router priorities and host-wide HTTPS. Domain claims,
   primary app creation and panel reservation use the same per-host database lock.
+- **Domain redirect to the primary domain:** a non-primary domain can answer every
+  request with a permanent redirect (301 for GET, 308 otherwise) to the app's current
+  primary domain, keeping path and query, with its own Let's Encrypt certificate; the
+  primary domain can be changed from the Domains tab (**Make primary**). See
+  [Domains](docs/guides/domains.md#redirect-a-domain-to-the-primary-domain).
 - **Operations:** live structured logs, web terminal, CPU/memory monitoring across
   all nodes, Telegram alerts, a visual cluster topology page. Since v0.7.0 a refused
   deploy says why (UI, REST, MCP), the Advanced tab shows effective limits and recent
@@ -148,6 +153,10 @@ Verified in code and tests, but not yet exercised on a real environment:
     overlay MTU on a newly created network. Covered so far by integration tests against
     the real Silo, Valkey and Traefik images and by the firewall confirmation protocol
     checked on real systemd 252 and 257.
+16. Domain redirect to the primary domain on a real install: a TLS redirecting domain
+    obtaining and renewing its Let's Encrypt certificate (HTTP-01 through the redirect
+    host) and the redirect from the old host after **Make primary**. Checked so far
+    against the pinned Traefik locally with plain HTTP and a self-signed certificate.
 
 ## Open
 

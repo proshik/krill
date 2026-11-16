@@ -60,6 +60,40 @@ hosts. Older releases overwrite the segment rules and explicit router priorities
 deploy or domain edit, so keeping a shared host across a rollback can route requests to
 the wrong app.
 
+## Redirect a domain to the primary domain
+
+Moving an app to a new host? Keep the old host and let it point to the new one.
+
+1. Add the new host on the **Domains** tab and press **Make primary** on it. The primary
+   host must not be shared with other apps. The app link follows the primary domain.
+2. On the old domain, tick **Redirect to the app's primary domain** and save.
+
+Every request to the old host, on HTTP and HTTPS, now gets a permanent redirect to
+`<scheme>://<primary host>` with the same path and query, e.g.
+`http://old.example.org/a?b=1` → `https://new.example.com/a?b=1`. The scheme follows the
+primary domain's HTTPS setting. Traefik answers `301 Moved Permanently` to `GET` and
+`308 Permanent Redirect` to every other method, so a `POST` stays a `POST`. Its
+`redirectRegex` middleware has no option for `308` on `GET`.
+
+- The target is always the current primary domain of the same app. There is no free-form
+  URL. After **Make primary** on another domain, redirects point to the new one.
+- With **HTTPS** on, the redirecting domain still gets its own Let's Encrypt certificate.
+  HTTP-01 challenges reach Traefik before any app route, so issuing and renewing it still
+  works. Plain `http://` goes straight to the target in one hop.
+- A redirecting domain takes its whole host. It cannot be enabled on a host other apps
+  share, and no other app can join its host.
+- Exposure, public paths, basic auth and allowed IPs of the redirecting domain do not
+  apply: everyone gets the redirect. The settings are kept and apply again when the
+  redirect is turned off. Protection and hidden metrics paths of the **primary** domain
+  still apply after the redirect, so `/metrics` is never served through the old host.
+- The primary domain cannot redirect, and a redirecting domain cannot become primary
+  until its redirect is off.
+- The primary domain does not need to be exposed here. If the new host is served by
+  another Krill, add it unexposed; this Krill only uses it as the redirect target.
+- **The app must be running.** Traefik has no routes for a service without running tasks,
+  so a stopped app's redirect answers 404. To keep only the redirect, deploy something
+  small in the app instead of stopping it.
+
 ## Protect a domain
 
 **Access protection** on an exposed domain adds two independent checks:
