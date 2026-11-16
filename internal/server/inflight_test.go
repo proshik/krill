@@ -106,3 +106,56 @@ func TestInflightForgetsFinishedRequests(t *testing.T) {
 		t.Fatalf("a finished request is still pending: %q", p)
 	}
 }
+
+// After the handler returns, the server still reads the rest of a body the
+// handler left unread, and the connection stays active — Shutdown keeps
+// waiting for it, so the request stays listed until the connection is done.
+func TestInflightKeepsRequestWhileItsBodyIsDrained(t *testing.T) {
+	tr := NewInflight()
+	returned := make(chan struct{}, 1)
+	ts := httptest.NewUnstartedServer(tr.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized) // answers without reading the body
+		returned <- struct{}{}
+	})))
+	ts.Config.ConnContext = tr.ConnContext
+	ts.Config.ConnState = tr.ConnState
+	ts.Start()
+	defer ts.Close()
+
+	c, err := net.Dial("tcp", ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fmt.Fprint(c, "POST /unread HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nx") // 99 bytes never sent
+	<-returned
+	time.Sleep(100 * time.Millisecond) // the server is now draining the body
+	got := tr.Pending()
+	if len(got) != 1 || !strings.HasPrefix(got[0], "POST /unread (") || !strings.HasSuffix(got[0], ", handler done)") {
+		t.Fatalf("a request whose connection is still draining its body: %q", got)
+	}
+
+	c.Close()
+	if got := pendingSoon(t, tr, func(p []string) bool { return len(p) == 0 }); len(got) != 0 {
+		t.Fatalf("the request is still listed after its connection closed: %q", got)
+	}
+}
+
+// A keep-alive connection that goes idle after a complete request releases it.
+func TestInflightReleasesRequestWhenConnectionGoesIdle(t *testing.T) {
+	tr := NewInflight()
+	ts := httptest.NewUnstartedServer(tr.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	ts.Config.ConnContext = tr.ConnContext
+	ts.Config.ConnState = tr.ConnState
+	ts.Start()
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close() // the connection stays open, idle
+	if got := pendingSoon(t, tr, func(p []string) bool { return len(p) == 0 }); len(got) != 0 {
+		t.Fatalf("a finished request on an idle connection is still listed: %q", got)
+	}
+}

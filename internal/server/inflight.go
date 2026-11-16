@@ -12,13 +12,20 @@ import (
 
 // Inflight records the HTTP requests currently being served, so a shutdown
 // that runs out of time can say which requests it was still waiting for.
-// A request leaves the list once its connection is hijacked (a WebSocket that
-// was accepted): http.Server.Shutdown does not wait for hijacked connections,
-// so listing them would point at the wrong culprit. Until the hijack actually
-// happens — an upgrade request still in authentication, say — it does hold
-// Shutdown and stays listed. (A connection still sending its request line or
-// headers is not active yet; Shutdown closes it on its own.) Wire ConnContext
-// and ConnState into the server.
+// http.Server.Shutdown waits for a connection while it is active, which is
+// not quite while its handler runs, so the tracker follows the connection:
+//   - a request leaves the list once its connection is hijacked (an accepted
+//     WebSocket) — Shutdown does not wait for hijacked connections, so listing
+//     them would point at the wrong culprit. Until the hijack actually happens
+//     (an upgrade request still in authentication, say) it holds Shutdown and
+//     stays listed;
+//   - after the handler returns, the server may still be reading the rest of a
+//     request body the handler left unread, and the connection stays active
+//     until it goes idle or closes; the request stays listed until then.
+//
+// (A connection still sending its request line or headers is not active yet;
+// Shutdown closes it on its own.) Wire ConnContext and ConnState into the
+// server; without them a request leaves the list when its handler returns.
 type Inflight struct {
 	mu   sync.Mutex
 	next uint64
@@ -29,6 +36,7 @@ type inflightReq struct {
 	method, path string
 	started      time.Time
 	conn         net.Conn
+	handled      bool // the handler returned; the connection is still active
 }
 
 type inflightConnKey struct{}
@@ -39,16 +47,17 @@ func NewInflight() *Inflight {
 }
 
 // ConnContext is an http.Server.ConnContext that remembers each request's
-// connection, so ConnState can tell which requests a hijack took away.
+// connection, so ConnState can tell which requests it is done with.
 func (t *Inflight) ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return context.WithValue(ctx, inflightConnKey{}, c)
 }
 
 // ConnState is an http.Server.ConnState that drops the request of a
-// connection once it is hijacked. Hijacked is a terminal state — the server
-// reports nothing further for that connection — so nothing is kept for it.
+// connection once the connection goes idle, closes or is hijacked — the
+// points from which Shutdown no longer waits for it. Closed and hijacked are
+// terminal states, so nothing is kept for such a connection.
 func (t *Inflight) ConnState(c net.Conn, st http.ConnState) {
-	if st != http.StateHijacked {
+	if st != http.StateIdle && st != http.StateClosed && st != http.StateHijacked {
 		return
 	}
 	t.mu.Lock()
@@ -72,15 +81,21 @@ func (t *Inflight) Wrap(next http.Handler) http.Handler {
 		t.mu.Unlock()
 		defer func() {
 			t.mu.Lock()
-			delete(t.reqs, id)
-			t.mu.Unlock()
+			defer t.mu.Unlock()
+			if c == nil {
+				delete(t.reqs, id)
+			} else if req, ok := t.reqs[id]; ok {
+				req.handled = true
+				t.reqs[id] = req
+			}
 		}()
 		next.ServeHTTP(w, r)
 	})
 }
 
 // Pending describes the requests still being served, oldest first, as
-// "METHOD /path (age)".
+// "METHOD /path (age)", or "METHOD /path (age, handler done)" for one whose
+// connection is still busy after its handler returned.
 func (t *Inflight) Pending() []string {
 	t.mu.Lock()
 	reqs := make([]inflightReq, 0, len(t.reqs))
@@ -92,7 +107,11 @@ func (t *Inflight) Pending() []string {
 	out := make([]string, 0, len(reqs))
 	now := time.Now()
 	for _, r := range reqs {
-		out = append(out, fmt.Sprintf("%s %s (%s)", r.method, r.path, now.Sub(r.started).Round(time.Second)))
+		note := ""
+		if r.handled {
+			note = ", handler done"
+		}
+		out = append(out, fmt.Sprintf("%s %s (%s%s)", r.method, r.path, now.Sub(r.started).Round(time.Second), note))
 	}
 	return out
 }

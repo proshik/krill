@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +62,12 @@ func TestMCPStreamEndsOnShutdown(t *testing.T) {
 	ts.Config.RegisterOnShutdown(app.StopStreams)
 	ts.Start()
 	defer ts.Close()
+	// ts.Close waits for every handler: release the held tool call on any
+	// exit, a failed assertion included, so a regression fails instead of
+	// hanging the test run.
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCall) }) }
+	defer release()
 
 	post := func(body, sid string) *http.Response {
 		t.Helper()
@@ -169,7 +176,7 @@ func TestMCPStreamEndsOnShutdown(t *testing.T) {
 
 	// The tool call reaches the MCP handler only now, after StopStreams ran:
 	// it must still be served in full.
-	close(releaseCall)
+	release()
 	select {
 	case res := <-callDone:
 		if res.err != nil || res.status != http.StatusOK {

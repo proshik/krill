@@ -14,8 +14,9 @@ import (
 // so systemd never has to SIGKILL a stop that runs into it.
 const shutdownBudget = 10 * time.Second
 
-// gracefulShutdown stops environment clone work (stopWork) and the HTTP server within budget.
-// A stop that runs out of time is not a failure of the process: whatever is
+// gracefulShutdown stops environment clone work (stopWork) and the HTTP
+// server within budget. A stop that runs out of time is not a failure of the
+// process: whatever is
 // left is closed forcibly and logged, and the caller exits normally. Exiting
 // non-zero here would make systemd mark every restart — a self-update's
 // included — as "Failed", while the restart itself happens either way.
