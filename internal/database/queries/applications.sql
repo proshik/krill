@@ -100,3 +100,6 @@ UPDATE applications SET env_text = $2, env_public_keys = $3, updated_at = now() 
 
 -- name: GetApplicationPlacement :one
 SELECT placement_mode, placement_nodes FROM applications WHERE id = $1;
+
+-- name: SetApplicationDomain :exec
+UPDATE applications SET domain = $2, updated_at = now() WHERE id = $1;

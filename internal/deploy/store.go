@@ -137,12 +137,7 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		Args:             docker.SplitCommand(strDeref(a.Command)),
 	}
 	out.Runtime = runtimeSettings(a)
-	for _, d := range doms {
-		out.Domains = append(out.Domains, traefik.Domain{
-			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
-			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
-		})
-	}
+	out.Domains = TraefikDomains(doms)
 	netName, err := s.q.GetOrganizationNetworkByApp(ctx, a.ID)
 	if err != nil {
 		return App{}, err
@@ -589,11 +584,23 @@ func (s *DBStore) RefreshRouting(ctx context.Context, app *App) error {
 		}
 		hidden = appmetrics.HiddenPaths(app.Port, paths)
 	}
-	app.Domains = nil
-	for _, d := range doms {
-		app.Domains = append(app.Domains, traefik.Domain{Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths), BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps)})
-	}
+	app.Domains = TraefikDomains(doms)
 	app.Network = network
 	app.MetricsHiddenPaths = hidden
 	return nil
+}
+
+// TraefikDomains converts an application's domain rows into the routing input
+// of traefik.AppLabels. Every label writer (deploy, routing refresh, the domain
+// handlers) goes through it, so a new routing field cannot be forgotten in one.
+func TraefikDomains(rows []db.Domain) []traefik.Domain {
+	out := make([]traefik.Domain, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, traefik.Domain{
+			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
+			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
+			Primary: d.IsPrimary, RedirectToPrimary: d.RedirectToPrimary,
+		})
+	}
+	return out
 }

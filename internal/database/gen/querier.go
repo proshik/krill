@@ -289,6 +289,7 @@ type Querier interface {
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
+	SetApplicationDomain(ctx context.Context, arg SetApplicationDomainParams) error
 	SetApplicationGitCredential(ctx context.Context, arg SetApplicationGitCredentialParams) error
 	SetApplicationMetricsEnabled(ctx context.Context, arg SetApplicationMetricsEnabledParams) error
 	SetApplicationMetricsToken(ctx context.Context, arg SetApplicationMetricsTokenParams) error
@@ -308,6 +309,9 @@ type Querier interface {
 	SetDeploymentRollbackSource(ctx context.Context, arg SetDeploymentRollbackSourceParams) error
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
+	// Never on the primary: the CHECK backs this up, the condition keeps it a
+	// clean no-op (0 rows) instead of a constraint error.
+	SetDomainRedirect(ctx context.Context, arg SetDomainRedirectParams) (int64, error)
 	SetDomainTLS(ctx context.Context, arg SetDomainTLSParams) error
 	// TLS is a property of the host: every row sharing it switches together.
 	SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error
@@ -319,6 +323,8 @@ type Querier interface {
 	SetPanelDomainPending(ctx context.Context, host string) error
 	SetPanelGatewaySecret(ctx context.Context, secret string) error
 	SetPanelHSTS(ctx context.Context, hstsMaxAge int32) (int64, error)
+	// Exactly one primary per application: every row of the app is rewritten.
+	SetPrimaryDomainRow(ctx context.Context, arg SetPrimaryDomainRowParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
 	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error

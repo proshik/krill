@@ -487,6 +487,8 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/tls", s.toggleDomainTLS)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/exposure", s.setDomainExposure)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/delete", s.deleteDomain)
+				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/redirect", s.setDomainRedirect)
+				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/primary", s.makeDomainPrimary)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/basic-auth", s.addDomainBasicAuthUser)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/basic-auth/delete", s.deleteDomainBasicAuthUser)
 				r.Post("/projects/{projID}/environments/{envID}/apps/{appID}/domains/{domainID}/allowed-ips", s.setDomainAllowedIPs)

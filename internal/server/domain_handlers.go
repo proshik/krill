@@ -12,6 +12,7 @@ import (
 	"github.com/proshik/krill/internal/appmetrics"
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/oplock"
@@ -269,6 +270,79 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
 }
 
+// setDomainRedirect turns a domain's redirect to the app's primary domain on or
+// off. The form posts the state it wants (checkbox), so a duplicate is harmless.
+func (s *Server) setDomainRedirect(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	d, ok := s.loadDomain(w, r, c.App.ID)
+	if !ok {
+		return
+	}
+	on := r.FormValue("redirect") == "on"
+	if s.hosts == nil {
+		logFrom(r).Error("setDomainRedirect: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.update_redirect")
+		return
+	}
+	if err := s.hosts.SetRedirect(r.Context(), d.ID, on); err != nil {
+		if s.flashHostConflict(w, r, err) {
+			logFrom(r).Info("setDomainRedirect: refused", "domain_id", d.ID, "app_id", c.App.ID, "err", err)
+			return
+		}
+		logFrom(r).Error("setDomainRedirect: update failed", "err", err, "domain_id", d.ID)
+		s.flashErrT(w, r, "flash.err.update_redirect")
+		return
+	}
+	logFrom(r).Info("domain redirect updated", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host, "redirect", on)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
+	if on {
+		s.flashOK(w, r, "flash.ok.redirect_on")
+	} else {
+		s.flashOK(w, r, "flash.ok.redirect_off")
+	}
+	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
+}
+
+// makeDomainPrimary makes a domain the app's primary; redirecting domains follow
+// it once the labels are re-applied below.
+func (s *Server) makeDomainPrimary(w http.ResponseWriter, r *http.Request) {
+	c, ok := s.loadAppCtx(w, r)
+	if !ok {
+		return
+	}
+	d, ok := s.loadDomain(w, r, c.App.ID)
+	if !ok {
+		return
+	}
+	if s.hosts == nil {
+		logFrom(r).Error("makeDomainPrimary: host-sharing store unavailable")
+		s.flashErrT(w, r, "flash.err.make_primary")
+		return
+	}
+	if err := s.hosts.MakePrimary(r.Context(), d.ID); err != nil {
+		if s.flashHostConflict(w, r, err) {
+			logFrom(r).Info("makeDomainPrimary: refused", "domain_id", d.ID, "app_id", c.App.ID, "err", err)
+			return
+		}
+		logFrom(r).Error("makeDomainPrimary: update failed", "err", err, "domain_id", d.ID)
+		s.flashErrT(w, r, "flash.err.make_primary")
+		return
+	}
+	logFrom(r).Info("primary domain changed", "domain_id", d.ID, "app_id", c.App.ID, "host", d.Host)
+	if !s.syncAppLabels(r, c.App.ID, c.App.Port) {
+		s.flashErrT(w, r, "flash.err.update_domain")
+		return
+	}
+	s.flashOK(w, r, "flash.ok.primary_changed")
+	http.Redirect(w, r, appURL(c)+"?tab=domains", http.StatusSeeOther)
+}
+
 // syncAppLabels re-applies the application's Traefik labels (no container restart).
 func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) bool {
 	if s.engine == nil {
@@ -285,13 +359,7 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) bool {
 		logFrom(r).Error("syncAppLabels: list domains failed", "err", err, "app_id", appID)
 		return false
 	}
-	ds := make([]traefik.Domain, 0, len(doms))
-	for _, d := range doms {
-		ds = append(ds, traefik.Domain{
-			Host: d.Host, TLS: d.Tls, Exposed: d.Exposed, Paths: traefik.SplitPaths(d.Paths),
-			BasicAuthUsers: traefik.SplitPaths(d.BasicAuthUsers), AllowedIPs: traefik.SplitPaths(d.AllowedIps),
-		})
-	}
+	ds := deploy.TraefikDomains(doms)
 	net, ok := s.appNetwork(r, appID)
 	if !ok {
 		return false // the network is unknown; a wrong label is worse than a stale one

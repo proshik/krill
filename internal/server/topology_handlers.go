@@ -203,7 +203,8 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		// ingress edges: Traefik -> app per exposed domain
 		var hosts []string
 		for _, d := range domsByApp[a.ID] {
-			if d.Exposed {
+			// A redirecting domain never reaches the app: it bounces to the primary.
+			if d.Exposed && !d.RedirectToPrimary {
 				if paths := traefik.NormalizePaths(traefik.SplitPaths(d.Paths)); len(paths) > 0 {
 					for _, p := range paths {
 						hosts = append(hosts, d.Host+p)

@@ -15,6 +15,36 @@ type Domain struct {
 	Paths          []string // allowed path prefixes; empty = all
 	BasicAuthUsers []string // htpasswd entries "user:bcrypthash"; empty = no basic-auth
 	AllowedIPs     []string // CIDR/IP entries; empty = no IP filter
+	Primary        bool     // the application's primary domain (redirect target)
+	// RedirectToPrimary answers every request on the host with a permanent
+	// redirect to the primary domain. It is routed whatever Exposed says, and
+	// Paths, BasicAuthUsers, AllowedIPs and hidden metrics paths do not apply.
+	RedirectToPrimary bool
+}
+
+// Redirect middleware parameters. Traefik matches the regex against the full
+// request URL (scheme://host[:port]/path?query); the capture keeps the request
+// URI. With permanent=true Traefik v3 answers 301 to GET and 308 to any other
+// method, so a non-GET request keeps its method.
+const (
+	redirectRegex     = `^https?://[^/]+(.*)$`
+	redirectURIToken  = "${1}"
+	redirectPermanent = "true"
+)
+
+// primaryTarget is the scheme://host every redirecting domain points at, or ""
+// when the list has no primary (or the primary is itself marked as redirecting,
+// which the schema forbids).
+func primaryTarget(domains []Domain) string {
+	for _, d := range domains {
+		if d.Primary && !d.RedirectToPrimary {
+			if d.TLS {
+				return "https://" + d.Host
+			}
+			return "http://" + d.Host
+		}
+	}
+	return ""
 }
 
 // SplitPaths parses a stored newline-separated paths string into trimmed,
@@ -89,14 +119,24 @@ func domainRule(host string, paths, hidden []string) string {
 // Non-TLS domains get a plain router on the web entrypoint. TLS domains get a
 // secure router on websecure (cert via the "le" resolver) plus a web router that
 // redirects to HTTPS. There is no global redirect, so plain-HTTP domains keep working.
+//
+// A RedirectToPrimary domain gets Host-only routers carrying a redirectregex
+// middleware to the primary domain (TLS: a websecure router with its own
+// certificate plus a web router redirecting straight to the target). Without a
+// primary in the list it is not routed at all. Traefik's ACME HTTP-01 router
+// has the highest possible priority, so certificate challenges still work.
 func AppLabels(serviceName string, domains []Domain, port int32, network string, hiddenPaths []string) map[string]string {
-	exposed := 0
+	target := primaryTarget(domains)
+	redirects := func(d Domain) bool { return d.RedirectToPrimary && !d.Primary && target != "" }
+	// A redirecting domain never serves the app, even with no target to go to.
+	serves := func(d Domain) bool { return d.Exposed && !(d.RedirectToPrimary && !d.Primary) }
+	routed := 0
 	for _, d := range domains {
-		if d.Exposed {
-			exposed++
+		if serves(d) || redirects(d) {
+			routed++
 		}
 	}
-	if exposed == 0 {
+	if routed == 0 {
 		// internal-only: Traefik ignores the service entirely.
 		return map[string]string{"traefik.enable": "false"}
 	}
@@ -107,7 +147,11 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string,
 		svc:                      strconv.Itoa(int(port)),
 	}
 	for i, d := range domains {
-		if !d.Exposed {
+		if redirects(d) {
+			redirectLabels(l, serviceName, i, d, target)
+			continue
+		}
+		if !serves(d) {
 			continue
 		}
 		priority := strconv.Itoa(PriorityCatchAll)
@@ -155,4 +199,33 @@ func AppLabels(serviceName string, domains []Domain, port int32, network string,
 		}
 	}
 	return l
+}
+
+// redirectLabels emits the routers of one domain redirecting to target. The
+// host is exclusive to this domain (internal/hostshare), so a Host-only rule at
+// catch-all priority cannot shadow another application's paths.
+func redirectLabels(l map[string]string, serviceName string, i int, d Domain, target string) {
+	base := fmt.Sprintf("%s-d%d", serviceName, i)
+	mw := base + "-toprimary"
+	mp := "traefik.http.middlewares." + mw + ".redirectregex."
+	l[mp+"regex"] = redirectRegex
+	l[mp+"replacement"] = target + redirectURIToken
+	l[mp+"permanent"] = redirectPermanent
+	rule := fmt.Sprintf("Host(`%s`)", d.Host)
+	priority := strconv.Itoa(PriorityCatchAll)
+	router := func(name, entrypoint string) string {
+		p := "traefik.http.routers." + name + "."
+		l[p+"rule"] = rule
+		l[p+"priority"] = priority
+		l[p+"entrypoints"] = entrypoint
+		l[p+"service"] = serviceName
+		l[p+"middlewares"] = mw
+		return p
+	}
+	// Plain HTTP redirects straight to the target in one hop, TLS or not.
+	router(base, "web")
+	if d.TLS {
+		p := router(base+"s", "websecure")
+		l[p+"tls.certresolver"] = "le"
+	}
 }

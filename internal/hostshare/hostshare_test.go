@@ -101,3 +101,17 @@ func TestCheck(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckRedirectTakesTheWholeHost(t *testing.T) {
+	redir := Claim{DomainID: 1, AppID: 1, AppName: "old", EnvID: 1, Redirect: true}
+	if got := conflictKey(t, Check([]Claim{redir}, Claim{AppID: 2, EnvID: 1, Paths: []string{"/api"}})); got != KeyHostRedirects {
+		t.Fatalf("adding beside a redirect: %s", got)
+	}
+	plain := Claim{DomainID: 1, AppID: 1, AppName: "web", EnvID: 1, Paths: []string{"/web"}}
+	if got := conflictKey(t, Check([]Claim{plain}, Claim{AppID: 2, EnvID: 1, Paths: []string{"/api"}, Redirect: true})); got != KeyHostRedirects {
+		t.Fatalf("redirecting a shared host: %s", got)
+	}
+	if err := Check([]Claim{redir}, redir); err != nil {
+		t.Fatalf("a redirect row alone on its host: %v", err)
+	}
+}

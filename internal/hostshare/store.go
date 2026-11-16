@@ -54,7 +54,8 @@ func claims(rows []db.ListDomainClaimsByHostRow) []Claim {
 	for _, r := range rows {
 		out = append(out, Claim{
 			DomainID: r.ID, AppID: r.ApplicationID, AppName: r.AppName, EnvID: r.EnvironmentID,
-			Paths: traefik.NormalizePaths(traefik.SplitPaths(r.Paths)),
+			Paths:    traefik.NormalizePaths(traefik.SplitPaths(r.Paths)),
+			Redirect: r.RedirectToPrimary,
 		})
 	}
 	return out
@@ -161,6 +162,98 @@ func (s *Store) SetTLS(ctx context.Context, domainID int64, tls bool) ([]AppRef,
 		return nil
 	})
 	return refs, err
+}
+
+// SetRedirect turns a domain's redirect to its application's primary domain on
+// or off. Turning it on is refused on the primary and on a host other
+// applications share (a redirect answers every path of the host).
+func (s *Store) SetRedirect(ctx context.Context, domainID int64, on bool) error {
+	d, err := db.New(s.pool).GetDomain(ctx, domainID)
+	if err != nil {
+		return fmt.Errorf("load domain: %w", err)
+	}
+	return s.inHostTx(ctx, d.Host, func(q *db.Queries) error {
+		rows, err := q.ListDomainClaimsByHost(ctx, d.Host)
+		if err != nil {
+			return fmt.Errorf("list host claims: %w", err)
+		}
+		all := claims(rows)
+		var self *Claim
+		for i, r := range rows {
+			if r.ID == domainID {
+				if on && r.IsPrimary {
+					return &ConflictError{Key: KeyRedirectOnPrimary}
+				}
+				self = &all[i]
+			}
+		}
+		if self == nil {
+			return pgx.ErrNoRows
+		}
+		if on {
+			cand := *self
+			cand.Redirect = true
+			if err := Check(all, cand); err != nil {
+				return err
+			}
+		}
+		n, err := q.SetDomainRedirect(ctx, db.SetDomainRedirectParams{ID: domainID, Redirect: on})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			// Became primary between the read and the write.
+			return &ConflictError{Key: KeyRedirectOnPrimary}
+		}
+		return nil
+	})
+}
+
+// MakePrimary makes a domain its application's primary: is_primary moves to it
+// and applications.domain follows. Already primary is a no-op. Refused for a
+// redirecting domain and for a host another application also claims, since a
+// primary host is exclusive (ReservePrimaryHost).
+func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
+	d, err := db.New(s.pool).GetDomain(ctx, domainID)
+	if err != nil {
+		return fmt.Errorf("load domain: %w", err)
+	}
+	return s.inHostTx(ctx, d.Host, func(q *db.Queries) error {
+		if err := panelAvailable(ctx, q, d.Host); err != nil {
+			return err
+		}
+		rows, err := q.ListDomainClaimsByHost(ctx, d.Host)
+		if err != nil {
+			return fmt.Errorf("list host claims: %w", err)
+		}
+		var self *db.ListDomainClaimsByHostRow
+		for i, r := range rows {
+			if r.ID == domainID {
+				self = &rows[i]
+			}
+		}
+		if self == nil {
+			return pgx.ErrNoRows
+		}
+		if self.IsPrimary {
+			return nil
+		}
+		if self.RedirectToPrimary {
+			return &ConflictError{Key: KeyPrimaryRedirects}
+		}
+		for _, r := range rows {
+			if r.ApplicationID != self.ApplicationID {
+				return &ConflictError{Key: KeyPrimaryShared}
+			}
+		}
+		if err := q.SetPrimaryDomainRow(ctx, db.SetPrimaryDomainRowParams{ApplicationID: self.ApplicationID, ID: domainID}); err != nil {
+			return fmt.Errorf("move primary: %w", err)
+		}
+		if err := q.SetApplicationDomain(ctx, db.SetApplicationDomainParams{ID: self.ApplicationID, Domain: d.Host}); err != nil {
+			return fmt.Errorf("set application domain: %w", err)
+		}
+		return nil
+	})
 }
 
 // panelAvailable is checked under the host lock shared with SetPanelDomain.

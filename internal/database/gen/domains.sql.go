@@ -45,7 +45,7 @@ func (q *Queries) CountExposedDomainsByApplication(ctx context.Context, applicat
 const createDomain = `-- name: CreateDomain :one
 INSERT INTO domains (application_id, host, tls, is_primary, exposed, paths)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+RETURNING id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips, redirect_to_primary
 `
 
 type CreateDomainParams struct {
@@ -78,6 +78,7 @@ func (q *Queries) CreateDomain(ctx context.Context, arg CreateDomainParams) (Dom
 		&i.Paths,
 		&i.BasicAuthUsers,
 		&i.AllowedIps,
+		&i.RedirectToPrimary,
 	)
 	return i, err
 }
@@ -92,7 +93,7 @@ func (q *Queries) DeleteDomain(ctx context.Context, id int64) error {
 }
 
 const getDomain = `-- name: GetDomain :one
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips, redirect_to_primary
 FROM domains WHERE id = $1
 `
 
@@ -110,12 +111,13 @@ func (q *Queries) GetDomain(ctx context.Context, id int64) (Domain, error) {
 		&i.Paths,
 		&i.BasicAuthUsers,
 		&i.AllowedIps,
+		&i.RedirectToPrimary,
 	)
 	return i, err
 }
 
 const listDomainClaimsByHost = `-- name: ListDomainClaimsByHost :many
-SELECT d.id, d.application_id, d.paths, d.tls,
+SELECT d.id, d.application_id, d.paths, d.tls, d.is_primary, d.redirect_to_primary,
        a.name AS app_name, a.port AS app_port, a.environment_id
 FROM domains d JOIN applications a ON a.id = d.application_id
 WHERE d.host = $1
@@ -124,13 +126,15 @@ FOR UPDATE OF d
 `
 
 type ListDomainClaimsByHostRow struct {
-	ID            int64  `json:"id"`
-	ApplicationID int64  `json:"application_id"`
-	Paths         string `json:"paths"`
-	Tls           bool   `json:"tls"`
-	AppName       string `json:"app_name"`
-	AppPort       int32  `json:"app_port"`
-	EnvironmentID int64  `json:"environment_id"`
+	ID                int64  `json:"id"`
+	ApplicationID     int64  `json:"application_id"`
+	Paths             string `json:"paths"`
+	Tls               bool   `json:"tls"`
+	IsPrimary         bool   `json:"is_primary"`
+	RedirectToPrimary bool   `json:"redirect_to_primary"`
+	AppName           string `json:"app_name"`
+	AppPort           int32  `json:"app_port"`
+	EnvironmentID     int64  `json:"environment_id"`
 }
 
 // Every row claiming a host, locked until its checked update commits.
@@ -148,6 +152,8 @@ func (q *Queries) ListDomainClaimsByHost(ctx context.Context, host string) ([]Li
 			&i.ApplicationID,
 			&i.Paths,
 			&i.Tls,
+			&i.IsPrimary,
+			&i.RedirectToPrimary,
 			&i.AppName,
 			&i.AppPort,
 			&i.EnvironmentID,
@@ -163,7 +169,7 @@ func (q *Queries) ListDomainClaimsByHost(ctx context.Context, host string) ([]Li
 }
 
 const listDomainsByApplication = `-- name: ListDomainsByApplication :many
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips, redirect_to_primary
 FROM domains WHERE application_id = $1 ORDER BY is_primary DESC, created_at
 `
 
@@ -187,6 +193,7 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 			&i.Paths,
 			&i.BasicAuthUsers,
 			&i.AllowedIps,
+			&i.RedirectToPrimary,
 		); err != nil {
 			return nil, err
 		}
@@ -199,7 +206,7 @@ func (q *Queries) ListDomainsByApplication(ctx context.Context, applicationID in
 }
 
 const listDomainsByApplicationIDs = `-- name: ListDomainsByApplicationIDs :many
-SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips
+SELECT id, application_id, host, tls, is_primary, created_at, exposed, paths, basic_auth_users, allowed_ips, redirect_to_primary
 FROM domains WHERE application_id = ANY($1::bigint[]) ORDER BY application_id, is_primary DESC, created_at
 `
 
@@ -224,6 +231,7 @@ func (q *Queries) ListDomainsByApplicationIDs(ctx context.Context, dollar_1 []in
 			&i.Paths,
 			&i.BasicAuthUsers,
 			&i.AllowedIps,
+			&i.RedirectToPrimary,
 		); err != nil {
 			return nil, err
 		}
@@ -306,6 +314,26 @@ func (q *Queries) SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuth
 	return err
 }
 
+const setDomainRedirect = `-- name: SetDomainRedirect :execrows
+UPDATE domains SET redirect_to_primary = $1::boolean
+WHERE id = $2 AND (NOT $1::boolean OR NOT is_primary)
+`
+
+type SetDomainRedirectParams struct {
+	Redirect bool  `json:"redirect"`
+	ID       int64 `json:"id"`
+}
+
+// Never on the primary: the CHECK backs this up, the condition keeps it a
+// clean no-op (0 rows) instead of a constraint error.
+func (q *Queries) SetDomainRedirect(ctx context.Context, arg SetDomainRedirectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setDomainRedirect, arg.Redirect, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setDomainTLS = `-- name: SetDomainTLS :exec
 UPDATE domains SET tls = $2 WHERE id = $1
 `
@@ -332,6 +360,21 @@ type SetDomainTLSByHostParams struct {
 // TLS is a property of the host: every row sharing it switches together.
 func (q *Queries) SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error {
 	_, err := q.db.Exec(ctx, setDomainTLSByHost, arg.Host, arg.Tls)
+	return err
+}
+
+const setPrimaryDomainRow = `-- name: SetPrimaryDomainRow :exec
+UPDATE domains SET is_primary = (id = $2) WHERE application_id = $1
+`
+
+type SetPrimaryDomainRowParams struct {
+	ApplicationID int64 `json:"application_id"`
+	ID            int64 `json:"id"`
+}
+
+// Exactly one primary per application: every row of the app is rewritten.
+func (q *Queries) SetPrimaryDomainRow(ctx context.Context, arg SetPrimaryDomainRowParams) error {
+	_, err := q.db.Exec(ctx, setPrimaryDomainRow, arg.ApplicationID, arg.ID)
 	return err
 }
 

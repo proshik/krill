@@ -206,16 +206,17 @@ type Destination struct {
 }
 
 type Domain struct {
-	ID             int64     `json:"id"`
-	ApplicationID  int64     `json:"application_id"`
-	Host           string    `json:"host"`
-	Tls            bool      `json:"tls"`
-	IsPrimary      bool      `json:"is_primary"`
-	CreatedAt      time.Time `json:"created_at"`
-	Exposed        bool      `json:"exposed"`
-	Paths          string    `json:"paths"`
-	BasicAuthUsers string    `json:"basic_auth_users"`
-	AllowedIps     string    `json:"allowed_ips"`
+	ID                int64     `json:"id"`
+	ApplicationID     int64     `json:"application_id"`
+	Host              string    `json:"host"`
+	Tls               bool      `json:"tls"`
+	IsPrimary         bool      `json:"is_primary"`
+	CreatedAt         time.Time `json:"created_at"`
+	Exposed           bool      `json:"exposed"`
+	Paths             string    `json:"paths"`
+	BasicAuthUsers    string    `json:"basic_auth_users"`
+	AllowedIps        string    `json:"allowed_ips"`
+	RedirectToPrimary bool      `json:"redirect_to_primary"`
 }
 
 type Environment struct {

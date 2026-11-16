@@ -15,6 +15,14 @@ const (
 	KeyHostOnThisApp = "flash.err.host_on_this_app"
 	KeyCatchAllTaken = "flash.err.host_catchall_taken"
 	KeyPathOverlap   = "flash.err.host_path_overlap"
+	// A redirecting domain takes its whole host: it shares it with nobody.
+	KeyHostRedirects = "flash.err.host_redirects"
+	// The primary itself cannot redirect, and a redirecting domain cannot become
+	// primary until its redirect is turned off.
+	KeyRedirectOnPrimary = "flash.err.redirect_on_primary"
+	KeyPrimaryRedirects  = "flash.err.primary_redirects"
+	// A primary host is exclusive to its application, as at creation.
+	KeyPrimaryShared = "flash.err.primary_host_shared"
 )
 
 // ConflictError is a rule violation; Key/Args render the user-facing message.
@@ -35,6 +43,7 @@ type Claim struct {
 	AppName  string
 	EnvID    int64
 	Paths    []string
+	Redirect bool // redirects to its app's primary domain: needs the whole host
 }
 
 // Overlaps reports whether two normalized path prefixes can match the same
@@ -61,6 +70,9 @@ func Check(existing []Claim, cand Claim) error {
 	for _, e := range others {
 		if e.AppID == cand.AppID {
 			return &ConflictError{Key: KeyHostOnThisApp}
+		}
+		if e.Redirect || cand.Redirect {
+			return &ConflictError{Key: KeyHostRedirects, Args: []any{e.AppName}}
 		}
 		if len(cand.Paths) == 0 && len(e.Paths) == 0 {
 			return &ConflictError{Key: KeyCatchAllTaken, Args: []any{e.AppName}}
