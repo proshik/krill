@@ -137,6 +137,12 @@ type Server struct {
 	logSeatMu sync.Mutex
 	logSeats  map[int64]int
 
+	// streams is cancelled by StopStreams when the HTTP server starts shutting
+	// down; long-lived streaming responses watch it (see endStreamOnShutdown).
+	streamsOnce sync.Once
+	streamsCtx  context.Context
+	streamsStop context.CancelFunc
+
 	// mustChangePasswordLookup reads the must_change_password flag for a user.
 	// Defaults to q.GetUserMustChangePassword in New(); tests substitute it to
 	// force a lookup error and exercise requirePasswordChange's fail-closed path
@@ -360,8 +366,8 @@ func (s *Server) Router() http.Handler {
 		// covers every method, which streamable HTTP needs (POST for messages,
 		// GET for the notification stream, DELETE to end a session).
 		if s.cfg.AgentAPIEnabled && s.mcpHandler != nil {
-			r.With(s.RequireAPIToken).Handle("/mcp", s.mcpHandler)
-			r.With(s.RequireAPIToken).Handle("/mcp/*", s.mcpHandler)
+			r.With(s.RequireAPIToken, s.endStreamOnShutdown).Handle("/mcp", s.mcpHandler)
+			r.With(s.RequireAPIToken, s.endStreamOnShutdown).Handle("/mcp/*", s.mcpHandler)
 		}
 	}
 

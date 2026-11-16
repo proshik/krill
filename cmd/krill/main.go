@@ -102,9 +102,10 @@ func run() error {
 	// every request with a 503 "Krill is starting" page instead of leaving the
 	// browser with "connection refused".
 	gate := server.NewStartupGate()
+	inflight := server.NewInflight()
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
-		Handler: gate,
+		Handler: inflight.Wrap(gate),
 		// Slowloris guard on the request line/headers only; body/stream reads and
 		// writes stay unbounded (long-lived WS: deploy logs, log viewer, terminal).
 		// Do NOT set ReadTimeout/WriteTimeout — those would cut those streams.
@@ -588,6 +589,10 @@ func run() error {
 		srv.SetKeepAlivesEnabled(true)
 	})
 
+	// Long-lived streams (the MCP notification stream) end when the server
+	// starts shutting down instead of holding the shutdown until its deadline.
+	srv.RegisterOnShutdown(app.StopStreams)
+
 	// Hand the listener to the real router — only through the gate: srv.Serve is
 	// already running, and assigning srv.Handler now would race with it.
 	gate.Swap(app.Router())
@@ -644,10 +649,8 @@ func run() error {
 		return err
 	case <-stop:
 		slog.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = cloner.Shutdown(shutdownCtx)
-		return srv.Shutdown(shutdownCtx)
+		gracefulShutdown(srv, shutdownBudget, inflight, cloner.Shutdown)
+		return nil
 	}
 }
 
