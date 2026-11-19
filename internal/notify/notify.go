@@ -60,6 +60,7 @@ type DiskDetail struct {
 	Pct       float64
 	Used      int64
 	Total     int64
+	Avail     int64 // free for unprivileged users, as df's Avail
 	Threshold int
 }
 

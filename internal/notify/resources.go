@@ -188,7 +188,7 @@ func (m *ResourceMonitor) checkDisk(ctx context.Context, c Channel, node string,
 		kind, next = DiskRecovered, AlertState{Active: false, LastSent: &now}
 	}
 	ev := Event{Kind: kind, Time: now, Instance: m.svc.instance(ctx), Disk: &DiskDetail{
-		Node: node, Mount: d.Mount, Pct: pct, Used: d.Used, Total: d.Total, Threshold: c.DiskThresholdPct,
+		Node: node, Mount: d.Mount, Pct: pct, Used: d.Used, Total: d.Total, Avail: d.Avail, Threshold: c.DiskThresholdPct,
 	}}
 	// The state moves only once the message is out, so a failed send is
 	// retried on the next disk snapshot instead of waiting a day.

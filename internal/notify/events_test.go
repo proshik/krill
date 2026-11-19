@@ -132,9 +132,9 @@ func TestFormatInRussianAndUnknownLanguage(t *testing.T) {
 
 func TestFormatNodeAlerts(t *testing.T) {
 	disk := format(Event{Kind: DiskHigh, Instance: "krill.example.com", Disk: &DiskDetail{
-		Node: "control-plane", Mount: "/", Pct: 87.2, Used: 43 << 30, Total: 50 << 30, Threshold: 85,
+		Node: "control-plane", Mount: "/", Pct: 87.2, Used: 43 << 30, Total: 50 << 30, Avail: 6 << 30, Threshold: 85,
 	}}, "en")
-	for _, want := range []string{"Disk almost full · krill.example.com", "node control-plane, /: 87% used (43.0 GiB of 50.0 GiB), threshold 85%"} {
+	for _, want := range []string{"Disk almost full · krill.example.com", "node control-plane, disk /: 87% used (43.0 of 50.0 GiB), 6.0 GiB free, threshold 85%"} {
 		if !strings.Contains(disk, want) {
 			t.Errorf("disk alert lacks %q:\n%s", want, disk)
 		}
@@ -142,7 +142,7 @@ func TestFormatNodeAlerts(t *testing.T) {
 	mem := format(Event{Kind: MemOvercommit, Mem: &MemDetail{
 		Node: "worker-1", App: "p/e/a", Limits: 2 << 30, Total: 1 << 30, Pct: 200, Threshold: 100, Unlimited: 2,
 	}}, "ru")
-	for _, want := range []string{"Переподписка памяти", "нода worker-1: сумма лимитов памяти 2.0 GiB из 1.0 GiB (200%), порог 100%", "после деплоя p/e/a", "без лимита памяти (не учтены): 2"} {
+	for _, want := range []string{"Переподписка памяти", "нода worker-1: сумма лимитов памяти 2.0 GiB — 200% памяти ноды (1.0 GiB), порог 100%", "после деплоя p/e/a", "без лимита памяти (не учтены): 2"} {
 		if !strings.Contains(mem, want) {
 			t.Errorf("memory alert lacks %q:\n%s", want, mem)
 		}

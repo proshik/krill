@@ -72,11 +72,11 @@ func format(ev Event, lang string) string {
 	case ev.Disk != nil:
 		d := ev.Disk
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(i18n.Tf(ctx, "tg.disk_line",
-			d.Node, d.Mount, d.Pct, humanBytes(d.Used), humanBytes(d.Total), d.Threshold)))
+			d.Node, d.Mount, d.Pct, bytesPair(ctx, "tg.pair", d.Used, d.Total), humanBytes(d.Avail), d.Threshold)))
 	case ev.Mem != nil:
 		m := ev.Mem
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(i18n.Tf(ctx, "tg.mem_line",
-			m.Node, humanBytes(m.Limits), humanBytes(m.Total), m.Pct, m.Threshold)))
+			m.Node, humanBytes(m.Limits), m.Pct, humanBytes(m.Total), m.Threshold)))
 		if m.App != "" {
 			fmt.Fprintf(&b, "\n%s", html.EscapeString(i18n.Tf(ctx, "tg.mem_after", m.App)))
 		}
@@ -141,6 +141,17 @@ func shortImage(ref string) string {
 }
 
 // humanBytes formats a byte count with binary units, as docker stats does.
+// bytesPair renders "a of b" through the i18n key (two %s), writing the
+// unit once when both sizes share it: "12.9 of 148 GiB", but
+// "584 MiB of 1.5 GiB".
+func bytesPair(ctx context.Context, key string, a, b int64) string {
+	as, bs := humanBytes(a), humanBytes(b)
+	if ai, bi := strings.LastIndexByte(as, ' '), strings.LastIndexByte(bs, ' '); ai > 0 && bi > 0 && as[ai:] == bs[bi:] {
+		as = as[:ai]
+	}
+	return i18n.Tf(ctx, key, as, bs)
+}
+
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {

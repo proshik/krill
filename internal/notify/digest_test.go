@@ -206,12 +206,12 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 		"Бэкапы за 24 ч</b>: успешно 1, с ошибкой 1",
 		"🟢 база p/prod/krill-postgres-x · 12.0 MiB · 03:00",
 		"🔴 <b>control-plane</b>",
-		"\n🔴 диск /: 88% · 44.0 GiB из 50.0 GiB",
-		"\nконтейнеры занимают 250 MiB из 2.0 GiB · лимиты 512 MiB (25%) · без лимита: 1",
-		"\nCPU ср. 50% · пик 80% · ядер 2",
+		"\n🔴 диск /: занято 88% (44.0 из 50.0 GiB), свободно 6.0 GiB",
+		"\nпамять: контейнеры занимают 250 MiB из 2.0 GiB · сумма лимитов 512 MiB — 25% памяти ноды · контейнеров без лимита: 1",
+		"\nCPU: в среднем 50%, пик 80% — от мощности всех ядер (2)",
 		"🟢 <b>worker-1</b>",
-		"🟢 p/prod/api: 200 MiB · пик 300 MiB из 512 MiB (59%) · падений 0",
-		"🔴 p/prod/bot: 240 MiB · пик 240 MiB из 256 MiB (94%) · падений 3",
+		"🟢 p/prod/api: сейчас 200 MiB · пик 300 из лимита 512 MiB (59%) · падений 0",
+		"🔴 p/prod/bot: сейчас 240 MiB · пик 240 из лимита 256 MiB (94%) · падений 3",
 		"🔴 Не запущены: p/prod/worker",
 		"⚪ Остановлены или не развёрнуты: p/dev/old, p/dev/never",
 	} {
@@ -531,8 +531,8 @@ func TestDigestAllGreen(t *testing.T) {
 	for _, want := range []string{
 		"🟢 Всё в норме",
 		"Бэкапы за 24 ч</b>: не было",
-		"🟢 <b>krill-worker-ams</b>\nдиск /: 14%",
-		"🟢 side/prod/pochitushki: 291 MiB · пик 291 MiB из 768 MiB (38%) · падений 0",
+		"🟢 <b>krill-worker-ams</b>\nдиск /: занято 14% (10.0 из 80.0 GiB), свободно 65.0 GiB",
+		"🟢 side/prod/pochitushki: сейчас 291 MiB · пик 291 из лимита 768 MiB (38%) · падений 0",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q", want)
@@ -570,5 +570,21 @@ func TestAppRowsCrashLoopKeepsLimit(t *testing.T) {
 	}, map[string]int64{"n": 1 << 30}, map[string]int{"krill-1": 3}, nil, now)
 	if len(rows) != 1 || rows[0].Limit != 256<<20 || rows[0].Now != 0 || rows[0].memLevel() != lvlCrit {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestBytesPairWritesASharedUnitOnce(t *testing.T) {
+	ru, en := msgCtx("ru"), msgCtx("en")
+	const mib, gib = int64(1) << 20, int64(1) << 30
+	for _, c := range []struct{ got, want string }{
+		{bytesPair(ru, "tg.pair", 12*gib+900*mib, 148*gib), "12.9 из 148 GiB"},
+		{bytesPair(en, "tg.pair", 12*gib+900*mib, 148*gib), "12.9 of 148 GiB"},
+		{bytesPair(ru, "tg.pair_limit", 584*mib, 1536*mib), "584 MiB из лимита 1.5 GiB"},
+		{bytesPair(en, "tg.pair_limit", 240*mib, 256*mib), "240 of the 256 MiB limit"},
+		{bytesPair(en, "tg.pair", 512, 2*gib), "512 B of 2.0 GiB"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%q, want %q", c.got, c.want)
+		}
 	}
 }

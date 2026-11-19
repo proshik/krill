@@ -95,7 +95,10 @@ overcommit alert names the deployed app only to a channel of the same organizati
 `systemctl restart docker` — or with "No such container" (dind) is a planned stop and is skipped,
 while `(143): dockerexec: unhealthy container` stays a crash);
 `ServiceStates` (same `notify.SwarmReader`) tells an app that should run from one stopped on purpose.
-Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
+Digest and alert lines name what each number is (2026-11-19, `digest-wording`): "used"/"free"
+(free = df's Avail from `node_disks.avail_bytes`, not total − used, so the root reserve is not
+shown as free), "of the node's memory", "of the limit"; `bytesPair` writes a unit both sizes share
+once ("12.9 of 148 GiB"). Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
 and limits thresholds are the red marks; table in the guide). tzdata is
 embedded (`time/tzdata` in `cmd/krill`). **Telegram proxy (2026-11-19):** `KRILL_TELEGRAM_PROXY`
 (socks5h/socks5/http/https URL) gives the Telegram sender its own transport

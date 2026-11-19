@@ -764,12 +764,12 @@ func renderDigest(d digestData) []string {
 				continue // its last figures would read as current
 			}
 			for _, dk := range n.Disks {
-				metric(d.diskLevel(dk), i18n.Tf(ctx, "tg.dg.node_disk", dk.Mount, dk.UsedPct(), humanBytes(dk.Used), humanBytes(dk.Total)))
+				metric(d.diskLevel(dk), i18n.Tf(ctx, "tg.dg.node_disk", dk.Mount, dk.UsedPct(), bytesPair(ctx, "tg.pair", dk.Used, dk.Total), humanBytes(dk.Avail)))
 			}
 			if len(n.Disks) == 0 {
 				metric(lvlWarn, i18n.T(ctx, "tg.dg.node_disk_unknown"))
 			}
-			mem := i18n.Tf(ctx, "tg.dg.node_mem", humanBytes(n.MemUsed), humanBytes(n.MemTotal), humanBytes(n.Limits), pct(n.Limits, n.MemTotal))
+			mem := i18n.Tf(ctx, "tg.dg.node_mem", bytesPair(ctx, "tg.pair", n.MemUsed, n.MemTotal), humanBytes(n.Limits), pct(n.Limits, n.MemTotal))
 			if n.Unlimited > 0 {
 				mem += " · " + i18n.Tf(ctx, "tg.dg.unlimited", n.Unlimited)
 			}
@@ -787,9 +787,9 @@ func renderDigest(d digestData) []string {
 	add("")
 	add("<b>%s</b>", esc(i18n.T(ctx, "tg.dg.apps")))
 	for _, a := range d.Apps {
-		line := a.Path + ": " + humanBytes(a.Now)
+		line := a.Path + ": " + i18n.Tf(ctx, "tg.dg.app_now", humanBytes(a.Now))
 		if a.Limit > 0 {
-			line += " · " + i18n.Tf(ctx, "tg.dg.app_peak_limit", humanBytes(a.Peak), humanBytes(a.Limit), pct(a.Peak, a.Limit))
+			line += " · " + i18n.Tf(ctx, "tg.dg.app_peak_limit", bytesPair(ctx, "tg.pair_limit", a.Peak, a.Limit), pct(a.Peak, a.Limit))
 		} else {
 			line += " · " + i18n.Tf(ctx, "tg.dg.app_peak", humanBytes(a.Peak))
 		}

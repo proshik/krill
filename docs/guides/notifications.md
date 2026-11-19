@@ -115,14 +115,22 @@ reporting into one chat can be told apart.
 
 - **Disk** is what `df` reports for `/` and for Docker's data directory (`/var/lib/docker`, or
   wherever the daemon keeps it) when that is a separate filesystem: used / (used + available), so
-  blocks reserved for root count as full. Krill takes the snapshot every 10 sampling intervals
+  blocks reserved for root count as full. "Free" is `df`'s *Avail* — what a container can still
+  write — so used + free can be less than the size by the root reserve (5 % on ext4 by default).
+  A line reads `disk /: 10% used (12.9 of 148 GiB), 128 GiB free`; a unit both sizes share is
+  written once. Krill takes the snapshot every 10 sampling intervals
   (about 5 minutes by default) — locally on the control-plane node and over the node's SSH
   connection on workers. The SSH user needs no special rights.
-- **Memory** ("containers use … of …") and **CPU** add up the containers on the node, as the **Monitoring** page
-  does: the operating system and the Krill process itself (a host binary on the control-plane
-  node) are not included. CPU is a share of all the node's cores.
-- **Memory limits** count every container with a limit. A container without one is counted
-  apart ("without a limit"): it can use the whole node.
+- **Memory** ("memory: containers use 2.6 of 7.3 GiB") and **CPU** add up the containers on the
+  node, as the **Monitoring** page does: the operating system and the Krill process itself (a host
+  binary on the control-plane node) are not included. CPU is a share of all the node's cores
+  together ("— of all cores (2)").
+- **Memory limits** ("limits add up to 7.8 GiB — 107% of the node's memory") count every
+  container with a limit; over 100 % means the containers may ask for more than the node has. A
+  container without one is counted apart ("containers without a limit"): it can use the whole
+  node.
+- An app's line reads `now 335 MiB · peak 584 MiB of the 1.5 GiB limit (38%)`: the memory it
+  uses at the time of the digest, and the day's peak of one container against its limit.
 - **Crashes** are the app's failed tasks in Swarm's history over the day: a non-zero exit code
   (137 is a SIGKILL — an OOM kill, or a stop that outlived the grace period), a container killed
   for failing its healthcheck, a task Swarm could not start. Planned stops are not counted:
