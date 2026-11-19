@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/notify"
@@ -29,6 +30,7 @@ func TestChannelsForOrgDecryptsToken(t *testing.T) {
 		OrgID: o.ID, Type: "telegram", Enabled: true,
 		BotToken: secret.Enc("super-token"), ChatID: "42",
 		NotifyDeploy: true, NotifyBackup: true, NotifyHealth: true,
+		DiskThresholdPct: 85, MemThresholdPct: 100, DigestMinute: 660, DigestTz: "Europe/Moscow", Lang: "en",
 	})
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -68,6 +70,7 @@ func TestChannelsForOrgFailsOnUndecryptableToken(t *testing.T) {
 	if _, err := q.UpsertNotificationChannel(ctx, db.UpsertNotificationChannelParams{
 		OrgID: o.ID, Type: "telegram", Enabled: true, BotToken: encTok, ChatID: "42",
 		NotifyDeploy: true, NotifyBackup: true, NotifyHealth: true,
+		DiskThresholdPct: 85, MemThresholdPct: 100, DigestMinute: 660, DigestTz: "Europe/Moscow", Lang: "en",
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -200,5 +203,184 @@ func TestBackupTargetsResolveThroughTheirOwnTables(t *testing.T) {
 	}
 	if tgt, err := st.BucketBackupTarget(ctx, bb.ID); err != nil || tgt.OrgID != bktOrg || tgt.Name != "assets" {
 		t.Fatalf("bucket backup: %+v %v", tgt, err)
+	}
+}
+
+func chanParams(orgID int64, token string) db.UpsertNotificationChannelParams {
+	return db.UpsertNotificationChannelParams{
+		OrgID: orgID, Type: "telegram", Enabled: true, BotToken: token, ChatID: "42",
+		NotifyDeploy: true, NotifyBackup: true, NotifyHealth: true,
+		DiskThresholdPct: 85, MemThresholdPct: 100, DigestMinute: 660, DigestTz: "Europe/Moscow", Lang: "en",
+	}
+}
+
+// The new channel settings survive a round trip, and the cross-organization
+// lists return only what their flags select.
+func TestInfraAndDigestChannels(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	ctx := context.Background()
+	mk := func(name string, mut func(*db.UpsertNotificationChannelParams)) int64 {
+		o, _ := orgSvc.CreateOrg(ctx, mkUser(t, q, name+"@k.local"), name)
+		p := chanParams(o.ID, "tok-"+name)
+		mut(&p)
+		if _, err := q.UpsertNotificationChannel(ctx, p); err != nil {
+			t.Fatalf("upsert %s: %v", name, err)
+		}
+		return o.ID
+	}
+	infraOrg := mk("infra", func(p *db.UpsertNotificationChannelParams) {
+		p.NotifyInfra, p.DiskThresholdPct, p.MemThresholdPct, p.Lang = true, 90, 120, "ru"
+	})
+	digestOrg := mk("digest", func(p *db.UpsertNotificationChannelParams) {
+		p.DigestEnabled, p.DigestMinute, p.DigestTz, p.NotifyDeploySuccess = true, 9*60+30, "Asia/Tbilisi", true
+	})
+	mk("off", func(p *db.UpsertNotificationChannelParams) { p.Enabled, p.NotifyInfra, p.DigestEnabled = false, true, true })
+
+	st := notify.NewDBStore(q)
+	infra, err := st.InfraChannels(ctx)
+	if err != nil || len(infra) != 1 || infra[0].OrgID != infraOrg {
+		t.Fatalf("InfraChannels = %+v, %v", infra, err)
+	}
+	if c := infra[0]; c.DiskThresholdPct != 90 || c.MemThresholdPct != 120 || c.Lang != "ru" || c.BotToken != "tok-infra" || c.ID == 0 {
+		t.Fatalf("infra channel fields = %+v", c)
+	}
+	dg, err := st.DigestChannels(ctx)
+	if err != nil || len(dg) != 1 || dg[0].OrgID != digestOrg {
+		t.Fatalf("DigestChannels = %+v, %v", dg, err)
+	}
+	if c := dg[0]; c.DigestMinute != 570 || c.DigestTZ != "Asia/Tbilisi" || !c.NotifyDeploySuccess || c.DigestLastAt != nil {
+		t.Fatalf("digest channel fields = %+v", c)
+	}
+
+	// One organization's broken token must not silence the others.
+	secret.Init("k1")
+	defer secret.Init("")
+	o, _ := orgSvc.CreateOrg(ctx, mkUser(t, q, "broken@k.local"), "broken")
+	p := chanParams(o.ID, secret.Enc("x"))
+	p.NotifyInfra = true
+	if _, err := q.UpsertNotificationChannel(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	secret.Init("k2")
+	infra, err = st.InfraChannels(ctx)
+	if err == nil || len(infra) != 1 || infra[0].OrgID != infraOrg {
+		t.Fatalf("InfraChannels with a broken token = %+v, %v; want the good one plus an error", infra, err)
+	}
+}
+
+func TestClaimAndReleaseDigest(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	o, _ := org.NewService(q).CreateOrg(ctx, mkUser(t, q, "c@k.local"), "Org")
+	ch, err := q.UpsertNotificationChannel(ctx, chanParams(o.ID, "t"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := notify.NewDBStore(q)
+	sched := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	at := sched.Add(30 * time.Second)
+
+	if ok, err := st.ClaimDigest(ctx, ch.ID, at, sched); err != nil || !ok {
+		t.Fatalf("first claim = %v, %v", ok, err)
+	}
+	if ok, _ := st.ClaimDigest(ctx, ch.ID, at.Add(time.Minute), sched); ok {
+		t.Fatal("the same occurrence was claimed twice")
+	}
+	if err := st.ReleaseDigest(ctx, ch.ID, at, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.ClaimDigest(ctx, ch.ID, at.Add(2*time.Minute), sched); !ok {
+		t.Fatal("not claimable after a release")
+	}
+	// A release with a stale claim time leaves the newer claim alone.
+	if err := st.ReleaseDigest(ctx, ch.ID, at, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.ClaimDigest(ctx, ch.ID, at.Add(3*time.Minute), sched); ok {
+		t.Fatal("a stale release undid a newer claim")
+	}
+	// The next day's occurrence is claimable.
+	if ok, _ := st.ClaimDigest(ctx, ch.ID, at.Add(24*time.Hour), sched.Add(24*time.Hour)); !ok {
+		t.Fatal("next day not claimable")
+	}
+}
+
+func TestAlertStateAndBackupJournal(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	orgSvc := org.NewService(q)
+	o, _ := orgSvc.CreateOrg(ctx, mkUser(t, q, "a@k.local"), "Org")
+	other, _ := orgSvc.CreateOrg(ctx, mkUser(t, q, "b@k.local"), "Other")
+	ch, _ := q.UpsertNotificationChannel(ctx, chanParams(o.ID, "t"))
+	st := notify.NewDBStore(q)
+
+	if s, err := st.AlertState(ctx, ch.ID, "disk:cp:/"); err != nil || s.Active || s.LastSent != nil {
+		t.Fatalf("missing state = %+v, %v", s, err)
+	}
+	now := time.Date(2026, 11, 18, 3, 0, 0, 0, time.UTC)
+	if err := st.SetAlertState(ctx, ch.ID, "disk:cp:/", notify.AlertState{Active: true, LastSent: &now}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.AlertState(ctx, ch.ID, "disk:cp:/"); !s.Active || s.LastSent == nil || !s.LastSent.Equal(now) {
+		t.Fatalf("stored state = %+v", s)
+	}
+
+	for _, r := range []notify.BackupRun{
+		{OrgID: o.ID, Kind: notify.BackupKindDatabase, SourceID: 1, Target: "old", Status: "ok", FinishedAt: now.Add(-48 * time.Hour)},
+		{OrgID: o.ID, Kind: notify.BackupKindVolume, SourceID: 1, Project: "p", Env: "e", Target: "web / data", Status: "ok", SizeBytes: 2048, FinishedAt: now},
+		{OrgID: o.ID, Kind: notify.BackupKindBucket, SourceID: 1, Target: "assets", Status: "error", Error: "denied", FinishedAt: now},
+		{OrgID: other.ID, Kind: notify.BackupKindDatabase, SourceID: 1, Target: "theirs", Status: "ok", FinishedAt: now},
+	} {
+		if err := st.RecordBackupRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs, err := st.BackupRunsSince(ctx, o.ID, now.Add(-24*time.Hour))
+	if err != nil || len(runs) != 2 || runs[0].SizeBytes != 2048 && runs[1].SizeBytes != 2048 {
+		t.Fatalf("BackupRunsSince = %+v, %v", runs, err)
+	}
+	if err := st.PruneBackupRuns(ctx, now.Add(-24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if runs, _ := st.BackupRunsSince(ctx, o.ID, time.Time{}); len(runs) != 2 {
+		t.Fatalf("after prune = %+v", runs)
+	}
+}
+
+func TestDeploymentQueries(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	orgSvc := org.NewService(q)
+	o, _ := orgSvc.CreateOrg(ctx, mkUser(t, q, "d@k.local"), "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "prod")
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "1", Domain: "w-dq.x", Port: 80, SourceType: "image", DockerfilePath: "Dockerfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, _ := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"})
+	if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{ID: done.ID, Status: "done", ImageTag: "nginx:1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"}); err != nil { // still running
+		t.Fatal(err)
+	}
+	st := notify.NewDBStore(q)
+	info, err := st.DeploymentInfo(ctx, done.ID)
+	if err != nil || info.OrgID != o.ID || info.App != "web" || info.Project != "P" || info.ImageTag != "nginx:1" || info.FinishedAt.IsZero() || info.Trigger != "manual" {
+		t.Fatalf("DeploymentInfo = %+v, %v", info, err)
+	}
+	deps, err := st.OrgDeploymentsSince(ctx, o.ID, time.Now().Add(-time.Hour))
+	if err != nil || len(deps) != 1 || deps[0].ID != done.ID {
+		t.Fatalf("OrgDeploymentsSince = %+v, %v (an unfinished deploy must not be listed)", deps, err)
+	}
+	apps, err := st.OrgApps(ctx, o.ID)
+	if err != nil || len(apps) != 1 || apps[0].AppID != app.ID || apps[0].Env != "prod" {
+		t.Fatalf("OrgApps = %+v, %v", apps, err)
 	}
 }

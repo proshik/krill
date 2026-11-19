@@ -125,6 +125,20 @@ type Backup struct {
 	LogicalDatabaseID int64              `json:"logical_database_id"`
 }
 
+type BackupRun struct {
+	ID         int64     `json:"id"`
+	OrgID      int64     `json:"org_id"`
+	Kind       string    `json:"kind"`
+	SourceID   int64     `json:"source_id"`
+	Project    string    `json:"project"`
+	Env        string    `json:"env"`
+	Target     string    `json:"target"`
+	Status     string    `json:"status"`
+	SizeBytes  int64     `json:"size_bytes"`
+	Error      string    `json:"error"`
+	FinishedAt time.Time `json:"finished_at"`
+}
+
 type BucketBackup struct {
 	ID                int64              `json:"id"`
 	BucketID          int64              `json:"bucket_id"`
@@ -301,23 +315,49 @@ type NodeCapacity struct {
 	SampledAt     time.Time `json:"sampled_at"`
 }
 
+type NodeDisk struct {
+	Node       string    `json:"node"`
+	Mount      string    `json:"mount"`
+	Filesystem string    `json:"filesystem"`
+	TotalBytes int64     `json:"total_bytes"`
+	UsedBytes  int64     `json:"used_bytes"`
+	AvailBytes int64     `json:"avail_bytes"`
+	SampledAt  time.Time `json:"sampled_at"`
+}
+
 type NodeLabel struct {
 	SwarmNodeID string `json:"swarm_node_id"`
 	Label       string `json:"label"`
 }
 
 type NotificationChannel struct {
-	ID           int64     `json:"id"`
-	OrgID        int64     `json:"org_id"`
-	Type         string    `json:"type"`
-	Enabled      bool      `json:"enabled"`
-	BotToken     string    `json:"bot_token"`
-	ChatID       string    `json:"chat_id"`
-	NotifyDeploy bool      `json:"notify_deploy"`
-	NotifyBackup bool      `json:"notify_backup"`
-	NotifyHealth bool      `json:"notify_health"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                  int64              `json:"id"`
+	OrgID               int64              `json:"org_id"`
+	Type                string             `json:"type"`
+	Enabled             bool               `json:"enabled"`
+	BotToken            string             `json:"bot_token"`
+	ChatID              string             `json:"chat_id"`
+	NotifyDeploy        bool               `json:"notify_deploy"`
+	NotifyBackup        bool               `json:"notify_backup"`
+	NotifyHealth        bool               `json:"notify_health"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+	NotifyDeploySuccess bool               `json:"notify_deploy_success"`
+	NotifyInfra         bool               `json:"notify_infra"`
+	DiskThresholdPct    int16              `json:"disk_threshold_pct"`
+	MemThresholdPct     int16              `json:"mem_threshold_pct"`
+	DigestEnabled       bool               `json:"digest_enabled"`
+	DigestMinute        int16              `json:"digest_minute"`
+	DigestTz            string             `json:"digest_tz"`
+	DigestLastAt        pgtype.Timestamptz `json:"digest_last_at"`
+	Lang                string             `json:"lang"`
+}
+
+type NotifyAlertState struct {
+	ChannelID  int64              `json:"channel_id"`
+	AlertKey   string             `json:"alert_key"`
+	Active     bool               `json:"active"`
+	LastSentAt pgtype.Timestamptz `json:"last_sent_at"`
 }
 
 type ObservabilitySetting struct {

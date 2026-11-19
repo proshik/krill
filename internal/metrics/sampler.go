@@ -12,6 +12,25 @@ import (
 // generating constant small deletes + autovacuum churn on the tiny VPS.
 const pruneEvery = 120 // ~1h at the default 30s interval
 
+// diskEvery takes a disk snapshot once per this many ticks: disks fill over
+// hours, and on a worker every snapshot is one more SSH command.
+const diskEvery = 10 // ~5min at the default 30s interval
+
+// Tick is the result of one sampling pass, handed to the Observer.
+type Tick struct {
+	Start    time.Time
+	Nodes    []NodeSample
+	Complete bool // the node list covers the whole cluster (see SampleAll)
+	Disks    bool // this tick asked every node for a disk snapshot
+}
+
+// Observer is told about every finished tick (e.g. the notification
+// resource monitor). It runs on the sampler goroutine, so it must not block
+// on slow work.
+type Observer interface {
+	Observe(ctx context.Context, t Tick)
+}
+
 // Sampler periodically records container stats and prunes old history.
 type Sampler struct {
 	src       *ClusterSource
@@ -20,7 +39,8 @@ type Sampler struct {
 	retention time.Duration
 	log       *slog.Logger
 
-	ticks int // tick counter for the coarse prune cadence
+	ticks int // tick counter for the coarse prune and disk cadences
+	obs   Observer
 
 	mu       sync.Mutex
 	selfComp string // control-plane component, learned from ListContainerStats
@@ -43,6 +63,9 @@ func NewSampler(src *ClusterSource, store Store, interval, retention time.Durati
 		log:       slog.Default(),
 	}
 }
+
+// SetObserver registers the tick observer. Call before Run.
+func (s *Sampler) SetObserver(o Observer) { s.obs = o }
 
 // Run samples on a ticker until ctx is canceled.
 func (s *Sampler) Run(ctx context.Context) {
@@ -70,7 +93,8 @@ func (s *Sampler) SelfComponent() string {
 
 func (s *Sampler) tick(ctx context.Context) {
 	now := time.Now()
-	samples, complete := s.src.SampleAll(ctx)
+	withDisks := s.ticks%diskEvery == 0
+	samples, complete := s.src.Sample(ctx, withDisks)
 	keep := make([]string, 0, len(samples))
 	for _, ns := range samples {
 		keep = append(keep, ns.Node) // every current node (incl. down → kept, shows stale)
@@ -92,6 +116,11 @@ func (s *Sampler) tick(ctx context.Context) {
 				s.log.Warn("metrics: capacity upsert failed", "node", ns.Node, "err", err)
 			}
 		}
+		if ns.DisksOK {
+			if err := s.store.ReplaceDisks(ctx, ns.Node, ns.Disks); err != nil {
+				s.log.Warn("metrics: disk snapshot store failed", "node", ns.Node, "err", err)
+			}
+		}
 	}
 	// Drop capacity for nodes no longer in the cluster (renamed/removed) so they
 	// stop showing as stale phantoms; down-but-still-listed nodes stay in keep.
@@ -100,6 +129,9 @@ func (s *Sampler) tick(ctx context.Context) {
 	if complete && len(keep) > 0 {
 		if err := s.store.PruneCapacityExcept(ctx, keep); err != nil {
 			s.log.Warn("metrics: orphan capacity prune failed", "err", err)
+		}
+		if err := s.store.PruneDisksExcept(ctx, keep); err != nil {
+			s.log.Warn("metrics: orphan disk prune failed", "err", err)
 		}
 	}
 	s.ticks++
@@ -111,5 +143,11 @@ func (s *Sampler) tick(ctx context.Context) {
 		if err := s.store.PruneCapacity(ctx, before); err != nil {
 			s.log.Warn("metrics: capacity prune failed", "err", err)
 		}
+		if err := s.store.PruneDisks(ctx, before); err != nil {
+			s.log.Warn("metrics: disk prune failed", "err", err)
+		}
+	}
+	if s.obs != nil {
+		s.obs.Observe(ctx, Tick{Start: now, Nodes: samples, Complete: complete, Disks: withDisks})
 	}
 }

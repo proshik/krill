@@ -800,10 +800,22 @@ func TestDeployCrashLoopMarksError(t *testing.T) {
 }
 
 type fakeNotifier struct {
-	mu     sync.Mutex
-	appID  int64
-	reason string
-	called bool
+	mu        sync.Mutex
+	appID     int64
+	reason    string
+	called    bool
+	succeeded []int64 // deployment ids
+}
+
+func (f *fakeNotifier) DeploySucceeded(_ context.Context, deploymentID int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.succeeded = append(f.succeeded, deploymentID)
+}
+func (f *fakeNotifier) successes() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.succeeded...)
 }
 
 func (f *fakeNotifier) DeployFailed(_ context.Context, appID int64, reason string) {
@@ -833,6 +845,47 @@ func TestDeployFailureNotifies(t *testing.T) {
 	waitFor(t, func() bool { return fn.was() })
 	if fn.appID != 1 {
 		t.Fatalf("notify appID = %d, want 1", fn.appID)
+	}
+}
+
+// A deploy that converges reports its deployment as succeeded — and only
+// that: a failed one must not.
+func TestDeploySuccessNotifies(t *testing.T) {
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
+	fn := &fakeNotifier{}
+	d.SetNotifier(fn)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	waitFor(t, func() bool { return len(fn.successes()) == 1 })
+	if got := fn.successes(); got[0] != id {
+		t.Fatalf("DeploySucceeded(%v), want deployment %d", got, id)
+	}
+	if fn.was() {
+		t.Fatal("a successful deploy also reported a failure")
+	}
+}
+
+func TestDeployFailureDoesNotReportSuccess(t *testing.T) {
+	oldT, oldP := convergeTimeout, convergePollInterval
+	convergeTimeout, convergePollInterval = 2*time.Second, 20*time.Millisecond
+	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+
+	st := newFakeStore(imageApp())
+	d := newDeployer(&mockEngine{crashLooping: true}, &mockBuilder{}, st)
+	fn := &fakeNotifier{}
+	d.SetNotifier(fn)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	waitFor(t, func() bool { return fn.was() })
+	if got := fn.successes(); len(got) != 0 {
+		t.Fatalf("a failed deploy reported success: %v", got)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 
 func TestFormatDeployFailed(t *testing.T) {
 	ev := Event{Kind: DeployFailed, Project: "proj", Env: "prod", Target: "web", Detail: "crash-loop", Time: time.Unix(0, 0)}
-	got := format(ev)
+	got := format(ev, "en")
 	if !strings.Contains(got, "Deploy failed") || !strings.Contains(got, "proj/prod/web") || !strings.Contains(got, "crash-loop") {
 		t.Fatalf("unexpected message:\n%s", got)
 	}
@@ -16,7 +16,7 @@ func TestFormatDeployFailed(t *testing.T) {
 
 func TestFormatRecoveredHasNoDetailLine(t *testing.T) {
 	ev := Event{Kind: AppRecovered, Project: "p", Env: "e", Target: "w", Time: time.Unix(0, 0)}
-	got := format(ev)
+	got := format(ev, "en")
 	if !strings.Contains(got, "App recovered") || !strings.Contains(got, "p/e/w") {
 		t.Fatalf("unexpected message:\n%s", got)
 	}
@@ -24,7 +24,7 @@ func TestFormatRecoveredHasNoDetailLine(t *testing.T) {
 
 func TestFormatEscapesHTML(t *testing.T) {
 	ev := Event{Kind: DeployFailed, Project: "p", Env: "e", Target: "a<b>", Detail: "x & y", Time: time.Unix(0, 0)}
-	got := format(ev)
+	got := format(ev, "en")
 	// User-supplied "<b>" in Target must be escaped; literal "a<b>" must not appear.
 	// The format itself uses <b>…</b> for the header (intentional), but "a<b>"
 	// injected by the user must become "a&lt;b&gt;".
@@ -37,7 +37,7 @@ func TestFormatEscapesHTML(t *testing.T) {
 }
 
 func TestFormatMigrateFailed(t *testing.T) {
-	got := format(Event{Kind: MigrateFailed, Target: "prod-pg", Detail: "copy volume: boom"})
+	got := format(Event{Kind: MigrateFailed, Target: "prod-pg", Detail: "copy volume: boom"}, "en")
 	if !strings.Contains(got, "DB migration failed") || !strings.Contains(got, "prod-pg") {
 		t.Fatalf("format = %q", got)
 	}

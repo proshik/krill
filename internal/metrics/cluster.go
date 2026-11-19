@@ -35,6 +35,11 @@ type NodeSample struct {
 	// read it". Persisting an unread capacity would overwrite good NCPU/MemTotal
 	// with zeros, and the dashboard would divide memory use by zero.
 	CapacityOK bool
+	// Disks is the node's disk snapshot, taken only on ticks that ask for one;
+	// DisksOK tells a snapshot that was taken apart from one that was not (or
+	// failed), so a missing snapshot never reads as "no filesystems".
+	Disks   []DiskUsage
+	DisksOK bool
 }
 
 // ClusterSource samples the control-plane node plus every worker each tick.
@@ -62,8 +67,14 @@ func NewClusterSource(localName string, local NodeStatsSource, workers WorkerLis
 // It is false when the worker list itself could not be read — the samples are
 // still usable, but callers must not treat missing nodes as removed.
 func (c *ClusterSource) SampleAll(ctx context.Context) (samples []NodeSample, complete bool) {
+	return c.Sample(ctx, false)
+}
+
+// Sample is SampleAll that also takes each node's disk snapshot when disks is
+// set (and the node's source can report one, see DiskSource).
+func (c *ClusterSource) Sample(ctx context.Context, disks bool) (samples []NodeSample, complete bool) {
 	lctx, lcancel := context.WithTimeout(ctx, c.timeout)
-	out := []NodeSample{c.sampleOne(lctx, c.localName, c.local)}
+	out := []NodeSample{c.sampleOne(lctx, c.localName, c.local, disks)}
 	lcancel()
 
 	workers, err := c.workers(ctx)
@@ -97,7 +108,7 @@ func (c *ClusterSource) SampleAll(ctx context.Context) (samples []NodeSample, co
 				}
 			}()
 
-			s := c.sampleOne(wctx, w.Name, src)
+			s := c.sampleOne(wctx, w.Name, src, disks)
 			mu.Lock()
 			out = append(out, s)
 			mu.Unlock()
@@ -108,19 +119,32 @@ func (c *ClusterSource) SampleAll(ctx context.Context) (samples []NodeSample, co
 	return out, true
 }
 
-// sampleOne collects stats + capacity from one node. On any error it returns OK=false.
-func (c *ClusterSource) sampleOne(ctx context.Context, name string, src NodeStatsSource) NodeSample {
+// sampleOne collects stats + capacity (and, when asked, disks) from one node.
+// On a stats error it returns OK=false.
+func (c *ClusterSource) sampleOne(ctx context.Context, name string, src NodeStatsSource, disks bool) NodeSample {
 	stats, err := src.ListContainerStats(ctx)
 	if err != nil {
 		c.log.Warn("metrics: node stats failed", "node", name, "err", err)
 		return NodeSample{Node: name}
 	}
+	out := NodeSample{Node: name, Containers: stats, OK: true}
 	info, err := src.NodeInfo(ctx)
 	if err != nil {
 		c.log.Warn("metrics: node info failed", "node", name, "err", err)
 		// Still report containers, but mark the capacity unknown so the stored
 		// NCPU/MemTotal are left as they are rather than zeroed.
-		return NodeSample{Node: name, Containers: stats, OK: true}
+	} else {
+		out.Capacity, out.CapacityOK = info, true
 	}
-	return NodeSample{Node: name, Containers: stats, Capacity: info, OK: true, CapacityOK: true}
+	if disks {
+		if ds, ok := src.(DiskSource); ok {
+			d, derr := ds.DiskUsage(ctx, diskPaths(info.DockerRootDir))
+			if derr != nil {
+				c.log.Warn("metrics: node disk usage failed", "node", name, "err", derr)
+			} else {
+				out.Disks, out.DisksOK = d, true
+			}
+		}
+	}
+	return out
 }

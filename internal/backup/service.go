@@ -29,10 +29,26 @@ type Execer interface {
 	Exec(ctx context.Context, serviceName string, cmd []string, env []string, stdin io.Reader, stdout io.Writer) error
 }
 
-// Notifier is the optional sink for backup-failure alerts (implemented by
-// *notify.Service). Defined here to avoid importing the notify package.
+// Notifier is the optional sink for backup alerts and the run journal
+// (implemented by *notify.Service). Defined here to avoid importing the
+// notify package.
 type Notifier interface {
 	BackupFailed(ctx context.Context, backupID int64, reason string)
+	// BackupSucceeded is told the stored size (bytes) of a successful run.
+	BackupSucceeded(ctx context.Context, backupID, sizeBytes int64)
+}
+
+// CountingReader counts the bytes read through it: the size of a streamed
+// upload, which is known only once it is over.
+type CountingReader struct {
+	R io.Reader
+	N int64
+}
+
+func (c *CountingReader) Read(p []byte) (int, error) {
+	n, err := c.R.Read(p)
+	c.N += int64(n)
+	return n, err
 }
 
 type Service struct {
@@ -182,7 +198,8 @@ func (s *Service) runBackup(ctx context.Context, backupID int64, now time.Time) 
 		}
 		pw.Close()
 	}()
-	if uerr := Upload(ctx, dst, key, pr, s.allowPrivate); uerr != nil {
+	counted := &CountingReader{R: pr}
+	if uerr := Upload(ctx, dst, key, counted, s.allowPrivate); uerr != nil {
 		// Close the read side so the dump goroutine's blocked pw.Write fails and
 		// the goroutine (and its docker exec + in-container pg_dump) terminates —
 		// otherwise each failed upload leaks them all until process exit.
@@ -205,7 +222,13 @@ func (s *Service) runBackup(ctx context.Context, backupID int64, now time.Time) 
 			}
 		}
 	}
-	return s.store.SetBackupResult(ctx, backupID, now, "ok", retentionNote(lerr, deleteFailures))
+	if err := s.store.SetBackupResult(ctx, backupID, now, "ok", retentionNote(lerr, deleteFailures)); err != nil {
+		return err
+	}
+	if s.notifier != nil {
+		s.notifier.BackupSucceeded(ctx, backupID, counted.N)
+	}
+	return nil
 }
 
 // retentionNote describes a retention pass that ran after a successful upload.

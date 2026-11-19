@@ -7,6 +7,9 @@ package db
 
 import (
 	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const appNotifyTarget = `-- name: AppNotifyTarget :one
@@ -94,8 +97,7 @@ func (q *Queries) BucketBackupNotifyTarget(ctx context.Context, id int64) (Bucke
 }
 
 const channelsForOrg = `-- name: ChannelsForOrg :many
-SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at
-FROM notification_channels WHERE org_id = $1 AND enabled
+SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at, notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct, digest_enabled, digest_minute, digest_tz, digest_last_at, lang FROM notification_channels WHERE org_id = $1 AND enabled
 `
 
 func (q *Queries) ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error) {
@@ -119,6 +121,15 @@ func (q *Queries) ChannelsForOrg(ctx context.Context, orgID int64) ([]Notificati
 			&i.NotifyHealth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.NotifyDeploySuccess,
+			&i.NotifyInfra,
+			&i.DiskThresholdPct,
+			&i.MemThresholdPct,
+			&i.DigestEnabled,
+			&i.DigestMinute,
+			&i.DigestTz,
+			&i.DigestLastAt,
+			&i.Lang,
 		); err != nil {
 			return nil, err
 		}
@@ -128,6 +139,27 @@ func (q *Queries) ChannelsForOrg(ctx context.Context, orgID int64) ([]Notificati
 		return nil, err
 	}
 	return items, nil
+}
+
+const claimDigest = `-- name: ClaimDigest :execrows
+UPDATE notification_channels SET digest_last_at = $1::timestamptz
+WHERE id = $2 AND (digest_last_at IS NULL OR digest_last_at < $3::timestamptz)
+`
+
+type ClaimDigestParams struct {
+	ClaimedAt   time.Time `json:"claimed_at"`
+	ID          int64     `json:"id"`
+	ScheduledAt time.Time `json:"scheduled_at"`
+}
+
+// Marks a channel's digest as sent at $2 unless another pass already claimed
+// this occurrence (digest_last_at at or after the scheduled time).
+func (q *Queries) ClaimDigest(ctx context.Context, arg ClaimDigestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimDigest, arg.ClaimedAt, arg.ID, arg.ScheduledAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const countEnabledHealthChannels = `-- name: CountEnabledHealthChannels :one
@@ -141,9 +173,119 @@ func (q *Queries) CountEnabledHealthChannels(ctx context.Context) (int64, error)
 	return count, err
 }
 
+const deploymentNotifyInfo = `-- name: DeploymentNotifyInfo :one
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.started_at, d.finished_at,
+       p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
+FROM deployments d
+JOIN applications a ON d.application_id = a.id
+JOIN environments e ON a.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE d.id = $1
+`
+
+type DeploymentNotifyInfoRow struct {
+	ID            int64              `json:"id"`
+	ApplicationID int64              `json:"application_id"`
+	Status        string             `json:"status"`
+	Trigger       string             `json:"trigger"`
+	ImageTag      string             `json:"image_tag"`
+	StartedAt     time.Time          `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	OrgID         int64              `json:"org_id"`
+	ProjectName   string             `json:"project_name"`
+	EnvName       string             `json:"env_name"`
+	AppName       string             `json:"app_name"`
+}
+
+func (q *Queries) DeploymentNotifyInfo(ctx context.Context, id int64) (DeploymentNotifyInfoRow, error) {
+	row := q.db.QueryRow(ctx, deploymentNotifyInfo, id)
+	var i DeploymentNotifyInfoRow
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.Status,
+		&i.Trigger,
+		&i.ImageTag,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.OrgID,
+		&i.ProjectName,
+		&i.EnvName,
+		&i.AppName,
+	)
+	return i, err
+}
+
+const digestChannels = `-- name: DigestChannels :many
+SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at, notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct, digest_enabled, digest_minute, digest_tz, digest_last_at, lang FROM notification_channels WHERE enabled AND digest_enabled
+`
+
+// Enabled channels with the daily digest on, across all organizations; used
+// only by the internal digest scheduler, which scopes each digest to its org.
+func (q *Queries) DigestChannels(ctx context.Context) ([]NotificationChannel, error) {
+	rows, err := q.db.Query(ctx, digestChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotificationChannel
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Type,
+			&i.Enabled,
+			&i.BotToken,
+			&i.ChatID,
+			&i.NotifyDeploy,
+			&i.NotifyBackup,
+			&i.NotifyHealth,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.NotifyDeploySuccess,
+			&i.NotifyInfra,
+			&i.DiskThresholdPct,
+			&i.MemThresholdPct,
+			&i.DigestEnabled,
+			&i.DigestMinute,
+			&i.DigestTz,
+			&i.DigestLastAt,
+			&i.Lang,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAlertState = `-- name: GetAlertState :one
+SELECT channel_id, alert_key, active, last_sent_at FROM notify_alert_state WHERE channel_id = $1 AND alert_key = $2
+`
+
+type GetAlertStateParams struct {
+	ChannelID int64  `json:"channel_id"`
+	AlertKey  string `json:"alert_key"`
+}
+
+func (q *Queries) GetAlertState(ctx context.Context, arg GetAlertStateParams) (NotifyAlertState, error) {
+	row := q.db.QueryRow(ctx, getAlertState, arg.ChannelID, arg.AlertKey)
+	var i NotifyAlertState
+	err := row.Scan(
+		&i.ChannelID,
+		&i.AlertKey,
+		&i.Active,
+		&i.LastSentAt,
+	)
+	return i, err
+}
+
 const getNotificationChannel = `-- name: GetNotificationChannel :one
-SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at
-FROM notification_channels WHERE org_id = $1 AND type = $2
+SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at, notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct, digest_enabled, digest_minute, digest_tz, digest_last_at, lang FROM notification_channels WHERE org_id = $1 AND type = $2
 `
 
 type GetNotificationChannelParams struct {
@@ -166,8 +308,243 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 		&i.NotifyHealth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NotifyDeploySuccess,
+		&i.NotifyInfra,
+		&i.DiskThresholdPct,
+		&i.MemThresholdPct,
+		&i.DigestEnabled,
+		&i.DigestMinute,
+		&i.DigestTz,
+		&i.DigestLastAt,
+		&i.Lang,
 	)
 	return i, err
+}
+
+const infraChannels = `-- name: InfraChannels :many
+SELECT id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at, notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct, digest_enabled, digest_minute, digest_tz, digest_last_at, lang FROM notification_channels WHERE enabled AND notify_infra
+`
+
+// Enabled channels of EVERY organization that an instance operator opted into
+// node-level alerts. Used only by the internal resource monitor.
+func (q *Queries) InfraChannels(ctx context.Context) ([]NotificationChannel, error) {
+	rows, err := q.db.Query(ctx, infraChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotificationChannel
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Type,
+			&i.Enabled,
+			&i.BotToken,
+			&i.ChatID,
+			&i.NotifyDeploy,
+			&i.NotifyBackup,
+			&i.NotifyHealth,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.NotifyDeploySuccess,
+			&i.NotifyInfra,
+			&i.DiskThresholdPct,
+			&i.MemThresholdPct,
+			&i.DigestEnabled,
+			&i.DigestMinute,
+			&i.DigestTz,
+			&i.DigestLastAt,
+			&i.Lang,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertBackupRun = `-- name: InsertBackupRun :exec
+INSERT INTO backup_runs (org_id, kind, source_id, project, env, target, status, size_bytes, error, finished_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`
+
+type InsertBackupRunParams struct {
+	OrgID      int64     `json:"org_id"`
+	Kind       string    `json:"kind"`
+	SourceID   int64     `json:"source_id"`
+	Project    string    `json:"project"`
+	Env        string    `json:"env"`
+	Target     string    `json:"target"`
+	Status     string    `json:"status"`
+	SizeBytes  int64     `json:"size_bytes"`
+	Error      string    `json:"error"`
+	FinishedAt time.Time `json:"finished_at"`
+}
+
+func (q *Queries) InsertBackupRun(ctx context.Context, arg InsertBackupRunParams) error {
+	_, err := q.db.Exec(ctx, insertBackupRun,
+		arg.OrgID,
+		arg.Kind,
+		arg.SourceID,
+		arg.Project,
+		arg.Env,
+		arg.Target,
+		arg.Status,
+		arg.SizeBytes,
+		arg.Error,
+		arg.FinishedAt,
+	)
+	return err
+}
+
+const listBackupRunsSince = `-- name: ListBackupRunsSince :many
+SELECT id, org_id, kind, source_id, project, env, target, status, size_bytes, error, finished_at FROM backup_runs WHERE org_id = $1 AND finished_at >= $2 ORDER BY finished_at
+`
+
+type ListBackupRunsSinceParams struct {
+	OrgID      int64     `json:"org_id"`
+	FinishedAt time.Time `json:"finished_at"`
+}
+
+func (q *Queries) ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSinceParams) ([]BackupRun, error) {
+	rows, err := q.db.Query(ctx, listBackupRunsSince, arg.OrgID, arg.FinishedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BackupRun
+	for rows.Next() {
+		var i BackupRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Kind,
+			&i.SourceID,
+			&i.Project,
+			&i.Env,
+			&i.Target,
+			&i.Status,
+			&i.SizeBytes,
+			&i.Error,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrgApps = `-- name: ListOrgApps :many
+SELECT a.id AS app_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
+FROM applications a
+JOIN environments e ON a.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, a.name
+`
+
+type ListOrgAppsRow struct {
+	AppID       int64  `json:"app_id"`
+	AppName     string `json:"app_name"`
+	EnvName     string `json:"env_name"`
+	ProjectName string `json:"project_name"`
+}
+
+func (q *Queries) ListOrgApps(ctx context.Context, organizationID int64) ([]ListOrgAppsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgApps, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgAppsRow
+	for rows.Next() {
+		var i ListOrgAppsRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.AppName,
+			&i.EnvName,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrgDeploymentsSince = `-- name: ListOrgDeploymentsSince :many
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.error_message, d.started_at, d.finished_at,
+       p.name AS project_name, e.name AS env_name, a.name AS app_name
+FROM deployments d
+JOIN applications a ON d.application_id = a.id
+JOIN environments e ON a.environment_id = e.id
+JOIN projects p ON e.project_id = p.id
+WHERE p.organization_id = $1 AND d.finished_at >= $2
+ORDER BY d.finished_at
+`
+
+type ListOrgDeploymentsSinceParams struct {
+	OrganizationID int64              `json:"organization_id"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+}
+
+type ListOrgDeploymentsSinceRow struct {
+	ID            int64              `json:"id"`
+	ApplicationID int64              `json:"application_id"`
+	Status        string             `json:"status"`
+	Trigger       string             `json:"trigger"`
+	ImageTag      string             `json:"image_tag"`
+	ErrorMessage  string             `json:"error_message"`
+	StartedAt     time.Time          `json:"started_at"`
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ProjectName   string             `json:"project_name"`
+	EnvName       string             `json:"env_name"`
+	AppName       string             `json:"app_name"`
+}
+
+// An organization's deployments that finished since $2 (the digest window).
+func (q *Queries) ListOrgDeploymentsSince(ctx context.Context, arg ListOrgDeploymentsSinceParams) ([]ListOrgDeploymentsSinceRow, error) {
+	rows, err := q.db.Query(ctx, listOrgDeploymentsSince, arg.OrganizationID, arg.FinishedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgDeploymentsSinceRow
+	for rows.Next() {
+		var i ListOrgDeploymentsSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ApplicationID,
+			&i.Status,
+			&i.Trigger,
+			&i.ImageTag,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.ProjectName,
+			&i.EnvName,
+			&i.AppName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listWatchedApps = `-- name: ListWatchedApps :many
@@ -213,9 +590,63 @@ func (q *Queries) ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, er
 	return items, nil
 }
 
+const pruneBackupRuns = `-- name: PruneBackupRuns :exec
+DELETE FROM backup_runs WHERE finished_at < $1
+`
+
+func (q *Queries) PruneBackupRuns(ctx context.Context, finishedAt time.Time) error {
+	_, err := q.db.Exec(ctx, pruneBackupRuns, finishedAt)
+	return err
+}
+
+const releaseDigest = `-- name: ReleaseDigest :exec
+UPDATE notification_channels SET digest_last_at = $1
+WHERE id = $2 AND digest_last_at = $3::timestamptz
+`
+
+type ReleaseDigestParams struct {
+	Previous  pgtype.Timestamptz `json:"previous"`
+	ID        int64              `json:"id"`
+	ClaimedAt time.Time          `json:"claimed_at"`
+}
+
+// Undoes a claim whose send failed, so the next pass retries it. Only while
+// the claim is still ours.
+func (q *Queries) ReleaseDigest(ctx context.Context, arg ReleaseDigestParams) error {
+	_, err := q.db.Exec(ctx, releaseDigest, arg.Previous, arg.ID, arg.ClaimedAt)
+	return err
+}
+
+const setAlertState = `-- name: SetAlertState :exec
+INSERT INTO notify_alert_state (channel_id, alert_key, active, last_sent_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (channel_id, alert_key) DO UPDATE
+  SET active = EXCLUDED.active, last_sent_at = EXCLUDED.last_sent_at
+`
+
+type SetAlertStateParams struct {
+	ChannelID  int64              `json:"channel_id"`
+	AlertKey   string             `json:"alert_key"`
+	Active     bool               `json:"active"`
+	LastSentAt pgtype.Timestamptz `json:"last_sent_at"`
+}
+
+func (q *Queries) SetAlertState(ctx context.Context, arg SetAlertStateParams) error {
+	_, err := q.db.Exec(ctx, setAlertState,
+		arg.ChannelID,
+		arg.AlertKey,
+		arg.Active,
+		arg.LastSentAt,
+	)
+	return err
+}
+
 const upsertNotificationChannel = `-- name: UpsertNotificationChannel :one
-INSERT INTO notification_channels (org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO notification_channels (
+    org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health,
+    notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct,
+    digest_enabled, digest_minute, digest_tz, lang)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT (org_id, type) DO UPDATE SET
     enabled = excluded.enabled,
     bot_token = excluded.bot_token,
@@ -223,19 +654,35 @@ ON CONFLICT (org_id, type) DO UPDATE SET
     notify_deploy = excluded.notify_deploy,
     notify_backup = excluded.notify_backup,
     notify_health = excluded.notify_health,
+    notify_deploy_success = excluded.notify_deploy_success,
+    notify_infra = excluded.notify_infra,
+    disk_threshold_pct = excluded.disk_threshold_pct,
+    mem_threshold_pct = excluded.mem_threshold_pct,
+    digest_enabled = excluded.digest_enabled,
+    digest_minute = excluded.digest_minute,
+    digest_tz = excluded.digest_tz,
+    lang = excluded.lang,
     updated_at = now()
-RETURNING id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at
+RETURNING id, org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health, created_at, updated_at, notify_deploy_success, notify_infra, disk_threshold_pct, mem_threshold_pct, digest_enabled, digest_minute, digest_tz, digest_last_at, lang
 `
 
 type UpsertNotificationChannelParams struct {
-	OrgID        int64  `json:"org_id"`
-	Type         string `json:"type"`
-	Enabled      bool   `json:"enabled"`
-	BotToken     string `json:"bot_token"`
-	ChatID       string `json:"chat_id"`
-	NotifyDeploy bool   `json:"notify_deploy"`
-	NotifyBackup bool   `json:"notify_backup"`
-	NotifyHealth bool   `json:"notify_health"`
+	OrgID               int64  `json:"org_id"`
+	Type                string `json:"type"`
+	Enabled             bool   `json:"enabled"`
+	BotToken            string `json:"bot_token"`
+	ChatID              string `json:"chat_id"`
+	NotifyDeploy        bool   `json:"notify_deploy"`
+	NotifyBackup        bool   `json:"notify_backup"`
+	NotifyHealth        bool   `json:"notify_health"`
+	NotifyDeploySuccess bool   `json:"notify_deploy_success"`
+	NotifyInfra         bool   `json:"notify_infra"`
+	DiskThresholdPct    int16  `json:"disk_threshold_pct"`
+	MemThresholdPct     int16  `json:"mem_threshold_pct"`
+	DigestEnabled       bool   `json:"digest_enabled"`
+	DigestMinute        int16  `json:"digest_minute"`
+	DigestTz            string `json:"digest_tz"`
+	Lang                string `json:"lang"`
 }
 
 func (q *Queries) UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error) {
@@ -248,6 +695,14 @@ func (q *Queries) UpsertNotificationChannel(ctx context.Context, arg UpsertNotif
 		arg.NotifyDeploy,
 		arg.NotifyBackup,
 		arg.NotifyHealth,
+		arg.NotifyDeploySuccess,
+		arg.NotifyInfra,
+		arg.DiskThresholdPct,
+		arg.MemThresholdPct,
+		arg.DigestEnabled,
+		arg.DigestMinute,
+		arg.DigestTz,
+		arg.Lang,
 	)
 	var i NotificationChannel
 	err := row.Scan(
@@ -262,6 +717,15 @@ func (q *Queries) UpsertNotificationChannel(ctx context.Context, arg UpsertNotif
 		&i.NotifyHealth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.NotifyDeploySuccess,
+		&i.NotifyInfra,
+		&i.DiskThresholdPct,
+		&i.MemThresholdPct,
+		&i.DigestEnabled,
+		&i.DigestMinute,
+		&i.DigestTz,
+		&i.DigestLastAt,
+		&i.Lang,
 	)
 	return i, err
 }

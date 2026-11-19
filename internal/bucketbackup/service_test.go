@@ -113,12 +113,33 @@ func fixture(t *testing.T) (*Service, *memIO, *memStore) {
 	return New(bio, st, true), bio, st
 }
 
+type sizeNotifier struct {
+	mu    sync.Mutex
+	sizes map[int64]int64
+}
+
+func (n *sizeNotifier) BucketBackupFailed(context.Context, int64, string) {}
+func (n *sizeNotifier) BucketBackupSucceeded(_ context.Context, id, size int64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.sizes == nil {
+		n.sizes = map[int64]int64{}
+	}
+	n.sizes[id] = size
+}
+
 func TestBackupWritesObjectsAndManifestThenRestoresIntoAnEmptyBucket(t *testing.T) {
 	svc, bio, st := fixture(t)
+	sn := &sizeNotifier{}
+	svc.SetNotifier(sn)
 	ctx := context.Background()
 	now := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
 	if err := svc.RunBackup(ctx, 1, now); err != nil {
 		t.Fatalf("backup: %v", err)
+	}
+	// The run journal gets the snapshot's size as the snapshot list shows it.
+	if got := sn.sizes[1]; got != 3005 {
+		t.Fatalf("BucketBackupSucceeded size = %d, want 3005", got)
 	}
 	if st.status != "ok" {
 		t.Fatalf("status %q %q", st.status, st.errMsg)

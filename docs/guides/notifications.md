@@ -1,0 +1,123 @@
+# Notifications
+
+Krill sends Telegram messages about what happens to an organization's apps, databases and
+nodes: failures as they happen, successful deploys, disks filling up, memory limits that no
+longer fit the node, and one digest a day. Everything is set up on **Settings → Notifications**
+of each organization.
+
+- [1. Setting up a channel](#1-setting-up-a-channel)
+- [2. Events](#2-events)
+- [3. Daily digest](#3-daily-digest)
+- [4. Infrastructure alerts](#4-infrastructure-alerts)
+- [5. What the numbers mean](#5-what-the-numbers-mean)
+- [6. Security](#6-security)
+- [7. Troubleshooting](#7-troubleshooting)
+
+## 1. Setting up a channel
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy its token.
+2. Add the bot to the chat that should get the messages (or start a private chat with it), and
+   find the chat's ID — for example by sending the bot a message and reading
+   `https://api.telegram.org/bot<token>/getUpdates`.
+3. On **Settings → Notifications** enter the token and the chat ID, tick **Enabled**, pick the
+   **Message language** (English or Russian) and save.
+4. **Send test message** checks the token and the chat; **Send digest now** sends today's digest
+   right away, whatever its schedule.
+
+The token is encrypted at rest (with `KRILL_SECRET_KEY`), never shown back and never logged.
+Leaving the token field empty keeps the stored one.
+
+## 2. Events
+
+| Setting | Sent when | When |
+|---------|-----------|------|
+| Deploy failures | A deploy fails, or a database server's move to another node fails. | At once |
+| Successful deploys | A deploy finishes with the app running. Deploys Krill makes itself (moving apps to their organization's network after an upgrade) are not reported. | At once |
+| Backup failures | A database, volume or bucket backup (or restore) fails. | At once |
+| App down / recovered | An app that was healthy loses its tasks, and when it comes back. | At once |
+
+Successful backups have no message of their own: they usually run at night, so they are listed in
+the [daily digest](#3-daily-digest) instead.
+
+## 3. Daily digest
+
+With **Send a daily digest** on, the channel gets one message a day at the chosen **Time** in the
+chosen **Time zone** (11:00 Europe/Moscow by default; any IANA name such as `Europe/Amsterdam`
+works). It covers the last 24 hours:
+
+- **Needs attention** — first, so it is the first thing you see; or **All good** when nothing
+  below is near a limit. It lists failed deploys and backups, apps whose memory peak reached 90 %
+  of their limit, apps that restarted, and — for an [infrastructure](#4-infrastructure-alerts)
+  channel — disks over their threshold, nodes whose memory limits or memory in use are high, and
+  nodes that stopped reporting.
+- **Deploys**: each finished deploy with its image (or build number) and time, failures with their
+  reason.
+- **Backups**: every database, volume and bucket backup run, successful ones with their stored
+  size.
+- **Nodes** (infrastructure channels only): disk use per filesystem, memory in use, the sum of the
+  containers' memory limits against the node's memory, and CPU (average and peak over the day).
+- **Apps**: memory now, the day's peak against the limit, and restarts.
+
+A long digest is split into several messages. If Krill is not running at the scheduled time, the
+digest is sent when it comes back, but only within 3 hours of that time; otherwise that day is
+skipped, so a digest never arrives at night. The digest is sent once per day even if Krill
+restarts, and a failed send is retried every minute within those 3 hours.
+
+Backup runs are kept for the digest for 30 days.
+
+## 4. Infrastructure alerts
+
+The nodes are shared by every organization of an installation, so node data goes only to channels
+an **instance operator** (the administrator Krill was installed with) has opted in. On those
+channels the operator can set:
+
+- **Node alerts and the node section of the digest** — the opt-in itself.
+- **Disk usage alert, %** (85 by default, 50–99). A filesystem at or over it is reported at once,
+  at any time of day; while it stays there it is reported again at most once a day, and once it
+  is 3 points below the threshold a "back to normal" message follows.
+- **Memory limits alert, % of node memory** (100 by default, 50–200). After every successful
+  deploy Krill adds up the memory limits of the containers on the node the app landed on and
+  warns when the sum reaches this share of the node's memory. The deploy itself is never
+  blocked; the message says which deploy prompted it.
+
+Organization admins see these settings but cannot change them, and if one of them points the
+channel at another bot or chat, node alerts are turned off until an operator turns them on again.
+
+Messages about nodes name the installation (the host of its public URL), so two installations
+reporting into one chat can be told apart.
+
+## 5. What the numbers mean
+
+- **Disk** is what `df` reports for `/` and for Docker's data directory (`/var/lib/docker`, or
+  wherever the daemon keeps it) when that is a separate filesystem: used / (used + available), so
+  blocks reserved for root count as full. Krill takes the snapshot every 10 sampling intervals
+  (about 5 minutes by default) — locally on the control-plane node and over the node's SSH
+  connection on workers. The SSH user needs no special rights.
+- **Memory in use** and **CPU** add up the containers on the node, as the **Monitoring** page
+  does: the operating system and the Krill process itself (a host binary on the control-plane
+  node) are not included. CPU is a share of all the node's cores.
+- **Memory limits** count every container with a limit. A container without one is counted
+  apart ("without a limit"): it can use the whole node.
+- **Restarts** are the app's failed tasks in Swarm's history over the day (a crash, an OOM kill, a
+  rejected task). Swarm keeps a few tasks per replica, so for an app that crash-loops the number
+  is a lower bound.
+- An app with no samples in the last 10 minutes is listed under **Not running**.
+
+## 6. Security
+
+- Messages never contain secret values: no tokens, passwords or connection strings.
+- The digest of an organization lists only that organization's apps, deploys and backups.
+- Node data reaches only the channels an instance operator opted in (see above).
+- Telegram receives everything a message says; choose the chat accordingly.
+
+## 7. Troubleshooting
+
+- **No messages at all** — **Send test message**. An error there means a wrong token or chat ID,
+  or the bot was never added to the chat. If the stored token cannot be decrypted (the
+  `KRILL_SECRET_KEY` changed), re-enter it.
+- **No digest** — check that **Enabled** and **Send a daily digest** are both on and that the time
+  zone is what you expect; **Send digest now** shows what the channel would get. Krill logs
+  `notify digest sent` (or `notify digest: send failed, will retry`) for every attempt.
+- **Disk shows "no data"** — the node's snapshot failed: `df` is missing (Krill running inside a
+  container) or the worker cannot be reached over SSH. Krill logs
+  `metrics: node disk usage failed` with the reason.

@@ -45,7 +45,11 @@ describes them in detail.
   primary domain can be changed from the Domains tab (**Make primary**). See
   [Domains](docs/guides/domains.md#redirect-a-domain-to-the-primary-domain).
 - **Operations:** live structured logs, web terminal, CPU/memory monitoring across
-  all nodes, Telegram alerts, a visual cluster topology page. Since v0.7.0 a refused
+  all nodes, Telegram alerts, a visual cluster topology page. Telegram channels also
+  report successful deploys, nodes' disks over a threshold and memory limits overcommitted
+  after a deploy (opt-in by an instance operator), and send a daily digest of deploys,
+  backups (with sizes), node resources and app memory/restarts in the channel's language
+  and time zone — see [Notifications](docs/guides/notifications.md). Since v0.7.0 a refused
   deploy says why (UI, REST, MCP), the Advanced tab shows effective limits and recent
   tasks with out-of-memory and slow-start hints, a logical database's page shows its
   connection budget and advisory locks, and the sidebar becomes a menu on narrow screens.
@@ -163,6 +167,12 @@ Verified in code and tests, but not yet exercised on a real environment:
     the target in one hop. Still open: certificate renewal (due in about two months) and the
     redirect after **Make primary** on a live install, since those primaries were set at app
     creation.
+17. Notifications beyond failures on a real install: a successful-deploy message, the daily
+    digest arriving at its scheduled time in the channel's zone (and once only across a
+    restart), disk snapshots on the control plane and over SSH on a worker (`df` on the real
+    hosts), a disk alert, its daily repeat and its recovery, and the memory-overcommit warning
+    after a deploy. Covered so far by unit tests with fake senders and by store tests against a
+    real Postgres. See [Notifications](docs/guides/notifications.md).
 
 ## Open
 
@@ -173,7 +183,8 @@ Verified in code and tests, but not yet exercised on a real environment:
   backed up automatically today.
 - **Direct image upload** in `krill-cli` (`delivery: upload`) for users without a
   registry — designed, not implemented; the CLI refuses the mode for now.
-- **Email and Slack** notification channels (Telegram ships today).
+- **Email and Slack** notification channels (Telegram ships today, with successful-deploy
+  messages, disk and memory alerts and a daily digest).
 - A Homebrew tap for `krill-cli`.
 - **Existing MinIO instances.** New S3 servers run Silo, a maintained MinIO fork, since
   v0.7.0; instances created earlier keep the pinned `quay.io/minio/minio` release, which

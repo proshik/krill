@@ -152,10 +152,24 @@ func newMinioStore(t *testing.T, prefix string, retention int) (*mockVolStore, b
 	return store, dst
 }
 
+type sizeNotifier struct {
+	sizes map[int64]int64
+}
+
+func (n *sizeNotifier) VolumeBackupFailed(context.Context, int64, string) {}
+func (n *sizeNotifier) VolumeBackupSucceeded(_ context.Context, id, size int64) {
+	if n.sizes == nil {
+		n.sizes = map[int64]int64{}
+	}
+	n.sizes[id] = size
+}
+
 func TestRunVolumeBackupRoundtrip(t *testing.T) {
 	store, dst := newMinioStore(t, "vol", 7)
 	eng := &mockVolEngine{} // default archive writes PAYLOAD-123, state Running:0
 	svc := New(eng, store, true)
+	sn := &sizeNotifier{}
+	svc.SetNotifier(sn)
 	ctx := context.Background()
 
 	if err := svc.RunVolumeBackup(ctx, 1, time.Now()); err != nil {
@@ -169,6 +183,10 @@ func TestRunVolumeBackupRoundtrip(t *testing.T) {
 	}
 	if len(objs) != 1 {
 		t.Fatalf("want 1 object, got %d: %+v", len(objs), objs)
+	}
+	// The run journal gets the stored (compressed) size.
+	if got := sn.sizes[1]; got != objs[0].Size || got == 0 {
+		t.Fatalf("VolumeBackupSucceeded size = %d, want the stored object's %d", got, objs[0].Size)
 	}
 	wantPrefix := prefixDir("vol", volKey(42, "data"))
 	if got := objs[0].Key; len(got) < len(wantPrefix) || got[:len(wantPrefix)] != wantPrefix {

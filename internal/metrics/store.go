@@ -41,6 +41,14 @@ type Store interface {
 	// or removed node stops appearing (a still-listed but down node is kept, and
 	// shows stale). No-op when keep is empty (guarded by the caller).
 	PruneCapacityExcept(ctx context.Context, keep []string) error
+	// ReplaceDisks stores a node's disk snapshot, dropping its mounts the
+	// snapshot no longer reports.
+	ReplaceDisks(ctx context.Context, node string, disks []DiskUsage) error
+	ListDisks(ctx context.Context) ([]NodeDisk, error)
+	PruneDisks(ctx context.Context, before time.Time) error
+	// PruneDisksExcept drops disks of nodes not in keep (same contract as
+	// PruneCapacityExcept).
+	PruneDisksExcept(ctx context.Context, keep []string) error
 }
 
 // DBStore implements Store backed by the sqlc-generated queries.
@@ -132,4 +140,43 @@ func (s *DBStore) PruneCapacity(ctx context.Context, before time.Time) error {
 
 func (s *DBStore) PruneCapacityExcept(ctx context.Context, keep []string) error {
 	return s.q.PruneNodeCapacityExcept(ctx, keep)
+}
+
+func (s *DBStore) ReplaceDisks(ctx context.Context, node string, disks []DiskUsage) error {
+	mounts := make([]string, 0, len(disks))
+	for _, d := range disks {
+		if err := s.q.UpsertNodeDisk(ctx, db.UpsertNodeDiskParams{
+			Node: node, Mount: d.Mount, Filesystem: d.Filesystem,
+			TotalBytes: d.Total, UsedBytes: d.Used, AvailBytes: d.Avail,
+		}); err != nil {
+			return err
+		}
+		mounts = append(mounts, d.Mount)
+	}
+	return s.q.PruneNodeDiskMounts(ctx, db.PruneNodeDiskMountsParams{Node: node, Mounts: mounts})
+}
+
+func (s *DBStore) ListDisks(ctx context.Context) ([]NodeDisk, error) {
+	rows, err := s.q.ListNodeDisks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodeDisk, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, NodeDisk{
+			Node: r.Node,
+			DiskUsage: DiskUsage{Mount: r.Mount, Filesystem: r.Filesystem,
+				Total: r.TotalBytes, Used: r.UsedBytes, Avail: r.AvailBytes},
+			SampledAt: r.SampledAt,
+		})
+	}
+	return out, nil
+}
+
+func (s *DBStore) PruneDisks(ctx context.Context, before time.Time) error {
+	return s.q.PruneNodeDisks(ctx, before)
+}
+
+func (s *DBStore) PruneDisksExcept(ctx context.Context, keep []string) error {
+	return s.q.PruneNodeDisksExcept(ctx, keep)
 }

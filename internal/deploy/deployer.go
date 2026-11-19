@@ -128,10 +128,13 @@ type job struct {
 	tag   string
 }
 
-// Notifier is the optional sink for deploy-failure alerts (implemented by
+// Notifier is the optional sink for deploy alerts (implemented by
 // *notify.Service). Defined here to avoid importing the notify package.
 type Notifier interface {
 	DeployFailed(ctx context.Context, appID int64, reason string)
+	// DeploySucceeded is told about a deploy that finished with the app
+	// running (not one still starting in the background).
+	DeploySucceeded(ctx context.Context, deploymentID int64)
 }
 
 // Deployer handles deployments through a queue and a worker.
@@ -202,7 +205,7 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 	}
 }
 
-// SetNotifier wires deploy-failure notifications (no-op if never set).
+// SetNotifier wires deploy notifications (no-op if never set).
 func (d *Deployer) SetNotifier(n Notifier) { d.notifier = n }
 
 func (d *Deployer) Start(ctx context.Context) {
@@ -820,6 +823,9 @@ func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, im
 	// survive a canceled job ctx (graceful shutdown right after a failed deploy).
 	if status == StatusError && appID != 0 && d.notifier != nil {
 		d.notifier.DeployFailed(context.Background(), appID, errMsg)
+	}
+	if status == StatusRunning && appID != 0 && d.notifier != nil {
+		d.notifier.DeploySucceeded(context.Background(), deployID)
 	}
 }
 

@@ -17,7 +17,23 @@ type capStore struct {
 	caps       map[string]int
 	prunes     int      // count of Prune calls
 	keptExcept []string // last keep set passed to PruneCapacityExcept
+	disks      map[string][]metrics.DiskUsage
+	diskWrites int
 }
+
+func (s *capStore) ReplaceDisks(_ context.Context, node string, d []metrics.DiskUsage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.disks == nil {
+		s.disks = map[string][]metrics.DiskUsage{}
+	}
+	s.disks[node] = d
+	s.diskWrites++
+	return nil
+}
+func (s *capStore) ListDisks(context.Context) ([]metrics.NodeDisk, error) { return nil, nil }
+func (s *capStore) PruneDisks(context.Context, time.Time) error           { return nil }
+func (s *capStore) PruneDisksExcept(context.Context, []string) error      { return nil }
 
 func (s *capStore) Insert(ctx context.Context, node, comp string, cpu float64, mem, lim int64) error {
 	s.mu.Lock()
@@ -34,8 +50,8 @@ func (s *capStore) UpsertCapacity(ctx context.Context, node string, ncpu int, me
 	s.caps[node] = ncpu
 	return nil
 }
-func (s *capStore) Since(context.Context, time.Time) ([]metrics.Sample, error)   { return nil, nil }
-func (s *capStore) Latest(context.Context, time.Time) ([]metrics.Sample, error)  { return nil, nil }
+func (s *capStore) Since(context.Context, time.Time) ([]metrics.Sample, error)  { return nil, nil }
+func (s *capStore) Latest(context.Context, time.Time) ([]metrics.Sample, error) { return nil, nil }
 func (s *capStore) Prune(_ context.Context, _ time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,5 +210,83 @@ func TestNodeInfoFailureDoesNotZeroCapacity(t *testing.T) {
 	// Container stats are still useful and must keep flowing.
 	if len(st.ins) == 0 {
 		t.Error("container stats dropped along with the capacity")
+	}
+}
+
+// diskSrc is a node source that can also report disks.
+type diskSrc struct {
+	fakeSrc
+	mu    *sync.Mutex
+	paths *[][]string
+	disks []metrics.DiskUsage
+	err   error
+}
+
+func (d diskSrc) DiskUsage(_ context.Context, paths []string) ([]metrics.DiskUsage, error) {
+	d.mu.Lock()
+	*d.paths = append(*d.paths, paths)
+	d.mu.Unlock()
+	return d.disks, d.err
+}
+
+type tickRecorder struct{ ticks []metrics.Tick }
+
+func (r *tickRecorder) Observe(_ context.Context, t metrics.Tick) { r.ticks = append(r.ticks, t) }
+
+// A disk snapshot is taken on the first tick and then once per diskEvery
+// ticks, covering the root and the daemon's data directory, and every tick
+// reaches the observer with its node samples.
+func TestSamplerDiskSnapshotCadenceAndObserver(t *testing.T) {
+	var mu sync.Mutex
+	var asked [][]string
+	local := diskSrc{
+		fakeSrc: fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 1, DockerRootDir: "/srv/docker"}},
+		mu:      &mu, paths: &asked,
+		disks: []metrics.DiskUsage{{Mount: "/", Total: 100, Used: 90, Avail: 10}},
+	}
+	noWorkers := func(context.Context) ([]metrics.Worker, error) { return nil, nil }
+	st := &capStore{}
+	s := metrics.NewSampler(metrics.NewClusterSource("cp", local, noWorkers, time.Second), st, time.Hour, time.Hour)
+	rec := &tickRecorder{}
+	s.SetObserver(rec)
+
+	for i := 0; i < metrics.DiskEvery+1; i++ {
+		s.TickForTest(context.Background())
+	}
+	if st.diskWrites != 2 {
+		t.Fatalf("disk snapshots stored %d times over %d ticks, want 2", st.diskWrites, metrics.DiskEvery+1)
+	}
+	if len(asked) != 2 || len(asked[0]) != 2 || asked[0][0] != "/" || asked[0][1] != "/srv/docker" {
+		t.Fatalf("disk paths asked = %v, want [/ /srv/docker] twice", asked)
+	}
+	if got := st.disks["cp"]; len(got) != 1 || got[0].Used != 90 {
+		t.Fatalf("stored disks = %v", got)
+	}
+	if len(rec.ticks) != metrics.DiskEvery+1 {
+		t.Fatalf("observer saw %d ticks, want %d", len(rec.ticks), metrics.DiskEvery+1)
+	}
+	if !rec.ticks[0].Disks || rec.ticks[1].Disks || !rec.ticks[0].Nodes[0].DisksOK || rec.ticks[1].Nodes[0].DisksOK {
+		t.Fatalf("tick disk flags wrong: %+v / %+v", rec.ticks[0], rec.ticks[1])
+	}
+}
+
+// A failed disk snapshot must not be stored (an empty list would drop the
+// node's mounts) and must not fail the rest of the sample.
+func TestSamplerDiskFailureKeepsStoredSnapshot(t *testing.T) {
+	var mu sync.Mutex
+	var asked [][]string
+	local := diskSrc{
+		fakeSrc: fakeSrc{stats: []docker.ContainerStat{{Component: "krill"}}, cap: docker.NodeInfo{NCPU: 1}},
+		mu:      &mu, paths: &asked, err: errors.New("df: not found"),
+	}
+	noWorkers := func(context.Context) ([]metrics.Worker, error) { return nil, nil }
+	st := &capStore{}
+	s := metrics.NewSampler(metrics.NewClusterSource("cp", local, noWorkers, time.Second), st, time.Hour, time.Hour)
+	s.TickForTest(context.Background())
+	if st.diskWrites != 0 {
+		t.Fatalf("a failed snapshot was stored")
+	}
+	if len(st.ins) == 0 || st.caps["cp"] != 1 {
+		t.Fatalf("container stats or capacity lost with the disk failure")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -55,6 +56,7 @@ type Server struct {
 	reloadBucketBackups func()
 
 	notify  *notify.Service
+	digest  *notify.Digest
 	metrics metrics.Store
 
 	// apiAuth/apiSvc/apiLimiter wire the agent-facing API (REST + MCP). A nil
@@ -272,6 +274,19 @@ func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
 // SetNotify wires the notification service (used by the test-message handler).
 func (s *Server) SetNotify(n *notify.Service) { s.notify = n }
 
+// SetDigest wires the daily digest (for the settings page's preview button).
+func (s *Server) SetDigest(d *notify.Digest) { s.digest = d }
+
+// InstanceName names this installation in notifications: the host of its
+// public URL (KRILL_PUBLIC_URL, the active panel domain, or KRILL_HOST).
+func (s *Server) InstanceName(ctx context.Context) string {
+	base := s.baseURL(ctx)
+	if u, err := url.Parse(base); err == nil && u.Host != "" {
+		return u.Hostname()
+	}
+	return base
+}
+
 // SetMetrics wires the metrics store (used by the monitoring handler).
 func (s *Server) SetMetrics(st metrics.Store) { s.metrics = st }
 
@@ -477,6 +492,7 @@ func (s *Server) Router() http.Handler {
 				r.Get("/notifications", s.listNotifications)
 				r.Post("/notifications", s.saveNotifications)
 				r.Post("/notifications/test", s.testNotification)
+				r.Post("/notifications/digest", s.sendDigestNow)
 				r.Post("/projects", s.createProject)
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/rename", s.renameProject)

@@ -46,7 +46,9 @@ and Traefik for routing, and stores its state in Postgres.
 - **Container settings.** CPU and memory limits, replicas, healthchecks, volumes, command
   override, raw TCP/UDP ports, build arguments and secrets.
 - **Operations.** Structured live logs, a web terminal, CPU and memory charts per node,
-  Telegram alerts, and a map of which app runs where and talks to which database.
+  Telegram alerts (failures, successful deploys, node disk and memory thresholds) with a daily
+  digest, and a map of which app runs where and talks to which database.
+  → [Notifications](docs/guides/notifications.md)
 - **Observability agent.** An optional Grafana Alloy agent on every node ships host metrics and
   container logs to your own Prometheus-compatible storage and Loki — Krill keeps none of it.
   → [Observability](docs/guides/observability.md)
@@ -110,6 +112,7 @@ else's production:
 | [Buckets](docs/guides/buckets.md) | Per-environment buckets on a managed S3 server, restricted keys, rotation. |
 | [Private images and repositories](docs/guides/registries.md) | Registries, private Git, build arguments and secrets. |
 | [Agent and CI API](docs/guides/agent-api.md) | REST, MCP, tokens, webhooks. |
+| [Notifications](docs/guides/notifications.md) | Telegram alerts, successful deploys, disk and memory thresholds, the daily digest. |
 | [Observability](docs/guides/observability.md) | The optional Grafana Alloy agent: metrics, logs, labels, cost, security. |
 | [krill-cli](docs/guides/krill-cli.md) | Build on your machine, deploy to Krill. |
 | [Architecture](docs/architecture.md) | How it fits together, data model, source layout. |

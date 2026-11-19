@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // digest time zones: the distroless image has no zoneinfo
 
 	"github.com/docker/docker/client"
 	"github.com/jackc/pgx/v5"
@@ -228,6 +229,10 @@ func run() error {
 	// concurrently with this assignment.
 	notifyStore := notify.NewDBStore(q)
 	notifySvc := notify.New(notifyStore)
+	// Node-level alerts (disk, memory overcommit after a deploy) ride the
+	// metrics sampler's ticks; the monitor is wired before the deployer runs.
+	resMonitor := notify.NewResourceMonitor(notifySvc, notifyStore)
+	notifySvc.SetMonitor(resMonitor)
 
 	// Deploys interrupted by a crash or a kill -9 are still marked 'running' and
 	// nothing will ever finish them. Reconcile before the worker starts: a
@@ -362,7 +367,7 @@ func run() error {
 						_ = cl.Close()
 						return nil, nil, rerr
 					}
-					return rs, func() error { _ = rs.Close(); return cl.Close() }, nil
+					return workerNodeSource{RemoteStats: rs, ssh: cl}, func() error { _ = rs.Close(); return cl.Close() }, nil
 				},
 			})
 		}
@@ -376,8 +381,9 @@ func run() error {
 		return ws, nil
 	}
 	metricsStore := metrics.NewDBStore(q)
-	clusterSrc := metrics.NewClusterSource(localName, engine, workerLister, cfg.MetricsNodeTimeout)
+	clusterSrc := metrics.NewClusterSource(localName, localNodeSource{engine}, workerLister, cfg.MetricsNodeTimeout)
 	metricsSampler := metrics.NewSampler(clusterSrc, metricsStore, cfg.MetricsInterval, cfg.MetricsRetention)
+	metricsSampler.SetObserver(resMonitor)
 	go metricsSampler.Run(ctx)
 
 	// Cross-node exec: route provisioning/backup/restore/terminal to the docker
@@ -504,6 +510,16 @@ func run() error {
 		}
 	})
 	app.SetNotify(notifySvc)
+	notifySvc.SetInstanceName(app.InstanceName)
+	// Daily digest: restarts come from the Swarm task history when the
+	// engine can list it.
+	var taskFailures notify.TaskFailureCounter
+	if tc, ok := engine.(notify.TaskFailureCounter); ok {
+		taskFailures = tc
+	}
+	digest := notify.NewDigest(notifySvc, notifyStore, metricsStore, taskFailures)
+	go digest.Run(ctx)
+	app.SetDigest(digest)
 	app.SetMetrics(metricsStore)
 	app.SetSelfComponentFn(metricsSampler.SelfComponent)
 	app.SetControlPlaneFirewall(firewall.LocalRunner{Timeout: 20 * time.Second})

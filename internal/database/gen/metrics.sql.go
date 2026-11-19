@@ -106,6 +106,39 @@ func (q *Queries) ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error) 
 	return items, nil
 }
 
+const listNodeDisks = `-- name: ListNodeDisks :many
+SELECT node, mount, filesystem, total_bytes, used_bytes, avail_bytes, sampled_at
+FROM node_disks ORDER BY node, mount
+`
+
+func (q *Queries) ListNodeDisks(ctx context.Context) ([]NodeDisk, error) {
+	rows, err := q.db.Query(ctx, listNodeDisks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NodeDisk
+	for rows.Next() {
+		var i NodeDisk
+		if err := rows.Scan(
+			&i.Node,
+			&i.Mount,
+			&i.Filesystem,
+			&i.TotalBytes,
+			&i.UsedBytes,
+			&i.AvailBytes,
+			&i.SampledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const metricSamplesSince = `-- name: MetricSamplesSince :many
 SELECT node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
 FROM metric_samples
@@ -176,6 +209,40 @@ func (q *Queries) PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string
 	return err
 }
 
+const pruneNodeDiskMounts = `-- name: PruneNodeDiskMounts :exec
+DELETE FROM node_disks WHERE node = $1 AND mount <> ALL($2::text[])
+`
+
+type PruneNodeDiskMountsParams struct {
+	Node   string   `json:"node"`
+	Mounts []string `json:"mounts"`
+}
+
+// Drops a node's mounts that its latest snapshot no longer reports.
+func (q *Queries) PruneNodeDiskMounts(ctx context.Context, arg PruneNodeDiskMountsParams) error {
+	_, err := q.db.Exec(ctx, pruneNodeDiskMounts, arg.Node, arg.Mounts)
+	return err
+}
+
+const pruneNodeDisks = `-- name: PruneNodeDisks :exec
+DELETE FROM node_disks WHERE sampled_at < $1
+`
+
+func (q *Queries) PruneNodeDisks(ctx context.Context, sampledAt time.Time) error {
+	_, err := q.db.Exec(ctx, pruneNodeDisks, sampledAt)
+	return err
+}
+
+const pruneNodeDisksExcept = `-- name: PruneNodeDisksExcept :exec
+DELETE FROM node_disks WHERE node <> ALL($1::text[])
+`
+
+// Drops disks of nodes no longer in the cluster.
+func (q *Queries) PruneNodeDisksExcept(ctx context.Context, dollar_1 []string) error {
+	_, err := q.db.Exec(ctx, pruneNodeDisksExcept, dollar_1)
+	return err
+}
+
 const upsertNodeCapacity = `-- name: UpsertNodeCapacity :exec
 INSERT INTO node_capacity (node, ncpu, mem_total_bytes, sampled_at)
 VALUES ($1, $2, $3, now())
@@ -191,5 +258,34 @@ type UpsertNodeCapacityParams struct {
 
 func (q *Queries) UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error {
 	_, err := q.db.Exec(ctx, upsertNodeCapacity, arg.Node, arg.Ncpu, arg.MemTotalBytes)
+	return err
+}
+
+const upsertNodeDisk = `-- name: UpsertNodeDisk :exec
+INSERT INTO node_disks (node, mount, filesystem, total_bytes, used_bytes, avail_bytes, sampled_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (node, mount) DO UPDATE
+  SET filesystem = EXCLUDED.filesystem, total_bytes = EXCLUDED.total_bytes,
+      used_bytes = EXCLUDED.used_bytes, avail_bytes = EXCLUDED.avail_bytes, sampled_at = now()
+`
+
+type UpsertNodeDiskParams struct {
+	Node       string `json:"node"`
+	Mount      string `json:"mount"`
+	Filesystem string `json:"filesystem"`
+	TotalBytes int64  `json:"total_bytes"`
+	UsedBytes  int64  `json:"used_bytes"`
+	AvailBytes int64  `json:"avail_bytes"`
+}
+
+func (q *Queries) UpsertNodeDisk(ctx context.Context, arg UpsertNodeDiskParams) error {
+	_, err := q.db.Exec(ctx, upsertNodeDisk,
+		arg.Node,
+		arg.Mount,
+		arg.Filesystem,
+		arg.TotalBytes,
+		arg.UsedBytes,
+		arg.AvailBytes,
+	)
 	return err
 }

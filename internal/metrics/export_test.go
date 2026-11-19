@@ -6,3 +6,6 @@ func (s *Sampler) TickForTest(ctx context.Context) { s.tick(ctx) }
 
 // PruneEvery exposes the package-level pruneEvery constant for white-box tests.
 const PruneEvery = pruneEvery
+
+// DiskEvery exposes diskEvery for white-box tests.
+const DiskEvery = diskEvery

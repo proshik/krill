@@ -165,6 +165,9 @@ type ContainerStat struct {
 type NodeInfo struct {
 	MemTotal int64
 	NCPU     int
+	// DockerRootDir is the daemon's data directory (/var/lib/docker by
+	// default) — the filesystem images, containers and volumes fill.
+	DockerRootDir string
 }
 
 // Engine — a narrow, mockable interface to Docker/Swarm.

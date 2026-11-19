@@ -35,6 +35,8 @@ type VolEngine interface {
 // The id is a volume_backups id, resolved by the notifier against that table.
 type Notifier interface {
 	VolumeBackupFailed(ctx context.Context, volumeBackupID int64, reason string)
+	// VolumeBackupSucceeded is told the stored size (bytes) of a successful run.
+	VolumeBackupSucceeded(ctx context.Context, volumeBackupID, sizeBytes int64)
 }
 
 type VolumeService struct {
@@ -171,7 +173,8 @@ func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, 
 		}
 		pw.Close()
 	}()
-	if uerr := backup.Upload(ctx, dst, key, pr, s.allowPrivate); uerr != nil {
+	counted := &backup.CountingReader{R: pr}
+	if uerr := backup.Upload(ctx, dst, key, counted, s.allowPrivate); uerr != nil {
 		pr.CloseWithError(uerr)
 		return s.fail(ctx, volBackupID, now, uerr)
 	}
@@ -184,7 +187,13 @@ func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, 
 	} else {
 		slog.Warn("volume backup retention list failed", "err", lerr)
 	}
-	return s.store.SetVolumeBackupResult(ctx, volBackupID, now, "ok", "")
+	if err := s.store.SetVolumeBackupResult(ctx, volBackupID, now, "ok", ""); err != nil {
+		return err
+	}
+	if s.notifier != nil {
+		s.notifier.VolumeBackupSucceeded(ctx, volBackupID, counted.N)
+	}
+	return nil
 }
 
 func (s *VolumeService) fail(ctx context.Context, id int64, now time.Time, err error) error {

@@ -16,6 +16,9 @@ type Querier interface {
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	BucketBackupNotifyTarget(ctx context.Context, id int64) (BucketBackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
+	// Marks a channel's digest as sent at $2 unless another pass already claimed
+	// this occurrence (digest_last_at at or after the scheduled time).
+	ClaimDigest(ctx context.Context, arg ClaimDigestParams) (int64, error)
 	ClearOldDeploymentLogs(ctx context.Context) error
 	ClearS3BucketPrevKey(ctx context.Context, id int64) error
 	CompleteEnvironmentCloneCleanup(ctx context.Context, requestKey string) (int64, error)
@@ -141,6 +144,10 @@ type Querier interface {
 	// Keeps KRILL_ADMIN_EMAIL authoritative: rotating it must hand the role over,
 	// not hand out a second one.
 	DemoteInstanceAdminsExcept(ctx context.Context, id int64) (int64, error)
+	DeploymentNotifyInfo(ctx context.Context, id int64) (DeploymentNotifyInfoRow, error)
+	// Enabled channels with the daily digest on, across all organizations; used
+	// only by the internal digest scheduler, which scopes each digest to its org.
+	DigestChannels(ctx context.Context) ([]NotificationChannel, error)
 	DisablePanelDomain(ctx context.Context) error
 	EnvironmentCloneNotice(ctx context.Context, targetID *int64) (EnvironmentCloneNoticeRow, error)
 	// Reconcile deploys that were in flight when the process died: nothing will
@@ -149,6 +156,7 @@ type Querier interface {
 	FailOrphanedDeployments(ctx context.Context) (int64, error)
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
 	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
+	GetAlertState(ctx context.Context, arg GetAlertStateParams) (NotifyAlertState, error)
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)
 	GetApplication(ctx context.Context, id int64) (Application, error)
 	GetApplicationChain(ctx context.Context, id int64) (GetApplicationChainRow, error)
@@ -192,7 +200,11 @@ type Querier interface {
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
+	// Enabled channels of EVERY organization that an instance operator opted into
+	// node-level alerts. Used only by the internal resource monitor.
+	InfraChannels(ctx context.Context) ([]NotificationChannel, error)
 	InitPanelGateway(ctx context.Context, secret string) error
+	InsertBackupRun(ctx context.Context, arg InsertBackupRunParams) error
 	InsertEnvironmentClone(ctx context.Context, arg InsertEnvironmentCloneParams) error
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
@@ -202,6 +214,7 @@ type Querier interface {
 	ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
 	ListApplicationsByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]Application, error)
+	ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSinceParams) ([]BackupRun, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListBucketBackupsByBucket(ctx context.Context, bucketID int64) ([]BucketBackup, error)
 	ListBucketLinksByApplication(ctx context.Context, applicationID int64) ([]AppBucketLink, error)
@@ -249,7 +262,11 @@ type Querier interface {
 	// ids its series are labelled with. Ordered so the rendered module is stable.
 	ListMetricsScrapeTargets(ctx context.Context) ([]ListMetricsScrapeTargetsRow, error)
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
+	ListNodeDisks(ctx context.Context) ([]NodeDisk, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
+	ListOrgApps(ctx context.Context, organizationID int64) ([]ListOrgAppsRow, error)
+	// An organization's deployments that finished since $2 (the digest window).
+	ListOrgDeploymentsSince(ctx context.Context, arg ListOrgDeploymentsSinceParams) ([]ListOrgDeploymentsSinceRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error)
@@ -274,12 +291,21 @@ type Querier interface {
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
+	PruneBackupRuns(ctx context.Context, finishedAt time.Time) error
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
 	PruneNodeCapacityExcept(ctx context.Context, dollar_1 []string) error
+	// Drops a node's mounts that its latest snapshot no longer reports.
+	PruneNodeDiskMounts(ctx context.Context, arg PruneNodeDiskMountsParams) error
+	PruneNodeDisks(ctx context.Context, sampledAt time.Time) error
+	// Drops disks of nodes no longer in the cluster.
+	PruneNodeDisksExcept(ctx context.Context, dollar_1 []string) error
 	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
 	RecordFirewallCheck(ctx context.Context, node string) error
+	// Undoes a claim whose send failed, so the next pass retries it. Only while
+	// the claim is still ours.
+	ReleaseDigest(ctx context.Context, arg ReleaseDigestParams) error
 	ReleaseEnvironmentCloneSlug(ctx context.Context, requestKey string) error
 	RemoveAppFromSystem(ctx context.Context, applicationID int64) error
 	RenameSystem(ctx context.Context, arg RenameSystemParams) error
@@ -294,6 +320,7 @@ type Querier interface {
 	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error)
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
+	SetAlertState(ctx context.Context, arg SetAlertStateParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
 	SetApplicationDomain(ctx context.Context, arg SetApplicationDomainParams) error
@@ -355,6 +382,7 @@ type Querier interface {
 	UpdateMemberRole(ctx context.Context, arg UpdateMemberRoleParams) error
 	UpdateProjectName(ctx context.Context, arg UpdateProjectNameParams) error
 	UpsertNodeCapacity(ctx context.Context, arg UpsertNodeCapacityParams) error
+	UpsertNodeDisk(ctx context.Context, arg UpsertNodeDiskParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
 	VolumeBackupNotifyTarget(ctx context.Context, id int64) (VolumeBackupNotifyTargetRow, error)

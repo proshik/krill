@@ -3,61 +3,137 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"strconv"
 )
 
 // NotifyView is the data the notifications page needs. HasToken is true when a
 // token is already stored (so the form shows a "keep" placeholder, never the
 // token itself).
 type NotifyView struct {
-	Enabled      bool
-	HasToken     bool
-	ChatID       string
-	NotifyDeploy bool
-	NotifyBackup bool
-	NotifyHealth bool
+	Enabled             bool
+	HasToken            bool
+	ChatID              string
+	NotifyDeploy        bool
+	NotifyBackup        bool
+	NotifyHealth        bool
+	NotifyDeploySuccess bool
+	Lang                string
+	DigestEnabled       bool
+	DigestTime          string // "HH:MM"
+	DigestTZ            string
+	NotifyInfra         bool
+	DiskThresholdPct    int
+	MemThresholdPct     int
+	// CanInfra is true for an instance operator: only they may change the
+	// infrastructure settings (the nodes are shared by every organization).
+	CanInfra bool
+}
+
+// notifyZones are suggestions for the time-zone field; any IANA name works.
+var notifyZones = []string{"Europe/Moscow", "Europe/Amsterdam", "Europe/Berlin", "Europe/London", "UTC", "Asia/Tbilisi", "Asia/Yerevan", "Asia/Almaty", "America/New_York"}
+
+templ notifyCheck(name, label string, checked bool) {
+	<label class="flex items-center gap-2">
+		<input type="checkbox" class="k-check" name={ name } checked?={ checked }/>
+		<span>{ label }</span>
+	</label>
+}
+
+templ notifyHint(text string) {
+	<p style="color:var(--color-muted);font-size:13px;max-width:680px">{ text }</p>
 }
 
 templ Notifications(org db.Organization, role string, v NotifyView) {
 	@Layout(i18n.T(ctx, "notif.title"), org, role) {
 		@settingsNav(org.ID)
 		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "notif.desc") }</p>
-		<div class="k-card">
-			<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications") } class="flex flex-col gap-3">
-				<label class="flex items-center gap-2">
-					<input type="checkbox" class="k-check" name="enabled" checked?={ v.Enabled }/>
-					<span>{ i18n.T(ctx, "notif.enabled") }</span>
-				</label>
+		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications") } class="flex flex-col gap-4">
+			<div class="k-card flex flex-col gap-3">
+				@notifyCheck("enabled", i18n.T(ctx, "notif.enabled"), v.Enabled)
 				<div>
-					<label class="k-label">{ i18n.T(ctx, "notif.bot_token") }</label>
+					<label class="k-label" for="notif-token">{ i18n.T(ctx, "notif.bot_token") }</label>
 					<div class="flex items-center gap-2">
 						if v.HasToken {
-							<input class="k-input" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
+							<input class="k-input" id="notif-token" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
 						} else {
-							<input class="k-input" name="bot_token" type="password" autocomplete="off"/>
+							<input class="k-input" id="notif-token" name="bot_token" type="password" autocomplete="off"/>
 						}
 						<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
 					</div>
 				</div>
 				<div>
-					<label class="k-label k-label-required">{ i18n.T(ctx, "notif.chat_id") }</label>
-					<input class="k-input" name="chat_id" value={ v.ChatID } required/>
+					<label class="k-label k-label-required" for="notif-chat">{ i18n.T(ctx, "notif.chat_id") }</label>
+					<input class="k-input" id="notif-chat" name="chat_id" value={ v.ChatID } required/>
 				</div>
-				<label class="flex items-center gap-2">
-					<input type="checkbox" class="k-check" name="notify_deploy" checked?={ v.NotifyDeploy }/>
-					<span>{ i18n.T(ctx, "notif.ev_deploy") }</span>
-				</label>
-				<label class="flex items-center gap-2">
-					<input type="checkbox" class="k-check" name="notify_backup" checked?={ v.NotifyBackup }/>
-					<span>{ i18n.T(ctx, "notif.ev_backup") }</span>
-				</label>
-				<label class="flex items-center gap-2">
-					<input type="checkbox" class="k-check" name="notify_health" checked?={ v.NotifyHealth }/>
-					<span>{ i18n.T(ctx, "notif.ev_health") }</span>
-				</label>
-				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "notif.save") }</button></div>
-			</form>
-			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/test") } class="mt-3">
+				<div style="max-width:240px">
+					<label class="k-label" for="notif-lang">{ i18n.T(ctx, "notif.lang") }</label>
+					<select class="k-select" id="notif-lang" name="lang">
+						for _, l := range i18n.Locales {
+							<option value={ l.Code } selected?={ l.Code == v.Lang }>{ l.Name }</option>
+						}
+					</select>
+				</div>
+			</div>
+			<div class="k-card flex flex-col gap-3">
+				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_events") }</h3>
+				@notifyCheck("notify_deploy", i18n.T(ctx, "notif.ev_deploy"), v.NotifyDeploy)
+				@notifyCheck("notify_deploy_success", i18n.T(ctx, "notif.ev_deploy_success"), v.NotifyDeploySuccess)
+				@notifyCheck("notify_backup", i18n.T(ctx, "notif.ev_backup"), v.NotifyBackup)
+				@notifyCheck("notify_health", i18n.T(ctx, "notif.ev_health"), v.NotifyHealth)
+			</div>
+			<div class="k-card flex flex-col gap-3">
+				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_digest") }</h3>
+				@notifyCheck("digest_enabled", i18n.T(ctx, "notif.digest_enabled"), v.DigestEnabled)
+				@notifyHint(i18n.T(ctx, "notif.digest_hint"))
+				<div class="flex flex-wrap gap-3">
+					<div style="width:140px">
+						<label class="k-label" for="notif-digest-time">{ i18n.T(ctx, "notif.digest_time") }</label>
+						<input class="k-input" id="notif-digest-time" name="digest_time" type="time" required value={ v.DigestTime }/>
+					</div>
+					<div style="flex:1;min-width:200px;max-width:320px">
+						<label class="k-label" for="notif-digest-tz">{ i18n.T(ctx, "notif.digest_tz") }</label>
+						<input class="k-input" id="notif-digest-tz" name="digest_tz" list="notif-zones" required value={ v.DigestTZ } autocomplete="off" spellcheck="false"/>
+						<datalist id="notif-zones">
+							for _, z := range notifyZones {
+								<option value={ z }></option>
+							}
+						</datalist>
+					</div>
+				</div>
+			</div>
+			<div class="k-card flex flex-col gap-3">
+				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_infra") }</h3>
+				if v.CanInfra {
+					@notifyCheck("notify_infra", i18n.T(ctx, "notif.infra_enabled"), v.NotifyInfra)
+				} else {
+					<label class="flex items-center gap-2" style="color:var(--color-muted)">
+						<input type="checkbox" class="k-check" checked?={ v.NotifyInfra } disabled/>
+						<span>{ i18n.T(ctx, "notif.infra_enabled") }</span>
+					</label>
+				}
+				@notifyHint(i18n.T(ctx, "notif.infra_hint"))
+				<div class="flex flex-wrap gap-3">
+					<div style="width:220px">
+						<label class="k-label" for="notif-disk">{ i18n.T(ctx, "notif.disk_threshold") }</label>
+						<input class="k-input" id="notif-disk" name="disk_threshold" type="number" min="50" max="99" step="1" required value={ strconv.Itoa(v.DiskThresholdPct) } disabled?={ !v.CanInfra }/>
+					</div>
+					<div style="width:300px">
+						<label class="k-label" for="notif-mem">{ i18n.T(ctx, "notif.mem_threshold") }</label>
+						<input class="k-input" id="notif-mem" name="mem_threshold" type="number" min="50" max="200" step="1" required value={ strconv.Itoa(v.MemThresholdPct) } disabled?={ !v.CanInfra }/>
+					</div>
+				</div>
+				if !v.CanInfra {
+					@notifyHint(i18n.T(ctx, "notif.infra_operator_only"))
+				}
+			</div>
+			<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "notif.save") }</button></div>
+		</form>
+		<div class="flex flex-wrap gap-2 mt-3">
+			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/test") }>
 				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "notif.test") }</button>
+			</form>
+			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/digest") }>
+				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "notif.digest_now") }</button>
 			</form>
 		</div>
 	}

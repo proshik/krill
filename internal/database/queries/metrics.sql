@@ -31,3 +31,25 @@ DELETE FROM node_capacity WHERE sampled_at < $1;
 
 -- name: PruneNodeCapacityExcept :exec
 DELETE FROM node_capacity WHERE node <> ALL($1::text[]);
+
+-- name: UpsertNodeDisk :exec
+INSERT INTO node_disks (node, mount, filesystem, total_bytes, used_bytes, avail_bytes, sampled_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
+ON CONFLICT (node, mount) DO UPDATE
+  SET filesystem = EXCLUDED.filesystem, total_bytes = EXCLUDED.total_bytes,
+      used_bytes = EXCLUDED.used_bytes, avail_bytes = EXCLUDED.avail_bytes, sampled_at = now();
+
+-- name: ListNodeDisks :many
+SELECT node, mount, filesystem, total_bytes, used_bytes, avail_bytes, sampled_at
+FROM node_disks ORDER BY node, mount;
+
+-- name: PruneNodeDisksExcept :exec
+-- Drops disks of nodes no longer in the cluster.
+DELETE FROM node_disks WHERE node <> ALL($1::text[]);
+
+-- name: PruneNodeDiskMounts :exec
+-- Drops a node's mounts that its latest snapshot no longer reports.
+DELETE FROM node_disks WHERE node = $1 AND mount <> ALL(sqlc.arg(mounts)::text[]);
+
+-- name: PruneNodeDisks :exec
+DELETE FROM node_disks WHERE sampled_at < $1;

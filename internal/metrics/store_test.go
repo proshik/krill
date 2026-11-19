@@ -117,3 +117,34 @@ func TestStoreCapacityPruneExcept(t *testing.T) {
 		t.Fatalf("PruneCapacityExcept wrong result: %+v", caps)
 	}
 }
+
+func TestStoreDisks(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := metrics.NewDBStore(db.New(pool))
+	ctx := context.Background()
+
+	two := []metrics.DiskUsage{
+		{Mount: "/", Filesystem: "/dev/vda1", Total: 100, Used: 90, Avail: 10},
+		{Mount: "/var/lib/docker", Filesystem: "/dev/vdb1", Total: 200, Used: 20, Avail: 180},
+	}
+	if err := st.ReplaceDisks(ctx, "worker-1", two); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceDisks(ctx, "old-node", two[:1]); err != nil {
+		t.Fatal(err)
+	}
+	// The Docker filesystem was moved onto the root: its row must go.
+	if err := st.ReplaceDisks(ctx, "worker-1", []metrics.DiskUsage{{Mount: "/", Total: 100, Used: 95, Avail: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PruneDisksExcept(ctx, []string{"worker-1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListDisks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Node != "worker-1" || got[0].Mount != "/" || got[0].Used != 95 || got[0].SampledAt.IsZero() {
+		t.Fatalf("ListDisks = %+v, want worker-1 / only with the latest values", got)
+	}
+}

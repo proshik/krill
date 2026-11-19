@@ -112,6 +112,9 @@ type Store interface {
 // The id is a bucket_backups id, resolved by the notifier against that table.
 type Notifier interface {
 	BucketBackupFailed(ctx context.Context, bucketBackupID int64, reason string)
+	// BucketBackupSucceeded is told the size of a successful snapshot: its
+	// objects' bytes, as the snapshot list shows it.
+	BucketBackupSucceeded(ctx context.Context, bucketBackupID, sizeBytes int64)
 }
 
 // ManifestObject is one object of a snapshot.
@@ -222,6 +225,7 @@ func (s *Service) runBackup(ctx context.Context, id int64, now time.Time) error 
 	}
 	dir := baseDir(row.Prefix, t) + now.UTC().Format(tsLayout) + "/"
 	m := Manifest{Version: 1, Server: t.Server, Bucket: t.Bucket, Taken: now.UTC()}
+	var stored int64
 	for _, e := range entries {
 		if !SafeKey(e.Key) {
 			return s.fail(ctx, id, now, fmt.Errorf("%w: %q", ErrUnsafeKey, e.Key))
@@ -231,6 +235,7 @@ func (s *Service) runBackup(ctx context.Context, id int64, now time.Time) error 
 			return s.fail(ctx, id, now, fmt.Errorf("copy %q: %w", e.Key, err))
 		}
 		m.Objects = append(m.Objects, ManifestObject{Key: e.Key, Size: size, SHA256: sum})
+		stored += size
 	}
 	body, _ := json.MarshalIndent(m, "", "  ")
 	// The manifest goes last: its presence is what makes the snapshot complete.
@@ -238,7 +243,13 @@ func (s *Service) runBackup(ctx context.Context, id int64, now time.Time) error 
 		return s.fail(ctx, id, now, fmt.Errorf("write manifest: %w", err))
 	}
 	s.prune(ctx, dst, baseDir(row.Prefix, t), row.Retention)
-	return s.store.SetBackupResult(ctx, id, now, "ok", "")
+	if err := s.store.SetBackupResult(ctx, id, now, "ok", ""); err != nil {
+		return err
+	}
+	if s.notifier != nil {
+		s.notifier.BucketBackupSucceeded(ctx, id, stored)
+	}
+	return nil
 }
 
 // copyOut streams one object from the bucket into backup storage, hashing it

@@ -117,7 +117,7 @@ func (sc *statsCollector) nodeInfo(ctx context.Context) (NodeInfo, error) {
 	if err != nil {
 		return NodeInfo{}, err
 	}
-	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU}, nil
+	return NodeInfo{MemTotal: info.MemTotal, NCPU: info.NCPU, DockerRootDir: info.DockerRootDir}, nil
 }
 
 // RemoteStats samples a docker daemon reached over a custom dialer (e.g. a
@@ -1176,6 +1176,42 @@ func (e *dockerEngine) Tasks(ctx context.Context) ([]TaskInfo, error) {
 		})
 	}
 	return out, nil
+}
+
+// TaskFailuresSince counts, per Swarm service name, the tasks that failed
+// (crashed, were OOM-killed, or were rejected) at or after since: each one is
+// a restart of a container. Swarm keeps a bounded task history (5 tasks per
+// slot by default), so a crash-looping service's count is a lower bound.
+func (e *dockerEngine) TaskFailuresSince(ctx context.Context, since time.Time) (map[string]int, error) {
+	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	id2svc := make(map[string]string, len(svcs))
+	for _, s := range svcs {
+		id2svc[s.ID] = s.Spec.Name
+	}
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return countTaskFailures(tasks, id2svc, since), nil
+}
+
+func countTaskFailures(tasks []swarm.Task, id2svc map[string]string, since time.Time) map[string]int {
+	out := map[string]int{}
+	for _, t := range tasks {
+		if t.Status.State != swarm.TaskStateFailed && t.Status.State != swarm.TaskStateRejected {
+			continue
+		}
+		if t.Status.Timestamp.Before(since) {
+			continue
+		}
+		if name, ok := id2svc[t.ServiceID]; ok {
+			out[name]++
+		}
+	}
+	return out
 }
 
 func (e *dockerEngine) NodeSetLabel(ctx context.Context, nodeID, key, value string) error {
