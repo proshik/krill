@@ -98,7 +98,8 @@ while `(143): dockerexec: unhealthy container` stays a crash);
 Digest and alert lines name what each number is (2026-11-19, `digest-wording`): "used"/"free"
 (free = df's Avail from `node_disks.avail_bytes`, not total − used, so the root reserve is not
 shown as free), "of the node's memory", "of the limit"; `bytesPair` writes a unit both sizes share
-once ("12.9 of 148 GiB"). Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
+once ("12.9 of 148 GiB"). A yellow/red node heading names its reasons (`nodeWhy`: the figures at
+the node's level from `nodeFigures`, at most two plus "and N more"). Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
 and limits thresholds are the red marks; table in the guide). tzdata is
 embedded (`time/tzdata` in `cmd/krill`). **Telegram proxy (2026-11-19):** `KRILL_TELEGRAM_PROXY`
 (socks5h/socks5/http/https URL) gives the Telegram sender its own transport

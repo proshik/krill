@@ -588,3 +588,48 @@ func TestBytesPairWritesASharedUnitOnce(t *testing.T) {
 		}
 	}
 }
+
+// A yellow or red node's heading names what made it so; a green one is
+// just the name.
+func TestNodeHeadingNamesTheReason(t *testing.T) {
+	const gib = int64(1) << 30
+	d := digestData{DiskThreshold: 85, MemThreshold: 100, Lang: "ru"}
+	ctx := msgCtx("ru")
+	disk := func(mount string, pct int64) metrics.DiskUsage {
+		return metrics.DiskUsage{Mount: mount, Used: pct, Avail: 100 - pct}
+	}
+	penpot := nodeRow{Name: "krill-penpot-msk", MemTotal: 73 * gib / 10, MemUsed: 26 * gib / 10, Limits: 78 * gib / 10,
+		NCPU: 2, CPUKnown: true, CPUAvg: 1, CPUPeak: 3, Disks: []metrics.DiskUsage{disk("/", 10)}}
+	if got := d.nodeWhy(ctx, penpot); got != "сумма лимитов 107% памяти ноды" {
+		t.Errorf("one reason: %q", got)
+	}
+	db := penpot
+	db.Disks = []metrics.DiskUsage{disk("/", 91), disk("/var/lib/docker", 70)}
+	db.Limits = 104 * gib * 73 / 1000
+	if got := d.nodeWhy(ctx, db); got != "диск / занят 91%, сумма лимитов 104% памяти ноды" {
+		t.Errorf("two reds (the yellow docker disk left out): %q", got)
+	}
+	db.MemUsed, db.CPUAvg = db.MemTotal*95/100, 95
+	if got := d.nodeWhy(ctx, db); got != "диск / занят 91%, сумма лимитов 104% памяти ноды, и ещё 2" {
+		t.Errorf("four reds: %q", got)
+	}
+	green := penpot
+	green.Limits = gib
+	if got := d.nodeWhy(ctx, green); got != "" {
+		t.Errorf("a green node has a reason: %q", got)
+	}
+	if got := d.nodeWhy(ctx, nodeRow{Stale: true}); got != "" {
+		t.Errorf("a stale node gets a reason besides 'not reporting': %q", got)
+	}
+
+	d.Infra, d.Nodes, d.Loc, d.Now = true, []nodeRow{penpot, green}, time.UTC, time.Now()
+	got := strings.Join(renderDigest(d), "\n")
+	for _, want := range []string{
+		"🔴 <b>krill-penpot-msk</b> — сумма лимитов 107% памяти ноды\nдиск /: занято 10%",
+		"🟢 <b>krill-penpot-msk</b>\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("digest lacks %q:\n%s", want, got)
+		}
+	}
+}

@@ -56,8 +56,20 @@ works). It covers the last 24 hours:
   the error; "none" when there were none.
 - **Nodes** (infrastructure channels only): disk use per filesystem, memory in use, the sum of the
   containers' memory limits against the node's memory, and CPU (average and peak over the day).
-  The node's name carries the worst of its figures; a figure's own line is marked only when it is
-  yellow or red, so the reason stands out.
+  The node's name carries the worst of its figures and, when that is yellow or red, what made it
+  so — the figures at that colour, at most two and "and N more" — so a red heading over a green
+  disk line is not read as the disk's; a figure's own line is marked only when it is yellow or
+  red:
+
+  ```
+  🔴 krill-penpot-msk — memory limits at 107% of its memory
+  disk /: 10% used (12.9 of 148 GiB), 128 GiB free
+  🔴 memory: containers use 2.6 of 7.3 GiB · limits add up to 7.8 GiB — 107% of the node’s memory
+  CPU: 1% on average, 3% at peak — of all cores (2)
+  ```
+
+  An app is one line and every figure that colours it is on that line, so its mark has no
+  separate reason.
 - **Apps**: memory now, the day's peak against the limit, and crashes, each app marked with its
   status. Apps without fresh data are listed by what Swarm says: 🔴 **Not running** (it should
   run and does not), ⚪ **Stopped or never deployed** (zero replicas on purpose, or no service),

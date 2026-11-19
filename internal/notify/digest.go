@@ -567,14 +567,60 @@ func (d digestData) nodeLevel(n nodeRow) level {
 	if n.Stale {
 		return lvlCrit
 	}
-	l := worst(d.limitsLevel(n), memUsedLevel(n), cpuLevel(n))
-	if len(n.Disks) == 0 {
-		l = worst(l, lvlWarn) // the disk snapshot failed: cannot tell
-	}
-	for _, dk := range n.Disks {
-		l = worst(l, d.diskLevel(dk))
+	l := lvlOK
+	for _, f := range d.nodeFigures(n) {
+		l = worst(l, f.lvl)
 	}
 	return l
+}
+
+// figure is one graded figure of a node, with the short i18n phrase that
+// names it in the node's heading.
+type figure struct {
+	lvl  level
+	key  string
+	args []any
+}
+
+// nodeFigures grades every figure of a reporting node, in the order its
+// lines are printed.
+func (d digestData) nodeFigures(n nodeRow) []figure {
+	var fs []figure
+	for _, dk := range n.Disks {
+		fs = append(fs, figure{d.diskLevel(dk), "tg.dg.why_disk", []any{dk.Mount, dk.UsedPct()}})
+	}
+	if len(n.Disks) == 0 {
+		fs = append(fs, figure{lvlWarn, "tg.dg.why_disk_unknown", nil}) // the snapshot failed: cannot tell
+	}
+	fs = append(fs,
+		figure{d.limitsLevel(n), "tg.dg.why_limits", []any{pct(n.Limits, n.MemTotal)}},
+		figure{memUsedLevel(n), "tg.dg.why_mem", []any{pct(n.MemUsed, n.MemTotal)}},
+		figure{cpuLevel(n), "tg.dg.why_cpu", []any{n.CPUAvg}},
+	)
+	return fs
+}
+
+// nodeWhyMax caps the reasons in a node's heading; the rest are counted.
+const nodeWhyMax = 2
+
+// nodeWhy names what made a yellow or red node that colour: the figures at
+// its level, so a red heading over a green disk line is not read as the
+// disk's. Empty for a green or a stale node (that one says so itself).
+func (d digestData) nodeWhy(ctx context.Context, n nodeRow) string {
+	l := d.nodeLevel(n)
+	if n.Stale || l == lvlOK {
+		return ""
+	}
+	var why []string
+	for _, f := range d.nodeFigures(n) {
+		if f.lvl == l {
+			why = append(why, i18n.Tf(ctx, f.key, f.args...))
+		}
+	}
+	if len(why) > nodeWhyMax {
+		why = append(why[:nodeWhyMax], i18n.Tf(ctx, "tg.dg.why_more", len(why)-nodeWhyMax))
+	}
+	return strings.Join(why, ", ")
 }
 
 type attItem struct {
@@ -759,7 +805,11 @@ func renderDigest(d digestData) []string {
 			if n.Stale {
 				name += " — " + i18n.T(ctx, "tg.dg.stale")
 			}
-			add("%s <b>%s</b>", d.nodeLevel(n).mark(), esc(name))
+			if why := d.nodeWhy(ctx, n); why != "" {
+				add("%s <b>%s</b> — %s", d.nodeLevel(n).mark(), esc(name), esc(why))
+			} else {
+				add("%s <b>%s</b>", d.nodeLevel(n).mark(), esc(name))
+			}
 			if n.Stale {
 				continue // its last figures would read as current
 			}
