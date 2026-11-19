@@ -1179,9 +1179,13 @@ func (e *dockerEngine) Tasks(ctx context.Context) ([]TaskInfo, error) {
 }
 
 // TaskFailuresSince counts, per Swarm service name, the tasks that failed
-// (crashed, were OOM-killed, or were rejected) at or after since: each one is
-// a restart of a container. Swarm keeps a bounded task history (5 tasks per
-// slot by default), so a crash-looping service's count is a lower bound.
+// (crashed, were OOM-killed or killed by an unhealthy healthcheck, or were
+// rejected) at or after since. Planned replacements are not failures: a
+// deploy's old task ends in Shutdown, and a task whose container vanished
+// under it (seen on a restart of dockerd) fails with "No such container",
+// which countTaskFailures skips. Swarm keeps a bounded task
+// history (5 tasks per slot by default), so a crash-looping service's count
+// is a lower bound.
 func (e *dockerEngine) TaskFailuresSince(ctx context.Context, since time.Time) (map[string]int, error) {
 	svcs, err := e.cli.ServiceList(ctx, swarm.ServiceListOptions{})
 	if err != nil {
@@ -1205,6 +1209,12 @@ func countTaskFailures(tasks []swarm.Task, id2svc map[string]string, since time.
 			continue
 		}
 		if t.Status.Timestamp.Before(since) {
+			continue
+		}
+		// The container was removed under a running task: on a restart of
+		// dockerd every task on the node fails this way, with exit code 0,
+		// and Swarm starts a replacement — not the app's fault.
+		if strings.HasPrefix(t.Status.Err, "No such container") {
 			continue
 		}
 		if name, ok := id2svc[t.ServiceID]; ok {

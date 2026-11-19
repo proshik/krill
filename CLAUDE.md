@@ -89,8 +89,12 @@ part fails), sends only within 3 h after the scheduled local time, lists deploys
 the previous digest when that one was late (≤ 48 h), and splits at 3500 characters on line
 boundaries without cutting an HTML entity. Restore failures alert through
 `VolumeRestoreFailed`/`BucketRestoreFailed` and are NOT journalled as backup runs. The
-overcommit alert names the deployed app only to a channel of the same organization. Restarts come from `docker`'s optional
-`TaskFailuresSince` (failed/rejected tasks — a lower bound, Swarm keeps few). tzdata is
+overcommit alert names the deployed app only to a channel of the same organization. Crashes come from `docker`'s optional
+`TaskFailuresSince` (failed/rejected tasks — a lower bound, Swarm keeps few; a task failed with
+"No such container" is a dockerd restart, verified on a dind two-node Swarm, and is skipped; a node reboot is unverified);
+`ServiceStates` (same `notify.SwarmReader`) tells an app that should run from one stopped on purpose.
+Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
+and limits thresholds are the red marks; table in the guide). tzdata is
 embedded (`time/tzdata` in `cmd/krill`). See `docs/guides/notifications.md`.
 
 **Shared hosts by path (2026-10-02):** implemented on `feat/shared-host-paths`; live

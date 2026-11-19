@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/metrics"
 )
 
@@ -93,10 +94,37 @@ func (f fakeMetrics) ListCapacity(context.Context) ([]metrics.NodeCapacity, erro
 }
 func (f fakeMetrics) ListDisks(context.Context) ([]metrics.NodeDisk, error) { return f.disks, nil }
 
-type fakeTasks map[string]int
+type fakeSwarm struct {
+	fails  map[string]int
+	states map[string]docker.ServiceState
+}
 
-func (f fakeTasks) TaskFailuresSince(context.Context, time.Time) (map[string]int, error) {
-	return f, nil
+func (f fakeSwarm) TaskFailuresSince(context.Context, time.Time) (map[string]int, error) {
+	return f.fails, nil
+}
+
+func (f fakeSwarm) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	out := map[string]docker.ServiceState{}
+	for _, n := range names {
+		if st, ok := f.states[n]; ok {
+			out[n] = st
+		}
+	}
+	return out, nil
+}
+
+// fixtureSwarm: bot crashed 3 times; old was stopped on purpose; worker
+// should run and runs nothing; never was never deployed.
+func fixtureSwarm() fakeSwarm {
+	return fakeSwarm{
+		fails: map[string]int{"krill-6": 3},
+		states: map[string]docker.ServiceState{
+			"krill-5":  {Found: true, Desired: 1, Running: 1},
+			"krill-6":  {Found: true, Desired: 1, Running: 1},
+			"krill-8":  {Found: true, Desired: 0},
+			"krill-10": {Found: true, Desired: 1},
+		},
+	}
 }
 
 // digestFixture is one organization with two apps on a two-node cluster.
@@ -107,6 +135,8 @@ func digestFixture(now time.Time) (*fakeStore, fakeMetrics) {
 			{AppID: 5, OrgID: 7, Project: "p", Env: "prod", Name: "api"},
 			{AppID: 6, OrgID: 7, Project: "p", Env: "prod", Name: "bot"},
 			{AppID: 8, OrgID: 7, Project: "p", Env: "dev", Name: "old"},
+			{AppID: 10, OrgID: 7, Project: "p", Env: "prod", Name: "worker"},
+			{AppID: 11, OrgID: 7, Project: "p", Env: "dev", Name: "never"},
 		},
 		orgDeploys: []DeploymentInfo{
 			{AppID: 5, Project: "p", Env: "prod", App: "api", Status: "done", Trigger: "manual", ImageTag: "ghcr.io/a/api:v2", FinishedAt: now.Add(-2 * time.Hour)},
@@ -148,7 +178,7 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 	st, m := digestFixture(now)
 	svc := New(st)
 	svc.SetInstanceName(func(context.Context) string { return "krill.example.com" })
-	d := NewDigest(svc, st, m, fakeTasks{"krill-6": 3})
+	d := NewDigest(svc, st, m, fixtureSwarm())
 	parts, err := d.Build(context.Background(), Channel{
 		OrgID: 7, Lang: "ru", DigestTZ: "Europe/Moscow", NotifyInfra: true, DiskThresholdPct: 85, MemThresholdPct: 100,
 	}, now)
@@ -163,23 +193,27 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 	for _, want := range []string{
 		"Сводка Krill за сутки · krill.example.com",
 		"11:00 (Europe/Moscow)",
-		"Требует внимания",
-		"деплой упал: p/prod/bot",
-		"бэкап упал: бакет p/prod/assets",
-		"p/prod/bot: перезапусков 3",
-		"p/prod/bot: пик памяти 94% от лимита",
-		"нода control-plane, диск /: занято 88%",
+		"🔴 <b>Требует внимания</b>",
+		"🔴 деплой упал: p/prod/bot",
+		"🔴 бэкап упал: бакет p/prod/assets",
+		"🔴 p/prod/bot: падений 3",
+		"🟡 p/prod/bot: пик памяти 94% от лимита",
+		"🔴 p/prod/worker: не запущено",
+		"🔴 нода control-plane, диск /: занято 88%",
 		"Деплои за 24 ч</b>: успешно 1, с ошибкой 1",
-		"✅ p/prod/api · api:v2 · 09:00",
-		"❌ p/prod/bot · 17.11 22:00 · service did not converge",
+		"🟢 p/prod/api · api:v2 · 09:00",
+		"🔴 p/prod/bot · 17.11 22:00 · service did not converge",
 		"Бэкапы за 24 ч</b>: успешно 1, с ошибкой 1",
-		"✅ база p/prod/krill-postgres-x · 12.0 MiB · 03:00",
-		"<b>control-plane</b>",
-		"диск /: 88% · 44.0 GiB из 50.0 GiB",
-		"лимиты 512 MiB (25%) · без лимита: 1",
-		"CPU ср. 50% · пик 80% · ядер 2",
-		"p/prod/api: 200 MiB · пик 300 MiB из 512 MiB (59%) · перезапусков 0",
-		"Не запущены: p/dev/old",
+		"🟢 база p/prod/krill-postgres-x · 12.0 MiB · 03:00",
+		"🔴 <b>control-plane</b>",
+		"\n🔴 диск /: 88% · 44.0 GiB из 50.0 GiB",
+		"\nконтейнеры занимают 250 MiB из 2.0 GiB · лимиты 512 MiB (25%) · без лимита: 1",
+		"\nCPU ср. 50% · пик 80% · ядер 2",
+		"🟢 <b>worker-1</b>",
+		"🟢 p/prod/api: 200 MiB · пик 300 MiB из 512 MiB (59%) · падений 0",
+		"🔴 p/prod/bot: 240 MiB · пик 240 MiB из 256 MiB (94%) · падений 3",
+		"🔴 Не запущены: p/prod/worker",
+		"⚪ Остановлены или не развёрнуты: p/dev/old, p/dev/never",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q", want)
@@ -192,6 +226,9 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 	}
 	if strings.Index(got, "Требует внимания") > strings.Index(got, "Деплои") {
 		t.Error("the attention block must come first")
+	}
+	if strings.Index(got, "🔴 нода control-plane") > strings.Index(got, "🟡 p/prod/bot") {
+		t.Error("red items must come before yellow ones")
 	}
 }
 
@@ -211,8 +248,8 @@ func TestDigestWithoutInfraHasNoNodes(t *testing.T) {
 			t.Errorf("non-infrastructure digest shows %q:\n%s", leak, got)
 		}
 	}
-	if strings.Contains(got, "restarts") {
-		t.Errorf("restarts shown without a task source:\n%s", got)
+	if strings.Contains(got, "crashes") {
+		t.Errorf("crashes shown without a task source:\n%s", got)
 	}
 }
 
@@ -224,7 +261,7 @@ func TestDigestAllGood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := parts[0]; !strings.Contains(got, "✅ All good") || !strings.Contains(got, "Deploys, 24h</b>: 0 ok, 0 failed") {
+	if got := parts[0]; !strings.Contains(got, "🟢 All good") || !strings.Contains(got, "Deploys, 24h</b>: none") || !strings.Contains(got, "Backups, 24h</b>: none") {
 		t.Fatalf("empty digest:\n%s", got)
 	}
 }
@@ -425,5 +462,113 @@ func TestCutLineKeepsEntities(t *testing.T) {
 	}
 	if got := cutLine([]rune("abc&amp;def"), 9); got != "abc&amp;d" {
 		t.Errorf("cut after an entity: %q", got)
+	}
+}
+
+func TestTrafficLightBands(t *testing.T) {
+	d := digestData{DiskThreshold: 85, MemThreshold: 100}
+	const gib = int64(1) << 30
+	disk := func(pct int64) metrics.DiskUsage { return metrics.DiskUsage{Used: pct, Avail: 100 - pct} }
+	for _, c := range []struct {
+		name string
+		got  level
+		want level
+	}{
+		{"disk 69%", d.diskLevel(disk(69)), lvlOK},
+		{"disk 70% (threshold-15)", d.diskLevel(disk(70)), lvlWarn},
+		{"disk 85% (threshold)", d.diskLevel(disk(85)), lvlCrit},
+		{"limits 79%", d.limitsLevel(nodeRow{MemTotal: 100, Limits: 79}), lvlOK},
+		{"limits 80%", d.limitsLevel(nodeRow{MemTotal: 100, Limits: 80}), lvlWarn},
+		{"limits 100% (threshold)", d.limitsLevel(nodeRow{MemTotal: 100, Limits: 100}), lvlCrit},
+		{"limits, threshold 70 under the yellow mark", digestData{MemThreshold: 70}.limitsLevel(nodeRow{MemTotal: 100, Limits: 70}), lvlCrit},
+		{"containers use 80% of the node", memUsedLevel(nodeRow{MemTotal: 100, MemUsed: 80}), lvlWarn},
+		{"containers use 90% of the node", memUsedLevel(nodeRow{MemTotal: 100, MemUsed: 90}), lvlCrit},
+		{"app peak 79%", appRow{Peak: 79, Limit: 100}.level(), lvlOK},
+		{"app peak 80%", appRow{Peak: 80, Limit: 100}.level(), lvlWarn},
+		{"app peak 79.6%, printed as 80%", appRow{Peak: 796, Limit: 1000}.level(), lvlWarn},
+		{"app peak 95%", appRow{Peak: 95, Limit: 100}.level(), lvlCrit},
+		{"app without a limit", appRow{Peak: gib}.level(), lvlOK},
+		{"app that crashed", appRow{Peak: 1, Limit: 100, Restarts: 1}.level(), lvlCrit},
+		{"node CPU avg 69%, peak 100%", cpuLevel(nodeRow{CPUKnown: true, CPUAvg: 69, CPUPeak: 100}), lvlOK},
+		{"node CPU avg 70%", cpuLevel(nodeRow{CPUKnown: true, CPUAvg: 70}), lvlWarn},
+		{"node CPU avg 90%", cpuLevel(nodeRow{CPUKnown: true, CPUAvg: 90}), lvlCrit},
+		{"stale node", d.nodeLevel(nodeRow{Stale: true, Disks: []metrics.DiskUsage{disk(1)}}), lvlCrit},
+		{"node without disk data", d.nodeLevel(nodeRow{MemTotal: gib}), lvlWarn},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, c.got.mark(), c.want.mark())
+		}
+	}
+}
+
+// The first production digest (ams, 2026-11-19), reduced to one app and one
+// node: every figure is green, and the empty backup journal says "none"
+// rather than "0 ok, 0 failed".
+func TestDigestAllGreen(t *testing.T) {
+	now := time.Date(2026, 11, 19, 9, 50, 0, 0, time.UTC)
+	const mib = int64(1) << 20
+	st := &fakeStore{
+		orgApps: []WatchedApp{{AppID: 3, OrgID: 1, Project: "side", Env: "prod", Name: "pochitushki"}},
+		orgDeploys: []DeploymentInfo{
+			{AppID: 3, Project: "side", Env: "prod", App: "pochitushki", Status: "done", Trigger: "webhook", ImageTag: "ghcr.io/x/pochitushki@sha256:cf691d6cd4d6aaaa", FinishedAt: now.Add(-20 * time.Hour)},
+		},
+	}
+	m := fakeMetrics{
+		samples: []metrics.Sample{
+			{Node: "krill-worker-ams", Component: "krill-3", TS: now.Add(-30 * time.Second), MemBytes: 291 * mib, MemLimitBytes: 768 * mib, CPUPct: 2},
+		},
+		caps:  []metrics.NodeCapacity{{Node: "krill-worker-ams", NCPU: 2, MemTotal: 3891 * mib, SampledAt: now.Add(-20 * time.Second)}},
+		disks: []metrics.NodeDisk{{Node: "krill-worker-ams", DiskUsage: metrics.DiskUsage{Mount: "/", Total: 80 << 30, Used: 10 << 30, Avail: 65 << 30}}},
+	}
+	sw := fakeSwarm{fails: map[string]int{}, states: map[string]docker.ServiceState{"krill-3": {Found: true, Desired: 1, Running: 1}}}
+	d := NewDigest(New(st), st, m, sw)
+	parts, err := d.Build(context.Background(), Channel{OrgID: 1, Lang: "ru", DigestTZ: "Europe/Moscow", NotifyInfra: true, DiskThresholdPct: 85, MemThresholdPct: 100}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parts[0]
+	t.Logf("digest:\n%s", got)
+	for _, want := range []string{
+		"🟢 Всё в норме",
+		"Бэкапы за 24 ч</b>: не было",
+		"🟢 <b>krill-worker-ams</b>\nдиск /: 14%",
+		"🟢 side/prod/pochitushki: 291 MiB · пик 291 MiB из 768 MiB (38%) · падений 0",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("digest lacks %q", want)
+		}
+	}
+	if strings.Contains(got, "🟡") || strings.Contains(got, "🔴") {
+		t.Errorf("a green digest shows yellow or red")
+	}
+}
+
+// An app whose node lost its metrics but that Swarm still runs is "no fresh
+// data", not "not running"; without Swarm nothing is called down.
+func TestAppRowsIdleBySwarmState(t *testing.T) {
+	now := time.Now()
+	apps := []WatchedApp{{AppID: 1, Name: "a"}, {AppID: 2, Name: "b"}, {AppID: 3, Name: "c"}}
+	_, idle := appRows(apps, nil, nil, nil, map[string]docker.ServiceState{
+		"krill-1": {Found: true, Desired: 1, Running: 1},
+		"krill-2": {Found: true, Desired: 1},
+	}, now)
+	if len(idle.NoData) != 1 || len(idle.Down) != 1 || len(idle.Stopped) != 1 {
+		t.Fatalf("idle = %+v", idle)
+	}
+	_, idle = appRows(apps, nil, nil, nil, nil, now)
+	if len(idle.NoData) != 3 || len(idle.Down) != 0 {
+		t.Fatalf("without Swarm: %+v", idle)
+	}
+}
+
+// A crash-looping app whose last sample is old keeps its limit: the OOM
+// that kills it is visible as its peak against the limit.
+func TestAppRowsCrashLoopKeepsLimit(t *testing.T) {
+	now := time.Now()
+	rows, _ := appRows([]WatchedApp{{AppID: 1, Name: "a"}}, []metrics.Sample{
+		{Node: "n", Component: "krill-1", TS: now.Add(-20 * time.Minute), MemBytes: 256 << 20, MemLimitBytes: 256 << 20},
+	}, map[string]int64{"n": 1 << 30}, map[string]int{"krill-1": 3}, nil, now)
+	if len(rows) != 1 || rows[0].Limit != 256<<20 || rows[0].Now != 0 || rows[0].memLevel() != lvlCrit {
+		t.Fatalf("rows = %+v", rows)
 	}
 }

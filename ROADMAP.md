@@ -48,7 +48,7 @@ describes them in detail.
   all nodes, Telegram alerts, a visual cluster topology page. Telegram channels also
   report successful deploys, nodes' disks over a threshold and memory limits overcommitted
   after a deploy (opt-in by an instance operator), and send a daily digest of deploys,
-  backups (with sizes), node resources and app memory/restarts in the channel's language
+  backups (with sizes), node resources and app memory/crashes, each marked 🟢/🟡/🔴, in the channel's language
   and time zone — see [Notifications](docs/guides/notifications.md). Since v0.7.0 a refused
   deploy says why (UI, REST, MCP), the Advanced tab shows effective limits and recent
   tasks with out-of-memory and slow-start hints, a logical database's page shows its

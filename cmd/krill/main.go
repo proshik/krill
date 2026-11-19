@@ -511,13 +511,13 @@ func run() error {
 	})
 	app.SetNotify(notifySvc)
 	notifySvc.SetInstanceName(app.InstanceName)
-	// Daily digest: restarts come from the Swarm task history when the
-	// engine can list it.
-	var taskFailures notify.TaskFailureCounter
-	if tc, ok := engine.(notify.TaskFailureCounter); ok {
-		taskFailures = tc
+	// Daily digest: crashes and stopped apps come from Swarm when the engine
+	// can list its task history.
+	var swarmReader notify.SwarmReader
+	if sr, ok := engine.(notify.SwarmReader); ok {
+		swarmReader = sr
 	}
-	digest := notify.NewDigest(notifySvc, notifyStore, metricsStore, taskFailures)
+	digest := notify.NewDigest(notifySvc, notifyStore, metricsStore, swarmReader)
 	go digest.Run(ctx)
 	app.SetDigest(digest)
 	app.SetMetrics(metricsStore)

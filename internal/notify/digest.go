@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -31,9 +32,17 @@ const (
 	// tickGap separates two sampler ticks in the stored samples: a tick's rows
 	// are written within milliseconds, ticks are the sampling interval apart.
 	tickGap = 5 * time.Second
-	// memNearLimit is the share of an app's memory limit, and of a node's
-	// memory, past which the digest asks for attention.
-	memNearLimit = 90.0
+	// Traffic-light bands (percent). The channel's own disk and memory-limit
+	// thresholds are the red marks; the rest are fixed. An app's memory peak
+	// is measured against its limit, a node's container memory and CPU
+	// against the node (CPU as the day's average: a peak is a spike).
+	appMemWarn, appMemCrit   = 80.0, 95.0
+	nodeMemWarn, nodeMemCrit = 80.0, 90.0
+	limitsWarn               = 80.0 // or the channel's threshold, if lower
+	diskWarnBand             = 15.0 // yellow this many points under the threshold
+	cpuWarn, cpuCrit         = 70.0, 90.0
+	defaultDiskThreshold     = 85
+	defaultMemThreshold      = 100
 	// digestListMax caps the deploy and backup lines; the rest is counted.
 	digestListMax = 20
 	// backupRunsKeep is how long the backup journal is kept.
@@ -50,10 +59,13 @@ type MetricsReader interface {
 	ListDisks(ctx context.Context) ([]metrics.NodeDisk, error)
 }
 
-// TaskFailureCounter counts each Swarm service's failed tasks since a time
-// (an optional docker engine capability).
-type TaskFailureCounter interface {
+// SwarmReader is what the digest reads from Swarm (an optional docker engine
+// capability): each service's failed tasks since a time, for crash counts,
+// and service states, to tell an app stopped on purpose from one that should
+// be running and is not.
+type SwarmReader interface {
 	TaskFailuresSince(ctx context.Context, since time.Time) (map[string]int, error)
+	ServiceStates(ctx context.Context, names []string) (map[string]docker.ServiceState, error)
 }
 
 // Digest builds the daily digest and schedules it per channel.
@@ -61,14 +73,14 @@ type Digest struct {
 	svc     *Service
 	store   Store
 	metrics MetricsReader
-	tasks   TaskFailureCounter // nil: restarts are not reported
+	swarm   SwarmReader // nil: crashes and stopped apps are not told apart
 	log     *slog.Logger
 	now     func() time.Time
 }
 
-// NewDigest creates the digest builder and scheduler. tasks may be nil.
-func NewDigest(svc *Service, store Store, m MetricsReader, tasks TaskFailureCounter) *Digest {
-	return &Digest{svc: svc, store: store, metrics: m, tasks: tasks, log: slog.Default(), now: time.Now}
+// NewDigest creates the digest builder and scheduler. sw may be nil.
+func NewDigest(svc *Service, store Store, m MetricsReader, sw SwarmReader) *Digest {
+	return &Digest{svc: svc, store: store, metrics: m, swarm: sw, log: slog.Default(), now: time.Now}
 }
 
 // Location returns the zone a channel's digest is scheduled in.
@@ -207,12 +219,20 @@ type digestData struct {
 	Deploys  []DeploymentInfo
 	Runs     []BackupRun
 	Apps     []appRow
-	Stopped  []string
-	Infra    bool
-	Nodes    []nodeRow
+	idleApps
+	Infra bool
+	Nodes []nodeRow
 	// Thresholds for the attention line.
 	DiskThreshold, MemThreshold int
 	RestartsKnown               bool
+}
+
+// idleApps are the apps without fresh samples (and no crashes), by what
+// Swarm says about them.
+type idleApps struct {
+	Down    []string // should be running (desired > 0) and run nothing
+	Stopped []string // stopped on purpose (0 replicas) or never deployed
+	NoData  []string // running per Swarm but not sampled, or Swarm unreadable
 }
 
 type appRow struct {
@@ -251,6 +271,12 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 		Now: now, Loc: Location(c.DigestTZ), Lang: c.Lang, Instance: d.svc.instance(ctx),
 		Infra: c.NotifyInfra, DiskThreshold: c.DiskThresholdPct, MemThreshold: c.MemThresholdPct,
 	}
+	if data.DiskThreshold <= 0 {
+		data.DiskThreshold = defaultDiskThreshold
+	}
+	if data.MemThreshold <= 0 {
+		data.MemThreshold = defaultMemThreshold
+	}
 	deps, err := d.store.OrgDeploymentsSince(ctx, c.OrgID, eventsSince)
 	if err != nil {
 		return data, fmt.Errorf("deployments: %w", err)
@@ -280,14 +306,23 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 		memTotal[cp.Node] = cp.MemTotal
 	}
 	var restarts map[string]int
-	if d.tasks != nil {
-		if restarts, err = d.tasks.TaskFailuresSince(ctx, since); err != nil {
+	var states map[string]docker.ServiceState
+	if d.swarm != nil {
+		if restarts, err = d.swarm.TaskFailuresSince(ctx, since); err != nil {
 			d.log.Warn("notify digest: task failures unavailable", "err", err)
 			restarts = nil
 		}
+		names := make([]string, len(apps))
+		for i, a := range apps {
+			names[i] = docker.ServiceName(a.AppID)
+		}
+		if states, err = d.swarm.ServiceStates(ctx, names); err != nil {
+			d.log.Warn("notify digest: service states unavailable", "err", err)
+			states = nil
+		}
 	}
 	data.RestartsKnown = restarts != nil
-	data.Apps, data.Stopped = appRows(apps, samples, memTotal, restarts, now)
+	data.Apps, data.idleApps = appRows(apps, samples, memTotal, restarts, states, now)
 	if c.NotifyInfra {
 		disks, err := d.metrics.ListDisks(ctx)
 		if err != nil {
@@ -303,7 +338,9 @@ func limited(limit, nodeTotal int64) bool {
 	return limit > 0 && (nodeTotal <= 0 || limit < nodeTotal)
 }
 
-func appRows(apps []WatchedApp, samples []metrics.Sample, memTotal map[string]int64, restarts map[string]int, now time.Time) (rows []appRow, stopped []string) {
+// appRows summarizes each app's memory and crashes; an app with no fresh
+// sample is sorted into idle by its Swarm state (states nil: unknown).
+func appRows(apps []WatchedApp, samples []metrics.Sample, memTotal map[string]int64, restarts map[string]int, states map[string]docker.ServiceState, now time.Time) (rows []appRow, idle idleApps) {
 	byComp := map[string][]metrics.Sample{}
 	for _, s := range samples {
 		byComp[s.Component] = append(byComp[s.Component], s)
@@ -324,31 +361,45 @@ func appRows(apps []WatchedApp, samples []metrics.Sample, memTotal map[string]in
 				latest[s.Node] = s
 			}
 		}
-		var newest time.Time
+		// The limit comes from the newest sample even when it is old: a
+		// crash-looping app keeps its row, and its peak against the limit is
+		// usually the reason it crashes.
+		var newest, newestAny time.Time
 		for _, s := range latest {
+			if s.TS.After(newestAny) {
+				newestAny = s.TS
+				row.Limit = 0
+				if limited(s.MemLimitBytes, memTotal[s.Node]) {
+					row.Limit = s.MemLimitBytes
+				}
+			}
 			if now.Sub(s.TS) > staleAfter {
 				continue
 			}
 			row.Now += s.MemBytes
 			if s.TS.After(newest) {
 				newest = s.TS
-				row.Limit = 0
-				if limited(s.MemLimitBytes, memTotal[s.Node]) {
-					row.Limit = s.MemLimitBytes
-				}
 			}
 		}
 		if newest.IsZero() {
-			if row.Restarts > 0 {
+			st, known := states[comp]
+			switch {
+			case row.Restarts > 0:
 				rows = append(rows, row) // crash-looping: worth showing
-			} else {
-				stopped = append(stopped, path)
+			case states == nil:
+				idle.NoData = append(idle.NoData, path)
+			case known && st.Found && st.Running > 0:
+				idle.NoData = append(idle.NoData, path) // its node's metrics are missing
+			case known && st.Found && st.Desired > 0:
+				idle.Down = append(idle.Down, path)
+			default:
+				idle.Stopped = append(idle.Stopped, path)
 			}
 			continue
 		}
 		rows = append(rows, row)
 	}
-	return rows, stopped
+	return rows, idle
 }
 
 func nodeRows(caps []metrics.NodeCapacity, disks []metrics.NodeDisk, samples []metrics.Sample, now time.Time) []nodeRow {
@@ -426,46 +477,163 @@ func pct(a, b int64) float64 {
 	return float64(a) * 100 / float64(b)
 }
 
-// attention lists what in the digest is at or near a threshold.
-func attention(ctx context.Context, d digestData) []string {
-	var out []string
+// level is a traffic-light status: green, yellow (worth a look), red.
+type level int
+
+const (
+	lvlOK level = iota
+	lvlWarn
+	lvlCrit
+)
+
+func (l level) mark() string {
+	switch l {
+	case lvlCrit:
+		return "🔴"
+	case lvlWarn:
+		return "🟡"
+	}
+	return "🟢"
+}
+
+func worst(ls ...level) level {
+	w := lvlOK
+	for _, l := range ls {
+		if l > w {
+			w = l
+		}
+	}
+	return w
+}
+
+// grade places v against a yellow and a red mark. v is rounded the way the
+// digest prints it (%.0f), so a figure shown as 80% is never green.
+func grade(v, warn, crit float64) level {
+	v = math.RoundToEven(v)
+	switch {
+	case v >= crit:
+		return lvlCrit
+	case v >= warn:
+		return lvlWarn
+	}
+	return lvlOK
+}
+
+func (a appRow) memLevel() level {
+	if a.Limit <= 0 {
+		return lvlOK // no limit: nothing to run into
+	}
+	return grade(pct(a.Peak, a.Limit), appMemWarn, appMemCrit)
+}
+
+func (a appRow) level() level {
+	l := a.memLevel()
+	if a.Restarts > 0 {
+		l = lvlCrit
+	}
+	return l
+}
+
+func (d digestData) diskLevel(dk metrics.DiskUsage) level {
+	t := float64(d.DiskThreshold)
+	return grade(dk.UsedPct(), t-diskWarnBand, t)
+}
+
+func (d digestData) limitsLevel(n nodeRow) level {
+	if n.MemTotal <= 0 {
+		return lvlOK
+	}
+	t := float64(d.MemThreshold)
+	return grade(pct(n.Limits, n.MemTotal), math.Min(limitsWarn, t), t)
+}
+
+func memUsedLevel(n nodeRow) level {
+	if n.MemTotal <= 0 {
+		return lvlOK
+	}
+	return grade(pct(n.MemUsed, n.MemTotal), nodeMemWarn, nodeMemCrit)
+}
+
+func cpuLevel(n nodeRow) level {
+	if !n.CPUKnown {
+		return lvlOK
+	}
+	return grade(n.CPUAvg, cpuWarn, cpuCrit)
+}
+
+// nodeLevel is the worst of a node's figures. A node that stopped reporting
+// is red, whatever its last figures said.
+func (d digestData) nodeLevel(n nodeRow) level {
+	if n.Stale {
+		return lvlCrit
+	}
+	l := worst(d.limitsLevel(n), memUsedLevel(n), cpuLevel(n))
+	if len(n.Disks) == 0 {
+		l = worst(l, lvlWarn) // the disk snapshot failed: cannot tell
+	}
+	for _, dk := range n.Disks {
+		l = worst(l, d.diskLevel(dk))
+	}
+	return l
+}
+
+type attItem struct {
+	lvl  level
+	text string
+}
+
+// attention lists every yellow and red figure of the digest, red first.
+func attention(ctx context.Context, d digestData) []attItem {
+	var out []attItem
+	add := func(l level, key string, args ...any) {
+		if l > lvlOK {
+			out = append(out, attItem{l, i18n.Tf(ctx, key, args...)})
+		}
+	}
 	for _, dep := range d.Deploys {
 		if dep.Status == "error" {
-			out = append(out, i18n.Tf(ctx, "tg.dg.att_deploy", targetPath(dep.Project, dep.Env, dep.App)))
+			add(lvlCrit, "tg.dg.att_deploy", targetPath(dep.Project, dep.Env, dep.App))
 		}
 	}
 	for _, r := range d.Runs {
 		if r.Status == "error" {
-			out = append(out, i18n.Tf(ctx, "tg.dg.att_backup", kindLabel(ctx, r.Kind), targetPath(r.Project, r.Env, r.Target)))
+			add(lvlCrit, "tg.dg.att_backup", kindLabel(ctx, r.Kind), targetPath(r.Project, r.Env, r.Target))
 		}
 	}
 	for _, a := range d.Apps {
-		if a.Limit > 0 && pct(a.Peak, a.Limit) >= memNearLimit {
-			out = append(out, i18n.Tf(ctx, "tg.dg.att_app_mem", a.Path, pct(a.Peak, a.Limit)))
-		}
+		add(a.memLevel(), "tg.dg.att_app_mem", a.Path, pct(a.Peak, a.Limit))
 		if a.Restarts > 0 {
-			out = append(out, i18n.Tf(ctx, "tg.dg.att_app_restarts", a.Path, a.Restarts))
+			add(lvlCrit, "tg.dg.att_app_restarts", a.Path, a.Restarts)
 		}
+	}
+	for _, p := range d.Down {
+		add(lvlCrit, "tg.dg.att_app_down", p)
 	}
 	for _, n := range d.Nodes {
 		if n.Stale {
-			out = append(out, i18n.Tf(ctx, "tg.dg.att_node_stale", n.Name))
+			add(lvlCrit, "tg.dg.att_node_stale", n.Name)
+			continue // its last figures are old
 		}
 		for _, dk := range n.Disks {
-			if p := dk.UsedPct(); p >= float64(d.DiskThreshold) {
-				out = append(out, i18n.Tf(ctx, "tg.dg.att_disk", n.Name, dk.Mount, p))
-			}
+			add(d.diskLevel(dk), "tg.dg.att_disk", n.Name, dk.Mount, dk.UsedPct())
 		}
-		if n.MemTotal > 0 {
-			if p := pct(n.Limits, n.MemTotal); p >= float64(d.MemThreshold) {
-				out = append(out, i18n.Tf(ctx, "tg.dg.att_limits", n.Name, p))
-			}
-			if p := pct(n.MemUsed, n.MemTotal); p >= memNearLimit {
-				out = append(out, i18n.Tf(ctx, "tg.dg.att_mem", n.Name, p))
-			}
+		if len(n.Disks) == 0 {
+			add(lvlWarn, "tg.dg.att_disk_unknown", n.Name)
 		}
+		add(d.limitsLevel(n), "tg.dg.att_limits", n.Name, pct(n.Limits, n.MemTotal))
+		add(memUsedLevel(n), "tg.dg.att_mem", n.Name, pct(n.MemUsed, n.MemTotal))
+		add(cpuLevel(n), "tg.dg.att_cpu", n.Name, n.CPUAvg)
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].lvl > out[j].lvl })
 	return out
+}
+
+// counts is a section's "ok / failed" summary, or "none" with no runs.
+func counts(ctx context.Context, ok, failed int) string {
+	if ok+failed == 0 {
+		return i18n.T(ctx, "tg.dg.none")
+	}
+	return i18n.Tf(ctx, "tg.dg.counts", ok, failed)
 }
 
 func kindLabel(ctx context.Context, kind string) string {
@@ -500,17 +668,32 @@ func renderDigest(d digestData) []string {
 	add("%s (%s)", esc(whenLabel(d.Now, d.Now, d.Loc, d.Lang)), esc(d.Loc.String()))
 	if att := attention(ctx, d); len(att) > 0 {
 		add("")
-		add("⚠️ <b>%s</b>", esc(i18n.T(ctx, "tg.dg.attention")))
+		add("%s <b>%s</b>", att[0].lvl.mark(), esc(i18n.T(ctx, "tg.dg.attention")))
 		for i, a := range att {
 			if i == digestListMax {
 				add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(att)-i)))
 				break
 			}
-			add("• %s", esc(a))
+			add("%s %s", a.lvl.mark(), esc(a.text))
 		}
 	} else {
 		add("")
-		add("✅ %s", esc(i18n.T(ctx, "tg.dg.all_ok")))
+		add("%s %s", lvlOK.mark(), esc(i18n.T(ctx, "tg.dg.all_ok")))
+	}
+	// metric adds a figure's line, marked only when it is not green, so the
+	// line behind a yellow or red node stands out.
+	metric := func(l level, text string) {
+		if l > lvlOK {
+			add("%s %s", l.mark(), esc(text))
+		} else {
+			add("%s", esc(text))
+		}
+	}
+	outcome := func(failed bool) string {
+		if failed {
+			return lvlCrit.mark()
+		}
+		return lvlOK.mark()
 	}
 
 	// Deploys.
@@ -523,16 +706,13 @@ func renderDigest(d digestData) []string {
 		}
 	}
 	add("")
-	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.deploys")), esc(i18n.Tf(ctx, "tg.dg.counts", okN, errN)))
+	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.deploys")), esc(counts(ctx, okN, errN)))
 	for i, dep := range d.Deploys {
 		if i == digestListMax {
 			add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(d.Deploys)-i)))
 			break
 		}
-		mark, parts := "✅", []string{targetPath(dep.Project, dep.Env, dep.App)}
-		if dep.Status == "error" {
-			mark = "❌"
-		}
+		parts := []string{targetPath(dep.Project, dep.Env, dep.App)}
 		if img := shortImage(dep.ImageTag); img != "" {
 			parts = append(parts, img)
 		}
@@ -540,7 +720,7 @@ func renderDigest(d digestData) []string {
 		if dep.Status == "error" && strings.TrimSpace(dep.Error) != "" {
 			parts = append(parts, oneLine(dep.Error, 120))
 		}
-		add("%s %s", mark, esc(strings.Join(parts, " · ")))
+		add("%s %s", outcome(dep.Status == "error"), esc(strings.Join(parts, " · ")))
 	}
 
 	// Backups.
@@ -553,23 +733,21 @@ func renderDigest(d digestData) []string {
 		}
 	}
 	add("")
-	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.backups")), esc(i18n.Tf(ctx, "tg.dg.counts", okN, errN)))
+	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.backups")), esc(counts(ctx, okN, errN)))
 	for i, r := range d.Runs {
 		if i == digestListMax {
 			add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(d.Runs)-i)))
 			break
 		}
-		mark, parts := "✅", []string{kindLabel(ctx, r.Kind) + " " + targetPath(r.Project, r.Env, r.Target)}
-		if r.Status == "error" {
-			mark = "❌"
-		} else if r.SizeBytes > 0 {
+		parts := []string{kindLabel(ctx, r.Kind) + " " + targetPath(r.Project, r.Env, r.Target)}
+		if r.Status != "error" && r.SizeBytes > 0 {
 			parts = append(parts, humanBytes(r.SizeBytes))
 		}
 		parts = append(parts, whenLabel(r.FinishedAt, d.Now, d.Loc, d.Lang))
 		if r.Status == "error" && strings.TrimSpace(r.Error) != "" {
 			parts = append(parts, oneLine(r.Error, 120))
 		}
-		add("%s %s", mark, esc(strings.Join(parts, " · ")))
+		add("%s %s", outcome(r.Status == "error"), esc(strings.Join(parts, " · ")))
 	}
 
 	// Nodes (infrastructure channels only).
@@ -581,20 +759,23 @@ func renderDigest(d digestData) []string {
 			if n.Stale {
 				name += " — " + i18n.T(ctx, "tg.dg.stale")
 			}
-			add("<b>%s</b>", esc(name))
+			add("%s <b>%s</b>", d.nodeLevel(n).mark(), esc(name))
+			if n.Stale {
+				continue // its last figures would read as current
+			}
 			for _, dk := range n.Disks {
-				add("%s", esc(i18n.Tf(ctx, "tg.dg.node_disk", dk.Mount, dk.UsedPct(), humanBytes(dk.Used), humanBytes(dk.Total))))
+				metric(d.diskLevel(dk), i18n.Tf(ctx, "tg.dg.node_disk", dk.Mount, dk.UsedPct(), humanBytes(dk.Used), humanBytes(dk.Total)))
 			}
 			if len(n.Disks) == 0 {
-				add("%s", esc(i18n.T(ctx, "tg.dg.node_disk_unknown")))
+				metric(lvlWarn, i18n.T(ctx, "tg.dg.node_disk_unknown"))
 			}
 			mem := i18n.Tf(ctx, "tg.dg.node_mem", humanBytes(n.MemUsed), humanBytes(n.MemTotal), humanBytes(n.Limits), pct(n.Limits, n.MemTotal))
 			if n.Unlimited > 0 {
 				mem += " · " + i18n.Tf(ctx, "tg.dg.unlimited", n.Unlimited)
 			}
-			add("%s", esc(mem))
+			metric(worst(d.limitsLevel(n), memUsedLevel(n)), mem)
 			if n.CPUKnown {
-				add("%s", esc(i18n.Tf(ctx, "tg.dg.node_cpu", n.CPUAvg, n.CPUPeak, n.NCPU)))
+				metric(cpuLevel(n), i18n.Tf(ctx, "tg.dg.node_cpu", n.CPUAvg, n.CPUPeak, n.NCPU))
 			}
 		}
 		if len(d.Nodes) == 0 {
@@ -615,17 +796,22 @@ func renderDigest(d digestData) []string {
 		if d.RestartsKnown {
 			line += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
 		}
-		add("%s", esc(line))
+		add("%s %s", a.level().mark(), esc(line))
 	}
-	if len(d.Stopped) > 0 {
-		names := d.Stopped
-		more := ""
-		if len(names) > digestListMax {
-			names, more = names[:digestListMax], " "+i18n.Tf(ctx, "tg.dg.more", len(d.Stopped)-digestListMax)
+	names := func(mark, key string, list []string) {
+		if len(list) == 0 {
+			return
 		}
-		add("%s", esc(i18n.T(ctx, "tg.dg.stopped")+": "+strings.Join(names, ", ")+more))
+		more := ""
+		if len(list) > digestListMax {
+			list, more = list[:digestListMax], " "+i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax)
+		}
+		add("%s %s", mark, esc(i18n.T(ctx, key)+": "+strings.Join(list, ", ")+more))
 	}
-	if len(d.Apps) == 0 && len(d.Stopped) == 0 {
+	names(lvlCrit.mark(), "tg.dg.down", d.Down)
+	names("⚪", "tg.dg.no_samples", d.NoData)
+	names("⚪", "tg.dg.stopped", d.Stopped)
+	if len(d.Apps) == 0 && len(d.Down) == 0 && len(d.NoData) == 0 && len(d.Stopped) == 0 {
 		add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
 	}
 	return splitParts(lines, digestPartLimit)

@@ -46,18 +46,37 @@ With **Send a daily digest** on, the channel gets one message a day at the chose
 chosen **Time zone** (11:00 Europe/Moscow by default; any IANA name such as `Europe/Amsterdam`
 works). It covers the last 24 hours:
 
-- **Needs attention** — first, so it is the first thing you see; or **All good** when nothing
-  below is near a limit. It lists failed deploys and backups, apps whose memory peak reached 90 %
-  of their limit, apps that restarted, and — for an [infrastructure](#4-infrastructure-alerts)
-  channel — disks over their threshold, nodes whose memory limits or memory in use are high, and
-  nodes that stopped reporting.
-- **Deploys**: each finished deploy with its image (or build number) and time, failures with their
-  reason.
-- **Backups**: every database, volume and bucket backup run, successful ones with their stored
-  size.
+- **Needs attention** — first, so it is the first thing you see; or 🟢 **All good** when every
+  figure below is green. It lists every yellow and red figure, red first, and its heading carries
+  the worst of them.
+- **Deploys**: each finished deploy with its image (or build number) and time, 🟢 or 🔴, failures
+  with their reason; "none" when there were none.
+- **Backups**: every database, volume and bucket backup run, 🟢 with its stored size or 🔴 with
+  the error; "none" when there were none.
 - **Nodes** (infrastructure channels only): disk use per filesystem, memory in use, the sum of the
   containers' memory limits against the node's memory, and CPU (average and peak over the day).
-- **Apps**: memory now, the day's peak against the limit, and restarts.
+  The node's name carries the worst of its figures; a figure's own line is marked only when it is
+  yellow or red, so the reason stands out.
+- **Apps**: memory now, the day's peak against the limit, and crashes, each app marked with its
+  status. Apps without fresh data are listed by what Swarm says: 🔴 **Not running** (it should
+  run and does not), ⚪ **Stopped or never deployed** (zero replicas on purpose, or no service),
+  ⚪ **No fresh data** (Swarm runs it, but its node's metrics are missing — or Swarm could not be
+  read, and then every such app is listed here).
+
+| Figure | 🟡 from | 🔴 from |
+|--------|---------|---------|
+| Disk use | the channel's disk threshold − 15 points (70 % by default) | the disk threshold (85 %) |
+| Sum of memory limits against the node | 80 % (or the threshold, if lower) | the channel's memory-limits threshold (100 %) |
+| Memory the containers use on the node | 80 % | 90 % |
+| Node CPU, the day's average | 70 % | 90 % |
+| No disk data for a node that reports | always | — |
+| A node that stopped reporting | — | always |
+| An app's memory peak against its limit | 80 % | 95 % |
+| An app crashed (see [Crashes](#5-what-the-numbers-mean)) | — | once |
+| Failed deploy or backup, app not running | — | always |
+
+The CPU peak is shown but not graded: a peak is one sampling interval, and a build or a backup
+reaches 100 % routinely.
 
 A long digest is split into several messages. If Krill is not running at the scheduled time, the
 digest is sent when it comes back, but only within 3 hours of that time; otherwise that day is
@@ -103,10 +122,17 @@ reporting into one chat can be told apart.
   node) are not included. CPU is a share of all the node's cores.
 - **Memory limits** count every container with a limit. A container without one is counted
   apart ("without a limit"): it can use the whole node.
-- **Restarts** are the app's failed tasks in Swarm's history over the day (a crash, an OOM kill, a
-  rejected task). Swarm keeps a few tasks per replica, so for an app that crash-loops the number
-  is a lower bound.
-- An app with no samples in the last 10 minutes is listed under **Not running**.
+- **Crashes** are the app's failed tasks in Swarm's history over the day: a non-zero exit, an
+  OOM kill, a container killed for failing its healthcheck, a task Swarm could not start. Planned
+  replacements are not counted: a deploy (the old task ends as *shutdown*) and a restart of the
+  Docker daemon (the task fails with "No such container" and Swarm starts a new one). A reboot of
+  a node has not been checked yet: if its tasks end with a non-zero exit instead, they count as
+  crashes. Swarm keeps a few tasks per replica, so for an app that crash-loops the number is a
+  lower bound.
+- An app with no samples in the last 10 minutes is listed under **Not running**, **Stopped or
+  never deployed** or **No fresh data**, by its Swarm service.
+- **Backups** are read from a run journal that exists since v0.9.0: the first digest after the
+  upgrade to it lists only the runs since the upgrade.
 
 ## 6. Security
 
