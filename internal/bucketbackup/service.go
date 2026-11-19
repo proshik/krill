@@ -112,6 +112,9 @@ type Store interface {
 // The id is a bucket_backups id, resolved by the notifier against that table.
 type Notifier interface {
 	BucketBackupFailed(ctx context.Context, bucketBackupID int64, reason string)
+	// BucketRestoreFailed alerts like a failed backup but is no backup run:
+	// the digest's journal must not count it.
+	BucketRestoreFailed(ctx context.Context, bucketBackupID int64, reason string)
 	// BucketBackupSucceeded is told the size of a successful snapshot: its
 	// objects' bytes, as the snapshot list shows it.
 	BucketBackupSucceeded(ctx context.Context, bucketBackupID, sizeBytes int64)
@@ -402,7 +405,7 @@ func (s *Service) StartRestore(ctx context.Context, id int64, ts string, target 
 			slog.Error("bucket restore failed", "err", err, "bucket_backup_id", id, "snapshot", ts)
 			_ = s.store.SetRestoreResult(context.WithoutCancel(rctx), id, now, "error", err.Error())
 			if s.notifier != nil {
-				s.notifier.BucketBackupFailed(rctx, id, "restore: "+err.Error())
+				s.notifier.BucketRestoreFailed(rctx, id, "restore: "+err.Error())
 			}
 			return
 		}

@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -294,15 +295,16 @@ func (c *countingStore) InfraChannels(ctx context.Context) ([]Channel, error) {
 
 func TestMonitorOvercommitAfterDeploy(t *testing.T) {
 	st := &fakeStore{infra: []Channel{
-		{ID: 1, Enabled: true, ChatID: "strict", NotifyInfra: true, MemThresholdPct: 100},
-		{ID: 2, Enabled: true, ChatID: "lax", NotifyInfra: true, MemThresholdPct: 150},
+		{ID: 1, OrgID: 7, Enabled: true, ChatID: "strict", NotifyInfra: true, MemThresholdPct: 100},
+		{ID: 2, OrgID: 7, Enabled: true, ChatID: "lax", NotifyInfra: true, MemThresholdPct: 150},
+		{ID: 3, OrgID: 9, Enabled: true, ChatID: "other-org", NotifyInfra: true, MemThresholdPct: 100},
 	}}
 	cap := &capturedSend{}
 	svc := New(st)
 	svc.send = cap.fn
 	mon := NewResourceMonitor(svc, st)
 	deployed := time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC)
-	mon.QueueOvercommitCheck(5, Target{Project: "p", Env: "e", Name: "api"}, deployed)
+	mon.QueueOvercommitCheck(5, Target{OrgID: 7, Project: "p", Env: "e", Name: "api"}, deployed)
 
 	// A tick that started before the deploy finished cannot show its container.
 	mon.Observe(context.Background(), metrics.Tick{Start: deployed.Add(-time.Second)})
@@ -324,9 +326,16 @@ func TestMonitorOvercommitAfterDeploy(t *testing.T) {
 	mon.Observe(context.Background(), metrics.Tick{Start: deployed.Add(30 * time.Second), Nodes: []metrics.NodeSample{other, node}})
 	mon.wg.Wait()
 	msgs := cap.all()
-	if len(msgs) != 1 || !strings.HasPrefix(msgs[0], "strict|") {
-		t.Fatalf("sent %v, want one alert to the 100%% channel only", msgs)
+	sort.Strings(msgs)
+	if len(msgs) != 2 || !strings.HasPrefix(msgs[0], "other-org|") || !strings.HasPrefix(msgs[1], "strict|") {
+		t.Fatalf("sent %v, want alerts to the two 100%% channels only", msgs)
 	}
+	// Another organization's infrastructure channel learns about the node,
+	// never the name of the app that was deployed.
+	if strings.Contains(msgs[0], "api") || strings.Contains(msgs[0], "after the deploy") || !strings.Contains(msgs[0], "worker-1") {
+		t.Errorf("other organization's alert:\n%s", msgs[0])
+	}
+	msgs = msgs[1:]
 	for _, want := range []string{"worker-1", "110%", "p/e/api", "(not counted): 1"} {
 		if !strings.Contains(msgs[0], want) {
 			t.Errorf("alert lacks %q:\n%s", want, msgs[0])
@@ -379,4 +388,27 @@ func (b *blockingInfra) InfraChannels(ctx context.Context) ([]Channel, error) {
 	b.once.Do(func() { close(b.entered) })
 	<-b.release
 	return []Channel{{ID: 1, NotifyInfra: true, MemThresholdPct: 100}}, nil
+}
+
+// A failed restore alerts like a failed backup but is not a backup run.
+func TestRestoreFailureAlertsWithoutJournal(t *testing.T) {
+	st := &fakeStore{
+		channels:      map[int64][]Channel{7: {{ID: 1, Enabled: true, ChatID: "c", NotifyBackup: true}}},
+		volumeBackups: map[int64]Target{4: {OrgID: 7, Name: "web / data"}},
+		bucketBackups: map[int64]Target{5: {OrgID: 7, Name: "assets"}},
+	}
+	cap := &capturedSend{}
+	svc := New(st)
+	svc.send = cap.fn
+	svc.VolumeRestoreFailed(context.Background(), 4, "volume restore: scale-up failed")
+	svc.BucketRestoreFailed(context.Background(), 5, "restore: denied")
+	waitUntil(t, func() bool { return cap.count() == 2 })
+	if runs := st.recordedRuns(); len(runs) != 0 {
+		t.Fatalf("restores journalled as backup runs: %+v", runs)
+	}
+	for _, m := range cap.all() {
+		if !strings.Contains(m, "Backup failed") {
+			t.Errorf("restore alert changed: %s", m)
+		}
+	}
 }

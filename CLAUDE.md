@@ -82,10 +82,14 @@ is an optional capability of a `NodeStatsSource`. Disk alert state is per channe
 `notify_alert_state` and moves only after a successful send (repeat ≥ 24 h, recovery 3 points
 under the threshold). The three backup services report `…Succeeded(id, size)`; notify
 writes every run (ok and error) to `backup_runs` (pruned after 30 days) — successful
-backups are reported only in the digest. `notify.Digest` ticks every minute, claims an
-occurrence with a conditional UPDATE of `digest_last_at` BEFORE sending (and releases it if
-the first part fails), sends only within 3 h after the scheduled local time, and splits at
-3500 characters on line boundaries. Restarts come from `docker`'s optional
+backups are reported only in the digest. `notify.Digest` ticks every minute, claims the LOCAL
+DAY with a conditional UPDATE of `digest_last_at` (bound = local midnight, so moving the time
+after today's digest can't send a second one) BEFORE sending (and releases it if the first
+part fails), sends only within 3 h after the scheduled local time, lists deploys/backups since
+the previous digest when that one was late (≤ 48 h), and splits at 3500 characters on line
+boundaries without cutting an HTML entity. Restore failures alert through
+`VolumeRestoreFailed`/`BucketRestoreFailed` and are NOT journalled as backup runs. The
+overcommit alert names the deployed app only to a channel of the same organization. Restarts come from `docker`'s optional
 `TaskFailuresSince` (failed/rejected tasks — a lower bound, Swarm keeps few). tzdata is
 embedded (`time/tzdata` in `cmd/krill`). See `docs/guides/notifications.md`.
 

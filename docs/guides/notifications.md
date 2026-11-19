@@ -37,7 +37,8 @@ Leaving the token field empty keeps the stored one.
 | App down / recovered | An app that was healthy loses its tasks, and when it comes back. | At once |
 
 Successful backups have no message of their own: they usually run at night, so they are listed in
-the [daily digest](#3-daily-digest) instead.
+the [daily digest](#3-daily-digest) instead. A failed restore is alerted like a failed backup but
+is not counted among the digest's backup runs.
 
 ## 3. Daily digest
 
@@ -60,8 +61,11 @@ works). It covers the last 24 hours:
 
 A long digest is split into several messages. If Krill is not running at the scheduled time, the
 digest is sent when it comes back, but only within 3 hours of that time; otherwise that day is
-skipped, so a digest never arrives at night. The digest is sent once per day even if Krill
-restarts, and a failed send is retried every minute within those 3 hours.
+skipped, so a digest never arrives at night. The digest is sent once per local day — also across
+restarts, and also when the time or zone is changed after today's digest went out — and a failed
+send is retried every minute within those 3 hours. When a digest went out late, the next one lists
+deploys and backups since that digest rather than for exactly 24 hours, so nothing falls between
+the two (up to 48 hours back).
 
 Backup runs are kept for the digest for 30 days.
 
@@ -78,7 +82,8 @@ channels the operator can set:
 - **Memory limits alert, % of node memory** (100 by default, 50–200). After every successful
   deploy Krill adds up the memory limits of the containers on the node the app landed on and
   warns when the sum reaches this share of the node's memory. The deploy itself is never
-  blocked; the message says which deploy prompted it.
+  blocked; the message names the deploy that prompted it only in a channel of the same
+  organization — other organizations' channels learn about the node, not about the app.
 
 Organization admins see these settings but cannot change them, and if one of them points the
 channel at another bot or chat, node alerts are turned off until an operator turns them on again.
@@ -93,7 +98,7 @@ reporting into one chat can be told apart.
   blocks reserved for root count as full. Krill takes the snapshot every 10 sampling intervals
   (about 5 minutes by default) — locally on the control-plane node and over the node's SSH
   connection on workers. The SSH user needs no special rights.
-- **Memory in use** and **CPU** add up the containers on the node, as the **Monitoring** page
+- **Memory** ("containers use … of …") and **CPU** add up the containers on the node, as the **Monitoring** page
   does: the operating system and the Krill process itself (a host binary on the control-plane
   node) are not included. CPU is a share of all the node's cores.
 - **Memory limits** count every container with a limit. A container without one is counted

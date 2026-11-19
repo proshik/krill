@@ -160,12 +160,20 @@ func (s *Service) appEvent(ctx context.Context, kind EventKind, appID int64, det
 // meaningful with the lookup of its own kind), records the run in the
 // journal, and returns the alert to send.
 func (s *Service) backupFailedEvent(ctx context.Context, kind string, lookup func(context.Context, int64) (Target, error), backupID int64, detail string) (Event, bool) {
+	return s.backupAlert(ctx, kind, lookup, backupID, detail, true)
+}
+
+// backupAlert resolves the owner and builds the failure alert; record adds
+// the run to the journal (a restore is not a backup run and is not recorded).
+func (s *Service) backupAlert(ctx context.Context, kind string, lookup func(context.Context, int64) (Target, error), backupID int64, detail string, record bool) (Event, bool) {
 	tgt, err := lookup(ctx, backupID)
 	if err != nil {
 		s.log.Warn("notify: backup target lookup failed", "backup", backupID, "kind", kind, "err", err)
 		return Event{}, false
 	}
-	s.recordRun(ctx, kind, backupID, tgt, "error", 0, detail)
+	if record {
+		s.recordRun(ctx, kind, backupID, tgt, "error", 0, detail)
+	}
 	return Event{Kind: BackupFailed, OrgID: tgt.OrgID, Project: tgt.Project, Env: tgt.Env, Target: tgt.Name, Detail: detail, Time: s.now()}, true
 }
 
@@ -268,6 +276,14 @@ func (s *Service) VolumeBackupFailed(_ context.Context, id int64, reason string)
 	})
 }
 
+// VolumeRestoreFailed alerts on a failed volume restore (a volume_backups
+// id) on the backup toggle, without recording a backup run.
+func (s *Service) VolumeRestoreFailed(_ context.Context, id int64, reason string) {
+	s.async(func(ctx context.Context) (Event, bool) {
+		return s.backupAlert(ctx, BackupKindVolume, s.store.VolumeBackupTarget, id, reason, false)
+	})
+}
+
 // VolumeBackupSucceeded is BackupSucceeded for a volume backup.
 func (s *Service) VolumeBackupSucceeded(_ context.Context, id, size int64) {
 	s.backupSucceeded(BackupKindVolume, s.store.VolumeBackupTarget, id, size)
@@ -278,6 +294,14 @@ func (s *Service) VolumeBackupSucceeded(_ context.Context, id, size int64) {
 func (s *Service) BucketBackupFailed(_ context.Context, id int64, reason string) {
 	s.async(func(ctx context.Context) (Event, bool) {
 		return s.backupFailedEvent(ctx, BackupKindBucket, s.store.BucketBackupTarget, id, reason)
+	})
+}
+
+// BucketRestoreFailed alerts on a failed bucket restore (a bucket_backups
+// id) on the backup toggle, without recording a backup run.
+func (s *Service) BucketRestoreFailed(_ context.Context, id int64, reason string) {
+	s.async(func(ctx context.Context) (Event, bool) {
+		return s.backupAlert(ctx, BackupKindBucket, s.store.BucketBackupTarget, id, reason, false)
 	})
 }
 

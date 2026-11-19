@@ -118,7 +118,8 @@ type sizeNotifier struct {
 	sizes map[int64]int64
 }
 
-func (n *sizeNotifier) BucketBackupFailed(context.Context, int64, string) {}
+func (n *sizeNotifier) BucketBackupFailed(context.Context, int64, string)  {}
+func (n *sizeNotifier) BucketRestoreFailed(context.Context, int64, string) {}
 func (n *sizeNotifier) BucketBackupSucceeded(_ context.Context, id, size int64) {
 	n.mu.Lock()
 	defer n.mu.Unlock()

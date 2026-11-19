@@ -216,8 +216,14 @@ func (m *ResourceMonitor) checkOvercommit(ctx context.Context, chans []Channel, 
 			if pct < float64(c.MemThresholdPct) {
 				continue
 			}
+			// The node is the operator's business, another organization's
+			// app is not: name the deploy only to its own organization.
+			app := ""
+			if c.OrgID == p.target.OrgID {
+				app = targetPath(p.target.Project, p.target.Env, p.target.Name)
+			}
 			_ = m.svc.sendTo(ctx, c, Event{Kind: MemOvercommit, Time: m.now(), Instance: m.svc.instance(ctx), Mem: &MemDetail{
-				Node: ns.Node, App: targetPath(p.target.Project, p.target.Env, p.target.Name),
+				Node: ns.Node, App: app,
 				Limits: limits, Total: ns.Capacity.MemTotal, Pct: pct,
 				Threshold: c.MemThresholdPct, Unlimited: unlimited,
 			}})

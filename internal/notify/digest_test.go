@@ -26,8 +26,8 @@ func TestDueAt(t *testing.T) {
 	if _, ok := dueAt(c, at(7, 59)); ok {
 		t.Error("due a minute early")
 	}
-	if got, ok := dueAt(c, at(8, 0)); !ok || !got.Equal(sched) {
-		t.Errorf("not due at 11:00 MSK: %v %v", got, ok)
+	if got, ok := dueAt(c, at(8, 0)); !ok || !got.Equal(time.Date(2026, 11, 18, 0, 0, 0, 0, mustLoc(t, "Europe/Moscow"))) {
+		t.Errorf("not due at 11:00 MSK, or not for that local day: %v %v", got, ok)
 	}
 	if _, ok := dueAt(c, at(10, 59)); !ok {
 		t.Error("a missed digest is not sent within the late window")
@@ -45,6 +45,12 @@ func TestDueAt(t *testing.T) {
 	if _, ok := dueAt(c, at(8, 5)); !ok {
 		t.Error("yesterday's digest blocks today's")
 	}
+	// Today's digest went out at 11:00; then the time is moved to 14:00.
+	c.DigestLastAt = &sent
+	c.DigestMinute = 14 * 60
+	if _, ok := dueAt(c, at(11, 0)); ok {
+		t.Error("moving the time after today's digest sends a second one")
+	}
 }
 
 // The scheduled time is wall-clock time in the channel's zone, across a DST
@@ -52,12 +58,11 @@ func TestDueAt(t *testing.T) {
 func TestDueAtFollowsDST(t *testing.T) {
 	c := Channel{DigestMinute: 11 * 60, DigestTZ: "Europe/Amsterdam"}
 	// 2026-03-29: CET → CEST at 02:00, so 11:00 local is 09:00 UTC.
-	got, ok := dueAt(c, time.Date(2026, 3, 29, 9, 0, 0, 0, time.UTC))
-	if !ok || got.UTC().Hour() != 9 {
-		t.Fatalf("dueAt = %v %v, want 09:00 UTC", got, ok)
+	if _, ok := dueAt(c, time.Date(2026, 3, 29, 9, 0, 0, 0, time.UTC)); !ok {
+		t.Fatal("not due at 11:00 local (09:00 UTC)")
 	}
-	if _, ok := dueAt(c, time.Date(2026, 3, 29, 8, 30, 0, 0, time.UTC)); ok {
-		t.Fatal("due at 10:30 local")
+	if _, ok := dueAt(c, time.Date(2026, 3, 29, 8, 59, 0, 0, time.UTC)); ok {
+		t.Fatal("due at 10:59 local")
 	}
 }
 
@@ -344,5 +349,81 @@ func TestSplitTicks(t *testing.T) {
 	got := splitTicks(ss)
 	if len(got) != 2 || len(got[0]) != 2 || len(got[1]) != 2 {
 		t.Fatalf("splitTicks = %v", got)
+	}
+}
+
+// A digest that went out late (13:30 instead of 11:00 yesterday) must not
+// leave the deploys of 11:00–13:30 out of today's digest.
+func TestDigestEventsStartAtThePreviousDigest(t *testing.T) {
+	now := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	rec := &sinceStore{fakeStore: &fakeStore{}}
+	d := NewDigest(New(rec), rec, fakeMetrics{}, nil)
+	late := now.Add(-24*time.Hour + 150*time.Minute) // yesterday 13:30 MSK
+	early := now.Add(-21 * time.Hour)
+	for _, c := range []struct {
+		last *time.Time
+		want time.Time
+	}{
+		{nil, now.Add(-24 * time.Hour)},
+		{&late, now.Add(-24 * time.Hour)}, // within the window: nothing missed
+		{&early, now.Add(-24 * time.Hour)},
+	} {
+		if _, err := d.Build(context.Background(), Channel{OrgID: 7, DigestTZ: "UTC", DigestLastAt: c.last}, now); err != nil {
+			t.Fatal(err)
+		}
+		if !rec.since.Equal(c.want) {
+			t.Errorf("last %v: deploys since %v, want %v", c.last, rec.since, c.want)
+		}
+	}
+	lateYesterday := now.Add(-26 * time.Hour)
+	if _, err := d.Build(context.Background(), Channel{OrgID: 7, DigestTZ: "UTC", DigestLastAt: &lateYesterday}, now); err != nil {
+		t.Fatal(err)
+	}
+	if !rec.since.Equal(lateYesterday) || !rec.runsSince.Equal(lateYesterday) {
+		t.Errorf("after a gap: deploys since %v, runs since %v, want %v", rec.since, rec.runsSince, lateYesterday)
+	}
+	weekAgo := now.Add(-7 * 24 * time.Hour)
+	d.Build(context.Background(), Channel{OrgID: 7, DigestTZ: "UTC", DigestLastAt: &weekAgo}, now)
+	if !rec.since.Equal(now.Add(-24 * time.Hour)) {
+		t.Errorf("after a week's pause: deploys since %v, want the last 24h", rec.since)
+	}
+}
+
+type sinceStore struct {
+	*fakeStore
+	since, runsSince time.Time
+}
+
+func (s *sinceStore) OrgDeploymentsSince(ctx context.Context, org int64, since time.Time) ([]DeploymentInfo, error) {
+	s.since = since
+	return nil, nil
+}
+func (s *sinceStore) BackupRunsSince(ctx context.Context, org int64, since time.Time) ([]BackupRun, error) {
+	s.runsSince = since
+	return nil, nil
+}
+
+func TestDigestCapsStoppedApps(t *testing.T) {
+	st := &fakeStore{}
+	for i := 0; i < 150; i++ {
+		st.orgApps = append(st.orgApps, WatchedApp{AppID: int64(i + 1), Project: "p&q", Env: "e", Name: "app" + strings.Repeat("x", 30)})
+	}
+	d := NewDigest(New(st), st, fakeMetrics{}, nil)
+	parts, err := d.Build(context.Background(), Channel{OrgID: 7, DigestTZ: "UTC", Lang: "en"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(parts, "\n")
+	if !strings.Contains(got, "…and 130 more") || strings.Count(got, "p&amp;q/e/") != 20 {
+		t.Fatalf("stopped list not capped:\n%s", got)
+	}
+}
+
+func TestCutLineKeepsEntities(t *testing.T) {
+	if got := cutLine([]rune("abc&amp;def"), 6); got != "abc" {
+		t.Errorf("cut inside an entity: %q", got)
+	}
+	if got := cutLine([]rune("abc&amp;def"), 9); got != "abc&amp;d" {
+		t.Errorf("cut after an entity: %q", got)
 	}
 }

@@ -12,10 +12,16 @@ type fakeEmitter struct {
 	recovered []int64
 }
 
-func (f *fakeEmitter) AppDown(_ context.Context, appID int64, _ string) { f.down = append(f.down, appID) }
-func (f *fakeEmitter) AppRecovered(_ context.Context, appID int64)      { f.recovered = append(f.recovered, appID) }
+func (f *fakeEmitter) AppDown(_ context.Context, appID int64, _ string) {
+	f.down = append(f.down, appID)
+}
+func (f *fakeEmitter) AppRecovered(_ context.Context, appID int64) {
+	f.recovered = append(f.recovered, appID)
+}
 
-type scriptEngine struct{ states map[string]docker.ServiceState }
+type scriptEngine struct {
+	states map[string]docker.ServiceState
+}
 
 func (s *scriptEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
 	out := map[string]docker.ServiceState{}
@@ -25,8 +31,10 @@ func (s *scriptEngine) ServiceStates(_ context.Context, names []string) (map[str
 	return out, nil
 }
 
-func healthyState() docker.ServiceState { return docker.ServiceState{Found: true, Desired: 1, Running: 1} }
-func downState() docker.ServiceState    { return docker.ServiceState{Found: true, Desired: 1, Running: 0} }
+func healthyState() docker.ServiceState {
+	return docker.ServiceState{Found: true, Desired: 1, Running: 1}
+}
+func downState() docker.ServiceState { return docker.ServiceState{Found: true, Desired: 1, Running: 0} }
 
 func newTestWatcher(eng stateEngine, st Store, em emitter) *Watcher {
 	w := NewWatcher(eng, st, em, 0)
@@ -122,7 +130,7 @@ func TestWatcherInactiveNotAlerted(t *testing.T) {
 	em := &fakeEmitter{}
 	w := newTestWatcher(eng, st, em)
 	ctx := context.Background()
-	w.tick(ctx)                                                                  // healthy baseline
+	w.tick(ctx)                                                                 // healthy baseline
 	eng.states[name] = docker.ServiceState{Found: true, Desired: 0, Running: 0} // stopped on purpose
 	w.tick(ctx)
 	w.tick(ctx)

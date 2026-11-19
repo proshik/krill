@@ -156,7 +156,8 @@ type sizeNotifier struct {
 	sizes map[int64]int64
 }
 
-func (n *sizeNotifier) VolumeBackupFailed(context.Context, int64, string) {}
+func (n *sizeNotifier) VolumeBackupFailed(context.Context, int64, string)  {}
+func (n *sizeNotifier) VolumeRestoreFailed(context.Context, int64, string) {}
 func (n *sizeNotifier) VolumeBackupSucceeded(_ context.Context, id, size int64) {
 	if n.sizes == nil {
 		n.sizes = map[int64]int64{}

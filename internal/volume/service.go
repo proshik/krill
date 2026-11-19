@@ -35,6 +35,9 @@ type VolEngine interface {
 // The id is a volume_backups id, resolved by the notifier against that table.
 type Notifier interface {
 	VolumeBackupFailed(ctx context.Context, volumeBackupID int64, reason string)
+	// VolumeRestoreFailed alerts like a failed backup but is no backup run:
+	// the digest's journal must not count it.
+	VolumeRestoreFailed(ctx context.Context, volumeBackupID int64, reason string)
 	// VolumeBackupSucceeded is told the stored size (bytes) of a successful run.
 	VolumeBackupSucceeded(ctx context.Context, volumeBackupID, sizeBytes int64)
 }
@@ -288,7 +291,7 @@ func (s *VolumeService) restore(ctx context.Context, volBackupID int64, dst back
 			// is already dead (the restore timed out / client disconnected).
 			// The id is the volume backup's: the notifier resolves the owner
 			// from volume_backups (it used to get the app volume's id).
-			s.notifier.VolumeBackupFailed(context.WithoutCancel(ctx), volBackupID, "volume restore: scale-up failed, app is down")
+			s.notifier.VolumeRestoreFailed(context.WithoutCancel(ctx), volBackupID, "volume restore: scale-up failed, app is down")
 		}
 	}()
 

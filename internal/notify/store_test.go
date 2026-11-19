@@ -236,7 +236,9 @@ func TestInfraAndDigestChannels(t *testing.T) {
 	digestOrg := mk("digest", func(p *db.UpsertNotificationChannelParams) {
 		p.DigestEnabled, p.DigestMinute, p.DigestTz, p.NotifyDeploySuccess = true, 9*60+30, "Asia/Tbilisi", true
 	})
-	mk("off", func(p *db.UpsertNotificationChannelParams) { p.Enabled, p.NotifyInfra, p.DigestEnabled = false, true, true })
+	mk("off", func(p *db.UpsertNotificationChannelParams) {
+		p.Enabled, p.NotifyInfra, p.DigestEnabled = false, true, true
+	})
 
 	st := notify.NewDBStore(q)
 	infra, err := st.InfraChannels(ctx)

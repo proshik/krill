@@ -16,6 +16,8 @@ import (
 
 const (
 	digestWindow = 24 * time.Hour
+	// digestMaxWindow bounds how far back the events of a late digest reach.
+	digestMaxWindow = 48 * time.Hour
 	// digestLate is how long after its scheduled time a missed digest (Krill
 	// was down at the time) is still sent; later it waits for the next day,
 	// so a digest never arrives at night.
@@ -89,20 +91,23 @@ func ValidTZ(tz string) bool {
 	return err == nil
 }
 
-// dueAt returns the occurrence of a channel's digest that is due at now, if
-// any: today's scheduled time in the channel's zone, when now falls in
-// [scheduled, scheduled+digestLate) and that occurrence was not sent yet.
-func dueAt(c Channel, now time.Time) (time.Time, bool) {
+// dueAt reports whether a channel's digest is due at now, returning the
+// start of the local day it belongs to: now falls in [scheduled,
+// scheduled+digestLate) of today's scheduled time in the channel's zone, and
+// no digest was sent yet that local day — so moving the time or the zone
+// after today's digest went out does not send a second one.
+func dueAt(c Channel, now time.Time) (day time.Time, ok bool) {
 	loc := Location(c.DigestTZ)
 	l := now.In(loc)
+	day = time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, loc)
 	sched := time.Date(l.Year(), l.Month(), l.Day(), c.DigestMinute/60, c.DigestMinute%60, 0, 0, loc)
 	if now.Before(sched) || !now.Before(sched.Add(digestLate)) {
 		return time.Time{}, false
 	}
-	if c.DigestLastAt != nil && !c.DigestLastAt.Before(sched) {
+	if c.DigestLastAt != nil && !c.DigestLastAt.Before(day) {
 		return time.Time{}, false
 	}
-	return sched, true
+	return day, true
 }
 
 // Run checks every minute for due digests until ctx is canceled, and prunes
@@ -134,11 +139,13 @@ func (d *Digest) tick(ctx context.Context) {
 	}
 	now := d.now().Truncate(time.Microsecond) // the database's precision: the claim is compared back
 	for _, c := range chans {
-		sched, ok := dueAt(c, now)
+		day, ok := dueAt(c, now)
 		if !ok {
 			continue
 		}
-		claimed, err := d.store.ClaimDigest(ctx, c.ID, now, sched)
+		// One digest per local day: the claim fails once anything was sent
+		// since the day began.
+		claimed, err := d.store.ClaimDigest(ctx, c.ID, now, day)
 		if err != nil {
 			d.log.Warn("notify digest: claim failed", "channel", c.ID, "err", err)
 			continue
@@ -232,11 +239,19 @@ type nodeRow struct {
 
 func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestData, error) {
 	since := now.Add(-digestWindow)
+	// Deploys and backups since the previous digest, when that one went out
+	// late (a restart, a retried send) — otherwise the hours between its
+	// scheduled and actual time would fall between two digests. Bounded, so
+	// a long pause does not dump a week of history.
+	eventsSince := since
+	if c.DigestLastAt != nil && c.DigestLastAt.Before(since) && c.DigestLastAt.After(now.Add(-digestMaxWindow)) {
+		eventsSince = *c.DigestLastAt
+	}
 	data := digestData{
 		Now: now, Loc: Location(c.DigestTZ), Lang: c.Lang, Instance: d.svc.instance(ctx),
 		Infra: c.NotifyInfra, DiskThreshold: c.DiskThresholdPct, MemThreshold: c.MemThresholdPct,
 	}
-	deps, err := d.store.OrgDeploymentsSince(ctx, c.OrgID, since)
+	deps, err := d.store.OrgDeploymentsSince(ctx, c.OrgID, eventsSince)
 	if err != nil {
 		return data, fmt.Errorf("deployments: %w", err)
 	}
@@ -245,7 +260,7 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 			data.Deploys = append(data.Deploys, dep)
 		}
 	}
-	if data.Runs, err = d.store.BackupRunsSince(ctx, c.OrgID, since); err != nil {
+	if data.Runs, err = d.store.BackupRunsSince(ctx, c.OrgID, eventsSince); err != nil {
 		return data, fmt.Errorf("backup runs: %w", err)
 	}
 	apps, err := d.store.OrgApps(ctx, c.OrgID)
@@ -603,12 +618,29 @@ func renderDigest(d digestData) []string {
 		add("%s", esc(line))
 	}
 	if len(d.Stopped) > 0 {
-		add("%s", esc(i18n.T(ctx, "tg.dg.stopped")+": "+strings.Join(d.Stopped, ", ")))
+		names := d.Stopped
+		more := ""
+		if len(names) > digestListMax {
+			names, more = names[:digestListMax], " "+i18n.Tf(ctx, "tg.dg.more", len(d.Stopped)-digestListMax)
+		}
+		add("%s", esc(i18n.T(ctx, "tg.dg.stopped")+": "+strings.Join(names, ", ")+more))
 	}
 	if len(d.Apps) == 0 && len(d.Stopped) == 0 {
 		add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
 	}
 	return splitParts(lines, digestPartLimit)
+}
+
+// cutLine shortens an escaped line to at most limit runes without cutting
+// inside an HTML entity (Telegram rejects the whole message then).
+func cutLine(r []rune, limit int) string {
+	cut := limit
+	if amp := strings.LastIndex(string(r[:cut]), "&"); amp >= 0 {
+		if semi := strings.IndexByte(string(r[:cut])[amp:], ';'); semi < 0 {
+			cut = len([]rune(string(r[:cut])[:amp]))
+		}
+	}
+	return string(r[:cut])
 }
 
 // oneLine flattens and shortens an error message for a digest line.
@@ -630,7 +662,7 @@ func splitParts(lines []string, limit int) []string {
 			continue // a part never starts with a blank line
 		}
 		if r := []rune(l); len(r) > limit {
-			l = string(r[:limit])
+			l = cutLine(r, limit)
 		}
 		if b.Len() > 0 && len([]rune(b.String()))+1+len([]rune(l)) > limit {
 			parts = append(parts, strings.TrimRight(b.String(), "\n"))
