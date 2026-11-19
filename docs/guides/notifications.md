@@ -229,6 +229,11 @@ down, messages fail with a connection error in the log.
   the bot was never added to the chat, or Telegram is out of reach (see
   [Telegram through a proxy](#7-telegram-through-a-proxy)). If the stored token cannot be
   decrypted (the `KRILL_SECRET_KEY` changed), re-enter it.
+- **A digest or alert arrives, yet the log says it failed** — fixed in v0.9.4: before it, a reply
+  from Telegram over 4 KiB (a long digest) was misread as a failure, and the scheduled digest was
+  re-sent every minute for up to 3 hours. If Telegram accepts a message but its reply cannot be
+  read, Krill now counts the message as sent and logs `notify: Telegram accepted a message (200)
+  with a reply that could not be read`.
 - **No digest** — check that **Enabled** and **Send a daily digest** are both on and that the time
   zone is what you expect; **Send digest now** shows what the channel would get. Krill logs
   `notify digest sent` (or `notify digest: send failed, will retry`) for every attempt.

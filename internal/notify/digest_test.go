@@ -3,7 +3,11 @@ package notify
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -655,5 +659,39 @@ func TestNodeHeadingYellowAndEnglish(t *testing.T) {
 	n.MemUsed, n.CPUAvg, n.Disks = 9*gib, 95, []metrics.DiskUsage{disk}
 	if got := d.nodeWhy(msgCtx("en"), n); got != "containers use 90% of its memory, CPU 95% on average" {
 		t.Errorf("red memory and CPU over a yellow disk, en: %q", got)
+	}
+}
+
+// The scheduled digest sends once when the Bot API's reply is long: a reply
+// misread as a failure released the claim and re-sent the digest every
+// minute for the 3-hour window.
+func TestScheduledDigestWithALongReplySendsOnce(t *testing.T) {
+	var mu sync.Mutex
+	sent := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sent++
+		mu.Unlock()
+		io.WriteString(w, `{"ok":true,"result":{"text":"`+strings.Repeat("Сводка ", 2000)+`"}}`)
+	}))
+	defer srv.Close()
+	now := time.Date(2026, 11, 19, 8, 0, 30, 0, time.UTC)
+	ch := Channel{ID: 1, OrgID: 7, Enabled: true, DigestEnabled: true, ChatID: "c", DigestMinute: 660, DigestTZ: "Europe/Moscow", DiskThresholdPct: 85, MemThresholdPct: 100}
+	st := &fakeStore{digest: []Channel{ch}}
+	svc := New(st)
+	svc.send = func(ctx context.Context, token, chatID, text string) error {
+		return sendTelegramTo(ctx, srv.URL, token, chatID, text)
+	}
+	d := NewDigest(svc, st, fakeMetrics{}, nil)
+	d.now = func() time.Time { return now }
+	for i := 0; i < 5; i++ { // five scheduler ticks, a minute apart
+		d.tick(context.Background())
+		if last, ok := st.claims[1]; ok {
+			st.digest[0].DigestLastAt = &last
+		}
+		now = now.Add(time.Minute)
+	}
+	if sent != 1 || st.released != 0 {
+		t.Fatalf("sent %d times, released %d claims; want once, none", sent, st.released)
 	}
 }

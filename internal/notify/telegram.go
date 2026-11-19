@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -45,18 +46,47 @@ func sendTelegramWith(ctx context.Context, client *http.Client, base, token, cha
 		return redactToken(err.Error(), token)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return telegramResult(resp)
+}
+
+// telegramReplyMax caps how much of a Bot API reply is read. sendMessage
+// echoes the whole message back (text and entities), so a long digest's
+// reply runs to several KiB; a successful reply is never near this.
+const telegramReplyMax = 1 << 20
+
+// telegramResult reads a Bot API reply. A refusal (any status but 200)
+// fails with Telegram's description, or the status without one. On 200 the
+// message was accepted: Telegram answers 200 only with "ok": true, so a body
+// that cannot be read or parsed (cut at telegramReplyMax, a proxy closing
+// early) still counts as sent, with a warning — calling it a failure would
+// make the digest resend a message that arrived. JSON without "ok": true on
+// 200 (an explicit false, or "{}" from something that is not the Bot API)
+// fails.
+func telegramResult(resp *http.Response) error {
+	body, rerr := io.ReadAll(io.LimitReader(resp.Body, telegramReplyMax))
 	var parsed struct {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	_ = json.Unmarshal(body, &parsed)
-	if resp.StatusCode != http.StatusOK || !parsed.OK {
-		desc := parsed.Description
-		if desc == "" {
-			desc = resp.Status
+	perr := json.Unmarshal(body, &parsed)
+	if resp.StatusCode != http.StatusOK {
+		desc := resp.Status
+		if perr == nil && parsed.Description != "" {
+			desc = parsed.Description
 		}
 		return fmt.Errorf("telegram: %s", desc) // never includes the token
+	}
+	if perr != nil || rerr != nil {
+		slog.Warn("notify: Telegram accepted a message (200) with a reply that could not be read; counting it as sent",
+			"read_err", rerr, "parse_err", perr, "bytes", len(body))
+		return nil
+	}
+	if !parsed.OK {
+		desc := parsed.Description
+		if desc == "" {
+			desc = "ok: false"
+		}
+		return fmt.Errorf("telegram: %s", desc)
 	}
 	return nil
 }

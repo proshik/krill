@@ -85,6 +85,9 @@ func format(ev Event, lang string) string {
 		}
 	}
 	if d := strings.TrimSpace(ev.Detail); d != "" {
+		if r := []rune(d); len(r) > detailMax {
+			d = strings.TrimSpace(string(r[:detailMax])) + " …"
+		}
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(d))
 	}
 	return b.String()
@@ -139,6 +142,12 @@ func shortImage(ref string) string {
 	}
 	return name
 }
+
+// detailMax caps an alert's detail (a deploy's or a backup's error, which
+// may quote a tool's output): Telegram refuses a message over 4096
+// characters, and the alert would then be lost altogether. The full error
+// stays in the deployment's or the backup's record.
+const detailMax = 1500
 
 // bytesPair renders "a of b" through the i18n key (two %s), writing the
 // unit once when both sizes share it: "12.9 of 148 GiB", but

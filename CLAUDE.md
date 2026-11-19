@@ -101,7 +101,15 @@ shown as free), "of the node's memory", "of the limit"; `bytesPair` writes a uni
 once ("12.9 of 148 GiB"). A yellow/red node heading names its reasons (`nodeWhy`: the figures at
 the node's level from `nodeFigures`, at most two plus "and N more"). Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
 and limits thresholds are the red marks; table in the guide). tzdata is
-embedded (`time/tzdata` in `cmd/krill`). **Telegram proxy (2026-11-19):** `KRILL_TELEGRAM_PROXY`
+embedded (`time/tzdata` in `cmd/krill`). **Bot API replies (2026-11-19, v0.9.3 bug):** `sendMessage` echoes the whole message, so a
+long digest's reply is several KiB; reading it through a 4 KiB `LimitReader` cut the JSON and a
+delivered message was reported as "telegram: 200 OK" — and the scheduled digest, which releases
+its claim on a failed first part, re-sent it every minute for 3 h. `telegramResult` reads up to
+1 MiB; on 200 a body that cannot be read or parsed counts as sent (WARN), while JSON without
+`ok:true` (`ok:false`, `{}` — not a Bot API answer) fails; any
+other status fails with Telegram's `description`. An alert's detail is capped at `detailMax`
+(1500 runes) to stay under Telegram's 4096 characters; digest parts are split at 3500.
+**Telegram proxy (2026-11-19):** `KRILL_TELEGRAM_PROXY`
 (socks5h/socks5/http/https URL) gives the Telegram sender its own transport
 (`notify.Service.SetTelegramProxy`, called once in `main` before anything sends) — owner's
 choice over `HTTPS_PROXY`, which would route registry/self-update/observability traffic too.

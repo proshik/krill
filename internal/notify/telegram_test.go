@@ -65,3 +65,60 @@ func TestSendTelegramNetworkErrorRedactsToken(t *testing.T) {
 		t.Fatalf("token leaked in network error: %v", err)
 	}
 }
+
+// botReply serves a Bot API answer; sendMessage echoes the whole message
+// back, so a long digest gets a long reply.
+func botReply(t *testing.T, status int, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// longOK is a successful sendMessage reply echoing a long Cyrillic text.
+func longOK(n int) string {
+	return `{"ok":true,"result":{"message_id":7,"chat":{"id":42},"text":"` + strings.Repeat("Сводка ", n) + `","entities":[{"offset":0,"length":6,"type":"bold"}]}}`
+}
+
+// Production 2026-11-19 (msk, v0.9.3): a digest's reply was over 4096
+// bytes, the cut body did not parse, and a delivered message was reported
+// as "telegram: 200 OK".
+func TestSendTelegramLongSuccessfulReply(t *testing.T) {
+	body := longOK(2000)
+	if len(body) <= 4096 {
+		t.Fatal("fixture too short")
+	}
+	if err := sendTelegramTo(context.Background(), botReply(t, 200, body), "TOKEN", "42", "x"); err != nil {
+		t.Fatalf("a delivered message reported as failed: %v", err)
+	}
+}
+
+func TestSendTelegramReplies(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  int
+		body    string
+		wantErr string // "" = sent
+	}{
+		{"long ok", 200, longOK(200000), ""}, // over the 1 MiB read cap: still sent
+		{"refused with a reason", 400, `{"ok":false,"error_code":400,"description":"Bad Request: message is too long"}`, "telegram: Bad Request: message is too long"},
+		{"refused without a body", 502, ``, "telegram: 502 Bad Gateway"},
+		{"refused, body not JSON", 502, `<html>bad gateway</html>`, "telegram: 502 Bad Gateway"},
+		{"200 but ok:false", 200, `{"ok":false,"description":"odd"}`, "telegram: odd"},
+		{"200, body cut", 200, `{"ok":true,"result":{"text":"Свод`, ""}, // Bot API accepted it
+		{"200, empty body", 200, ``, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := sendTelegramTo(context.Background(), botReply(t, c.status, c.body), "SECRET-TOKEN", "42", "x")
+			switch {
+			case c.wantErr == "" && err != nil:
+				t.Fatalf("want sent, got %v", err)
+			case c.wantErr != "" && (err == nil || err.Error() != c.wantErr):
+				t.Fatalf("want %q, got %v", c.wantErr, err)
+			}
+		})
+	}
+}

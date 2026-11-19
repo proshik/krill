@@ -45,3 +45,20 @@ func TestFormatMigrateFailed(t *testing.T) {
 		t.Fatalf("empty path segments leaked: %q", got)
 	}
 }
+
+// A long error (a build's output in it) is cut so the alert stays under
+// Telegram's 4096-character limit instead of being refused.
+func TestFormatCapsALongDetail(t *testing.T) {
+	msg := format(Event{Kind: DeployFailed, Project: "p", Env: "e", Target: "a", Detail: strings.Repeat("ошибка & ", 2000)}, "ru")
+	if n := len([]rune(msg)); n > 4096 {
+		t.Fatalf("alert is %d characters", n)
+	}
+	if !strings.Contains(msg, " …") {
+		t.Fatalf("not cut:\n%s", msg)
+	}
+	// Every "&" comes from escaping the detail's "&": a cut after escaping
+	// would leave a bare "&am" that Telegram refuses.
+	if strings.Count(msg, "&") != strings.Count(msg, "&amp;") {
+		t.Fatalf("a broken entity:\n%s", msg[len(msg)-80:])
+	}
+}
