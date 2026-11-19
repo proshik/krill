@@ -62,6 +62,18 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.CanInfra = auth.IsInstanceAdmin(r.Context())
+	if s.notify != nil {
+		via, perr := s.notify.TelegramProxy()
+		switch {
+		case perr != nil:
+			v.ProxyErrKey = proxyErrKey(perr)
+		case via != "":
+			v.ProxySet = true
+			if v.CanInfra { // the proxy is part of the machine: like the Nodes page, operators only
+				v.ProxyVia = via
+			}
+		}
+	}
 	render(w, r, http.StatusOK, templates.Notifications(o, role, v))
 }
 
@@ -296,4 +308,17 @@ func (s *Server) claimTestNotification(orgID int64, now time.Time) bool {
 	}
 	s.testNotifyAt[orgID] = now
 	return true
+}
+
+// proxyErrKey is the i18n key of why the Telegram proxy setting was rejected.
+func proxyErrKey(err error) string {
+	switch {
+	case errors.Is(err, notify.ErrProxyScheme):
+		return "notif.proxy_err_scheme"
+	case errors.Is(err, notify.ErrProxyHost):
+		return "notif.proxy_err_host"
+	case errors.Is(err, notify.ErrProxyPath):
+		return "notif.proxy_err_path"
+	}
+	return "notif.proxy_err_url"
 }

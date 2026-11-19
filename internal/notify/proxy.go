@@ -12,24 +12,31 @@ import (
 // ProxyEnv names the setting that routes Telegram messages through a proxy.
 const ProxyEnv = "KRILL_TELEGRAM_PROXY"
 
-// parseTelegramProxy validates a proxy URL for the Telegram sender. Its
-// errors never repeat the value: it may carry credentials.
+// Why a proxy setting was rejected. They never repeat the value: it may
+// carry credentials (in "user:pw@host:1080" even the "scheme" is the user).
+var (
+	ErrProxyURL    = errors.New("not a valid URL (check the scheme, the host and the port)")
+	ErrProxyScheme = errors.New("unsupported or missing scheme: want socks5h://, socks5://, http:// or https://")
+	ErrProxyHost   = errors.New("no proxy host")
+	ErrProxyPath   = errors.New("a proxy URL has no path, query or fragment")
+)
+
+// parseTelegramProxy validates a proxy URL for the Telegram sender.
 func parseTelegramProxy(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return nil, errors.New("not a valid URL (check the scheme, the host and the port)")
+		return nil, ErrProxyURL
 	}
 	switch u.Scheme {
 	case "socks5", "socks5h", "http", "https":
 	default:
-		// The scheme is not repeated: in "user:pw@host:1080" it is the user.
-		return nil, errors.New("unsupported or missing scheme: want socks5h://, socks5://, http:// or https://")
+		return nil, ErrProxyScheme
 	}
 	if u.Hostname() == "" {
-		return nil, errors.New("no proxy host")
+		return nil, ErrProxyHost
 	}
 	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("a proxy URL has no path, query or fragment")
+		return nil, ErrProxyPath
 	}
 	return u, nil
 }
@@ -69,6 +76,7 @@ func (s *Service) SetTelegramProxy(raw string) (string, error) {
 	}
 	u, err := parseTelegramProxy(raw)
 	if err != nil {
+		s.proxyErr = err
 		err = fmt.Errorf("%s is invalid: %w", ProxyEnv, err)
 		s.send = func(context.Context, string, string, string) error {
 			return fmt.Errorf("telegram: not sent: %w", err)
@@ -87,5 +95,13 @@ func (s *Service) SetTelegramProxy(raw string) (string, error) {
 		}
 		return err
 	}
-	return proxyLabel(u), nil
+	s.proxyVia = proxyLabel(u)
+	return s.proxyVia, nil
+}
+
+// TelegramProxy reports the Telegram proxy setting: the proxy as
+// scheme://host:port (empty: messages go direct), or why the setting was
+// rejected (one of the ErrProxy* errors: messages are not sent).
+func (s *Service) TelegramProxy() (via string, err error) {
+	return s.proxyVia, s.proxyErr
 }

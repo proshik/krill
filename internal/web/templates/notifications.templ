@@ -27,6 +27,34 @@ type NotifyView struct {
 	// CanInfra is true for an instance operator: only they may change the
 	// infrastructure settings (the nodes are shared by every organization).
 	CanInfra bool
+	// Telegram proxy (KRILL_TELEGRAM_PROXY, a setting of the machine): set
+	// when messages go through a proxy; ProxyVia (scheme://host:port, no
+	// credentials) only for an instance operator; ProxyErrKey is the i18n key
+	// of the reason a bad setting was rejected.
+	ProxySet    bool
+	ProxyVia    string
+	ProxyErrKey string
+}
+
+// notifyGuideProxy is the guide section on the Telegram proxy.
+const notifyGuideProxy = "https://github.com/proshik/krill/blob/master/docs/guides/notifications.md#7-telegram-through-a-proxy"
+
+templ notifyProxy(v NotifyView) {
+	if v.ProxyErrKey != "" {
+		<p id="notif-proxy" role="alert" style="color:var(--color-err);font-size:13px;max-width:680px">
+			{ i18n.Tf(ctx, "notif.proxy_bad", i18n.T(ctx, v.ProxyErrKey)) }
+			<a class="underline" href={ templ.SafeURL(notifyGuideProxy) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "notif.proxy_guide") }</a>
+		</p>
+	} else if v.ProxySet {
+		<p id="notif-proxy" style="color:var(--color-muted);font-size:13px;max-width:680px">
+			if v.ProxyVia != "" {
+				{ i18n.Tf(ctx, "notif.proxy_via", v.ProxyVia) }
+			} else {
+				{ i18n.T(ctx, "notif.proxy_on") }
+			}
+			<a class="underline" href={ templ.SafeURL(notifyGuideProxy) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "notif.proxy_guide") }</a>
+		</p>
+	}
 }
 
 // notifyZones are suggestions for the time-zone field; any IANA name works.
@@ -65,6 +93,7 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 					<label class="k-label k-label-required" for="notif-chat">{ i18n.T(ctx, "notif.chat_id") }</label>
 					<input class="k-input" id="notif-chat" name="chat_id" value={ v.ChatID } required/>
 				</div>
+				@notifyProxy(v)
 				<div style="max-width:240px">
 					<label class="k-label" for="notif-lang">{ i18n.T(ctx, "notif.lang") }</label>
 					<select class="k-select" id="notif-lang" name="lang">

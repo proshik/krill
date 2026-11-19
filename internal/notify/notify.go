@@ -90,6 +90,10 @@ type Service struct {
 	// instanceName names this installation in node-level messages; set
 	// after the watchers may already run, hence atomic.
 	instanceName atomic.Pointer[func(ctx context.Context) string]
+	// proxyVia / proxyErr record the Telegram proxy setting for the settings
+	// page (written once by SetTelegramProxy at startup, before any reader).
+	proxyVia string
+	proxyErr error
 }
 
 // SetInstanceName sets how node-level messages and the digest name this

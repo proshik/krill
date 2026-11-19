@@ -191,6 +191,12 @@ with the reason, and every message fails with `telegram: not sent: KRILL_TELEGRA
 invalid: …` — Krill never falls back to sending directly. **Send test message** then shows an
 error, and the reason is in the log line `testNotification: send failed`.
 
+**Settings → Notifications** shows the setting under the chat ID, read-only (it belongs to the
+machine, not to an organization): "Telegram messages are sent via proxy socks5h://127.0.0.1:1080"
+for an instance operator — scheme and address, never the credentials — and "…via a proxy set by
+the installation's administrator" for everyone else. A rejected value shows in red with the
+reason and "Messages are not sent"; with no proxy there is no line at all.
+
 One way to get a proxy is an SSH tunnel to a host that reaches Telegram, kept up by its own
 systemd unit: `ssh -N -D 127.0.0.1:1080 tunnel@other-host`, with the key restricted on the other
 host to `permitopen="api.telegram.org:443"`. Krill does not run or watch the tunnel: while it is

@@ -103,7 +103,10 @@ embedded (`time/tzdata` in `cmd/krill`). **Telegram proxy (2026-11-19):** `KRILL
 choice over `HTTPS_PROXY`, which would route registry/self-update/observability traffic too.
 An invalid value is logged at ERROR and replaces the sender with one that fails every send with
 the reason (no direct fallback, no failed startup: a self-update would roll back); credentials in
-the URL are never logged and are redacted from send errors. See `docs/guides/notifications.md`.
+the URL are never logged and are redacted from send errors. The notifications page shows the
+setting read-only (`Service.TelegramProxy` → `NotifyView.ProxySet/ProxyVia/ProxyErrKey`): the
+address only to an instance operator, like the Nodes page; a rejected value as an error for
+everyone (the `notify.ErrProxy*` reasons map to i18n keys). See `docs/guides/notifications.md`.
 
 **Shared hosts by path (2026-10-02):** implemented on `feat/shared-host-paths`; live
 Let's Encrypt acceptance remains in ROADMAP. Apps of one environment can share a host,
