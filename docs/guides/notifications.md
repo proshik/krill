@@ -122,13 +122,22 @@ reporting into one chat can be told apart.
   node) are not included. CPU is a share of all the node's cores.
 - **Memory limits** count every container with a limit. A container without one is counted
   apart ("without a limit"): it can use the whole node.
-- **Crashes** are the app's failed tasks in Swarm's history over the day: a non-zero exit, an
-  OOM kill, a container killed for failing its healthcheck, a task Swarm could not start. Planned
-  replacements are not counted: a deploy (the old task ends as *shutdown*) and a restart of the
-  Docker daemon (the task fails with "No such container" and Swarm starts a new one). A reboot of
-  a node has not been checked yet: if its tasks end with a non-zero exit instead, they count as
-  crashes. Swarm keeps a few tasks per replica, so for an app that crash-loops the number is a
-  lower bound.
+- **Crashes** are the app's failed tasks in Swarm's history over the day: a non-zero exit code
+  (137 is a SIGKILL — an OOM kill, or a stop that outlived the grace period), a container killed
+  for failing its healthcheck, a task Swarm could not start. Planned stops are not counted:
+  - a deploy — the old task ends as *shutdown*;
+  - an exit on SIGTERM, `non-zero exit (143)` — the Docker daemon stopping the container or a
+    manual `docker stop`. A production worker showed exactly this for a JVM app after
+    `systemctl restart docker`; an app that exits 0 on SIGTERM ends as *complete* and was never
+    counted. A reboot of the node is expected to look the same, but has not been checked;
+  - a container gone under its task, "No such container" — seen after a daemon restart on a test
+    cluster.
+- Only an app that exits within its stop grace period (10 s by default) on SIGTERM avoids being
+  counted when Docker restarts; one that takes longer is SIGKILLed (137), and one with its own
+  stop signal exits with another code (130 for SIGINT) — both count. A healthcheck kill also
+  starts with SIGTERM, but Swarm adds "unhealthy container" to its error, and it counts; an app
+  that exits 143 on its own is not told apart from a stop. Swarm keeps a few tasks per replica,
+  so for an app that crash-loops the number is a lower bound.
 - An app with no samples in the last 10 minutes is listed under **Not running**, **Stopped or
   never deployed** or **No fresh data**, by its Swarm service.
 - **Backups** are read from a run journal that exists since v0.9.0: the first digest after the

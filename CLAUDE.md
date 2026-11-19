@@ -90,8 +90,10 @@ the previous digest when that one was late (≤ 48 h), and splits at 3500 charac
 boundaries without cutting an HTML entity. Restore failures alert through
 `VolumeRestoreFailed`/`BucketRestoreFailed` and are NOT journalled as backup runs. The
 overcommit alert names the deployed app only to a channel of the same organization. Crashes come from `docker`'s optional
-`TaskFailuresSince` (failed/rejected tasks — a lower bound, Swarm keeps few; a task failed with
-"No such container" is a dockerd restart, verified on a dind two-node Swarm, and is skipped; a node reboot is unverified);
+`TaskFailuresSince` (failed/rejected tasks — a lower bound, Swarm keeps few; a task failed with exactly
+`task: non-zero exit (143)` — SIGTERM from a stopping daemon, seen on a production worker after
+`systemctl restart docker` — or with "No such container" (dind) is a planned stop and is skipped,
+while `(143): dockerexec: unhealthy container` stays a crash);
 `ServiceStates` (same `notify.SwarmReader`) tells an app that should run from one stopped on purpose.
 Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
 and limits thresholds are the red marks; table in the guide). tzdata is

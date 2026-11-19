@@ -1180,10 +1180,12 @@ func (e *dockerEngine) Tasks(ctx context.Context) ([]TaskInfo, error) {
 
 // TaskFailuresSince counts, per Swarm service name, the tasks that failed
 // (crashed, were OOM-killed or killed by an unhealthy healthcheck, or were
-// rejected) at or after since. Planned replacements are not failures: a
-// deploy's old task ends in Shutdown, and a task whose container vanished
-// under it (seen on a restart of dockerd) fails with "No such container",
-// which countTaskFailures skips. Swarm keeps a bounded task
+// rejected) at or after since. Planned stops are not failures: a deploy's old
+// task ends in Shutdown, and countTaskFailures skips the two ways a restart
+// of dockerd was seen to end a task — the app exiting on SIGTERM (exit 143,
+// on a production worker) and a container vanished under the task ("No such
+// container", on a docker-in-docker Swarm). An app still running when the
+// stop grace period ends is SIGKILLed (137) and does count. Swarm keeps a bounded task
 // history (5 tasks per slot by default), so a crash-looping service's count
 // is a lower bound.
 func (e *dockerEngine) TaskFailuresSince(ctx context.Context, since time.Time) (map[string]int, error) {
@@ -1202,6 +1204,25 @@ func (e *dockerEngine) TaskFailuresSince(ctx context.Context, since time.Time) (
 	return countTaskFailures(tasks, id2svc, since), nil
 }
 
+// sigtermExit is the whole error of a task whose app exited on SIGTERM
+// (128+15) without being asked to by Swarm: the daemon stopping its
+// containers (a restart of dockerd; presumably a node shutdown too, not
+// checked) or a manual docker stop. A
+// healthcheck kill also starts with SIGTERM, but its error carries a suffix
+// (": dockerexec: unhealthy container") and stays a failure.
+const sigtermExit = "task: non-zero exit (143)"
+
+// plannedStop reports whether a failed task's error is a stop from outside
+// the app rather than a crash.
+func plannedStop(err string) bool {
+	if err == sigtermExit {
+		return true
+	}
+	// The container was removed under a running task (a dockerd restart
+	// that cleaned it up first): exit code 0, Swarm starts a replacement.
+	return strings.HasPrefix(err, "No such container")
+}
+
 func countTaskFailures(tasks []swarm.Task, id2svc map[string]string, since time.Time) map[string]int {
 	out := map[string]int{}
 	for _, t := range tasks {
@@ -1211,10 +1232,7 @@ func countTaskFailures(tasks []swarm.Task, id2svc map[string]string, since time.
 		if t.Status.Timestamp.Before(since) {
 			continue
 		}
-		// The container was removed under a running task: on a restart of
-		// dockerd every task on the node fails this way, with exit code 0,
-		// and Swarm starts a replacement — not the app's fault.
-		if strings.HasPrefix(t.Status.Err, "No such container") {
+		if plannedStop(t.Status.Err) {
 			continue
 		}
 		if name, ok := id2svc[t.ServiceID]; ok {
