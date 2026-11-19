@@ -140,7 +140,6 @@ func shortImage(ref string) string {
 	return name
 }
 
-// humanBytes formats a byte count with binary units, as docker stats does.
 // bytesPair renders "a of b" through the i18n key (two %s), writing the
 // unit once when both sizes share it: "12.9 of 148 GiB", but
 // "584 MiB of 1.5 GiB".
@@ -152,6 +151,7 @@ func bytesPair(ctx context.Context, key string, a, b int64) string {
 	return i18n.Tf(ctx, key, as, bs)
 }
 
+// humanBytes formats a byte count with binary units, as docker stats does.
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {

@@ -127,8 +127,9 @@ reporting into one chat can be told apart.
 
 - **Disk** is what `df` reports for `/` and for Docker's data directory (`/var/lib/docker`, or
   wherever the daemon keeps it) when that is a separate filesystem: used / (used + available), so
-  blocks reserved for root count as full. "Free" is `df`'s *Avail* — what a container can still
-  write — so used + free can be less than the size by the root reserve (5 % on ext4 by default).
+  blocks reserved for root count as full. "Free" is `df`'s *Avail* — what an unprivileged process can still
+  write (a container running as root may also use the reserve) — so used + free can be less than
+  the size by the root reserve (5 % on ext4 by default).
   A line reads `disk /: 10% used (12.9 of 148 GiB), 128 GiB free`; a unit both sizes share is
   written once. Krill takes the snapshot every 10 sampling intervals
   (about 5 minutes by default) — locally on the control-plane node and over the node's SSH

@@ -633,3 +633,27 @@ func TestNodeHeadingNamesTheReason(t *testing.T) {
 		}
 	}
 }
+
+// A yellow node lists its yellow figures; a node whose disk snapshot failed
+// is yellow for that alone; the English phrases render too.
+func TestNodeHeadingYellowAndEnglish(t *testing.T) {
+	const gib = int64(1) << 30
+	d := digestData{DiskThreshold: 85, MemThreshold: 100}
+	disk := metrics.DiskUsage{Mount: "/", Total: 100 * gib, Used: 75 * gib, Avail: 25 * gib} // 75%: yellow
+	n := nodeRow{Name: "w", MemTotal: 10 * gib, MemUsed: 2 * gib, Limits: 85 * gib / 10, NCPU: 2, CPUKnown: true, CPUAvg: 1,
+		Disks: []metrics.DiskUsage{disk}}
+	if got := d.nodeWhy(msgCtx("ru"), n); got != "диск / занят 75%, сумма лимитов 85% памяти ноды" {
+		t.Errorf("yellow node: %q", got)
+	}
+	if got := d.nodeWhy(msgCtx("en"), n); got != "disk / 75% used, memory limits at 85% of its memory" {
+		t.Errorf("yellow node, en: %q", got)
+	}
+	n.Disks, n.Limits = nil, gib
+	if got := d.nodeWhy(msgCtx("ru"), n); got != "нет данных о диске" || d.nodeLevel(n) != lvlWarn {
+		t.Errorf("no disk data: %q (%s)", got, d.nodeLevel(n).mark())
+	}
+	n.MemUsed, n.CPUAvg, n.Disks = 9*gib, 95, []metrics.DiskUsage{disk}
+	if got := d.nodeWhy(msgCtx("en"), n); got != "containers use 90% of its memory, CPU 95% on average" {
+		t.Errorf("red memory and CPU over a yellow disk, en: %q", got)
+	}
+}
