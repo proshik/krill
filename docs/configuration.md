@@ -62,6 +62,7 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `KRILL_HEALTH_POLL_INTERVAL` | `30s` | How often service health is checked for down/recovered alerts. |
+| `KRILL_TELEGRAM_PROXY` | empty | Proxy for Telegram messages only: `socks5h://`, `socks5://`, `http://` or `https://` URL. Empty sends directly; an invalid value fails the sends, never the startup. See [Notifications](guides/notifications.md#7-telegram-through-a-proxy). |
 | `KRILL_TERMINAL_IDLE_TIMEOUT` | `15m` | Closes an idle web-terminal session. `0` disables it. |
 | `KRILL_METRICS_INTERVAL` | `30s` | How often CPU and memory are sampled. |
 | `KRILL_METRICS_RETENTION` | `48h` | How long metric history is kept. |

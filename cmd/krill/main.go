@@ -229,6 +229,11 @@ func run() error {
 	// concurrently with this assignment.
 	notifyStore := notify.NewDBStore(q)
 	notifySvc := notify.New(notifyStore)
+	if via, err := notifySvc.SetTelegramProxy(cfg.TelegramProxy); err != nil {
+		slog.Error("notify: Telegram proxy setting rejected; Telegram messages will fail until it is fixed", "err", err)
+	} else if via != "" {
+		slog.Info("notify: Telegram messages go through a proxy", "proxy", via)
+	}
 	// Node-level alerts (disk, memory overcommit after a deploy) ride the
 	// metrics sampler's ticks; the monitor is wired before the deployer runs.
 	resMonitor := notify.NewResourceMonitor(notifySvc, notifyStore)

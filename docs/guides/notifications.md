@@ -11,7 +11,8 @@ of each organization.
 - [4. Infrastructure alerts](#4-infrastructure-alerts)
 - [5. What the numbers mean](#5-what-the-numbers-mean)
 - [6. Security](#6-security)
-- [7. Troubleshooting](#7-troubleshooting)
+- [7. Telegram through a proxy](#7-telegram-through-a-proxy)
+- [8. Troubleshooting](#8-troubleshooting)
 
 ## 1. Setting up a channel
 
@@ -150,11 +151,57 @@ reporting into one chat can be told apart.
 - Node data reaches only the channels an instance operator opted in (see above).
 - Telegram receives everything a message says; choose the chat accordingly.
 
-## 7. Troubleshooting
+## 7. Telegram through a proxy
+
+Some networks cannot reach `api.telegram.org`: the name resolves to an address that never
+answers, or Telegram is blocked. `KRILL_TELEGRAM_PROXY` sends Krill's Telegram messages — every
+alert, the test message and the digest, for every organization — through a proxy, and nothing
+else. Deploys, image pulls, update checks and backups keep going direct, so they never depend on
+the proxy. (`HTTPS_PROXY` would route all of them; once `KRILL_TELEGRAM_PROXY` is set, it no
+longer applies to Telegram.)
+
+The value is a proxy URL:
+
+| Form | Proxy |
+|------|-------|
+| `socks5h://127.0.0.1:1080` | SOCKS5; the proxy resolves `api.telegram.org` |
+| `socks5://127.0.0.1:1080` | the same — Krill always hands the name to a SOCKS5 proxy |
+| `http://proxy.example:3128` | an HTTP proxy, through `CONNECT` |
+| `https://proxy.example:3128` | the same, with TLS to the proxy |
+
+A user and password go in the URL (`socks5h://user:pass@host:1080`); Krill never logs or shows
+them. Unset or empty means direct, as before. Each message still has 10 seconds in all.
+
+Set it for the service with a systemd drop-in, then restart Krill:
+
+```ini
+# /etc/systemd/system/krill.service.d/20-telegram-proxy.conf
+[Service]
+Environment=KRILL_TELEGRAM_PROXY=socks5h://127.0.0.1:1080
+```
+
+```sh
+sudo systemctl daemon-reload && sudo systemctl restart krill
+```
+
+At startup Krill logs `notify: Telegram messages go through a proxy proxy=socks5h://127.0.0.1:1080`.
+A value it cannot use (a typo, a scheme other than the four above, a path) does not stop Krill:
+it logs `notify: Telegram proxy setting rejected; Telegram messages will fail until it is fixed`
+with the reason, and every message fails with `telegram: not sent: KRILL_TELEGRAM_PROXY is
+invalid: …` — Krill never falls back to sending directly. **Send test message** then shows an
+error, and the reason is in the log line `testNotification: send failed`.
+
+One way to get a proxy is an SSH tunnel to a host that reaches Telegram, kept up by its own
+systemd unit: `ssh -N -D 127.0.0.1:1080 tunnel@other-host`, with the key restricted on the other
+host to `permitopen="api.telegram.org:443"`. Krill does not run or watch the tunnel: while it is
+down, messages fail with a connection error in the log.
+
+## 8. Troubleshooting
 
 - **No messages at all** — **Send test message**. An error there means a wrong token or chat ID,
-  or the bot was never added to the chat. If the stored token cannot be decrypted (the
-  `KRILL_SECRET_KEY` changed), re-enter it.
+  the bot was never added to the chat, or Telegram is out of reach (see
+  [Telegram through a proxy](#7-telegram-through-a-proxy)). If the stored token cannot be
+  decrypted (the `KRILL_SECRET_KEY` changed), re-enter it.
 - **No digest** — check that **Enabled** and **Send a daily digest** are both on and that the time
   zone is what you expect; **Send digest now** shows what the channel would get. Krill logs
   `notify digest sent` (or `notify digest: send failed, will retry`) for every attempt.

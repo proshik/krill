@@ -97,7 +97,13 @@ while `(143): dockerexec: unhealthy container` stays a crash);
 `ServiceStates` (same `notify.SwarmReader`) tells an app that should run from one stopped on purpose.
 Every node, app, deploy and backup line carries 🟢/🟡/🔴 (bands in `digest.go`, the channel's disk
 and limits thresholds are the red marks; table in the guide). tzdata is
-embedded (`time/tzdata` in `cmd/krill`). See `docs/guides/notifications.md`.
+embedded (`time/tzdata` in `cmd/krill`). **Telegram proxy (2026-11-19):** `KRILL_TELEGRAM_PROXY`
+(socks5h/socks5/http/https URL) gives the Telegram sender its own transport
+(`notify.Service.SetTelegramProxy`, called once in `main` before anything sends) — owner's
+choice over `HTTPS_PROXY`, which would route registry/self-update/observability traffic too.
+An invalid value is logged at ERROR and replaces the sender with one that fails every send with
+the reason (no direct fallback, no failed startup: a self-update would roll back); credentials in
+the URL are never logged and are redacted from send errors. See `docs/guides/notifications.md`.
 
 **Shared hosts by path (2026-10-02):** implemented on `feat/shared-host-paths`; live
 Let's Encrypt acceptance remains in ROADMAP. Apps of one environment can share a host,

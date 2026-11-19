@@ -57,6 +57,11 @@ type Config struct {
 	// HealthPollInterval is how often the notification health watcher polls
 	// service state to detect apps going down / recovering.
 	HealthPollInterval time.Duration `env:"KRILL_HEALTH_POLL_INTERVAL" envDefault:"30s"`
+	// TelegramProxy routes Telegram messages (and nothing else) through a
+	// proxy: socks5h://, socks5://, http:// or https:// URL. Validated by
+	// notify.Service.SetTelegramProxy, never here: a bad value must not stop
+	// Krill from starting (a self-update would roll back), it fails the sends.
+	TelegramProxy string `env:"KRILL_TELEGRAM_PROXY"`
 	// TerminalIdleTimeout closes an interactive web-terminal session after this
 	// long with no I/O (reaps abandoned shells). 0 disables the idle timeout.
 	TerminalIdleTimeout time.Duration `env:"KRILL_TERMINAL_IDLE_TIMEOUT" envDefault:"15m"`

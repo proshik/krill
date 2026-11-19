@@ -22,6 +22,11 @@ func sendTelegram(ctx context.Context, token, chatID, text string) error {
 
 // sendTelegramTo is sendTelegram with an overridable base URL (for tests).
 func sendTelegramTo(ctx context.Context, base, token, chatID, text string) error {
+	return sendTelegramWith(ctx, httpClient, base, token, chatID, text)
+}
+
+// sendTelegramWith posts a message through client.
+func sendTelegramWith(ctx context.Context, client *http.Client, base, token, chatID, text string) error {
 	url := base + "/bot" + token + "/sendMessage"
 	payload, _ := json.Marshal(map[string]any{
 		"chat_id":                  chatID,
@@ -34,7 +39,7 @@ func sendTelegramTo(ctx context.Context, base, token, chatID, text string) error
 		return redactToken(err.Error(), token)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		// url.Error embeds the request URL (and thus the token) — redact it.
 		return redactToken(err.Error(), token)

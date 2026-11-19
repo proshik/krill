@@ -269,7 +269,7 @@ func (s *Server) testNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.notify.SendTest(r.Context(), botToken, ch.ChatID, "Krill: test message"); err != nil {
-		logFrom(r).Info("testNotification: send failed", "org_id", o.ID) // never log the token
+		logFrom(r).Info("testNotification: send failed", "org_id", o.ID, "err", err) // the token is redacted from send errors
 		s.flashErr(w, r, i18n.T(r.Context(), "notif.test_fail"))
 		return
 	}

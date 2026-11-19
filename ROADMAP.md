@@ -49,7 +49,8 @@ describes them in detail.
   report successful deploys, nodes' disks over a threshold and memory limits overcommitted
   after a deploy (opt-in by an instance operator), and send a daily digest of deploys,
   backups (with sizes), node resources and app memory/crashes, each marked 🟢/🟡/🔴, in the channel's language
-  and time zone — see [Notifications](docs/guides/notifications.md). Since v0.7.0 a refused
+  and time zone, optionally through a Telegram-only proxy (`KRILL_TELEGRAM_PROXY`) — see
+  [Notifications](docs/guides/notifications.md). Since v0.7.0 a refused
   deploy says why (UI, REST, MCP), the Advanced tab shows effective limits and recent
   tasks with out-of-memory and slow-start hints, a logical database's page shows its
   connection budget and advisory locks, and the sidebar becomes a menu on narrow screens.
@@ -171,8 +172,10 @@ Verified in code and tests, but not yet exercised on a real environment:
     digest arriving at its scheduled time in the channel's zone (and once only across a
     restart), disk snapshots on the control plane and over SSH on a worker (`df` on the real
     hosts), a disk alert, its daily repeat and its recovery, and the memory-overcommit warning
-    after a deploy. Covered so far by unit tests with fake senders and by store tests against a
-    real Postgres. See [Notifications](docs/guides/notifications.md).
+    after a deploy, and messages through `KRILL_TELEGRAM_PROXY` (an SSH SOCKS tunnel) from an
+    install that cannot reach Telegram directly. Covered so far by unit tests with fake senders,
+    test SOCKS5/HTTP proxies and store tests against a real Postgres. See
+    [Notifications](docs/guides/notifications.md).
 
 ## Open
 
