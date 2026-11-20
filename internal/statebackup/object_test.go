@@ -50,7 +50,7 @@ func keysOf(o []backup.Object) []string {
 }
 
 func sched(d int) string { return ScheduledKey("ops", t0.AddDate(0, 0, d)) }
-func pre(d int) string   { return PreUpdateKey("ops", t0.AddDate(0, 0, d), "v1", "v2") }
+func pre(d int) string   { return PreUpdateKey("ops", t0.AddDate(0, 0, d), "v1.0.0", "v1.0.1") }
 
 func TestPrunableScheduled(t *testing.T) {
 	in := objs(sched(3), sched(0), sched(2), sched(1), pre(0), pre(1),
@@ -86,5 +86,28 @@ func TestPrunableKeepFloor(t *testing.T) {
 	got := Prunable(objs(sched(0), sched(1)), ScheduledDir("ops"), false, 0)
 	if len(got) != 1 || got[0].Key != sched(0) {
 		t.Fatalf("got %v", keysOf(got))
+	}
+}
+
+// Only names the updater writes count: an operator's copy, or a name with a
+// version the updater never runs with, is neither kept nor pruned.
+func TestPrunablePreUpdateIgnoresCopies(t *testing.T) {
+	dir := PreUpdateDir("ops")
+	stamp := t0.UTC().Format(stampLayout)
+	copies := []string{
+		dir + stamp + "_v1.0.0_to_v1.2.4-copy.sql.gz.age",
+		dir + stamp + "_v1.0.0-copy_to_v1.2.4.sql.gz.age",
+		dir + stamp + "_v1.0.0_to_v1.2.sql.gz.age",
+		dir + stamp + "_v1_to_v2.sql.gz.age",
+		dir + stamp + "_v1.0.0_to_v1.2.4.copy.sql.gz.age",
+		dir + stamp + "_v1.0.0_to_vX.Y.Z.sql.gz.age",
+	}
+	in := objs(copies...)
+	for i := 0; i < PreUpdateKeep+1; i++ {
+		in = append(in, backup.Object{Key: pre(-i - 1)})
+	}
+	got := keysOf(Prunable(in, dir, true, PreUpdateKeep))
+	if len(got) != 1 || got[0] != pre(-PreUpdateKeep-1) {
+		t.Fatalf("got %v; want only the oldest generated dump", got)
 	}
 }

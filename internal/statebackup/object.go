@@ -16,7 +16,10 @@ const stampLayout = "2006-01-02T15-04-05Z"
 
 var (
 	scheduledRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ\.sql\.gz\.age$`)
-	preUpdateRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ_v[0-9A-Za-z.\-]+_to_v[0-9A-Za-z.\-]+\.sql\.gz\.age$`)
+	// Both versions are release tags (vMAJOR.MINOR.PATCH): the updater runs
+	// only from a release build to a tag selfupdate.ValidTag accepts, so any
+	// other name (an operator's copy, say) is never counted or pruned.
+	preUpdateRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ_v\d+\.\d+\.\d+_to_v\d+\.\d+\.\d+\.sql\.gz\.age$`)
 	slashRuns   = regexp.MustCompile(`/+`)
 )
 
