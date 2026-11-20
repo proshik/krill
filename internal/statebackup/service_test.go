@@ -826,6 +826,53 @@ func TestStartRunsInBackground(t *testing.T) {
 	}
 }
 
+// flakyViewStore fails LoadView from the failFrom-th call on.
+type flakyViewStore struct {
+	*DBStore
+	mu       sync.Mutex
+	calls    int
+	failFrom int
+}
+
+func (s *flakyViewStore) LoadView(ctx context.Context) (Settings, error) {
+	s.mu.Lock()
+	s.calls++
+	n := s.calls
+	s.mu.Unlock()
+	if n >= s.failFrom {
+		return Settings{}, errors.New("database is restarting")
+	}
+	return s.DBStore.LoadView(ctx)
+}
+
+// A run Start admitted whose settings re-read fails is a failed run: it is
+// journalled and alerted, not lost behind the "started" confirmation.
+func TestStartedRunSettingsErrorIsJournalled(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	f.svc.store = &flakyViewStore{DBStore: f.st, failFrom: 2}
+	if err := f.svc.Start(TriggerManual); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for f.svc.InFlight() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("background run did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "error" || runs[0].Error != errSettings.Error() || runs[0].Trigger != TriggerManual {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if n := f.notes.got(); len(n) != 1 || n[0].reason != errSettings.Error() {
+		t.Fatalf("notifications = %+v", n)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+}
+
 // The updater's last busy check runs after its own snapshot; a manual or
 // scheduled run admitted after it would be cut short by the restart.
 func TestStartRefusedWhileUpdating(t *testing.T) {

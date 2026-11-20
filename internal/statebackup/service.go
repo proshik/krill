@@ -426,14 +426,6 @@ func (a schedStore) ListEnabledBackups(ctx context.Context) ([]backup.SchedBacku
 // returned without a journal row; every other outcome is journalled, and a
 // failure is alerted.
 func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) error {
-	ok, err := s.configured(ctx, trigger)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ErrNotConfigured
-	}
-
 	rec := Run{Trigger: trigger, FromVersion: from, ToVersion: to, StartedAt: time.Now()}
 	secrets := []string{s.dsn}
 	redact := func(t string) string { return redactAll(t, secrets...) }
@@ -452,6 +444,17 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 			cancel()
 		}
 		return e
+	}
+
+	// The caller already admitted the run, so a settings read that fails
+	// here is a failed run (journalled and alerted); finding the backup
+	// paused or not set up is still a refusal.
+	ok, err := s.configured(ctx, trigger)
+	if err != nil {
+		return fail(errSettings, errSettings.Error())
+	}
+	if !ok {
+		return ErrNotConfigured
 	}
 
 	st, err := s.store.Load(ctx)
