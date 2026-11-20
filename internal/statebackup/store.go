@@ -111,8 +111,8 @@ func (s *DBStore) Save(ctx context.Context, v Settings) error {
 	if retention == 0 {
 		retention = DefaultRetention
 	}
+	// v.Enabled is not written: only SetEnabled changes the flag.
 	return s.q.UpsertStateBackupSettings(ctx, db.UpsertStateBackupSettingsParams{
-		Enabled:  v.Enabled,
 		Endpoint: v.Endpoint, Bucket: v.Bucket, Region: v.Region, AccessKey: v.AccessKey,
 		SecretKey: enc, Prefix: v.Prefix, Recipient: v.Recipient, Schedule: v.Schedule,
 		Retention: int32(retention),

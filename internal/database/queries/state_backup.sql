@@ -2,10 +2,12 @@
 SELECT * FROM state_backup_settings WHERE id = 1;
 
 -- name: UpsertStateBackupSettings :exec
-INSERT INTO state_backup_settings (id, enabled, endpoint, bucket, region, access_key, secret_key, prefix, recipient, schedule, retention, updated_at)
-VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+-- enabled is left out on purpose: a new row starts paused (the column's
+-- default) and only SetStateBackupEnabled changes it, so a save that read
+-- the flag before a concurrent pause or resume cannot undo it.
+INSERT INTO state_backup_settings (id, endpoint, bucket, region, access_key, secret_key, prefix, recipient, schedule, retention, updated_at)
+VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 ON CONFLICT (id) DO UPDATE SET
-    enabled    = EXCLUDED.enabled,
     endpoint   = EXCLUDED.endpoint,
     bucket     = EXCLUDED.bucket,
     region     = EXCLUDED.region,

@@ -180,10 +180,9 @@ func (q *Queries) SetStateBackupEnabled(ctx context.Context, enabled bool) (int6
 }
 
 const upsertStateBackupSettings = `-- name: UpsertStateBackupSettings :exec
-INSERT INTO state_backup_settings (id, enabled, endpoint, bucket, region, access_key, secret_key, prefix, recipient, schedule, retention, updated_at)
-VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+INSERT INTO state_backup_settings (id, endpoint, bucket, region, access_key, secret_key, prefix, recipient, schedule, retention, updated_at)
+VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 ON CONFLICT (id) DO UPDATE SET
-    enabled    = EXCLUDED.enabled,
     endpoint   = EXCLUDED.endpoint,
     bucket     = EXCLUDED.bucket,
     region     = EXCLUDED.region,
@@ -197,7 +196,6 @@ ON CONFLICT (id) DO UPDATE SET
 `
 
 type UpsertStateBackupSettingsParams struct {
-	Enabled   bool   `json:"enabled"`
 	Endpoint  string `json:"endpoint"`
 	Bucket    string `json:"bucket"`
 	Region    string `json:"region"`
@@ -209,9 +207,11 @@ type UpsertStateBackupSettingsParams struct {
 	Retention int32  `json:"retention"`
 }
 
+// enabled is left out on purpose: a new row starts paused (the column's
+// default) and only SetStateBackupEnabled changes it, so a save that read
+// the flag before a concurrent pause or resume cannot undo it.
 func (q *Queries) UpsertStateBackupSettings(ctx context.Context, arg UpsertStateBackupSettingsParams) error {
 	_, err := q.db.Exec(ctx, upsertStateBackupSettings,
-		arg.Enabled,
 		arg.Endpoint,
 		arg.Bucket,
 		arg.Region,

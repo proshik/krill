@@ -99,20 +99,67 @@ func TestStoreUndecryptable(t *testing.T) {
 func TestStoreEnabledCheck(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	st := NewDBStore(db.New(pool))
+	ctx := context.Background()
 	s := sample()
-	s.Enabled, s.Recipient = true, ""
-	if err := st.Save(context.Background(), s); err == nil {
+	s.Recipient = ""
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetEnabled(ctx, true); err == nil {
 		t.Fatal("enabled without a recipient must fail")
 	}
 	s.Recipient = "age1abc"
-	if err := st.Save(context.Background(), s); err != nil {
+	if err := st.Save(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetEnabled(context.Background(), false); err != nil {
+	if err := st.SetEnabled(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.LoadView(context.Background()); got.Enabled {
+	s.Recipient = ""
+	if err := st.Save(ctx, s); err == nil {
+		t.Fatal("clearing the recipient of an enabled backup must fail")
+	}
+	if err := st.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.LoadView(ctx); got.Enabled {
 		t.Error("still enabled")
+	}
+}
+
+// Only SetEnabled changes the flag: a save carrying a stale Enabled (read
+// before a concurrent pause or resume) must not undo it.
+func TestStoreSaveNeverChangesEnabled(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := NewDBStore(db.New(pool))
+	ctx := context.Background()
+	s := sample()
+	s.Enabled = true
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.LoadView(ctx); got.Enabled {
+		t.Fatal("a first save must start paused")
+	}
+	if err := st.SetEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	s.Enabled = false // read before the resume
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.LoadView(ctx); !got.Enabled {
+		t.Fatal("a stale save undid the resume")
+	}
+	if err := st.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	s.Enabled = true // read before the pause
+	if err := st.Save(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.LoadView(ctx); got.Enabled {
+		t.Fatal("a stale save undid the pause")
 	}
 }
 

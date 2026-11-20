@@ -392,6 +392,9 @@ type Querier interface {
 	UpsertNodeDisk(ctx context.Context, arg UpsertNodeDiskParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
+	// enabled is left out on purpose: a new row starts paused (the column's
+	// default) and only SetStateBackupEnabled changes it, so a save that read
+	// the flag before a concurrent pause or resume cannot undo it.
 	UpsertStateBackupSettings(ctx context.Context, arg UpsertStateBackupSettingsParams) error
 	VolumeBackupNotifyTarget(ctx context.Context, id int64) (VolumeBackupNotifyTargetRow, error)
 }
