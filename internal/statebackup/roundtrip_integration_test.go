@@ -485,6 +485,19 @@ func TestStateBackupVerifyFullCABundle(t *testing.T) {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 
+	// The dump verifies the certificate itself: with a bundle from another
+	// CA it must fail, even though libpq's default (prefer) would connect
+	// and the pool stays connected.
+	_, otherCA, _, _ := rtTLSFiles(t)
+	svc.caBundles = []string{otherCA}
+	if err := svc.Run(ctx, TriggerManual); err == nil || !strings.Contains(err.Error(), "certificate verify failed") {
+		t.Fatalf("a dump trusting another CA = %v; want a certificate verification failure", err)
+	}
+	if objs, err := backup.List(ctx, dst, rtPrefix+"/", true); err != nil || len(objs) != 0 {
+		t.Fatalf("objects after the refused dump = %+v, err = %v", objs, err)
+	}
+	svc.caBundles = []string{filepath.Join(dir, "missing-bundle.pem"), caFile}
+
 	if err := svc.Run(ctx, TriggerManual); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
