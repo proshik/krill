@@ -696,7 +696,7 @@ func TestStart_BusyAgainBeforeInstalling(t *testing.T) {
 			t.Errorf("unexpected command %q", c)
 		}
 	}
-	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertCmds(t, h.runner.cmds()) // refused before the host changes: no systemd command at all
 	assertMissing(t, filepath.Join(h.unitDir, "krill.service.d", "10-krill-update.conf"))
 	if n := h.execCount(); n != 1 {
 		t.Errorf("staged binary executed %d times, want 1 (the smoke test runs before the check)", n)
@@ -1659,7 +1659,7 @@ func TestInstallSnapshotOrder(t *testing.T) {
 	if st.Phase != PhaseRestarting || st.Err != nil {
 		t.Fatalf("Status() = %+v, want restarting with no error", st)
 	}
-	want := []string{"busy", "stop-timers", "smoke", "busy", "snapshot", "busy", "daemon-reload", "arm-timer", "restart"}
+	want := []string{"busy", "smoke", "busy", "snapshot", "busy", "stop-timers", "daemon-reload", "arm-timer", "restart"}
 	if got := log.get(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("job steps = %v, want %v", got, want)
 	}
@@ -1692,7 +1692,7 @@ func TestInstallSnapshotFailureLeavesNothing(t *testing.T) {
 	}
 	h.assertUntouched(t)
 	h.assertNoTimer(t)
-	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertCmds(t, h.runner.cmds()) // refused before the host changes: no systemd command at all
 	assertMissing(t, h.dropIn())
 	assertMissing(t, filepath.Join(h.binDir, ".krill-"+testTag+".tmp"))
 }
@@ -1758,7 +1758,7 @@ func TestInstallBusyAfterSnapshot(t *testing.T) {
 	assertBusyFailure(t, st, "deploy")
 	h.assertUntouched(t)
 	h.assertNoTimer(t)
-	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertCmds(t, h.runner.cmds()) // refused before the host changes: no systemd command at all
 	assertMissing(t, h.dropIn())
 }
 
@@ -1773,7 +1773,7 @@ func TestInstallNoSnapshotFunc(t *testing.T) {
 	if st.Phase != PhaseRestarting || st.Err != nil {
 		t.Fatalf("Status() = %+v, want restarting with no error", st)
 	}
-	want := []string{"busy", "stop-timers", "smoke", "busy", "daemon-reload", "arm-timer", "restart"}
+	want := []string{"busy", "smoke", "busy", "stop-timers", "daemon-reload", "arm-timer", "restart"}
 	if got := log.get(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("job steps = %v, want %v", got, want)
 	}

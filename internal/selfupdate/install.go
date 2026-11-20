@@ -77,12 +77,7 @@ func (u *Updater) install(ctx context.Context, tag string) (err error) {
 		}
 	}()
 
-	// 1. A revert or restart unit left from an earlier attempt would make
-	// systemd-run refuse the unit name; staged files from a dead job are
-	// garbage.
-	if err := u.runCmd(ctx, u.stopTimerCmd()); err != nil {
-		return fmt.Errorf("clearing old update timers: %w", err)
-	}
+	// 1. Staged files from a dead job are garbage.
 	removeStaged(dir)
 
 	// 2. The checksum listing, which must name our asset.
@@ -141,8 +136,16 @@ func (u *Updater) install(ctx context.Context, tag string) (err error) {
 		}
 	}
 
-	// 6. Keep a crash-looping new binary restarting until the timer fires.
+	// 6. From here on the host changes. A revert or restart unit left from an
+	// earlier attempt would make systemd-run refuse the unit name; clearing
+	// it waits until now, so an attempt refused above (busy, a failed
+	// snapshot) leaves systemd as it found it.
 	u.setPhase(PhaseInstalling)
+	if err := u.runCmd(ctx, u.stopTimerCmd()); err != nil {
+		return fmt.Errorf("clearing old update timers: %w", err)
+	}
+
+	// Keep a crash-looping new binary restarting until the timer fires.
 	changed, err := writeDropIn(u.unitDir, u.unit)
 	if err != nil {
 		return fmt.Errorf("writing the systemd drop-in: %w", err)
