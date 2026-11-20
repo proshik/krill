@@ -1,6 +1,7 @@
 package statebackup
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -562,8 +563,15 @@ func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient 
 			return
 		}
 		gz := gzip.NewWriter(aw)
-		if err := s.runner.RunOneOff(dumpCtx, spec, gz); err != nil {
+		tail := newDumpTail(gz)
+		if err := s.runner.RunOneOff(dumpCtx, spec, tail); err != nil {
 			failDump("the dump failed: "+ext(err.Error()), err)
+			return
+		}
+		// A clean exit does not prove the whole output arrived: an attach
+		// stream can end early. pg_dump writes its footer last.
+		if !tail.complete() {
+			failDump(errIncompleteDump.Error(), errIncompleteDump)
 			return
 		}
 		if err := gz.Close(); err != nil {
@@ -593,6 +601,42 @@ func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient 
 		return 0, "the upload failed: " + ext(uerr.Error())
 	}
 	return counted.N, ""
+}
+
+// dumpFooter is the line pg_dump's plain format ends with (followed only by
+// comment lines and, since 13.22/14.19/15.14/16.10/17.6, an \unrestrict line).
+const dumpFooter = "\n-- PostgreSQL database dump complete\n"
+
+// dumpTailSize is how much of the end of the dump is kept for the footer
+// check; it leaves room for what pg_dump prints after the footer.
+const dumpTailSize = 1024
+
+var errIncompleteDump = errors.New("the dump ended without pg_dump's completion footer")
+
+// dumpTail passes the dump through to w and keeps its last bytes.
+type dumpTail struct {
+	w   io.Writer
+	buf []byte
+}
+
+func newDumpTail(w io.Writer) *dumpTail {
+	// The leading newline lets a footer at the very start of the stream
+	// count as the start of a line.
+	return &dumpTail{w: w, buf: []byte{'\n'}}
+}
+
+func (t *dumpTail) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	t.buf = append(t.buf, p[:n]...)
+	if over := len(t.buf) - dumpTailSize; over > 0 {
+		t.buf = append(t.buf[:0], t.buf[over:]...)
+	}
+	return n, err
+}
+
+// complete reports whether the dump's end carries pg_dump's footer.
+func (t *dumpTail) complete() bool {
+	return bytes.Contains(t.buf, []byte(dumpFooter))
 }
 
 // finish journals rec on a context that survives the run's own deadline.

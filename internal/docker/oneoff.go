@@ -3,6 +3,8 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,7 +101,7 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 		return fmt.Errorf("start one-off container: %w", err)
 	}
 	var stderr cappedBuffer
-	if _, err := stdcopy.StdCopy(out, &stderr, att.Reader); err != nil {
+	if _, err := stdcopy.StdCopy(out, &stderr, &frameReader{r: att.Reader}); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -109,6 +111,40 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 		return err
 	}
 	return waitContainer(ctx, cli, cid, "one-off container", &stderr.buf)
+}
+
+// frameReader passes Docker's multiplexed attach stream through and turns an
+// EOF inside a frame into io.ErrUnexpectedEOF: stdcopy.StdCopy reports a
+// stream cut mid-frame as a clean end, and the frame's bytes are then lost
+// without an error.
+type frameReader struct {
+	r    io.Reader
+	hdr  int // header bytes of the current frame seen so far
+	size [4]byte
+	left int // payload bytes of the current frame still to come
+}
+
+func (f *frameReader) Read(p []byte) (int, error) {
+	n, err := f.r.Read(p)
+	for b := p[:n]; len(b) > 0; {
+		if f.left > 0 {
+			k := min(f.left, len(b))
+			f.left, b = f.left-k, b[k:]
+			continue
+		}
+		// Header: 1 byte stream, 3 bytes padding, 4 bytes big-endian size.
+		if f.hdr >= 4 {
+			f.size[f.hdr-4] = b[0]
+		}
+		f.hdr, b = f.hdr+1, b[1:]
+		if f.hdr == 8 {
+			f.hdr, f.left = 0, int(binary.BigEndian.Uint32(f.size[:]))
+		}
+	}
+	if errors.Is(err, io.EOF) && (f.hdr > 0 || f.left > 0) {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
 }
 
 // removeOneOff force-removes a one-off container together with its anonymous

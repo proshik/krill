@@ -375,6 +375,50 @@ func TestRunUploadErrorStopsRunner(t *testing.T) {
 	}
 }
 
+// A dump whose output stops before pg_dump's footer (an attach stream that
+// ended early) must not leave an object, even though the runner succeeded.
+func TestRunTruncatedDumpLeavesNoObject(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	body := "--\n-- PostgreSQL database dump\n--\n\nCOPY public.users (id) FROM stdin;\n1\n"
+	for name, emit := range map[string]string{
+		"cut before the footer":         body,
+		"footer text inside a line":     body + "x-- PostgreSQL database dump complete\n",
+		"footer pushed out of the tail": body + dumpDone + strings.Repeat("y", dumpTailSize),
+	} {
+		f.runner.emit = []byte(emit)
+		err := f.svc.Run(context.Background(), TriggerManual)
+		if err == nil || !strings.Contains(err.Error(), errIncompleteDump.Error()) {
+			t.Fatalf("%s: Run = %v", name, err)
+		}
+		if keys := f.keys(t, ""); len(keys) != 0 {
+			t.Fatalf("%s: objects after a truncated dump: %q", name, keys)
+		}
+	}
+	runs := f.runs(t)
+	if len(runs) != 3 || runs[0].Status != "error" || runs[0].Error != errIncompleteDump.Error() {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+// What current pg_dump prints after the footer must not fail the check.
+func TestRunAcceptsTextAfterFooter(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	emit := "--\n-- PostgreSQL database dump\n--\n\n\\restrict k3y\n\n--\n" + dumpDone + "--\n\n\\unrestrict k3y\n\n"
+	f.runner.emit = []byte(emit)
+	if err := f.svc.Run(context.Background(), TriggerManual); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	keys := f.keys(t, "ops/")
+	if len(keys) != 1 {
+		t.Fatalf("objects = %q", keys)
+	}
+	if got := f.decrypt(t, keys[0]); string(got) != emit {
+		t.Fatalf("decrypted dump = %q", got)
+	}
+}
+
 func TestRunMultipartSizeCheck(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, nil)
@@ -382,6 +426,7 @@ func TestRunMultipartSizeCheck(t *testing.T) {
 	if _, err := crand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
+	payload = append(payload, "\n"+dumpDone...) // a dump must end with the footer
 	f.runner.emit = payload
 	ctx := context.Background()
 	if err := f.svc.Run(ctx, TriggerSchedule); err != nil {
