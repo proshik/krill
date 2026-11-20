@@ -313,10 +313,11 @@ The workloads kept running, so nothing needs redeploying except what the failed 
 
 ### Test a restore regularly
 
-Restore into a throwaway container, check it, and remove it:
+Restore into a throwaway container, check it, and remove it. Use the image of your server's own
+Postgres major version (`postgres:<major>-alpine`; the bundled install runs 17):
 
 ```sh
-docker run -d --rm --name krill-restore-test -e POSTGRES_PASSWORD=x postgres:17-alpine
+docker run -d --rm --name krill-restore-test -e POSTGRES_PASSWORD=x postgres:<major>-alpine
 # pipe the snapshot into it as in step A.5, with `docker exec -i krill-restore-test psql -U postgres`
 docker exec krill-restore-test psql -U postgres -c 'SELECT version, dirty FROM schema_migrations' -c 'SELECT count(*) FROM applications'
 docker rm -f krill-restore-test
