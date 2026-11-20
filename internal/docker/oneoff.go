@@ -59,7 +59,9 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	if err := ensureImageOn(ctx, cli, spec.Image); err != nil {
 		return fmt.Errorf("prepare image %s: %w", spec.Image, err)
 	}
-	host := &container.HostConfig{NetworkMode: "none"}
+	// Output is read only through attach. A logging driver would keep a
+	// second, unencrypted copy of it (json-file writes it to disk).
+	host := &container.HostConfig{NetworkMode: "none", LogConfig: container.LogConfig{Type: "none"}}
 	if spec.HostNetwork {
 		host.NetworkMode = "host"
 	}

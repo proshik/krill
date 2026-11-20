@@ -176,3 +176,55 @@ func TestRunOneOffCancelRemovesContainer(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 }
+
+// runWatched runs spec (labelled value) and inspects its container while it
+// is still running; spec's command must stay up for a moment.
+func runWatched(t *testing.T, e *dockerEngine, spec OneOffSpec, value string) (container.InspectResponse, string, error) {
+	t.Helper()
+	ctx := context.Background()
+	spec.Labels = map[string]string{OneOffRoleLabel: value}
+	var out bytes.Buffer
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.RunOneOff(ctx, spec, &out) }()
+	var seen container.InspectResponse
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatal("the one-off container never appeared")
+		}
+		list, err := e.cli.ContainerList(ctx, container.ListOptions{
+			All: true, Filters: filters.NewArgs(filters.Arg("label", OneOffRoleLabel+"="+value)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(list) > 0 {
+			if seen, err = e.cli.ContainerInspect(ctx, list[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	err := <-errCh
+	return seen, out.String(), err
+}
+
+func TestRunOneOffKeepsNoLog(t *testing.T) {
+	e := oneOffEngine(t)
+	seen, out, err := runWatched(t, e, OneOffSpec{
+		Image: busyboxImage, Cmd: []string{"sh", "-c", "sleep 1; printf hello"},
+	}, "oneoff-nolog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen.HostConfig == nil {
+		t.Fatal("inspect returned no host config")
+	}
+	if got := seen.HostConfig.LogConfig.Type; got != "none" {
+		t.Fatalf("log driver = %q, want none: the daemon would keep a copy of the output", got)
+	}
+	if out != "hello" {
+		t.Fatalf("out = %q: attach must still deliver the output", out)
+	}
+}
