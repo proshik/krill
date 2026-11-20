@@ -538,6 +538,41 @@ func TestRunMultipartSizeCheck(t *testing.T) {
 	}
 }
 
+// The size check runs against what the storage reports: a mismatch fails the
+// run, deletes the new object and leaves the older recovery points alone.
+func TestRunSizeMismatchDeletesNewObject(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, func(s *Settings) { s.Retention = 1 })
+	older := []string{ScheduledKey("ops", t0.Add(-2*time.Hour)), ScheduledKey("ops", t0.Add(-time.Hour))}
+	f.seed(t, older...)
+	var headed []string
+	f.svc.head = func(ctx context.Context, d backup.Destination, key string, allowPrivate bool) (int64, error) {
+		headed = append(headed, key)
+		n, err := backup.Head(ctx, d, key, allowPrivate)
+		return n + 1, err
+	}
+	err := f.svc.Run(context.Background(), TriggerSchedule)
+	if err == nil || !strings.Contains(err.Error(), "were sent; it was deleted") {
+		t.Fatalf("Run = %v", err)
+	}
+	keys := f.keys(t, ScheduledDir("ops"))
+	if len(headed) != 1 || len(keys) != 2 || keys[0] == headed[0] || keys[1] == headed[0] {
+		t.Fatalf("objects after a size mismatch: %q (checked %q)", keys, headed)
+	}
+	for _, k := range older {
+		if k != keys[0] && k != keys[1] {
+			t.Fatalf("older recovery point %q is gone: %q", k, keys)
+		}
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "error" || runs[0].ObjectKey != "" {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if n := f.notes.got(); len(n) != 1 {
+		t.Fatalf("notifications = %+v", n)
+	}
+}
+
 func TestRunRetention(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, func(s *Settings) { s.Retention = 2 })

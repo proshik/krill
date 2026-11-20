@@ -76,6 +76,8 @@ type Service struct {
 	notifier     Notifier
 	onChange     func()
 	updateActive func() bool
+	// head reads a stored object's size (backup.Head; a test hook).
+	head func(ctx context.Context, d backup.Destination, key string, allowPrivate bool) (int64, error)
 
 	mu       sync.Mutex
 	inFlight bool
@@ -84,7 +86,7 @@ type Service struct {
 // New builds the service. A nil runner is allowed; every run then fails with
 // ErrNoRunner.
 func New(q Querier, runner docker.OneOffRunner, store Store, dsn string, allowPrivate bool) *Service {
-	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles}
+	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles, head: backup.Head}
 }
 
 // SetNotifier wires failure alerts (no-op if never set).
@@ -517,7 +519,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 		return fail(nil, msg)
 	}
 
-	size, err := backup.Head(ctx, dst, key, s.allowPrivate)
+	size, err := s.head(ctx, dst, key, s.allowPrivate)
 	if err != nil || size != n {
 		cause := ""
 		if err != nil {
