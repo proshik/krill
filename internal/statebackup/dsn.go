@@ -14,8 +14,14 @@ import (
 
 // ConnEnv is a libpq environment derived from a DSN.
 type ConnEnv struct {
-	Env   []string // "PGHOST=…", … — PGPASSWORD included; never log
-	Files []string // host paths to bind-mount read-only at the same path
+	// Env is "PGHOST=…", …, without the password: it becomes part of the dump
+	// container's config, which docker inspect and a debug-level daemon log
+	// show. Never log it anyway.
+	Env []string
+	// Password is the effective password ("" when there is none); it reaches
+	// the container on its stdin only. Never log.
+	Password string
+	Files    []string // host paths to bind-mount read-only at the same path
 	// MinClientMajor is the oldest pg_dump major that honors Env (0 = any):
 	// sslnegotiation=direct is libpq 17+.
 	MinClientMajor int
@@ -39,6 +45,7 @@ var (
 	ErrCertFile    = errors.New("SSL_CERT_FILE in Krill's environment names a missing, relative or non-regular file, which the dump container cannot use as its CA bundle")
 	ErrCertDir     = errors.New("Krill's environment sets SSL_CERT_DIR, whose CA certificates the dump container cannot reproduce; add sslrootcert=<path to the CA file> to KRILL_DATABASE_URL")
 	ErrWeakDirect  = errors.New("sslnegotiation=direct needs sslmode=require, verify-ca or verify-full for the dump; sslmode=allow is not supported with it")
+	ErrPasswordLF  = errors.New("the database password contains a line break, which the dump container cannot be given")
 )
 
 // allowed maps the libpq parameters that are passed through to their
@@ -75,8 +82,9 @@ func noRepeat(k string) bool {
 	return false
 }
 
-// ConnFromDSN maps a Postgres DSN to libpq environment variables so the
-// password reaches pg_dump through the environment, never through argv.
+// ConnFromDSN maps a Postgres DSN to libpq environment variables plus the
+// password, which the caller hands to the dump container on its stdin: never
+// through argv or the container's environment.
 //
 // The control-plane pool (pgconn) takes a parameter missing from the DSN from
 // Krill's own PG* environment, and the dump container does not inherit that
@@ -151,11 +159,15 @@ func connFromDSN(dsn string, caBundles []string, getenv func(string) string) (Co
 		}
 	}
 
+	// The dump's wrapper reads the password as one line of stdin.
+	if strings.Contains(cfg.Password, "\n") {
+		return ConnEnv{}, ErrPasswordLF
+	}
+	out.Password = cfg.Password
 	out.Env = []string{
 		"PGHOST=" + strings.Join(hosts, ","),
 		"PGPORT=" + strings.Join(ports, ","),
 		"PGUSER=" + cfg.User,
-		"PGPASSWORD=" + cfg.Password,
 		"PGDATABASE=" + cfg.Database,
 	}
 

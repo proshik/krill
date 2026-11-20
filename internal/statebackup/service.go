@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -196,8 +198,9 @@ func (s *Service) claim() (release func(), ok bool) {
 	}, true
 }
 
-// RemoveLeftovers removes the dump containers a crashed run left behind
-// (their environment still holds the database password) and returns how many
+// RemoveLeftovers removes the dump containers a crashed run left behind (a
+// running one's pg_dump still holds the database password in its process
+// environment) and returns how many
 // went. It holds the run slot while it sweeps, so it never removes the
 // container of a run in flight, and a run cannot start meanwhile; with the
 // slot taken it removes nothing and returns (0, nil).
@@ -489,10 +492,10 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 	if conn.MinClientMajor > num/10000 {
 		return fail(ErrClientTooOld, ErrClientTooOld.Error())
 	}
-	for _, e := range conn.Env {
-		if pw, ok := strings.CutPrefix(e, "PGPASSWORD="); ok {
-			secrets = append(secrets, pw)
-		}
+	secrets = append(secrets, conn.Password)
+	nonce, err := newNonce()
+	if err != nil {
+		return fail(nil, "the dump's completion marker could not be generated")
 	}
 
 	key := ScheduledKey(st.Prefix, rec.StartedAt)
@@ -501,12 +504,15 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 	}
 	dst := st.Destination()
 	spec := docker.OneOffSpec{
-		Image: image, Cmd: DumpArgs(), Env: conn.Env, HostNetwork: true,
+		Image: image, Cmd: dumpCmd(nonce), Env: conn.Env, HostNetwork: true,
+		// The password travels on stdin only: Env is in the create request
+		// and the container's config (docker inspect, a debug daemon log).
+		Stdin:         strings.NewReader(conn.Password + "\n"),
 		ReadOnlyFiles: conn.Files,
 		Labels:        map[string]string{docker.OneOffRoleLabel: StateDumpLabelValue},
 	}
 
-	n, msg := s.stream(ctx, spec, recipient, dst, key, ext)
+	n, msg := s.stream(ctx, spec, recipient, dst, key, completionMarker(nonce), ext)
 	if msg != "" {
 		return fail(nil, msg)
 	}
@@ -557,7 +563,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 // stream runs the dump container and uploads its output, gzipped and
 // age-encrypted, to key. It returns the bytes uploaded, or the text of the
 // failure. Nothing unencrypted ever leaves the process.
-func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient age.Recipient, dst backup.Destination, key string, ext func(string) string) (int64, string) {
+func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient age.Recipient, dst backup.Destination, key, marker string, ext func(string) string) (int64, string) {
 	dumpCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	pr, pw := io.Pipe()
@@ -591,13 +597,14 @@ func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient 
 			return
 		}
 		gz := gzip.NewWriter(aw)
-		tail := newDumpTail(gz)
+		tail := newMarkerTail(gz, marker)
 		if err := s.runner.RunOneOff(dumpCtx, spec, tail); err != nil {
 			failDump("the dump failed: "+ext(err.Error()), err)
 			return
 		}
 		// A clean exit does not prove the whole output arrived: an attach
-		// stream can end early. pg_dump writes its footer last.
+		// stream can end early. The wrapper prints this run's marker only
+		// after pg_dump exited 0, and it must be the very last bytes.
 		if !tail.complete() {
 			failDump(errIncompleteDump.Error(), errIncompleteDump)
 			return
@@ -631,41 +638,82 @@ func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient 
 	return counted.N, ""
 }
 
-// dumpFooter is the line pg_dump's plain format ends with (followed only by
-// comment lines and, since 13.22/14.19/15.14/16.10/17.6, an \unrestrict line).
-const dumpFooter = "\n-- PostgreSQL database dump complete\n"
+// dumpScript wraps pg_dump in the dump container (POSIX sh: busybox in the
+// alpine images). It reads the password as the first line of stdin and
+// exports it only when it is not empty, so it never appears in argv or the
+// container's config, and prints the completion marker with the run's nonce
+// ($1) only after pg_dump ("$@" after the shift) exited 0; a failure keeps
+// pg_dump's exit status.
+const dumpScript = `IFS= read -r p || { echo 'krill: the database password did not arrive on stdin' >&2; exit 97; }
+if [ -n "$p" ]; then PGPASSWORD=$p; export PGPASSWORD; fi
+unset p
+n=$1
+shift
+"$@" || exit
+printf '\n-- krill-state-backup-complete %s\n' "$n"`
 
-// dumpTailSize is how much of the end of the dump is kept for the footer
-// check; it leaves room for what pg_dump prints after the footer.
-const dumpTailSize = 1024
-
-var errIncompleteDump = errors.New("the dump ended without pg_dump's completion footer")
-
-// dumpTail passes the dump through to w and keeps its last bytes.
-type dumpTail struct {
-	w   io.Writer
-	buf []byte
+// dumpCmd is the dump container's command for a run with nonce.
+func dumpCmd(nonce string) []string {
+	return append([]string{"sh", "-c", dumpScript, "krill-state-dump", nonce}, DumpArgs()...)
 }
 
-func newDumpTail(w io.Writer) *dumpTail {
-	// The leading newline lets a footer at the very start of the stream
-	// count as the start of a line.
-	return &dumpTail{w: w, buf: []byte{'\n'}}
+// completionMarker is what dumpScript prints after a successful pg_dump.
+func completionMarker(nonce string) string {
+	return "\n-- krill-state-backup-complete " + nonce + "\n"
 }
 
-func (t *dumpTail) Write(p []byte) (int, error) {
-	n, err := t.w.Write(p)
-	t.buf = append(t.buf, p[:n]...)
-	if over := len(t.buf) - dumpTailSize; over > 0 {
-		t.buf = append(t.buf[:0], t.buf[over:]...)
+// newNonce is a run's random marker nonce. It is not secret: it only makes
+// the marker impossible to predict from the dumped data.
+func newNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	return n, err
+	return hex.EncodeToString(b), nil
 }
 
-// complete reports whether the dump's end carries pg_dump's footer.
-func (t *dumpTail) complete() bool {
-	return bytes.Contains(t.buf, []byte(dumpFooter))
+var errIncompleteDump = errors.New("the dump ended without this run's completion marker")
+
+// markerTail passes the dump through to w, holding back its last len(marker)
+// bytes: the marker never reaches the archive, and complete checks that the
+// stream ended with exactly it.
+type markerTail struct {
+	w      io.Writer
+	marker []byte
+	hold   []byte
 }
+
+func newMarkerTail(w io.Writer, marker string) *markerTail {
+	return &markerTail{w: w, marker: []byte(marker), hold: make([]byte, 0, 2*len(marker))}
+}
+
+func (t *markerTail) Write(p []byte) (int, error) {
+	m := len(t.marker)
+	if len(p) >= m {
+		// Everything held plus all but the last m bytes of p is dump data.
+		if len(t.hold) > 0 {
+			if _, err := t.w.Write(t.hold); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := t.w.Write(p[:len(p)-m]); err != nil {
+			return 0, err
+		}
+		t.hold = append(t.hold[:0], p[len(p)-m:]...)
+		return len(p), nil
+	}
+	t.hold = append(t.hold, p...)
+	if over := len(t.hold) - m; over > 0 {
+		if _, err := t.w.Write(t.hold[:over]); err != nil {
+			return 0, err
+		}
+		t.hold = append(t.hold[:0], t.hold[over:]...)
+	}
+	return len(p), nil
+}
+
+// complete reports whether the stream ended with exactly the marker.
+func (t *markerTail) complete() bool { return bytes.Equal(t.hold, t.marker) }
 
 // finish journals rec on a context that survives the run's own deadline.
 func (s *Service) finish(ctx context.Context, rec Run) {

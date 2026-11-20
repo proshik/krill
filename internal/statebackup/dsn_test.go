@@ -37,7 +37,10 @@ func TestConnFromDSNURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, c.Env, "PGHOST=127.0.0.1", "PGPORT=5432", "PGUSER=krill", "PGPASSWORD=pw", "PGDATABASE=krill", "PGSSLMODE=disable")
+	eq(t, c.Env, "PGHOST=127.0.0.1", "PGPORT=5432", "PGUSER=krill", "PGDATABASE=krill", "PGSSLMODE=disable")
+	if c.Password != "pw" {
+		t.Fatalf("password not carried")
+	}
 	if len(c.Files) != 0 {
 		t.Fatalf("files: %v", c.Files)
 	}
@@ -48,7 +51,10 @@ func TestConnFromDSNKeywordForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, c.Env, "PGHOST=db.example.com", "PGPORT=6432", "PGUSER=u", "PGPASSWORD=p", "PGDATABASE=d", "PGSSLMODE=require", "PGCONNECT_TIMEOUT=5")
+	eq(t, c.Env, "PGHOST=db.example.com", "PGPORT=6432", "PGUSER=u", "PGDATABASE=d", "PGSSLMODE=require", "PGCONNECT_TIMEOUT=5")
+	if c.Password != "p" {
+		t.Fatalf("password not carried")
+	}
 }
 
 func TestConnFromDSNPasswordDecoding(t *testing.T) {
@@ -56,15 +62,36 @@ func TestConnFromDSNPasswordDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(c.Env, "PGPASSWORD=p@ss/w") {
-		t.Fatalf("env: %q", c.Env)
+	if c.Password != "p@ss/w" {
+		t.Fatalf("password not decoded")
 	}
 	c, err = ConnFromDSN(`host=h user=u dbname=d password='a b\'c'`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(c.Env, "PGPASSWORD=a b'c") {
-		t.Fatalf("env: %q", c.Env)
+	if c.Password != "a b'c" {
+		t.Fatalf("password not decoded")
+	}
+}
+
+// The password never goes into Env (the dump container's config shows it);
+// one the wrapper could not read as a single stdin line is refused.
+func TestConnFromDSNPasswordStaysOutOfEnv(t *testing.T) {
+	c, err := ConnFromDSN("postgres://u:pw-SECRET@h/d?sslmode=disable", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range c.Env {
+		if strings.HasPrefix(e, "PGPASSWORD") || strings.Contains(e, "pw-SECRET") {
+			t.Fatalf("password in Env: %q", e)
+		}
+	}
+	c, err = ConnFromDSN("postgres://u@h/d?sslmode=disable", nil)
+	if err != nil || c.Password != "" {
+		t.Fatalf("no password: %q, %v", c.Password, err)
+	}
+	if _, err := ConnFromDSN("postgres://u:a%0Ab@h/d?sslmode=disable", nil); !errors.Is(err, ErrPasswordLF) {
+		t.Fatalf("password with a line break: %v", err)
 	}
 }
 

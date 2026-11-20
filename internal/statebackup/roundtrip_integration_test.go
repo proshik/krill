@@ -252,6 +252,10 @@ func TestStateBackupRoundTrip(t *testing.T) {
 	if bytes.Contains(plain, []byte(sessionToken)) {
 		t.Fatal("the dump carries a live session token")
 	}
+	// The completion marker is held back: the archive is pg_dump's output.
+	if bytes.Contains(plain, []byte("krill-state-backup-complete")) || !bytes.HasSuffix(plain, []byte("\n")) {
+		t.Fatalf("the archive carries the completion marker or was cut: ...%q", plain[max(0, len(plain)-200):])
+	}
 
 	// Restore into a fresh, empty server.
 	target, err := postgres.Run(ctx, "postgres:16-alpine",
@@ -323,6 +327,11 @@ func TestStateBackupWrongPassword(t *testing.T) {
 	}
 	if run := f.lastRun(t); run.Status != "error" || strings.Contains(run.Error, wrong) {
 		t.Fatalf("run = %+v", run)
+	}
+	// The server checked the password it was given on stdin (none at all
+	// would fail with "no password supplied").
+	if !strings.Contains(err.Error(), "password authentication failed") {
+		t.Fatalf("Run = %v, want a password authentication failure", err)
 	}
 	if objs := f.stateObjects(t); len(objs) != 0 {
 		t.Fatalf("objects left after a failed dump: %v", objs)

@@ -32,14 +32,19 @@ const (
 	dumpDone     = "-- PostgreSQL database dump complete\n"
 )
 
-// fakeRunner records every spec it is given. By default it writes emit to out
-// and returns err; fn, when set, replaces that behaviour.
+// fakeRunner records every spec it is given and what it read from the spec's
+// stdin. By default it writes emit to out and returns err; fn, when set,
+// replaces that behaviour. Like the real wrapper (dumpScript), it then prints
+// the run's completion marker if the dump succeeded, unless raw is set, in
+// which case emit/fn's output is the whole stream.
 type fakeRunner struct {
-	mu    sync.Mutex
-	specs []docker.OneOffSpec
-	emit  []byte
-	err   error
-	fn    func(ctx context.Context, out io.Writer) error
+	mu     sync.Mutex
+	specs  []docker.OneOffSpec
+	stdins []string
+	emit   []byte
+	err    error
+	raw    bool
+	fn     func(ctx context.Context, spec docker.OneOffSpec, out io.Writer) error
 	// rm, when set, answers RemoveContainersByLabel; rmCalls records each
 	// call's key=value.
 	rm      func(ctx context.Context) (int, error)
@@ -47,19 +52,41 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) RunOneOff(ctx context.Context, spec docker.OneOffSpec, out io.Writer) error {
+	var stdin []byte
+	if spec.Stdin != nil {
+		stdin, _ = io.ReadAll(spec.Stdin)
+	}
 	f.mu.Lock()
 	f.specs = append(f.specs, spec)
-	fn, emit, err := f.fn, f.emit, f.err
+	f.stdins = append(f.stdins, string(stdin))
+	fn, emit, err, raw := f.fn, f.emit, f.err, f.raw
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, out)
-	}
-	if len(emit) > 0 {
+		err = fn(ctx, spec, out)
+	} else if len(emit) > 0 {
 		if _, werr := out.Write(emit); werr != nil {
 			return werr
 		}
 	}
+	if err != nil || raw {
+		return err
+	}
+	_, err = io.WriteString(out, completionMarker(nonceOf(spec)))
 	return err
+}
+
+// nonceOf is the marker nonce dumpCmd put into spec's command.
+func nonceOf(spec docker.OneOffSpec) string {
+	if len(spec.Cmd) < 5 {
+		return ""
+	}
+	return spec.Cmd[4]
+}
+
+func (f *fakeRunner) stdinOf(i int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stdins[i]
 }
 
 func (f *fakeRunner) RemoveContainersByLabel(ctx context.Context, key, value string) (int, error) {
@@ -279,22 +306,20 @@ func TestRunHappyPath(t *testing.T) {
 		t.Fatalf("runner calls = %d", len(specs))
 	}
 	sp := specs[0]
-	if !sp.HostNetwork || sp.Image != "postgres:16-alpine" || !reflect.DeepEqual(sp.Cmd, DumpArgs()) ||
+	if !sp.HostNetwork || sp.Image != "postgres:16-alpine" || !reflect.DeepEqual(sp.Cmd, dumpCmd(nonceOf(sp))) ||
+		!reflect.DeepEqual(sp.Cmd[5:], DumpArgs()) || len(nonceOf(sp)) != 32 ||
 		!reflect.DeepEqual(sp.Labels, map[string]string{"krill.role": "state-dump"}) {
 		t.Errorf("spec = %+v", sp)
 	}
-	hasPW := false
-	for _, e := range sp.Env {
-		if e == "PGPASSWORD=pw-SECRET" {
-			hasPW = true
-		}
+	// The password reaches the container on stdin only: never in its Env,
+	// argv or labels, which its config (docker inspect, a debug daemon log)
+	// shows.
+	if got := f.runner.stdinOf(0); got != "pw-SECRET\n" {
+		t.Errorf("stdin = %q, want the password line", got)
 	}
-	if !hasPW {
-		t.Errorf("Env has no PGPASSWORD: %d entries", len(sp.Env))
-	}
-	for _, a := range sp.Cmd {
-		if strings.Contains(a, "pw-SECRET") {
-			t.Errorf("password in argv")
+	for _, v := range append(append(append([]string{}, sp.Env...), sp.Cmd...), sp.Labels["krill.role"]) {
+		if strings.Contains(v, "pw-SECRET") || strings.HasPrefix(v, "PGPASSWORD") {
+			t.Errorf("password in the container's config: %q", v)
 		}
 	}
 
@@ -340,7 +365,7 @@ func TestRunUploadErrorStopsRunner(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, func(s *Settings) { s.Bucket = "no-such-bucket" })
 	done := make(chan struct{})
-	f.runner.fn = func(_ context.Context, out io.Writer) error {
+	f.runner.fn = func(_ context.Context, _ docker.OneOffSpec, out io.Writer) error {
 		defer close(done)
 		// Fresh pseudo-random data every chunk: a repeated 32 KiB chunk sits
 		// inside deflate's window and compresses to nothing, so the uploader
@@ -375,29 +400,94 @@ func TestRunUploadErrorStopsRunner(t *testing.T) {
 	}
 }
 
-// A dump whose output stops before pg_dump's footer (an attach stream that
-// ended early) must not leave an object, even though the runner succeeded.
-func TestRunTruncatedDumpLeavesNoObject(t *testing.T) {
+// A dump whose output does not end with this run's completion marker (an
+// attach stream that ended early, even at a line that looks like pg_dump's
+// footer) must not leave an object, even though the runner succeeded.
+func TestRunWithoutMarkerLeavesNoObject(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, nil)
-	body := "--\n-- PostgreSQL database dump\n--\n\nCOPY public.users (id) FROM stdin;\n1\n"
-	for name, emit := range map[string]string{
-		"cut before the footer":         body,
-		"footer text inside a line":     body + "x-- PostgreSQL database dump complete\n",
-		"footer pushed out of the tail": body + dumpDone + strings.Repeat("y", dumpTailSize),
-	} {
-		f.runner.emit = []byte(emit)
+	f.runner.raw = true
+	body := "--\n-- PostgreSQL database dump\n--\n\nCREATE FUNCTION f() RETURNS text AS $$\n" + dumpDone
+	cases := map[string]func(nonce string) string{
+		"marker missing":             func(string) string { return body },
+		"empty stream":               func(string) string { return "" },
+		"wrong nonce":                func(string) string { return body + completionMarker(strings.Repeat("0", 32)) },
+		"marker not at the end":      func(n string) string { return body + completionMarker(n) + "more SQL;\n" },
+		"data after the marker":      func(n string) string { return body + completionMarker(n) + "x" },
+		"marker without its newline": func(n string) string { return body + strings.TrimSuffix(completionMarker(n), "\n") },
+		"marker cut short":           func(n string) string { return body + completionMarker(n)[:20] },
+		"marker inside a line":       func(n string) string { return body + "x" + strings.TrimPrefix(completionMarker(n), "\n") },
+	}
+	for name, emit := range cases {
+		f.runner.fn = func(_ context.Context, spec docker.OneOffSpec, out io.Writer) error {
+			_, err := io.WriteString(out, emit(nonceOf(spec)))
+			return err
+		}
 		err := f.svc.Run(context.Background(), TriggerManual)
 		if err == nil || !strings.Contains(err.Error(), errIncompleteDump.Error()) {
 			t.Fatalf("%s: Run = %v", name, err)
 		}
 		if keys := f.keys(t, ""); len(keys) != 0 {
-			t.Fatalf("%s: objects after a truncated dump: %q", name, keys)
+			t.Fatalf("%s: objects after an incomplete dump: %q", name, keys)
 		}
 	}
 	runs := f.runs(t)
-	if len(runs) != 3 || runs[0].Status != "error" || runs[0].Error != errIncompleteDump.Error() {
+	if len(runs) != len(cases) || runs[0].Status != "error" || runs[0].Error != errIncompleteDump.Error() {
 		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+// Each run gets its own nonce: a marker from an earlier run (say, inside the
+// dumped data) never completes a later one.
+func TestRunNonceIsPerRun(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	for range 2 {
+		if err := f.svc.Run(context.Background(), TriggerManual); err != nil {
+			t.Fatal(err)
+		}
+	}
+	specs := f.runner.calls()
+	if len(specs) != 2 || nonceOf(specs[0]) == nonceOf(specs[1]) {
+		t.Fatalf("nonces: %q", []string{nonceOf(specs[0]), nonceOf(specs[1])})
+	}
+}
+
+// A DSN without a password sends an empty line; the wrapper then exports no
+// PGPASSWORD at all.
+func TestRunWithoutPassword(t *testing.T) {
+	f := newFixture(t, "postgres://krill@db.example:5432/krill?sslmode=disable", true)
+	f.configure(t, nil)
+	if err := f.svc.Run(context.Background(), TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.runner.stdinOf(0); got != "\n" {
+		t.Fatalf("stdin = %q", got)
+	}
+}
+
+// The marker is held back at every split of the stream, so the archive is
+// exactly what pg_dump wrote.
+func TestMarkerTailSplits(t *testing.T) {
+	marker := completionMarker("abc")
+	dump := "SELECT 1;\n" + dumpDone
+	stream := dump + marker
+	for chunk := 1; chunk <= len(stream)+1; chunk++ {
+		var got bytes.Buffer
+		tail := newMarkerTail(&got, marker)
+		for i := 0; i < len(stream); i += chunk {
+			if _, err := tail.Write([]byte(stream[i:min(i+chunk, len(stream))])); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !tail.complete() || got.String() != dump {
+			t.Fatalf("chunk %d: complete=%v archive=%q", chunk, tail.complete(), got.String())
+		}
+	}
+	tail := newMarkerTail(io.Discard, marker)
+	_, _ = tail.Write([]byte(marker[:len(marker)-1]))
+	if tail.complete() {
+		t.Fatal("a cut marker completed the dump")
 	}
 }
 
@@ -426,7 +516,6 @@ func TestRunMultipartSizeCheck(t *testing.T) {
 	if _, err := crand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
-	payload = append(payload, "\n"+dumpDone...) // a dump must end with the footer
 	f.runner.emit = payload
 	ctx := context.Background()
 	if err := f.svc.Run(ctx, TriggerSchedule); err != nil {
@@ -589,7 +678,7 @@ func TestClaim(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, nil)
 	entered, gate := make(chan struct{}), make(chan struct{})
-	f.runner.fn = func(_ context.Context, out io.Writer) error {
+	f.runner.fn = func(_ context.Context, _ docker.OneOffSpec, out io.Writer) error {
 		close(entered)
 		<-gate
 		_, err := out.Write([]byte(dumpDone))
@@ -999,7 +1088,7 @@ func TestRemoveLeftovers(t *testing.T) {
 
 	// A run holds the slot: its own container must not be swept.
 	entered, gate := make(chan struct{}), make(chan struct{})
-	f.runner.fn = func(_ context.Context, out io.Writer) error {
+	f.runner.fn = func(_ context.Context, _ docker.OneOffSpec, out io.Writer) error {
 		close(entered)
 		<-gate
 		_, err := out.Write([]byte(dumpDone))

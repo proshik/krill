@@ -49,8 +49,9 @@ func scheduledStateRun(svc *statebackup.Service) backup.RunFunc {
 	}
 }
 
-// cleanupStateDumps removes dump containers a crashed run left behind: their
-// environment still holds the database password. The service holds its run
+// cleanupStateDumps removes dump containers a crashed run left behind: a
+// running one's pg_dump still holds the database password in its process
+// environment. The service holds its run
 // slot while it sweeps, so a run in flight keeps its container (it logs the
 // skip itself).
 func cleanupStateDumps(ctx context.Context, svc *statebackup.Service) {
