@@ -205,7 +205,10 @@ let a running migration finish, as long as it does within systemd's stop timeout
 by default; a `kill -9` or a crash does not.) Recovery is manual and careful:
 
 1. Back up Krill's database first — for the bundled Postgres,
-   `docker exec krill-postgres pg_dump -U krill krill > krill-backup.sql`.
+   `docker exec krill-postgres pg_dump -U krill krill > krill-backup.sql`. If
+   [Krill backups](guides/krill-backups.md) are on, the newest snapshot under `pre-update/`
+   was taken just before the update and is the safer starting point (see
+   [Restore Krill's state from a backup](#restore-krills-state-from-a-backup), runbook B).
 2. Read in `journalctl -u krill` which migration failed and why; its SQL is
    `internal/database/migrations/<N>_*.up.sql` in that release's source.
 3. Fix the data or the schema by hand until it matches version N either fully applied or not
@@ -243,6 +246,83 @@ one:
   points at a private address (a Git server on your LAN or on the host itself) now stops
   building on that forced rebuild. Set `KRILL_ALLOW_PRIVATE_EGRESS=true` before upgrading if
   you build from one.
+
+## Restore Krill's state from a backup
+
+This applies when [Krill backups](guides/krill-backups.md) were set up. The backup restores
+Krill's **configuration**, not your workloads. After a restore:
+
+- Swarm services must be redeployed.
+- App volumes, app databases and buckets come back only from their own backups.
+- Worker nodes belonged to the old swarm and must be removed and re-added.
+
+You need the age private key (`krill-backup-key.txt`) and, to read the encrypted secrets, the old
+`KRILL_SECRET_KEY`. Add a lifecycle rule that aborts incomplete multipart uploads after one day
+to the backup bucket; a Krill killed mid-backup would otherwise leave billed, invisible leftovers.
+
+### A. Lost host, new host
+
+1. Run `install.sh` with the same `KRILL_ADMIN_EMAIL` (and, for an external database, the new
+   `KRILL_DATABASE_URL`). Use a release equal to or newer than the snapshot's; `install.sh`
+   installs the latest. Never use an older one.
+2. `systemctl stop krill`. The first start already migrated and seeded an empty database.
+3. Fetch the backup object with your storage's own tool, onto your workstation or the host.
+4. Recreate the database empty. For the bundled Postgres:
+   ```sh
+   docker exec krill-postgres psql -U krill -d postgres -c 'DROP DATABASE krill' -c 'CREATE DATABASE krill OWNER krill'
+   ```
+5. Restore:
+   ```sh
+   age -d -i krill-backup-key.txt <object> | gunzip | docker exec -i krill-postgres psql -v ON_ERROR_STOP=1 --single-transaction -U krill -d krill
+   ```
+   For an external database use `psql "$DSN" …` instead of `docker exec`. To keep the private key
+   off the host, decrypt on your workstation and pipe the result over `ssh`.
+6. Put the old `KRILL_SECRET_KEY` into `/etc/krill/krill.env`. Without it the encrypted secrets are
+   unreadable and the operations that need them fail visibly.
+7. `systemctl start krill`. The admin password is the old one (the seeding step never overwrites
+   an existing user). Migrations bring an older snapshot forward.
+8. Recover the workloads:
+   - Point DNS at the new IP address.
+   - Redeploy the database instances.
+   - For each logical database, recreate its user and database by hand: a redeployed instance
+     starts empty and Krill does not re-create them. Take the name, user and password from the
+     database's page and run this in the instance's container as its superuser
+     (`docker exec -i <instance container> psql -U <superuser>`):
+     ```sql
+     CREATE USER "<user>" PASSWORD '<password>';
+     CREATE DATABASE "<db>" OWNER "<user>";
+     REVOKE CONNECT ON DATABASE "<db>" FROM PUBLIC;
+     ```
+   - Restore the app database backups, then the volume and bucket backups.
+   - Redeploy the apps.
+   - Remove the old worker nodes and add them again.
+   - Re-check Settings → Panel domain and the Firewall page.
+
+### B. Failed upgrade on the same host
+
+Use this for a dirty migration or broken data after an update.
+
+1. `systemctl stop krill`.
+2. Put the old binary back (`mv /usr/local/bin/krill.prev /usr/local/bin/krill`, or download the
+   release you updated from).
+3. Recreate the database and restore the **pre-update** snapshot whose name ends in
+   `_<from>_to_<to>.sql.gz.age`, as in A.4 and A.5.
+4. `systemctl start krill`. `KRILL_SECRET_KEY` has not changed.
+
+The workloads kept running, so nothing needs redeploying except what the failed release touched.
+
+### Test a restore regularly
+
+Restore into a throwaway container, check it, and remove it:
+
+```sh
+docker run -d --rm --name krill-restore-test -e POSTGRES_PASSWORD=x postgres:17-alpine
+# pipe the snapshot into it as in step A.5, with `docker exec -i krill-restore-test psql -U postgres`
+docker exec krill-restore-test psql -U postgres -c 'SELECT version, dirty FROM schema_migrations' -c 'SELECT count(*) FROM applications'
+docker rm -f krill-restore-test
+```
+
+This proves both the object and the private key.
 
 ## Uninstall
 

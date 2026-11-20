@@ -75,6 +75,10 @@ describes them in detail.
   logs (Loki) to storage you provide; Krill keeps none of it. Configured from
   **Settings → Observability**, with a check of the saved addresses that never blocks turning
   the agent on. See [Observability](docs/guides/observability.md).
+- **Backups of Krill's own state:** the control-plane database is dumped on a schedule and
+  before every UI update, encrypted with your age public key and uploaded to S3 storage, with a
+  restore runbook. Configured from **Settings → Krill backups**. See
+  [Krill backups](docs/guides/krill-backups.md).
 
 ## Live-acceptance queue
 
@@ -176,14 +180,19 @@ Verified in code and tests, but not yet exercised on a real environment:
     install that cannot reach Telegram directly. Covered so far by unit tests with fake senders,
     test SOCKS5/HTTP proxies and store tests against a real Postgres. See
     [Notifications](docs/guides/notifications.md).
+18. Krill state backups on a real install: the bundled database, an external database with
+    `verify-full`, the pre-update snapshot on a real VPS (including a blocked update and the
+    pause escape hatch), and runbook A on a fresh VM. Covered so far by unit tests and
+    integration tests against a real Postgres and MinIO.
 
 ## Open
 
 - **Resilience on top of Swarm:** a resilient ingress (Traefik is a single replica
   pinned to the manager) and a decision on high availability vs. a documented
   fast-recovery runbook for the control plane.
-- **Backups of Krill's own state database** — the bundled `krill-postgres` is not
-  backed up automatically today.
+- **Re-provision logical databases on DB-instance deploy**, so restoring onto a new host
+  needs no manual `CREATE USER`/`CREATE DATABASE` (today a step of the
+  [restore runbook](docs/install.md#restore-krills-state-from-a-backup)).
 - **Direct image upload** in `krill-cli` (`delivery: upload`) for users without a
   registry — designed, not implemented; the CLI refuses the mode for now.
 - **Email and Slack** notification channels (Telegram ships today, with successful-deploy
