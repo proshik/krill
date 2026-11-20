@@ -435,6 +435,34 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type StateBackupRun struct {
+	ID          int64     `json:"id"`
+	Trigger     string    `json:"trigger"`
+	Status      string    `json:"status"`
+	ObjectKey   string    `json:"object_key"`
+	SizeBytes   int64     `json:"size_bytes"`
+	FromVersion string    `json:"from_version"`
+	ToVersion   string    `json:"to_version"`
+	Error       string    `json:"error"`
+	StartedAt   time.Time `json:"started_at"`
+	FinishedAt  time.Time `json:"finished_at"`
+}
+
+type StateBackupSetting struct {
+	ID        int16     `json:"id"`
+	Enabled   bool      `json:"enabled"`
+	Endpoint  string    `json:"endpoint"`
+	Bucket    string    `json:"bucket"`
+	Region    string    `json:"region"`
+	AccessKey string    `json:"access_key"`
+	SecretKey string    `json:"secret_key"`
+	Prefix    string    `json:"prefix"`
+	Recipient string    `json:"recipient"`
+	Schedule  string    `json:"schedule"`
+	Retention int32     `json:"retention"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type System struct {
 	ID            int64     `json:"id"`
 	EnvironmentID int64     `json:"environment_id"`

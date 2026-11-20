@@ -1,0 +1,37 @@
+-- name: GetStateBackupSettings :one
+SELECT * FROM state_backup_settings WHERE id = 1;
+
+-- name: UpsertStateBackupSettings :exec
+INSERT INTO state_backup_settings (id, enabled, endpoint, bucket, region, access_key, secret_key, prefix, recipient, schedule, retention, updated_at)
+VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+ON CONFLICT (id) DO UPDATE SET
+    enabled    = EXCLUDED.enabled,
+    endpoint   = EXCLUDED.endpoint,
+    bucket     = EXCLUDED.bucket,
+    region     = EXCLUDED.region,
+    access_key = EXCLUDED.access_key,
+    secret_key = EXCLUDED.secret_key,
+    prefix     = EXCLUDED.prefix,
+    recipient  = EXCLUDED.recipient,
+    schedule   = EXCLUDED.schedule,
+    retention  = EXCLUDED.retention,
+    updated_at = now();
+
+-- name: SetStateBackupEnabled :execrows
+UPDATE state_backup_settings SET enabled = $1, updated_at = now() WHERE id = 1;
+
+-- name: InsertStateBackupRun :exec
+INSERT INTO state_backup_runs (trigger, status, object_key, size_bytes, from_version, to_version, error, started_at, finished_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+
+-- name: ListStateBackupRuns :many
+SELECT * FROM state_backup_runs ORDER BY finished_at DESC, id DESC LIMIT $1;
+
+-- name: ListStateBackupRunsSince :many
+SELECT * FROM state_backup_runs WHERE finished_at >= $1 ORDER BY finished_at, id;
+
+-- name: LastSuccessfulStateBackupRun :one
+SELECT * FROM state_backup_runs WHERE status = 'ok' ORDER BY finished_at DESC, id DESC LIMIT 1;
+
+-- name: PruneStateBackupRuns :exec
+DELETE FROM state_backup_runs WHERE finished_at < $1;
