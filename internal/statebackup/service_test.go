@@ -733,6 +733,29 @@ func TestRunServerTooOld(t *testing.T) {
 	}
 }
 
+// sslnegotiation=direct is libpq 17+: an older dump client would silently
+// negotiate TLS the old way, so the run is refused before the dump starts.
+func TestRunDirectNegotiationNeedsClient17(t *testing.T) {
+	f := newFixture(t, "postgres://krill:pw-SECRET@db.example:5432/krill?sslmode=require&sslnegotiation=direct", false)
+	f.configure(t, nil)
+	if err := f.svc.Run(context.Background(), TriggerManual); !errors.Is(err, ErrClientTooOld) {
+		t.Fatalf("Run: want ErrClientTooOld, got %v", err)
+	}
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "error" || !strings.Contains(runs[0].Error, "PostgreSQL 17") {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+
+	f.svc.q = fakeQuerier{version: "170002"}
+	_ = f.svc.Run(context.Background(), TriggerManual)
+	calls := f.runner.calls()
+	if len(calls) != 1 || calls[0].Image != "postgres:17-alpine" || !contains(calls[0].Env, "PGSSLNEGOTIATION=direct") {
+		t.Fatalf("calls = %+v", calls)
+	}
+}
+
 func TestRunErrorTextHasNoSecrets(t *testing.T) {
 	check := func(t *testing.T, f *fixture, err error) {
 		t.Helper()

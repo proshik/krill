@@ -358,3 +358,52 @@ func TestConnFromDSNRefusesRepeatedParameters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The pool honors sslnegotiation (DSN or PGSSLNEGOTIATION) and channel_binding;
+// the dump must too, or it negotiates TLS the old way or falls back to prefer.
+func TestConnFromDSNNegotiationAndChannelBinding(t *testing.T) {
+	c, err := connFromDSN("postgres://u:p@h/d?sslmode=require&sslnegotiation=direct&channel_binding=require", nil, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PGSSLMODE=require", "PGSSLNEGOTIATION=direct", "PGCHANNELBINDING=require"} {
+		if !contains(c.Env, want) {
+			t.Fatalf("missing %q in %q", want, c.Env)
+		}
+	}
+	if c.MinClientMajor != 17 {
+		t.Fatalf("MinClientMajor = %d", c.MinClientMajor)
+	}
+
+	// From Krill's environment, and the default prefer becomes require as
+	// it does in the pool.
+	c, err = connFromDSN("host=h user=u password=p dbname=d", nil, envOf(map[string]string{"PGSSLNEGOTIATION": "direct", "PGCHANNELBINDING": "require"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PGSSLMODE=require", "PGSSLNEGOTIATION=direct", "PGCHANNELBINDING=require"} {
+		if !contains(c.Env, want) {
+			t.Fatalf("missing %q in %q", want, c.Env)
+		}
+	}
+
+	// postgres negotiation and channel binding need no particular client.
+	c, err = connFromDSN("postgres://u:p@h/d?sslnegotiation=postgres&channel_binding=require", nil, envOf(nil))
+	if err != nil || c.MinClientMajor != 0 || !contains(c.Env, "PGSSLNEGOTIATION=postgres") {
+		t.Fatalf("err %v env %q min %d", err, c.Env, c.MinClientMajor)
+	}
+
+	// With disable the pool sends no TLS, so there is nothing to negotiate.
+	c, err = connFromDSN("postgres://u:p@h/d?sslmode=disable&sslnegotiation=direct", nil, envOf(nil))
+	if err != nil || c.MinClientMajor != 0 {
+		t.Fatalf("err %v min %d", err, c.MinClientMajor)
+	}
+	for _, e := range c.Env {
+		if strings.HasPrefix(e, "PGSSLNEGOTIATION=") {
+			t.Fatalf("unexpected %q", e)
+		}
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d?sslmode=allow&sslnegotiation=direct", nil, envOf(nil)); !errors.Is(err, ErrWeakDirect) {
+		t.Fatalf("allow: %v", err)
+	}
+}

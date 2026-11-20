@@ -109,8 +109,11 @@ container connects with your `KRILL_DATABASE_URL`. A `verify-full` or `verify-ca
 without `sslrootcert` uses the host's CA bundle, and so does `sslrootcert=system` (with
 `verify-full`, since the `pg_dump` of PostgreSQL 13–15 does not know `system`); relative
 certificate paths and unix-socket connections are refused. TLS settings Krill itself takes from its environment (`PGSSLMODE`,
-`PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`) when the URL leaves them out reach the dump the same
-way. A connection that relies on a PostgreSQL service file (`service=` or `PGSERVICE`) is
+`PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLNEGOTIATION`, `PGCHANNELBINDING`) when the URL
+leaves them out reach the dump the same way, and so do `sslnegotiation` and `channel_binding`
+in the URL. `sslnegotiation=direct` needs the `pg_dump` of PostgreSQL 17 or newer, so with an
+older server the backup is refused; it also turns the default `sslmode` into `require`, as it
+does for Krill's own connection, and is refused with `sslmode=allow`. A connection that relies on a PostgreSQL service file (`service=` or `PGSERVICE`) is
 refused, because the container cannot read its settings: put them in `KRILL_DATABASE_URL`.
 A URL that gives a connection or TLS parameter (`sslmode`, `sslrootcert`, `channel_binding`,
 …) more than once is refused too: Krill's own connection and `pg_dump` would not agree on which

@@ -47,6 +47,7 @@ var (
 	ErrServerTooOld       = errors.New("statebackup: the database server is older than PostgreSQL 13")
 	ErrNoRunner           = errors.New("statebackup: this Docker engine cannot run the dump container")
 	ErrUpdateInProgress   = errors.New("statebackup: a Krill update is in progress")
+	ErrClientTooOld       = errors.New("statebackup: the database URL needs a newer pg_dump than the one matching the database server (sslnegotiation=direct needs PostgreSQL 17)")
 
 	errSettings = errors.New("statebackup: the settings could not be read")
 )
@@ -484,6 +485,9 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 	if err != nil {
 		// Every ConnFromDSN error is a sentinel with a fixed message.
 		return fail(err, err.Error())
+	}
+	if conn.MinClientMajor > num/10000 {
+		return fail(ErrClientTooOld, ErrClientTooOld.Error())
 	}
 	for _, e := range conn.Env {
 		if pw, ok := strings.CutPrefix(e, "PGPASSWORD="); ok {

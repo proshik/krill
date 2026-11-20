@@ -16,6 +16,9 @@ import (
 type ConnEnv struct {
 	Env   []string // "PGHOST=…", … — PGPASSWORD included; never log
 	Files []string // host paths to bind-mount read-only at the same path
+	// MinClientMajor is the oldest pg_dump major that honors Env (0 = any):
+	// sslnegotiation=direct is libpq 17+.
+	MinClientMajor int
 }
 
 // DefaultCABundles is checked in order when sslmode is verify-ca/verify-full
@@ -32,6 +35,7 @@ var (
 	ErrSSLFile     = errors.New("an SSL file named in the database URL or a PGSSL* environment variable is missing or not a regular file")
 	ErrServiceFile = errors.New("the database connection relies on a PostgreSQL service file (service= or PGSERVICE), which the dump container cannot reproduce; put its settings in KRILL_DATABASE_URL")
 	ErrRepeated    = errors.New("the database URL gives a connection or TLS parameter more than once; give each of them once")
+	ErrWeakDirect  = errors.New("sslnegotiation=direct needs sslmode=require, verify-ca or verify-full for the dump; sslmode=allow is not supported with it")
 )
 
 // allowed maps the libpq parameters that are passed through to their
@@ -44,6 +48,10 @@ var allowed = []struct{ param, env string }{
 	{"connect_timeout", "PGCONNECT_TIMEOUT"},
 	{"target_session_attrs", "PGTARGETSESSIONATTRS"},
 	{"options", "PGOPTIONS"},
+	{"sslnegotiation", "PGSSLNEGOTIATION"},
+	// pgx itself does not read PGCHANNELBINDING; libpq does, so an operator
+	// who set it gets it on the dump too.
+	{"channel_binding", "PGCHANNELBINDING"},
 }
 
 var fileParams = map[string]bool{"sslrootcert": true, "sslcert": true, "sslkey": true}
@@ -53,7 +61,7 @@ var fileParams = map[string]bool{"sslrootcert": true, "sslcert": true, "sslkey":
 // keyword, so the dump could otherwise run with weaker TLS than the pool.
 func noRepeat(k string) bool {
 	switch k {
-	case "sslpassword", "service", "sslnegotiation", "channel_binding":
+	case "sslpassword", "service":
 		return true
 	}
 	for _, a := range allowed {
@@ -155,6 +163,22 @@ func connFromDSN(dsn string, caBundles []string, getenv func(string) string) (Co
 	if system {
 		eff["sslrootcert"] = ""
 		eff["sslmode"] = "verify-full"
+	}
+	// Direct TLS negotiation: like the pool, it upgrades the default prefer
+	// to require (libpq refuses the weaker modes with it); with disable the
+	// pool sends no TLS at all, so neither does the dump.
+	if eff["sslnegotiation"] == "direct" {
+		switch eff["sslmode"] {
+		case "", "prefer":
+			eff["sslmode"] = "require"
+		case "disable":
+			eff["sslnegotiation"] = ""
+		case "allow":
+			return ConnEnv{}, ErrWeakDirect
+		}
+	}
+	if eff["sslnegotiation"] == "direct" {
+		out.MinClientMajor = 17
 	}
 	for _, a := range allowed {
 		if v := eff[a.param]; v != "" {
