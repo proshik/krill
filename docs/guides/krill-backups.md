@@ -105,7 +105,12 @@ re-created every 30 seconds). Their structure is kept.
 
 For the bundled database the dump runs in a short-lived container on the host network using the
 same `postgres:<major>-alpine` image major as the server. For an external database the same
-container connects with your `KRILL_DATABASE_URL`. A `verify-full` or `verify-ca` connection
+container connects with your `KRILL_DATABASE_URL`. The database password is handed to that
+container on its standard input, never in its environment or command line, so it does not show
+up in `docker inspect` or in a debug-level Docker daemon log; a password containing a line break
+is refused. A backup is kept only when the dump's output ends with a completion line that the
+container prints, with a value unique to that run, after `pg_dump` succeeded: output cut short
+anywhere fails the run instead of storing a partial dump. A `verify-full` or `verify-ca` connection
 without `sslrootcert` uses the host's CA bundle, and so does `sslrootcert=system` (with
 `verify-full`, since the `pg_dump` of PostgreSQL 13–15 does not know `system`). When Krill's
 environment sets `SSL_CERT_FILE`, that file is the CA bundle instead, as it is for Krill's own
