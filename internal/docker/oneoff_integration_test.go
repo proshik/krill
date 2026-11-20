@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/errdefs"
 )
 
 func oneOffEngine(t *testing.T) *dockerEngine {
@@ -227,4 +228,71 @@ func TestRunOneOffKeepsNoLog(t *testing.T) {
 	if out != "hello" {
 		t.Fatalf("out = %q: attach must still deliver the output", out)
 	}
+}
+
+// volumeImage declares a VOLUME, so each container gets an anonymous volume;
+// it is the state dump's image family.
+const volumeImage = "postgres:16-alpine"
+
+func anonymousVolumes(t *testing.T, c container.InspectResponse) []string {
+	t.Helper()
+	var names []string
+	for _, m := range c.Mounts {
+		if m.Type == "volume" {
+			names = append(names, m.Name)
+		}
+	}
+	if len(names) == 0 {
+		t.Fatalf("%s got no anonymous volume; the test proves nothing", volumeImage)
+	}
+	return names
+}
+
+func assertVolumesGone(t *testing.T, e *dockerEngine, names []string) {
+	t.Helper()
+	for _, n := range names {
+		_, err := e.cli.VolumeInspect(context.Background(), n)
+		if err == nil {
+			_ = e.cli.VolumeRemove(context.Background(), n, true)
+			t.Errorf("anonymous volume %s remains after the container was removed", n)
+		} else if !errdefs.IsNotFound(err) {
+			t.Errorf("inspect volume %s: %v", n, err)
+		}
+	}
+}
+
+func TestRunOneOffRemovesAnonymousVolumes(t *testing.T) {
+	e := oneOffEngine(t)
+	seen, _, err := runWatched(t, e, OneOffSpec{
+		Image: volumeImage, Cmd: []string{"sh", "-c", "sleep 1"},
+	}, "oneoff-volume")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertVolumesGone(t, e, anonymousVolumes(t, seen))
+}
+
+func TestRemoveContainersByLabelRemovesAnonymousVolumes(t *testing.T) {
+	e := oneOffEngine(t)
+	ctx := context.Background()
+	if err := ensureImageOn(ctx, e.cli, volumeImage); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := e.cli.ContainerCreate(ctx, &container.Config{
+		Image: volumeImage, Cmd: []string{"sleep", "300"},
+		Labels: map[string]string{OneOffRoleLabel: "state-dump-volume-test"},
+	}, nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	seen, err := e.cli.ContainerInspect(ctx, resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vols := anonymousVolumes(t, seen)
+	if n, err := e.RemoveContainersByLabel(ctx, OneOffRoleLabel, "state-dump-volume-test"); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	assertVolumesGone(t, e, vols)
 }

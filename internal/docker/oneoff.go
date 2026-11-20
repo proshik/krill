@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -75,7 +77,7 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 		return fmt.Errorf("create one-off container: %w", err)
 	}
 	cid := resp.ID
-	defer e.removeSidecarOn(ctx, "", cid)
+	defer e.removeOneOff(ctx, cid)
 
 	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
 	if err != nil {
@@ -109,6 +111,19 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	return waitContainer(ctx, cli, cid, "one-off container", &stderr.buf)
 }
 
+// removeOneOff force-removes a one-off container together with its anonymous
+// volumes: an image declaring VOLUME (every postgres image does) gets one at
+// creation, and nothing else ever removes it. Named volumes are kept by the
+// daemon; a one-off mounts none anyway.
+func (e *dockerEngine) removeOneOff(ctx context.Context, cid string) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarCleanupTimeout)
+	defer cancel()
+	err := e.cli.ContainerRemove(rctx, cid, container.RemoveOptions{Force: true, RemoveVolumes: true})
+	if err != nil && !errdefs.IsNotFound(err) {
+		slog.Warn("could not remove one-off container", "container", cid, "err", err)
+	}
+}
+
 func (e *dockerEngine) RemoveContainersByLabel(ctx context.Context, key, value string) (int, error) {
 	list, err := e.cli.ContainerList(ctx, container.ListOptions{
 		All: true, Filters: filters.NewArgs(filters.Arg("label", key+"="+value)),
@@ -119,7 +134,8 @@ func (e *dockerEngine) RemoveContainersByLabel(ctx context.Context, key, value s
 	removed := 0
 	var firstErr error
 	for _, c := range list {
-		if err := e.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
+		// RemoveVolumes: see removeOneOff.
+		if err := e.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
