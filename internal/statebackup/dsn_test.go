@@ -326,3 +326,35 @@ func TestConnFromDSNParseIgnoresEnvironmentCertificates(t *testing.T) {
 		}
 	}
 }
+
+// pgx takes the first value of a repeated URL parameter and the last of a
+// repeated keyword; the dump must never pick a different one, so a repeated
+// connection or TLS parameter is refused in either order and either form.
+func TestConnFromDSNRefusesRepeatedParameters(t *testing.T) {
+	ca := tmpFile(t)
+	for _, dsn := range []string{
+		"postgres://u:pw@h/d?sslmode=verify-full&sslmode=disable",
+		"postgres://u:pw@h/d?sslmode=disable&sslmode=verify-full",
+		"postgres://u:pw@h/d?sslmode=verify-full&sslmode=require",
+		"postgres://u:pw@h/d?sslmode=require&sslmode=verify-full",
+		"postgres://u:pw@h/d?sslrootcert=" + ca + "&sslrootcert=system",
+		"postgres://u:pw@h/d?channel_binding=require&channel_binding=disable",
+		"postgres://u:pw@h/d?sslnegotiation=direct&sslnegotiation=postgres",
+		"postgres://u:pw@h/d?options=-c%20a%3D1&options=-c%20a%3D2",
+		"host=h user=u password=pw dbname=d sslmode=verify-full sslmode=disable",
+		"host=h user=u password=pw dbname=d sslmode=disable sslmode=verify-full",
+		"host=h user=u password=pw dbname=d channel_binding=require channel_binding=disable",
+	} {
+		_, err := connFromDSN(dsn, []string{ca}, envOf(nil))
+		if !errors.Is(err, ErrRepeated) {
+			t.Fatalf("%q: got %v", dsn, err)
+		}
+		if strings.Contains(err.Error(), "pw") || strings.Contains(err.Error(), "verify") {
+			t.Fatalf("error leaks input: %v", err)
+		}
+	}
+	// A repeated parameter the dump does not use stays accepted.
+	if _, err := connFromDSN("postgres://u:p@h/d?sslmode=disable&application_name=a&application_name=b", nil, envOf(nil)); err != nil {
+		t.Fatal(err)
+	}
+}

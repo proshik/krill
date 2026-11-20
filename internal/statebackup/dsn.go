@@ -3,7 +3,6 @@ package statebackup
 
 import (
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,6 +31,7 @@ var (
 	ErrNoCABundle  = errors.New("sslmode or sslrootcert=system needs a CA bundle but none was found on this host")
 	ErrSSLFile     = errors.New("an SSL file named in the database URL or a PGSSL* environment variable is missing or not a regular file")
 	ErrServiceFile = errors.New("the database connection relies on a PostgreSQL service file (service= or PGSERVICE), which the dump container cannot reproduce; put its settings in KRILL_DATABASE_URL")
+	ErrRepeated    = errors.New("the database URL gives a connection or TLS parameter more than once; give each of them once")
 )
 
 // allowed maps the libpq parameters that are passed through to their
@@ -47,6 +47,22 @@ var allowed = []struct{ param, env string }{
 }
 
 var fileParams = map[string]bool{"sslrootcert": true, "sslcert": true, "sslkey": true}
+
+// noRepeat lists the parameters a DSN must not repeat: the pool (pgx) takes
+// the first value of a repeated URL parameter and the last of a repeated
+// keyword, so the dump could otherwise run with weaker TLS than the pool.
+func noRepeat(k string) bool {
+	switch k {
+	case "sslpassword", "service", "sslnegotiation", "channel_binding":
+		return true
+	}
+	for _, a := range allowed {
+		if a.param == k {
+			return true
+		}
+	}
+	return false
+}
 
 // ConnFromDSN maps a Postgres DSN to libpq environment variables so the
 // password reaches pg_dump through the environment, never through argv.
@@ -205,22 +221,25 @@ func rawParams(dsn string) (map[string]string, error) {
 		}
 		m := map[string]string{}
 		for k, v := range u.Query() {
+			if len(v) > 1 && noRepeat(k) {
+				return nil, ErrRepeated
+			}
 			if len(v) > 0 {
-				m[k] = v[len(v)-1]
+				m[k] = v[0]
 			}
 		}
 		return m, nil
 	}
 	m, err := parseKeywords(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("%w", ErrDSNParse)
+		return nil, err
 	}
 	return m, nil
 }
 
 // parseKeywords parses libpq keyword/value syntax: key=value pairs separated
 // by whitespace, values optionally single-quoted, backslash escaping the next
-// character.
+// character. A repeated noRepeat keyword is refused with ErrRepeated.
 func parseKeywords(s string) (map[string]string, error) {
 	m := map[string]string{}
 	i, n := 0, len(s)
@@ -277,6 +296,9 @@ func parseKeywords(s string) (map[string]string, error) {
 				val.WriteByte(s[i])
 				i++
 			}
+		}
+		if _, dup := m[key]; dup && noRepeat(key) {
+			return nil, ErrRepeated
 		}
 		m[key] = val.String()
 	}
