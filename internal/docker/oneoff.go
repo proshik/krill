@@ -79,22 +79,22 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	cid := resp.ID
 	defer e.removeOneOff(ctx, cid)
 
-	att, err := cli.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	// The attach upgrade and the hijacked stream do raw socket IO that does
+	// not observe ctx. This client's connection is closed on cancellation,
+	// which also interrupts a daemon that stalls during the handshake.
+	attachClient, err := cancelableAttachClient(ctx, cli)
 	if err != nil {
 		return fmt.Errorf("attach one-off container: %w", err)
 	}
-	defer att.Close()
-	// The hijacked stream does not observe ctx; close it on cancellation so
-	// the copy below returns.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			att.Close()
-		case <-stop:
+	defer attachClient.Close()
+	att, err := attachClient.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
-	}()
+		return fmt.Errorf("attach one-off container: %w", err)
+	}
+	defer att.Close()
 	if err := cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start one-off container: %w", err)
 	}

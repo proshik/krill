@@ -532,6 +532,14 @@ func (s *Service) stream(ctx context.Context, spec docker.OneOffSpec, recipient 
 	dumpCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	pr, pw := io.Pipe()
+	// The pipe does not observe ctx: once the run's context ends, fail both
+	// ends so a read or write blocked on the other side returns on its own.
+	// After a normal Close this changes nothing.
+	stopPipeClose := context.AfterFunc(ctx, func() {
+		pw.CloseWithError(ctx.Err())
+		pr.CloseWithError(ctx.Err())
+	})
+	defer stopPipeClose()
 	var (
 		uploadFailed atomic.Bool
 		dumpErr      string // written by the goroutine, read after done
