@@ -192,13 +192,17 @@ func stateLines(ctx context.Context, d digestData) []stateLine {
 		}
 		out = append(out, stateLine{mk(lvlCrit), i18n.Tf(ctx, "tg.dg.state_failed", strings.Join(parts, " · "))})
 	}
-	if okN > 0 {
-		out = append(out, stateLine{mk(lvlOK), i18n.Tf(ctx, "tg.dg.state_ok", okN, humanBytes(lastOK.Size), whenLabel(lastOK.At, d.Now, d.Loc, d.Lang))})
-		return out
-	}
 	last := i18n.T(ctx, "tg.dg.state_never")
 	if !st.LastSuccess.IsZero() {
 		last = whenLabel(st.LastSuccess, d.Now, d.Loc, d.Lang)
+	}
+	if okN > 0 {
+		out = append(out, stateLine{mk(lvlOK), i18n.Tf(ctx, "tg.dg.state_ok", okN, humanBytes(lastOK.Size), whenLabel(lastOK.At, d.Now, d.Loc, d.Lang))})
+		// Earlier successes in the window do not make a missed schedule fine.
+		if b.Overdue {
+			out = append(out, stateLine{mk(lvlWarn), i18n.Tf(ctx, "tg.dg.state_overdue", last)})
+		}
+		return out
 	}
 	switch {
 	case b.Overdue:

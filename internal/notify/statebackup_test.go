@@ -142,6 +142,10 @@ func TestDigestStateBlock(t *testing.T) {
 			[]string{"🔴 бэкап не удался: 01:00 · по расписанию · boom", "🔴 …и ещё 2"}, nil},
 		{"overdue", with(func(s *StateStatus) { s.LastSuccess = at(3).AddDate(0, 0, -2) }),
 			[]string{"🟡 a scheduled backup is overdue, the last one was at Nov 18 03:00"}, []string{"🟡 бэкап по расписанию просрочен, последний: 18.11 03:00"}, nil},
+		{"ok but overdue", with(func(s *StateStatus) {
+			s.LastSuccess = at(3).AddDate(0, 0, -2)
+			s.Runs = []StateRun{{Trigger: "manual", Status: "ok", Size: 2048, At: at(1)}}
+		}), []string{"🟢 1 backups", "🟡 a scheduled backup is overdue, the last one was at Nov 18 03:00"}, nil, nil},
 		{"nothing due", base, []string{"\nlast backup 03:00"}, []string{"\nпоследний бэкап: 03:00"}, []string{"🟢 last", "🟡 last"}},
 		{"on demand", with(func(s *StateStatus) { s.Schedule = ""; s.LastSuccess = time.Time{} }),
 			[]string{"\non demand only, last backup never"}, []string{"\nтолько по запросу, последний бэкап: не было"}, []string{"🟡 on demand"}},
