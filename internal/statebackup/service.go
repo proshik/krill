@@ -83,14 +83,19 @@ type Service struct {
 	// head reads a stored object's size (backup.Head; a test hook).
 	head func(ctx context.Context, d backup.Destination, key string, allowPrivate bool) (int64, error)
 
+	now func() time.Time // time.Now; a test hook
+
 	mu       sync.Mutex
 	inFlight bool
+	// lastSecond is the UTC second the previous run's object key was
+	// stamped with (keys have one-second resolution).
+	lastSecond time.Time
 }
 
 // New builds the service. A nil runner is allowed; every run then fails with
 // ErrNoRunner.
 func New(q Querier, runner docker.OneOffRunner, store Store, dsn string, allowPrivate bool) *Service {
-	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles, head: backup.Head}
+	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles, head: backup.Head, now: time.Now}
 }
 
 // SetNotifier wires failure alerts (no-op if never set).
@@ -507,9 +512,14 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 		return fail(nil, "the dump's completion marker could not be generated")
 	}
 
-	key := ScheduledKey(st.Prefix, rec.StartedAt)
+	stamp, err := s.keyTime(ctx)
+	if err != nil {
+		return fail(nil, "the run's time ran out before its backup could be named")
+	}
+	rec.StartedAt = stamp
+	key := ScheduledKey(st.Prefix, stamp)
 	if trigger == TriggerPreUpdate {
-		key = PreUpdateKey(st.Prefix, rec.StartedAt, from, to)
+		key = PreUpdateKey(st.Prefix, stamp, from, to)
 	}
 	dst := st.Destination()
 	spec := docker.OneOffSpec{
@@ -572,6 +582,32 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 	s.finish(ctx, rec)
 	slog.Info("state backup stored", "trigger", string(trigger), "key", key, "bytes", n)
 	return nil
+}
+
+// keyTime is the time a run's object key is stamped with: now, or, when the
+// previous run of this process already used now's second, the next second
+// (waited for, bounded by ctx). Keys have one-second resolution, and a second
+// run with the same key would overwrite the first one's object. The caller
+// holds the run slot.
+func (s *Service) keyTime(ctx context.Context) (time.Time, error) {
+	for {
+		now := s.now()
+		sec := now.UTC().Truncate(time.Second)
+		s.mu.Lock()
+		if !sec.Equal(s.lastSecond) {
+			s.lastSecond = sec
+			s.mu.Unlock()
+			return now, nil
+		}
+		s.mu.Unlock()
+		t := time.NewTimer(sec.Add(time.Second).Sub(now.UTC()))
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return time.Time{}, ctx.Err()
+		case <-t.C:
+		}
+	}
 }
 
 // stream runs the dump container and uploads its output, gzipped and

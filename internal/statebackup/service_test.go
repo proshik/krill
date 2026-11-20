@@ -453,6 +453,53 @@ func TestRunNonceIsPerRun(t *testing.T) {
 	}
 }
 
+// Two runs in the same second must not share an object key: the second one
+// waits for the next second instead of overwriting the first one's backup.
+func TestRunsInOneSecondGetDistinctKeys(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	base := time.Now().Truncate(time.Second).Add(900 * time.Millisecond)
+	var mu sync.Mutex
+	calls := 0
+	f.svc.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls <= 2 { // both runs start within one second
+			return base
+		}
+		return base.Add(200 * time.Millisecond)
+	}
+	for range 2 {
+		if err := f.svc.Run(context.Background(), TriggerManual); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := f.runs(t)
+	if len(runs) != 2 || runs[0].ObjectKey == runs[1].ObjectKey {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if keys := f.keys(t, ScheduledDir("ops")); len(keys) != 2 {
+		t.Fatalf("objects = %q", keys)
+	}
+	if got, want := runs[0].ObjectKey, ScheduledKey("ops", base.Add(200*time.Millisecond)); got != want {
+		t.Fatalf("second run's key = %q, want %q", got, want)
+	}
+}
+
+// A run waiting for the next second gives up with its context.
+func TestKeyTimeHonorsContext(t *testing.T) {
+	s := &Service{now: func() time.Time { return time.Date(2026, 11, 20, 10, 0, 0, 500, time.UTC) }}
+	if _, err := s.keyTime(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.keyTime(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("keyTime with a cancelled context = %v", err)
+	}
+}
+
 // A DSN without a password sends an empty line; the wrapper then exports no
 // PGPASSWORD at all.
 func TestRunWithoutPassword(t *testing.T) {
