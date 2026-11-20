@@ -139,9 +139,10 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	job := i.Status()
 	if supported {
 		// Busy reads the database; an instance that cannot update anyway
-		// (a dev machine) never asks. While the update job itself runs, its
-		// own pre-update snapshot is not a reason to wait.
-		if busy := i.Busy(ctx); busy != "" && !(busy == "state_backup" && job.Phase.Active()) {
+		// (a dev machine) never asks. While the update job backs up Krill's
+		// state, that snapshot is its own and not a reason to wait; in any
+		// other phase a running state backup is someone else's.
+		if busy := i.Busy(ctx); busy != "" && !(busy == "state_backup" && job.Phase == selfupdate.PhaseBackingUp) {
 			v.BusyKey = "update.busy." + busy
 		}
 	}

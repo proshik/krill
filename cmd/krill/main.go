@@ -43,6 +43,7 @@ import (
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/selfupdate"
 	"github.com/proshik/krill/internal/server"
+	"github.com/proshik/krill/internal/statebackup"
 	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/volume"
 )
@@ -488,6 +489,22 @@ func run() error {
 	}
 	defer bucketSched.Stop()
 
+	// Krill's own state backups (Settings → Krill backups): pg_dump of the
+	// control-plane database in a one-off local container, encrypted on the
+	// way to S3. An engine that cannot run one leaves the feature unwired.
+	var (
+		stateSvc   *statebackup.Service
+		stateStore *statebackup.DBStore
+	)
+	stateRunner, stateOK := engine.(docker.OneOffRunner)
+	if stateOK {
+		stateStore = statebackup.NewDBStore(q)
+		stateSvc = statebackup.New(pool, stateRunner, stateStore, cfg.DatabaseURL, cfg.AllowPrivateEgress)
+		stateSvc.SetNotifier(notifySvc)
+	} else {
+		slog.Warn("state backups unavailable: the docker engine cannot run one-off containers")
+	}
+
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
 	app.SetHostShare(hostshare.NewStore(pool))
@@ -523,6 +540,9 @@ func run() error {
 		swarmReader = sr
 	}
 	digest := notify.NewDigest(notifySvc, notifyStore, metricsStore, swarmReader)
+	if stateSvc != nil {
+		digest.SetStateBackups(stateDigestAdapter{store: stateStore})
+	}
 	go digest.Run(ctx)
 	app.SetDigest(digest)
 	app.SetMetrics(metricsStore)
@@ -533,16 +553,44 @@ func run() error {
 
 	// Self-update: discover newer releases and install one from Settings → Updates.
 	updateChecker := selfupdate.NewChecker(cfg.UpdateRepo, cfg.UpdateCheckInterval, cfg.AllowPrivateEgress)
+	busy := updateBusy{
+		runningDeploys:     q.CountRunningDeployments,
+		migratingInstances: q.CountMigratingDBInstances,
+		backups:            backupSvc,
+		volumes:            volSvc,
+		buckets:            bucketSvc,
+		clones:             cloner,
+	}
+	if stateSvc != nil { // a nil *Service in the interface would not read as unset
+		busy.stateBackups = stateSvc
+	}
 	updater := selfupdate.NewUpdater(firewall.LocalRunner{Timeout: 60 * time.Second}, updateChecker,
-		cfg.UpdateRepo, cfg.AllowPrivateEgress, updateBusy{
-			runningDeploys:     q.CountRunningDeployments,
-			migratingInstances: q.CountMigratingDBInstances,
-			backups:            backupSvc,
-			volumes:            volSvc,
-			buckets:            bucketSvc,
-			clones:             cloner,
-		}.reason)
+		cfg.UpdateRepo, cfg.AllowPrivateEgress, busy.reason)
 	app.SetSelfUpdate(updateChecker, updater)
+
+	if stateSvc != nil {
+		updater.SetSnapshot(snapshotHook(stateSvc))
+		stateSched := backup.NewScheduler(stateSvc.SchedStore(), scheduledStateRun(stateSvc, func() bool {
+			return updater.Status().Phase.Active()
+		}))
+		stateSvc.SetOnChange(func() {
+			if err := stateSched.Reload(); err != nil {
+				slog.Error("state backup scheduler reload failed", "err", err)
+			}
+		})
+		defer stateSched.Stop()
+		// A dump container left by a crash still holds the database password
+		// in its environment. Remove it in the background (a slow Docker must
+		// not hold boot), and only then load the schedule, so the cleanup can
+		// never remove the container of a scheduled run that just started.
+		go func() {
+			cleanupStateDumps(ctx, stateRunner)
+			if err := stateSched.Reload(); err != nil {
+				slog.Warn("state backup scheduler reload failed", "err", err)
+			}
+		}()
+		app.SetStateBackup(stateSvc, cfg.SecretKey != "")
+	}
 
 	// Observability: Krill's own Alloy agent on every node (Settings →
 	// Observability). The real engine implements the Swarm config/secret

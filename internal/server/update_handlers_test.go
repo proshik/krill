@@ -344,6 +344,17 @@ func TestUpdatesPage(t *testing.T) {
 		if !strings.Contains(body, "state is running") {
 			t.Errorf("a foreign state backup is not shown as busy")
 		}
+		// Only the backing-up phase is the update's own snapshot: in any
+		// other active phase a running state backup is someone else's.
+		for _, ph := range []selfupdate.Phase{selfupdate.PhaseDownloading, selfupdate.PhaseVerifying, selfupdate.PhaseInstalling} {
+			c, i = newUpdateFakes()
+			i.busy = "state_backup"
+			i.status = selfupdate.Status{Phase: ph, Tag: updLatest}
+			body = getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+			if !strings.Contains(body, "state is running") {
+				t.Errorf("phase %s: a foreign state backup is not shown as busy", ph)
+			}
+		}
 	})
 
 	t.Run("up to date with a previous version", func(t *testing.T) {
