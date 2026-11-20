@@ -135,12 +135,16 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	v.Supported = supported
 	if !supported {
 		v.UnsupportedKey = "update.unsupported." + reason
-	} else if busy := i.Busy(ctx); busy != "" {
-		// Busy reads the database; an instance that cannot update anyway
-		// (a dev machine) never asks.
-		v.BusyKey = "update.busy." + busy
 	}
 	job := i.Status()
+	if supported {
+		// Busy reads the database; an instance that cannot update anyway
+		// (a dev machine) never asks. While the update job itself runs, its
+		// own pre-update snapshot is not a reason to wait.
+		if busy := i.Busy(ctx); busy != "" && !(busy == "state_backup" && job.Phase.Active()) {
+			v.BusyKey = "update.busy." + busy
+		}
+	}
 	v.Phase = string(job.Phase)
 	if v.Phase == "" {
 		v.Phase = string(selfupdate.PhaseIdle)

@@ -328,6 +328,24 @@ func TestUpdatesPage(t *testing.T) {
 		}
 	})
 
+	// The update's own pre-update snapshot is not a reason to wait; the same
+	// snapshot started by someone else is.
+	t.Run("own state snapshot is not busy", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		i.busy = "state_backup"
+		i.status = selfupdate.Status{Phase: selfupdate.PhaseBackingUp, Tag: updLatest}
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if strings.Contains(body, "state is running") {
+			t.Errorf("the update's own snapshot is shown as a reason to wait")
+		}
+		c, i = newUpdateFakes()
+		i.busy = "state_backup"
+		body = getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if !strings.Contains(body, "state is running") {
+			t.Errorf("a foreign state backup is not shown as busy")
+		}
+	})
+
 	t.Run("up to date with a previous version", func(t *testing.T) {
 		c, i := newUpdateFakes()
 		c.newer = false

@@ -235,7 +235,7 @@ func TestStateBackupRoundTrip(t *testing.T) {
 		t.Fatalf("object key = %q", run.ObjectKey)
 	}
 	if imgs := f.runner.used(); len(imgs) != 1 || imgs[0] != "postgres:16-alpine" {
-		t.Fatalf("dump images = %v, want [postgres:16-alpine]", imgs)
+		t.Fatalf("dump images = %v, want exactly one, the postgres 16 alpine image", imgs)
 	}
 
 	ciphertext := f.download(t, run.ObjectKey)
