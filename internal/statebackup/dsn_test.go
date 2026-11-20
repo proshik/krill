@@ -182,3 +182,34 @@ func TestConnFromDSNVerifyFullUsesCABundle(t *testing.T) {
 		}
 	}
 }
+
+func TestConnFromDSNRelativeSSLPathRefused(t *testing.T) {
+	for _, p := range []string{"sslrootcert", "sslcert", "sslkey"} {
+		if _, err := ConnFromDSN("postgres://u:p@h/d?"+p+"=rel/file.pem", nil); !errors.Is(err, ErrSSLFile) {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+}
+
+func TestConnFromDSNClientCertPassthroughAndDedupe(t *testing.T) {
+	cert, key := tmpFile(t), tmpFile(t)
+	c, err := ConnFromDSN("postgres://u:p@h/d?sslcert="+cert+"&sslkey="+key, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(c.Env, "PGSSLCERT="+cert) || !contains(c.Env, "PGSSLKEY="+key) || len(c.Files) != 2 {
+		t.Fatalf("env %q files %v", c.Env, c.Files)
+	}
+	c, err = ConnFromDSN("postgres://u:p@h/d?sslcert="+cert+"&sslkey="+cert, nil)
+	if err != nil || len(c.Files) != 1 {
+		t.Fatalf("err %v files %v", err, c.Files)
+	}
+	c, err = ConnFromDSN("postgres://u:p@h/d?sslmode=verify-full&sslcert="+cert, []string{cert})
+	if err != nil || len(c.Files) != 1 {
+		t.Fatalf("err %v files %v", err, c.Files)
+	}
+	missing := filepath.Join(t.TempDir(), "nokey")
+	if _, err := ConnFromDSN("postgres://u:p@h/d?sslcert="+cert+"&sslkey="+missing, nil); !errors.Is(err, ErrSSLFile) {
+		t.Fatalf("missing key: %v", err)
+	}
+}

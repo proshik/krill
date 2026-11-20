@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -64,10 +65,13 @@ func ConnFromDSN(dsn string, caBundles []string) (ConnEnv, error) {
 		if v == "" || !fileParams[a.param] || (a.param == "sslrootcert" && v == "system") {
 			continue
 		}
+		if !filepath.IsAbs(v) {
+			return ConnEnv{}, ErrSSLFile
+		}
 		if st, err := os.Stat(v); err != nil || !st.Mode().IsRegular() {
 			return ConnEnv{}, ErrSSLFile
 		}
-		out.Files = append(out.Files, v)
+		out.Files = appendUnique(out.Files, v)
 	}
 	cfg, err := pgconn.ParseConfig(withoutTLS(dsn, raw))
 	if err != nil {
@@ -127,7 +131,7 @@ func ConnFromDSN(dsn string, caBundles []string) (ConnEnv, error) {
 			return ConnEnv{}, ErrNoCABundle
 		}
 		out.Env = append(out.Env, "PGSSLROOTCERT="+found)
-		out.Files = append(out.Files, found)
+		out.Files = appendUnique(out.Files, found)
 	}
 	return out, nil
 }
@@ -247,4 +251,13 @@ func parseKeywords(s string) (map[string]string, error) {
 		}
 		m[key] = val.String()
 	}
+}
+
+func appendUnique(s []string, v string) []string {
+	for _, e := range s {
+		if e == v {
+			return s
+		}
+	}
+	return append(s, v)
 }
