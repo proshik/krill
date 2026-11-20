@@ -110,6 +110,11 @@ func List(ctx context.Context, d Destination, prefix string, allowPrivate bool) 
 			return nil, err
 		}
 		for _, o := range page.Contents {
+			// A listing entry without a key cannot be matched, kept or
+			// deleted; dereferencing it would panic the caller's goroutine.
+			if o.Key == nil {
+				return nil, errors.New("the storage listed an object without a key")
+			}
 			obj := Object{Key: *o.Key}
 			if o.Size != nil {
 				obj.Size = *o.Size
