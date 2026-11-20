@@ -946,6 +946,29 @@ func TestStartRefusedWhileUpdating(t *testing.T) {
 	}
 }
 
+// A request refused during an update never shows as in flight: the
+// updater's own busy check (InFlight) must not see a claim that is about to
+// be refused. updateActive runs under the slot's mutex, so it reads the
+// field directly.
+func TestRefusedDuringUpdateNeverInFlight(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	var seen []bool
+	f.svc.SetUpdateActive(func() bool {
+		seen = append(seen, f.svc.inFlight)
+		return true
+	})
+	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrUpdateInProgress) {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := f.svc.Run(context.Background(), TriggerSchedule); !errors.Is(err, ErrUpdateInProgress) {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(seen) != 2 || seen[0] || seen[1] {
+		t.Fatalf("slot taken while the update was asked = %v; want [false false]", seen)
+	}
+}
+
 func TestRunNotConfigured(t *testing.T) {
 	f := newFixture(t, testDSN, false)
 	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrNotConfigured) {

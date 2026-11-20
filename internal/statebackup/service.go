@@ -179,18 +179,22 @@ func (s *Service) InFlight() int {
 }
 
 // claimRun reserves the slot for a manual or scheduled run, refusing while a
-// self-update is active. The update is asked with the slot already held, so
-// an update starting after the check still finds the slot taken (busy).
+// self-update is active. The update is asked and the slot reserved under the
+// one mutex, so a refused request never shows as in flight (the updater's
+// busy check or Snapshot would otherwise see it and abort), and an update
+// starting after the check still finds the slot taken (busy). updateActive
+// only reads the updater's status and never calls back into this service.
 func (s *Service) claimRun() (release func(), err error) {
-	release, ok := s.claim()
-	if !ok {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inFlight {
 		return nil, ErrStateBackupRunning
 	}
 	if s.updateActive != nil && s.updateActive() {
-		release()
 		return nil, ErrUpdateInProgress
 	}
-	return release, nil
+	s.inFlight = true
+	return s.releaseFunc(), nil
 }
 
 // claim reserves the service's single slot; release must be called when the
@@ -202,11 +206,15 @@ func (s *Service) claim() (release func(), ok bool) {
 		return nil, false
 	}
 	s.inFlight = true
+	return s.releaseFunc(), true
+}
+
+func (s *Service) releaseFunc() func() {
 	return func() {
 		s.mu.Lock()
 		s.inFlight = false
 		s.mu.Unlock()
-	}, true
+	}
 }
 
 // RemoveLeftovers removes the dump containers a crashed run left behind (a
