@@ -46,6 +46,20 @@ All S3 traffic goes through the same egress guard as other storage. A private en
 address on your own network) needs `KRILL_ALLOW_PRIVATE_EGRESS=true`; see
 [Configuration](../configuration.md).
 
+The credentials need these S3 permissions on the bucket and the prefix:
+
+- `s3:ListBucket` and `s3:GetBucketLocation` (the save check is a `HeadBucket` call, and
+  retention lists the prefix);
+- `s3:PutObject` and `s3:AbortMultipartUpload` (the upload is multipart);
+- `s3:GetObject` (after an upload Krill reads the object's size back with `HeadObject`, which
+  AWS authorizes with `GetObject`);
+- `s3:DeleteObject` (retention).
+
+The save check covers only the bucket, not the objects, so a key that lacks the rest passes it
+and fails at the first real backup. That could be the snapshot before an update, which then
+refuses to start. **Press Back up now right after saving and check that the run in "Recent
+backups" says OK**; this proves the key, the endpoint and the permissions in one step.
+
 Add a lifecycle rule to the bucket that aborts incomplete multipart uploads after one day. If
 Krill is killed in the middle of a backup, the unfinished upload stays in the bucket, invisible
 and billed, until such a rule removes it.
@@ -56,13 +70,21 @@ Pick a schedule preset: hourly, daily, weekly, monthly or a custom cron expressi
 means on demand only: nothing runs on a timer, but **Back up now** and the pre-update snapshot
 still work.
 
+**Saving does not turn the automatic backups on.** On a new installation the page stays
+**Paused** after the first save (storage and key set, schedule chosen): **Back up now** works,
+but no scheduled backup runs and no snapshot is taken before an update. Press **Resume**. The
+status at the top of the page then reads **Active** (with the time of the next backup), or
+**On demand only** when the schedule is Off. If it still says **Paused**, nothing automatic
+happens, and the Updates page says so too ("this update will not be preceded by a backup").
+
 **Pause** stops the scheduled backups and the pre-update snapshot. **Back up now** still works
 while paused, as long as storage and the age key are set. "Keep last N backups" applies to the
 scheduled directory; the `pre-update/` directory always keeps the 5 newest.
 
 ## 4. Before every update
 
-When you install a release from **Settings → Updates**, Krill first takes a snapshot named
+When you install a release from **Settings → Updates** and the backups are enabled (not
+paused, with storage and the key set), Krill first takes a snapshot named
 `…_<from>_to_<to>.sql.gz.age` under `pre-update/`. If it fails, the update does not start and
 the page shows why: an update that cannot be undone from a backup is not worth the risk.
 
