@@ -59,6 +59,9 @@ func TestStateBackupFailedDetailCapped(t *testing.T) {
 }
 
 func TestStateOverdue(t *testing.T) {
+	old := cronLoc
+	cronLoc = time.UTC
+	defer func() { cronLoc = old }()
 	at := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, time.UTC) }
 	cases := []struct {
 		name             string
@@ -70,6 +73,10 @@ func TestStateOverdue(t *testing.T) {
 		{"daily inside grace", "0 3 * * *", at(19, 3, 1), time.Time{}, at(20, 3, 30), false},
 		{"weekly", "0 3 * * 0", at(17, 3, 0), time.Time{}, at(20, 4, 0), false},
 		{"on demand", "", at(1, 3, 0), time.Time{}, at(20, 4, 0), false},
+		{"weekly 8 days", "0 3 * * 0", at(12, 3, 0), time.Time{}, at(20, 4, 0), true},
+		{"monthly late", "0 3 1 * *", at(1, 3, 0).AddDate(0, -1, 0), time.Time{}, at(20, 4, 0), true},
+		{"monthly fine", "0 3 1 * *", at(1, 3, 0), time.Time{}, at(20, 4, 0), false},
+		{"both zero", "0 3 * * *", time.Time{}, time.Time{}, at(20, 4, 0), false},
 		{"never, saved 2 days ago", "0 3 * * *", time.Time{}, at(18, 12, 0), at(20, 12, 0), true},
 	}
 	for _, c := range cases {
@@ -81,6 +88,9 @@ func TestStateOverdue(t *testing.T) {
 
 func stateDigest(t *testing.T, st StateStatus, infra bool, lang string) string {
 	t.Helper()
+	old := cronLoc
+	cronLoc = time.UTC
+	defer func() { cronLoc = old }()
 	fs := &fakeStore{}
 	d := NewDigest(New(fs), fs, fakeMetrics{}, nil)
 	d.SetStateBackups(&fakeState{st: st})
@@ -202,5 +212,25 @@ func TestDigestStateBlockCanSplitMessage(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(parts, "\n"), "not backed up") {
 		t.Fatal("state line lost in the split")
+	}
+}
+
+func TestStateOverdueUsesSchedulerZone(t *testing.T) {
+	old := cronLoc
+	cronLoc = time.FixedZone("UTC-5", -5*3600)
+	defer func() { cronLoc = old }()
+	last := time.Date(2026, 11, 19, 8, 0, 0, 0, time.UTC) // 03:00 local
+	if stateOverdue("0 3 * * *", last, time.Time{}, time.Date(2026, 11, 20, 4, 30, 0, 0, time.UTC)) {
+		t.Error("overdue before the next 03:00 local")
+	}
+	if !stateOverdue("0 3 * * *", last, time.Time{}, time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)) {
+		t.Error("not overdue after 03:00 local + grace")
+	}
+}
+
+func TestDigestStateUnknownStatusNotGreen(t *testing.T) {
+	got := stateDigest(t, StateStatus{Configured: true, Schedule: "0 3 * * *", Since: time.Now(), Runs: []StateRun{{Status: "running", At: time.Now()}}}, true, "en")
+	if strings.Contains(got, "🟢 1 backups") {
+		t.Fatalf("a non-ok run shown green:\n%s", got)
 	}
 }

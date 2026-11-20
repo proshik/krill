@@ -92,6 +92,10 @@ func stateTriggerLine(ctx context.Context, trigger, from, to string) string {
 	return label
 }
 
+// cronLoc is the zone the cron scheduler fires in (cron.New defaults to
+// time.Local); overridable in tests.
+var cronLoc = time.Local
+
 // stateOverdue reports whether a scheduled backup is overdue: the schedule's
 // next due time after the later of the last success and the moment the
 // settings were saved, plus the grace period, has passed. An on-demand
@@ -108,7 +112,12 @@ func stateOverdue(schedule string, lastSuccess, since, now time.Time) bool {
 	if since.After(base) {
 		base = since
 	}
-	return sched.Next(base).Add(stateOverdueGrace).Before(now)
+	if base.IsZero() {
+		return false
+	}
+	// Next evaluates the schedule in base's zone; the scheduler fires in
+	// cronLoc, while stored times may come back in UTC.
+	return sched.Next(base.In(cronLoc)).Add(stateOverdueGrace).Before(now.In(cronLoc))
 }
 
 // stateBlock is the digest's collected state backup section.
@@ -157,6 +166,9 @@ func stateLines(ctx context.Context, d digestData) []stateLine {
 	for _, r := range st.Runs {
 		if r.Status == "error" {
 			failed = append(failed, r)
+			continue
+		}
+		if r.Status != "ok" {
 			continue
 		}
 		okN++
