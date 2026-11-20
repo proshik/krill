@@ -81,6 +81,10 @@ func TestPrepareValidation(t *testing.T) {
 	if _, err := Prepare(Settings{}, bad); !errors.Is(err, ErrInvalidSchedule) {
 		t.Errorf("schedule: %v", err)
 	}
+	bad.CustomCron = " CRON_TZ=UTC " // a timezone alone used to panic the parser
+	if _, err := Prepare(Settings{}, bad); !errors.Is(err, ErrInvalidSchedule) {
+		t.Errorf("timezone-only schedule: %v", err)
+	}
 	bad = in
 	bad.Recipient = "ssh-ed25519 AAAA"
 	if _, err := Prepare(Settings{}, bad); !errors.Is(err, ErrInvalidRecipient) {
