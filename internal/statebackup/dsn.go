@@ -22,7 +22,8 @@ type ConnEnv struct {
 }
 
 // DefaultCABundles is checked in order when sslmode is verify-ca/verify-full
-// and the DSN names no sslrootcert, or when it names sslrootcert=system.
+// and the DSN names no sslrootcert, or when it names sslrootcert=system,
+// unless Krill's environment sets SSL_CERT_FILE.
 var DefaultCABundles = []string{"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem"}
 
 // Sentinel errors. Their messages are fixed strings: a pgconn error echoes the
@@ -35,6 +36,8 @@ var (
 	ErrSSLFile     = errors.New("an SSL file named in the database URL or a PGSSL* environment variable is missing or not a regular file")
 	ErrServiceFile = errors.New("the database connection relies on a PostgreSQL service file (service= or PGSERVICE), which the dump container cannot reproduce; put its settings in KRILL_DATABASE_URL")
 	ErrRepeated    = errors.New("the database URL gives a connection or TLS parameter more than once; give each of them once")
+	ErrCertFile    = errors.New("SSL_CERT_FILE in Krill's environment names a missing, relative or non-regular file, which the dump container cannot use as its CA bundle")
+	ErrCertDir     = errors.New("Krill's environment sets SSL_CERT_DIR, whose CA certificates the dump container cannot reproduce; add sslrootcert=<path to the CA file> to KRILL_DATABASE_URL")
 	ErrWeakDirect  = errors.New("sslnegotiation=direct needs sslmode=require, verify-ca or verify-full for the dump; sslmode=allow is not supported with it")
 )
 
@@ -188,11 +191,24 @@ func connFromDSN(dsn string, caBundles []string, getenv func(string) string) (Co
 
 	mode := eff["sslmode"]
 	if (mode == "verify-ca" || mode == "verify-full") && eff["sslrootcert"] == "" {
+		// The pool verifies against Go's system roots, which SSL_CERT_FILE
+		// replaces and SSL_CERT_DIR extends.
+		if getenv("SSL_CERT_DIR") != "" {
+			return ConnEnv{}, ErrCertDir
+		}
 		found := ""
+		if f := getenv("SSL_CERT_FILE"); f != "" {
+			if st, err := os.Stat(f); err != nil || !filepath.IsAbs(f) || !st.Mode().IsRegular() {
+				return ConnEnv{}, ErrCertFile
+			}
+			found = f
+		}
 		for _, p := range caBundles {
+			if found != "" {
+				break
+			}
 			if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
 				found = p
-				break
 			}
 		}
 		if found == "" {

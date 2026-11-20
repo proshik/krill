@@ -407,3 +407,39 @@ func TestConnFromDSNNegotiationAndChannelBinding(t *testing.T) {
 		t.Fatalf("allow: %v", err)
 	}
 }
+
+// The pool's system roots honor SSL_CERT_FILE (replaces the default bundle)
+// and SSL_CERT_DIR (adds a directory the dump cannot reproduce).
+func TestConnFromDSNSystemRootsFollowSSLCertEnv(t *testing.T) {
+	bundle, custom := tmpFile(t), tmpFile(t)
+	for _, dsn := range []string{"postgres://u:p@h/d?sslmode=verify-full", "postgres://u:p@h/d?sslrootcert=system"} {
+		c, err := connFromDSN(dsn, []string{bundle}, envOf(map[string]string{"SSL_CERT_FILE": custom}))
+		if err != nil {
+			t.Fatalf("%q: %v", dsn, err)
+		}
+		if !contains(c.Env, "PGSSLROOTCERT="+custom) || len(c.Files) != 1 || c.Files[0] != custom {
+			t.Fatalf("%q: env %q files %v", dsn, c.Env, c.Files)
+		}
+		for _, v := range []string{filepath.Join(t.TempDir(), "nope"), "rel/ca.pem", t.TempDir()} {
+			if _, err := connFromDSN(dsn, []string{bundle}, envOf(map[string]string{"SSL_CERT_FILE": v})); !errors.Is(err, ErrCertFile) {
+				t.Fatalf("%q SSL_CERT_FILE=%s: %v", dsn, v, err)
+			}
+		}
+		for _, env := range []map[string]string{
+			{"SSL_CERT_DIR": t.TempDir()},
+			{"SSL_CERT_DIR": t.TempDir(), "SSL_CERT_FILE": custom},
+		} {
+			if _, err := connFromDSN(dsn, []string{bundle}, envOf(env)); !errors.Is(err, ErrCertDir) {
+				t.Fatalf("%q %v: %v", dsn, env, err)
+			}
+		}
+	}
+	// Neither matters when the bundle is not needed.
+	c, err := connFromDSN("postgres://u:p@h/d?sslmode=verify-full&sslrootcert="+custom, nil, envOf(map[string]string{"SSL_CERT_DIR": t.TempDir(), "SSL_CERT_FILE": "rel"}))
+	if err != nil || !contains(c.Env, "PGSSLROOTCERT="+custom) {
+		t.Fatalf("explicit root cert: err %v env %q", err, c.Env)
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d?sslmode=require", nil, envOf(map[string]string{"SSL_CERT_DIR": t.TempDir()})); err != nil {
+		t.Fatalf("require: %v", err)
+	}
+}

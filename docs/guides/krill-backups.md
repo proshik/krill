@@ -107,7 +107,10 @@ For the bundled database the dump runs in a short-lived container on the host ne
 same `postgres:<major>-alpine` image major as the server. For an external database the same
 container connects with your `KRILL_DATABASE_URL`. A `verify-full` or `verify-ca` connection
 without `sslrootcert` uses the host's CA bundle, and so does `sslrootcert=system` (with
-`verify-full`, since the `pg_dump` of PostgreSQL 13–15 does not know `system`); relative
+`verify-full`, since the `pg_dump` of PostgreSQL 13–15 does not know `system`). When Krill's
+environment sets `SSL_CERT_FILE`, that file is the CA bundle instead, as it is for Krill's own
+connection; `SSL_CERT_DIR` cannot be reproduced in the container, so with it the backup is
+refused until the URL names `sslrootcert=<path>`. Relative
 certificate paths and unix-socket connections are refused. TLS settings Krill itself takes from its environment (`PGSSLMODE`,
 `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`, `PGSSLNEGOTIATION`, `PGCHANNELBINDING`) when the URL
 leaves them out reach the dump the same way, and so do `sslnegotiation` and `channel_binding`
