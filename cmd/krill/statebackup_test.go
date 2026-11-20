@@ -373,3 +373,95 @@ func TestStateDigestAdapter(t *testing.T) {
 		t.Errorf("after the prune %d runs remain, want 2", len(rs))
 	}
 }
+
+// fakeReload fails its first fails calls, then succeeds; done is closed on
+// the first success.
+type fakeReload struct {
+	mu    sync.Mutex
+	calls int
+	fails int
+	done  chan struct{}
+}
+
+func (f *fakeReload) reload() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= f.fails {
+		return errors.New("database unavailable")
+	}
+	if f.calls == f.fails+1 {
+		close(f.done)
+	}
+	return nil
+}
+
+func (f *fakeReload) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func fastReloader(ctx context.Context, f *fakeReload) *schedReloader {
+	r := newSchedReloader(ctx, f.reload)
+	r.first, r.max, r.giveUp = time.Millisecond, 5*time.Millisecond, time.Minute
+	return r
+}
+
+// A failed reload is retried until it succeeds, so settings saved while the
+// database blinked still take effect.
+func TestSchedReloaderRetriesUntilSuccess(t *testing.T) {
+	f := &fakeReload{fails: 3, done: make(chan struct{})}
+	fastReloader(context.Background(), f).Reload()
+	select {
+	case <-f.done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("reload never succeeded after %d calls", f.count())
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := f.count(); n != 4 {
+		t.Fatalf("reload calls = %d, want 4 (retrying stops after the success)", n)
+	}
+}
+
+// A successful reload needs no retry.
+func TestSchedReloaderNoRetryOnSuccess(t *testing.T) {
+	f := &fakeReload{done: make(chan struct{})}
+	r := fastReloader(context.Background(), f)
+	r.Reload()
+	time.Sleep(50 * time.Millisecond)
+	if n := f.count(); n != 1 {
+		t.Fatalf("reload calls = %d, want 1", n)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancel != nil {
+		t.Fatal("a retry is pending after a successful reload")
+	}
+}
+
+// Shutdown ends the retrying, and so does the give-up bound.
+func TestSchedReloaderStops(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := &fakeReload{fails: 1 << 30, done: make(chan struct{})}
+	fastReloader(ctx, f).Reload()
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	n := f.count()
+	time.Sleep(50 * time.Millisecond)
+	if f.count() != n {
+		t.Fatal("reload is still retried after shutdown")
+	}
+
+	g := &fakeReload{fails: 1 << 30, done: make(chan struct{})}
+	r := fastReloader(context.Background(), g)
+	r.giveUp = 30 * time.Millisecond
+	r.Reload()
+	time.Sleep(80 * time.Millisecond)
+	m := g.count()
+	time.Sleep(50 * time.Millisecond)
+	if g.count() != m {
+		t.Fatal("reload is still retried after the give-up bound")
+	}
+}

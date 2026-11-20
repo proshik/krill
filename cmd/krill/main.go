@@ -572,11 +572,12 @@ func run() error {
 		updater.SetSnapshot(snapshotHook(stateSvc))
 		stateSvc.SetUpdateActive(func() bool { return updater.Status().Phase.Active() })
 		stateSched := backup.NewScheduler(stateSvc.SchedStore(), scheduledStateRun(stateSvc))
-		stateSvc.SetOnChange(func() {
-			if err := stateSched.Reload(); err != nil {
-				slog.Error("state backup scheduler reload failed", "err", err)
-			}
-		})
+		// A failed reload is retried in the background until it succeeds;
+		// the retry ends when run returns.
+		reloadCtx, stopReload := context.WithCancel(ctx)
+		defer stopReload()
+		stateReload := newSchedReloader(reloadCtx, stateSched.Reload)
+		stateSvc.SetOnChange(stateReload.Reload)
 		defer stateSched.Stop()
 		// A dump container left by a crash still holds the database password
 		// in its environment. Remove it in the background (a slow Docker must
@@ -584,9 +585,7 @@ func run() error {
 		// live run's container. The schedule is loaded after it.
 		go func() {
 			cleanupStateDumps(ctx, stateSvc)
-			if err := stateSched.Reload(); err != nil {
-				slog.Warn("state backup scheduler reload failed", "err", err)
-			}
+			stateReload.Reload()
 		}()
 		app.SetStateBackup(stateSvc, cfg.SecretKey != "")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/proshik/krill/internal/backup"
@@ -15,6 +16,83 @@ import (
 // stateDumpCleanupTimeout bounds the startup removal of leftover dump
 // containers; it runs in the background, so a slow Docker never holds boot.
 const stateDumpCleanupTimeout = 30 * time.Second
+
+// Reload retries after a failed state backup schedule reload: the first
+// waits reloadRetryFirst, each next one twice as long up to reloadRetryMax,
+// and retrying stops after reloadRetryFor.
+const (
+	reloadRetryFirst = 2 * time.Second
+	reloadRetryMax   = time.Minute
+	reloadRetryFor   = time.Hour
+)
+
+// schedReloader reloads the state backup schedule after its settings change
+// and, when the reload fails (it reads the settings from the database), keeps
+// retrying in the background: Save and SetEnabled have already stored the new
+// settings, which would otherwise stay out of effect until the next change or
+// restart. A later reload supersedes a pending retry; ctx (the process's)
+// ends it on shutdown.
+type schedReloader struct {
+	ctx    context.Context
+	reload func() error
+	first  time.Duration
+	max    time.Duration
+	giveUp time.Duration
+
+	mu     sync.Mutex
+	cancel context.CancelFunc // the pending retry, if any
+}
+
+func newSchedReloader(ctx context.Context, reload func() error) *schedReloader {
+	return &schedReloader{ctx: ctx, reload: reload, first: reloadRetryFirst, max: reloadRetryMax, giveUp: reloadRetryFor}
+}
+
+// Reload reloads the schedule now and, on failure, starts retrying.
+func (r *schedReloader) Reload() {
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	r.mu.Unlock()
+	err := r.reload()
+	if err == nil {
+		return
+	}
+	slog.Error("state backup scheduler reload failed; retrying in the background", "err", err)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancel != nil { // a concurrent Reload failed too: one retry is enough
+		r.cancel()
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, r.giveUp)
+	r.cancel = cancel
+	go r.retry(ctx, cancel)
+}
+
+func (r *schedReloader) retry(ctx context.Context, cancel context.CancelFunc) {
+	defer cancel()
+	wait := r.first
+	for {
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) && r.ctx.Err() == nil {
+				slog.Error("state backup scheduler reload: giving up; save the settings again to retry", "after", r.giveUp)
+			}
+			return
+		case <-t.C:
+		}
+		if err := r.reload(); err != nil {
+			slog.Error("state backup scheduler reload failed again", "err", err)
+		} else {
+			slog.Info("state backup scheduler reloaded after an earlier failure")
+			return
+		}
+		wait = min(2*wait, r.max)
+	}
+}
 
 // snapshotHook is the self-updater's pre-update snapshot. A run that already
 // holds the state backup's slot refuses the update as busy instead of
