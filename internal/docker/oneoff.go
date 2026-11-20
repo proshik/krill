@@ -25,9 +25,16 @@ const oneOffStderrCap = 1024
 
 // OneOffSpec describes a throwaway container on the local daemon.
 type OneOffSpec struct {
-	Image         string
-	Cmd           []string
-	Env           []string // never logged and never part of an error
+	Image string
+	Cmd   []string
+	// Env is part of the container's create request and its config, which
+	// docker inspect and a debug-level daemon log show: never put a secret
+	// here, pass it on Stdin instead. Never logged and never part of an error.
+	Env []string
+	// Stdin, when set, is copied to the container's stdin, which is closed
+	// after it. It travels over the attach stream only, never in a request
+	// body or the container's config.
+	Stdin         io.Reader
 	HostNetwork   bool
 	ReadOnlyFiles []string // host paths bind-mounted read-only at the same path
 	Labels        map[string]string
@@ -72,9 +79,12 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	for _, f := range spec.ReadOnlyFiles {
 		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeBind, Source: f, Target: f, ReadOnly: true})
 	}
-	resp, err := cli.ContainerCreate(ctx,
-		&container.Config{Image: spec.Image, Cmd: spec.Cmd, Env: spec.Env, Labels: spec.Labels},
-		host, nil, nil, "")
+	cfg := &container.Config{Image: spec.Image, Cmd: spec.Cmd, Env: spec.Env, Labels: spec.Labels}
+	withStdin := spec.Stdin != nil
+	if withStdin {
+		cfg.AttachStdin, cfg.OpenStdin, cfg.StdinOnce = true, true, true
+	}
+	resp, err := cli.ContainerCreate(ctx, cfg, host, nil, nil, "")
 	if err != nil {
 		return fmt.Errorf("create one-off container: %w", err)
 	}
@@ -89,7 +99,7 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 		return fmt.Errorf("attach one-off container: %w", err)
 	}
 	defer attachClient.Close()
-	att, err := attachClient.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdout: true, Stderr: true})
+	att, err := attachClient.ContainerAttach(ctx, cid, container.AttachOptions{Stream: true, Stdin: withStdin, Stdout: true, Stderr: true})
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -99,6 +109,21 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	defer att.Close()
 	if err := cli.ContainerStart(ctx, cid, container.StartOptions{}); err != nil {
 		return fmt.Errorf("start one-off container: %w", err)
+	}
+	stdinErr := make(chan error, 1)
+	if withStdin {
+		// Closing the write half ends the container's stdin (StdinOnce). The
+		// attach connection is closed on cancellation, so a blocked write
+		// returns then too.
+		go func() {
+			_, err := io.Copy(att.Conn, spec.Stdin)
+			if cerr := att.CloseWrite(); err == nil {
+				err = cerr
+			}
+			stdinErr <- err
+		}()
+	} else {
+		stdinErr <- nil
 	}
 	var stderr cappedBuffer
 	if _, err := stdcopy.StdCopy(out, &stderr, &frameReader{r: att.Reader}); err != nil {
@@ -110,7 +135,14 @@ func (e *dockerEngine) RunOneOff(ctx context.Context, spec OneOffSpec, out io.Wr
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return waitContainer(ctx, cli, cid, "one-off container", &stderr.buf)
+	if err := waitContainer(ctx, cli, cid, "one-off container", &stderr.buf); err != nil {
+		return err
+	}
+	// The error text is the connection's, never the data written.
+	if err := <-stdinErr; err != nil {
+		return fmt.Errorf("write one-off container stdin: %w", err)
+	}
+	return nil
 }
 
 // frameReader passes Docker's multiplexed attach stream through and turns an

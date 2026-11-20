@@ -296,3 +296,52 @@ func TestRemoveContainersByLabelRemovesAnonymousVolumes(t *testing.T) {
 	}
 	assertVolumesGone(t, e, vols)
 }
+
+func TestRunOneOffStdin(t *testing.T) {
+	e := oneOffEngine(t)
+	var out bytes.Buffer
+	err := e.RunOneOff(context.Background(), OneOffSpec{
+		Image: busyboxImage,
+		Cmd:   []string{"sh", "-c", `IFS= read -r x; printf %s "$x"; cat`},
+		Stdin: strings.NewReader(" first line \nrest"),
+	}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// cat returning proves stdin was closed after the data.
+	if out.String() != " first line rest" {
+		t.Fatalf("out = %q", out.String())
+	}
+}
+
+// A secret passed on stdin must not appear in the container's config, which
+// is what docker inspect (and the create request a debug daemon logs) shows.
+func TestRunOneOffStdinSecretNotInConfig(t *testing.T) {
+	e := oneOffEngine(t)
+	const pw = "stdin-SECRET-4711"
+	seen, out, err := runWatched(t, e, OneOffSpec{
+		Image: busyboxImage,
+		Cmd:   []string{"sh", "-c", `IFS= read -r p; sleep 1; printf %s "$p"`},
+		Env:   []string{"PLAIN=1"},
+		Stdin: strings.NewReader(pw + "\n"),
+	}, "oneoff-stdin-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != pw {
+		t.Fatalf("out = %q: the container did not get the secret on stdin", out)
+	}
+	if seen.Config == nil {
+		t.Fatal("inspect returned no config")
+	}
+	for _, v := range append(append([]string{}, seen.Config.Env...), seen.Config.Cmd...) {
+		if strings.Contains(v, "stdin-SECRET") {
+			t.Fatalf("the secret is in the container's config: %q", v)
+		}
+	}
+	for k, v := range seen.Config.Labels {
+		if strings.Contains(k+v, "stdin-SECRET") {
+			t.Fatalf("the secret is in a label")
+		}
+	}
+}
