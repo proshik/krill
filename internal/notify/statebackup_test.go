@@ -43,6 +43,20 @@ func TestStateBackupFailedInfraOnly(t *testing.T) {
 	}
 }
 
+func TestStateBackupFailedSkipsBrokenChannel(t *testing.T) {
+	st := &fakeStore{
+		infra:    []Channel{{ID: 1, Enabled: true, ChatID: "ops", NotifyInfra: true, Lang: "en"}},
+		infraErr: errors.New("channel 9: token undecryptable"),
+	}
+	send := &flakySend{}
+	svc := New(st)
+	svc.send = send.fn
+	svc.stateBackupFailed(context.Background(), "schedule", "", "", "boom")
+	if send.count() != 1 {
+		t.Fatalf("the working channel must still be alerted: %v", send.all())
+	}
+}
+
 func TestStateBackupFailedDetailCapped(t *testing.T) {
 	st := &fakeStore{infra: []Channel{{ID: 1, Enabled: true, ChatID: "ops", NotifyInfra: true, Lang: "ru"}}}
 	send := &flakySend{}

@@ -61,8 +61,12 @@ func (s *Service) StateBackupFailed(_ context.Context, trigger, from, to, reason
 func (s *Service) stateBackupFailed(ctx context.Context, trigger, from, to, reason string) {
 	chans, err := s.store.InfraChannels(ctx)
 	if err != nil {
+		// The store returns the usable channels together with the error for
+		// rows it had to skip; only give up when nothing is usable.
 		s.log.Warn("notify: load infra channels failed", "err", err)
-		return
+		if len(chans) == 0 {
+			return
+		}
 	}
 	ev := Event{
 		Kind: StateBackupFailed, Time: s.now(), Instance: s.instance(ctx), Detail: reason,
