@@ -67,3 +67,24 @@ func TestS3CheckAccessBlocksLoopbackByDefault(t *testing.T) {
 		t.Errorf("CheckAccess(allowPrivate=false) against a loopback endpoint: expected netguard.ErrBlocked, got %v", err)
 	}
 }
+
+// TestHead reports the stored object's size, which the state backup compares
+// with the bytes it streamed.
+func TestHead(t *testing.T) {
+	ctx := context.Background()
+	m := testutil.NewMinio(t)
+	d := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	if err := backup.CreateBucket(ctx, d, true); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	if err := backup.Upload(ctx, d, "k/ten", strings.NewReader("0123456789"), true); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	n, err := backup.Head(ctx, d, "k/ten", true)
+	if err != nil || n != 10 {
+		t.Fatalf("Head = %d, %v; want 10", n, err)
+	}
+	if _, err := backup.Head(ctx, d, "k/missing", true); err == nil {
+		t.Fatal("Head of a missing object: want an error")
+	}
+}

@@ -1,0 +1,787 @@
+package statebackup
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	crand "crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"math/rand"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/proshik/krill/internal/backup"
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/testutil"
+)
+
+const (
+	testDSN      = "postgres://krill:pw-SECRET@db.example:5432/krill?sslmode=disable"
+	testS3Secret = "s3-SECRET"
+	dumpDone     = "-- PostgreSQL database dump complete\n"
+)
+
+// fakeRunner records every spec it is given. By default it writes emit to out
+// and returns err; fn, when set, replaces that behaviour.
+type fakeRunner struct {
+	mu    sync.Mutex
+	specs []docker.OneOffSpec
+	emit  []byte
+	err   error
+	fn    func(ctx context.Context, out io.Writer) error
+}
+
+func (f *fakeRunner) RunOneOff(ctx context.Context, spec docker.OneOffSpec, out io.Writer) error {
+	f.mu.Lock()
+	f.specs = append(f.specs, spec)
+	fn, emit, err := f.fn, f.emit, f.err
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, out)
+	}
+	if len(emit) > 0 {
+		if _, werr := out.Write(emit); werr != nil {
+			return werr
+		}
+	}
+	return err
+}
+
+func (f *fakeRunner) RemoveContainersByLabel(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeRunner) calls() []docker.OneOffSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]docker.OneOffSpec(nil), f.specs...)
+}
+
+// fakeQuerier answers SHOW server_version_num.
+type fakeQuerier struct{ version string }
+
+type fakeRow struct{ v string }
+
+func (r fakeRow) Scan(dest ...any) error {
+	if len(dest) != 1 {
+		return fmt.Errorf("fakeRow: %d destinations", len(dest))
+	}
+	switch d := dest[0].(type) {
+	case *string:
+		*d = r.v
+	default:
+		return fmt.Errorf("fakeRow: unsupported destination %T", dest[0])
+	}
+	return nil
+}
+
+func (q fakeQuerier) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	if !strings.Contains(sql, "server_version_num") {
+		return fakeRow{v: "unexpected query"}
+	}
+	return fakeRow{v: q.version}
+}
+
+type failure struct{ trigger, from, to, reason string }
+
+type recNotifier struct {
+	mu    sync.Mutex
+	calls []failure
+}
+
+func (n *recNotifier) StateBackupFailed(_ context.Context, trigger, from, to, reason string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, failure{trigger, from, to, reason})
+}
+
+func (n *recNotifier) got() []failure {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]failure(nil), n.calls...)
+}
+
+type fixture struct {
+	svc    *Service
+	st     *DBStore
+	runner *fakeRunner
+	notes  *recNotifier
+	dst    backup.Destination // the configured storage (bucket created)
+	id     *age.X25519Identity
+}
+
+// newFixture builds a Service on a real DBStore. With minio it also starts an
+// S3 server and creates the "state" bucket in it.
+func newFixture(t *testing.T, dsn string, minio bool) *fixture {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{
+		st:     NewDBStore(db.New(testutil.NewTestDB(t))),
+		runner: &fakeRunner{emit: []byte(dumpDone)},
+		notes:  &recNotifier{},
+		id:     id,
+	}
+	if minio {
+		m := testutil.NewMinio(t)
+		f.dst = backup.Destination{Endpoint: m.Endpoint, Bucket: "state", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+		if err := backup.CreateBucket(context.Background(), f.dst, true); err != nil {
+			t.Fatalf("create bucket: %v", err)
+		}
+	} else {
+		f.dst = backup.Destination{Endpoint: "http://127.0.0.1:1", Bucket: "state", Region: "us-east-1", AccessKey: "ak", SecretKey: testS3Secret}
+	}
+	f.svc = New(fakeQuerier{version: "160004"}, f.runner, f.st, dsn, true)
+	f.svc.SetNotifier(f.notes)
+	return f
+}
+
+// configure stores enabled settings for f.dst, bypassing Save's access check.
+func (f *fixture) configure(t *testing.T, mutate func(*Settings)) {
+	t.Helper()
+	s := Settings{
+		Endpoint: f.dst.Endpoint, Bucket: f.dst.Bucket, Region: f.dst.Region,
+		AccessKey: f.dst.AccessKey, SecretKey: f.dst.SecretKey, HasSecretKey: true,
+		Prefix: "ops", Recipient: f.id.Recipient().String(), Schedule: "0 3 * * *", Retention: 14,
+	}
+	if mutate != nil {
+		mutate(&s)
+	}
+	ctx := context.Background()
+	if err := f.st.Save(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.SetEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fixture) runs(t *testing.T) []Run {
+	t.Helper()
+	rs, err := f.st.ListRuns(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+func (f *fixture) keys(t *testing.T, prefix string) []string {
+	t.Helper()
+	objs, err := backup.List(context.Background(), f.dst, prefix, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, o := range objs {
+		out = append(out, o.Key)
+	}
+	return out
+}
+
+func (f *fixture) seed(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if err := backup.Upload(context.Background(), f.dst, k, strings.NewReader("old"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func (f *fixture) decrypt(t *testing.T, key string) []byte {
+	t.Helper()
+	rc, err := backup.Download(context.Background(), f.dst, key, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	plain, err := age.Decrypt(rc, f.id)
+	if err != nil {
+		t.Fatalf("age decrypt: %v", err)
+	}
+	gz, err := gzip.NewReader(plain)
+	if err != nil {
+		t.Fatalf("gunzip: %v", err)
+	}
+	b, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return b
+}
+
+func TestImageFor(t *testing.T) {
+	for v, want := range map[int]string{170004: "postgres:17-alpine", 160010: "postgres:16-alpine", 130000: "postgres:13-alpine"} {
+		if got, err := ImageFor(v); err != nil || got != want {
+			t.Errorf("ImageFor(%d) = %q, %v; want %q", v, got, err, want)
+		}
+	}
+	if _, err := ImageFor(120022); !errors.Is(err, ErrServerTooOld) {
+		t.Errorf("ImageFor(120022): want ErrServerTooOld, got %v", err)
+	}
+}
+
+func TestDumpArgs(t *testing.T) {
+	want := []string{"pg_dump", "--format=plain", "--no-owner", "--no-privileges", "--lock-wait-timeout=60s",
+		"--exclude-table-data=*.sessions", "--exclude-table-data=*.metric_samples"}
+	if got := DumpArgs(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DumpArgs = %q", got)
+	}
+}
+
+func TestRunHappyPath(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	ctx := context.Background()
+	if err := f.svc.Run(ctx, TriggerManual); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	keys := f.keys(t, "ops/")
+	if len(keys) != 1 || !strings.HasPrefix(keys[0], ScheduledDir("ops")) || !scheduledRe.MatchString(strings.TrimPrefix(keys[0], ScheduledDir("ops"))) {
+		t.Fatalf("objects = %q", keys)
+	}
+	if got := f.decrypt(t, keys[0]); string(got) != dumpDone {
+		t.Fatalf("decrypted dump = %q", got)
+	}
+
+	specs := f.runner.calls()
+	if len(specs) != 1 {
+		t.Fatalf("runner calls = %d", len(specs))
+	}
+	sp := specs[0]
+	if !sp.HostNetwork || sp.Image != "postgres:16-alpine" || !reflect.DeepEqual(sp.Cmd, DumpArgs()) ||
+		!reflect.DeepEqual(sp.Labels, map[string]string{"krill.role": "state-dump"}) {
+		t.Errorf("spec = %+v", sp)
+	}
+	hasPW := false
+	for _, e := range sp.Env {
+		if e == "PGPASSWORD=pw-SECRET" {
+			hasPW = true
+		}
+	}
+	if !hasPW {
+		t.Errorf("Env has no PGPASSWORD: %d entries", len(sp.Env))
+	}
+	for _, a := range sp.Cmd {
+		if strings.Contains(a, "pw-SECRET") {
+			t.Errorf("password in argv")
+		}
+	}
+
+	runs := f.runs(t)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	r := runs[0]
+	size, err := backup.Head(ctx, f.dst, keys[0], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "ok" || r.Trigger != TriggerManual || r.ObjectKey != keys[0] || r.SizeBytes != size || r.Error != "" {
+		t.Errorf("run = %+v (object size %d)", r, size)
+	}
+	if n := f.notes.got(); len(n) != 0 {
+		t.Errorf("notifier called: %+v", n)
+	}
+}
+
+func TestRunSidecarErrorLeavesNoObject(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	f.runner.emit = bytes.Repeat([]byte("x"), 1024)
+	f.runner.err = errors.New("one-off container exited 1: pg_dump: error: query failed")
+	if err := f.svc.Run(context.Background(), TriggerManual); err == nil {
+		t.Fatal("Run: want an error")
+	}
+	if keys := f.keys(t, ""); len(keys) != 0 {
+		t.Fatalf("objects after a failed dump: %q", keys)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "error" || !strings.Contains(runs[0].Error, "query failed") {
+		t.Fatalf("runs = %+v", runs)
+	}
+	n := f.notes.got()
+	if len(n) != 1 || n[0].trigger != "manual" || n[0].reason != runs[0].Error {
+		t.Fatalf("notifications = %+v", n)
+	}
+}
+
+func TestRunUploadErrorStopsRunner(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, func(s *Settings) { s.Bucket = "no-such-bucket" })
+	done := make(chan struct{})
+	f.runner.fn = func(_ context.Context, out io.Writer) error {
+		defer close(done)
+		// Fresh pseudo-random data every chunk: a repeated 32 KiB chunk sits
+		// inside deflate's window and compresses to nothing, so the uploader
+		// would read the whole stream instead of failing on its first part.
+		chunk := make([]byte, 32<<10)
+		rnd := rand.New(rand.NewSource(1))
+		for written := 0; written < 64<<20; written += len(chunk) {
+			rnd.Read(chunk)
+			if _, err := out.Write(chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- f.svc.Run(context.Background(), TriggerManual) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("runner still writing 20s after Run started: the pipe was not closed on the upload error")
+	}
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "upload failed") {
+			t.Fatalf("Run into a missing bucket: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return after the runner stopped")
+	}
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "error" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunMultipartSizeCheck(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	payload := make([]byte, 12<<20)
+	if _, err := crand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	f.runner.emit = payload
+	ctx := context.Background()
+	if err := f.svc.Run(ctx, TriggerSchedule); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	keys := f.keys(t, ScheduledDir("ops"))
+	if len(keys) != 1 {
+		t.Fatalf("objects = %q", keys)
+	}
+	size, err := backup.Head(ctx, f.dst, keys[0], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "ok" || runs[0].SizeBytes != size || size <= 12<<20 {
+		t.Fatalf("runs = %+v, object size %d", runs, size)
+	}
+	if !bytes.Equal(f.decrypt(t, keys[0]), payload) {
+		t.Fatal("decrypted payload differs")
+	}
+}
+
+func TestRunRetention(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, func(s *Settings) { s.Retention = 2 })
+	old := []string{
+		ScheduledKey("ops", t0.Add(-3*time.Hour)),
+		ScheduledKey("ops", t0.Add(-2*time.Hour)),
+		ScheduledKey("ops", t0.Add(-1*time.Hour)),
+	}
+	pre := PreUpdateKey("ops", t0, "v0.9.2", "v0.9.3")
+	stray := ScheduledDir("ops") + "notes.txt"
+	f.seed(t, append(append([]string{}, old...), pre, stray)...)
+
+	if err := f.svc.Run(context.Background(), TriggerSchedule); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	keys := f.keys(t, "ops/")
+	set := map[string]bool{}
+	for _, k := range keys {
+		set[k] = true
+	}
+	if len(keys) != 4 || !set[old[2]] || !set[pre] || !set[stray] || set[old[0]] || set[old[1]] {
+		t.Fatalf("after retention: %q", keys)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "ok" || runs[0].Error != "" || !set[runs[0].ObjectKey] {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+// TestPreUpdateKeysArePrunable pins that what Snapshot writes is what
+// pre-update retention prunes.
+func TestPreUpdateKeysArePrunable(t *testing.T) {
+	var objs []backup.Object
+	for i := range PreUpdateKeep + 2 {
+		objs = append(objs, backup.Object{Key: PreUpdateKey("ops", t0.Add(time.Duration(i)*time.Hour), "v0.9.3", "v0.9.4")})
+	}
+	got := Prunable(objs, PreUpdateDir("ops"), true, PreUpdateKeep)
+	if len(got) != 2 || got[0].Key != objs[1].Key || got[1].Key != objs[0].Key {
+		t.Fatalf("Prunable = %+v", got)
+	}
+}
+
+func TestSnapshotNaming(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	var seeded []string
+	for i := range 6 {
+		// Older than the snapshot about to be taken.
+		seeded = append(seeded, PreUpdateKey("ops", t0.AddDate(0, -1, 0).Add(time.Duration(i)*time.Hour), "v0.9.1", "v0.9.2"))
+	}
+	f.seed(t, seeded...)
+
+	took, err := f.svc.Snapshot(context.Background(), "v0.9.3", "v0.9.4")
+	if !took || err != nil {
+		t.Fatalf("Snapshot = %v, %v", took, err)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v", runs)
+	}
+	r := runs[0]
+	if r.Status != "ok" || r.Trigger != TriggerPreUpdate || r.FromVersion != "v0.9.3" || r.ToVersion != "v0.9.4" {
+		t.Fatalf("run = %+v", r)
+	}
+	want := PreUpdateKey("ops", r.StartedAt, "v0.9.3", "v0.9.4")
+	if r.ObjectKey != want {
+		t.Fatalf("object key = %q, want %q", r.ObjectKey, want)
+	}
+	keys := f.keys(t, PreUpdateDir("ops"))
+	if len(keys) != PreUpdateKeep {
+		t.Fatalf("pre-update objects = %q", keys)
+	}
+	found := false
+	for _, k := range keys {
+		found = found || k == want
+	}
+	if !found {
+		t.Fatalf("snapshot %q not among %q", want, keys)
+	}
+	for _, k := range keys {
+		if k == seeded[0] || k == seeded[1] {
+			t.Fatalf("an oldest pre-update dump survived: %q", keys)
+		}
+	}
+	if got := f.decrypt(t, want); string(got) != dumpDone {
+		t.Fatalf("decrypted = %q", got)
+	}
+}
+
+func TestSnapshotNotConfigured(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	ctx := context.Background()
+	if took, err := f.svc.Snapshot(ctx, "v1.0.0", "v1.0.1"); took || err != nil {
+		t.Fatalf("no settings: Snapshot = %v, %v", took, err)
+	}
+	f.configure(t, nil)
+	if err := f.st.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if took, err := f.svc.Snapshot(ctx, "v1.0.0", "v1.0.1"); took || err != nil {
+		t.Fatalf("paused: Snapshot = %v, %v", took, err)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+	if runs := f.runs(t); len(runs) != 0 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestSnapshotUndecryptableBlocks(t *testing.T) {
+	secret.Init("key-one")
+	defer secret.Init("")
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	secret.Init("key-two") // a rotated KRILL_SECRET_KEY
+
+	took, err := f.svc.Snapshot(context.Background(), "v1.0.0", "v1.0.1")
+	if took || !errors.Is(err, secret.ErrUndecryptable) {
+		t.Fatalf("Snapshot = %v, %v; want (false, ErrUndecryptable)", took, err)
+	}
+	if !strings.Contains(err.Error(), "KRILL_SECRET_KEY") {
+		t.Errorf("error = %q", err)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "error" || runs[0].Trigger != TriggerPreUpdate || runs[0].Error != err.Error() {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+	if n := f.notes.got(); len(n) != 1 || n[0].trigger != "pre_update" || n[0].from != "v1.0.0" || n[0].to != "v1.0.1" {
+		t.Fatalf("notifications = %+v", n)
+	}
+}
+
+func TestClaim(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	entered, gate := make(chan struct{}), make(chan struct{})
+	f.runner.fn = func(_ context.Context, out io.Writer) error {
+		close(entered)
+		<-gate
+		_, err := out.Write([]byte(dumpDone))
+		return err
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- f.svc.Run(context.Background(), TriggerManual) }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never reached the runner")
+	}
+
+	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrStateBackupRunning) {
+		t.Errorf("Start while running: %v", err)
+	}
+	if took, err := f.svc.Snapshot(context.Background(), "v1.0.0", "v1.0.1"); took || !errors.Is(err, ErrStateBackupRunning) {
+		t.Errorf("Snapshot while running: %v, %v", took, err)
+	}
+	if err := f.svc.Run(context.Background(), TriggerSchedule); !errors.Is(err, ErrStateBackupRunning) {
+		t.Errorf("Run while running: %v", err)
+	}
+	if n := f.svc.InFlight(); n != 1 {
+		t.Errorf("InFlight = %d", n)
+	}
+
+	close(gate)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run did not finish")
+	}
+	if n := f.svc.InFlight(); n != 0 {
+		t.Errorf("InFlight after the run = %d", n)
+	}
+	// Refused attempts wrote nothing.
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "ok" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestStartRunsInBackground(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	if err := f.svc.Start(TriggerManual); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for f.svc.InFlight() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("background run did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "ok" || runs[0].Trigger != TriggerManual {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunNotConfigured(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Start: want ErrNotConfigured, got %v", err)
+	}
+	if err := f.svc.Run(context.Background(), TriggerManual); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Run: want ErrNotConfigured, got %v", err)
+	}
+	if n := f.svc.InFlight(); n != 0 {
+		t.Fatalf("InFlight = %d", n)
+	}
+	if runs := f.runs(t); len(runs) != 0 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunNoRunner(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	f.svc.runner = nil
+	if err := f.svc.Run(context.Background(), TriggerManual); !errors.Is(err, ErrNoRunner) {
+		t.Fatalf("Run: want ErrNoRunner, got %v", err)
+	}
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "error" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunRejectsUnixSocketDSN(t *testing.T) {
+	f := newFixture(t, "host=/var/run/postgresql user=krill password=pw-SECRET dbname=krill", false)
+	f.configure(t, nil)
+	if err := f.svc.Run(context.Background(), TriggerManual); !errors.Is(err, ErrUnixSocket) {
+		t.Fatalf("Run: want ErrUnixSocket, got %v", err)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "error" || !strings.Contains(runs[0].Error, "TCP connection") {
+		t.Fatalf("runs = %+v", runs)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+}
+
+func TestRunServerTooOld(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	f.svc.q = fakeQuerier{version: "120022"}
+	if err := f.svc.Run(context.Background(), TriggerManual); !errors.Is(err, ErrServerTooOld) {
+		t.Fatalf("Run: want ErrServerTooOld, got %v", err)
+	}
+	if runs := f.runs(t); len(runs) != 1 || runs[0].Status != "error" {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestRunErrorTextHasNoSecrets(t *testing.T) {
+	check := func(t *testing.T, f *fixture, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("Run: want an error")
+		}
+		runs := f.runs(t)
+		if len(runs) != 1 || runs[0].Status != "error" {
+			t.Fatalf("runs = %+v", runs)
+		}
+		n := f.notes.got()
+		if len(n) != 1 {
+			t.Fatalf("notifications = %+v", n)
+		}
+		for what, text := range map[string]string{"returned": err.Error(), "journal": runs[0].Error, "alert": n[0].reason} {
+			if strings.Contains(text, "pw-SECRET") || strings.Contains(text, testS3Secret) {
+				t.Errorf("%s error carries a secret: %q", what, text)
+			}
+		}
+	}
+
+	t.Run("runner stderr", func(t *testing.T) {
+		f := newFixture(t, testDSN, false)
+		f.configure(t, nil)
+		stderr := "pg_dump: error: connection to server failed: password pw-SECRET rejected, s3 " + testS3Secret + " " + strings.Repeat("e", 4096)
+		f.runner.err = errors.New("one-off container exited 1: " + stderr)
+		err := f.svc.Run(context.Background(), TriggerManual)
+		check(t, f, err)
+		if !strings.Contains(err.Error(), "connection to server failed") {
+			t.Errorf("error lost the stderr: %q", err)
+		}
+		if len(err.Error()) > 1200 {
+			t.Errorf("error is %d bytes: stderr was not capped", len(err.Error()))
+		}
+	})
+
+	t.Run("wrong S3 secret", func(t *testing.T) {
+		f := newFixture(t, testDSN, true)
+		f.configure(t, func(s *Settings) { s.SecretKey = testS3Secret })
+		check(t, f, f.svc.Run(context.Background(), TriggerManual))
+	})
+}
+
+func TestSaveChecksAccess(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	changes := 0
+	f.svc.SetOnChange(func() { changes++ })
+	ctx := context.Background()
+	in := Input{
+		Endpoint: f.dst.Endpoint, Bucket: "no-such-bucket", Region: f.dst.Region,
+		AccessKey: f.dst.AccessKey, SecretKey: f.dst.SecretKey, Prefix: "ops",
+		Recipient: f.id.Recipient().String(), Preset: "daily", Retention: 14,
+	}
+	if err := f.svc.Save(ctx, in); err == nil {
+		t.Fatal("Save with a missing bucket: want an error")
+	}
+	if v, err := f.svc.View(ctx); err != nil || v.Bucket != "" || changes != 0 {
+		t.Fatalf("after a refused save: %+v, %v, changes=%d", v, err, changes)
+	}
+
+	in.Bucket = f.dst.Bucket
+	if err := f.svc.Save(ctx, in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	v, err := f.svc.View(ctx)
+	if err != nil || v.Bucket != f.dst.Bucket || !v.HasSecretKey || v.Enabled || changes != 1 {
+		t.Fatalf("after save: %+v, %v, changes=%d", v, err, changes)
+	}
+
+	if err := f.svc.SetEnabled(ctx, true); err != nil || changes != 2 {
+		t.Fatalf("SetEnabled: %v, changes=%d", err, changes)
+	}
+}
+
+func TestSaveUndecryptableAsksForKey(t *testing.T) {
+	secret.Init("key-one")
+	defer secret.Init("")
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	secret.Init("key-two")
+	in := Input{
+		Endpoint: f.dst.Endpoint, Bucket: f.dst.Bucket, Region: f.dst.Region, AccessKey: f.dst.AccessKey,
+		Prefix: "ops", Recipient: f.id.Recipient().String(), Preset: "daily", Retention: 14,
+	}
+	if err := f.svc.Save(context.Background(), in); !errors.Is(err, ErrSecretKeyRequired) {
+		t.Fatalf("Save keeping an undecryptable key: want ErrSecretKeyRequired, got %v", err)
+	}
+	in.SecretKey = f.dst.SecretKey
+	if err := f.svc.Save(context.Background(), in); err != nil {
+		t.Fatalf("Save with the key entered again: %v", err)
+	}
+}
+
+func TestSchedStore(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, func(s *Settings) { s.Schedule = "0 3 * * *" })
+	ctx := context.Background()
+	got, err := f.svc.SchedStore().ListEnabledBackups(ctx)
+	if err != nil || len(got) != 1 || got[0].ID != 1 || got[0].Schedule != "0 3 * * *" {
+		t.Fatalf("enabled: %+v, %v", got, err)
+	}
+	if err := f.svc.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.svc.SchedStore().ListEnabledBackups(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("paused: %+v, %v", got, err)
+	}
+}
+
+func TestNextRun(t *testing.T) {
+	now := time.Date(2026, 11, 20, 2, 0, 0, 0, time.Local)
+	got, ok := NextRun("0 3 * * *", now)
+	if want := time.Date(2026, 11, 20, 3, 0, 0, 0, time.Local); !ok || !got.Equal(want) {
+		t.Fatalf("NextRun = %v, %v; want %v", got, ok, want)
+	}
+	if _, ok := NextRun("", now); ok {
+		t.Fatal("NextRun(\"\") reported a run")
+	}
+	if _, ok := NextRun("not a cron", now); ok {
+		t.Fatal("NextRun(invalid) reported a run")
+	}
+}
+
+func TestRunsAndLastSuccess(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	ctx := context.Background()
+	if _, ok, err := f.svc.LastSuccess(ctx); ok || err != nil {
+		t.Fatalf("LastSuccess before any run: %v, %v", ok, err)
+	}
+	if err := f.svc.Run(ctx, TriggerManual); err != nil {
+		t.Fatal(err)
+	}
+	last, ok, err := f.svc.LastSuccess(ctx)
+	if err != nil || !ok || last.Status != "ok" {
+		t.Fatalf("LastSuccess = %+v, %v, %v", last, ok, err)
+	}
+	if rs, err := f.svc.Runs(ctx, 10); err != nil || len(rs) != 1 {
+		t.Fatalf("Runs = %+v, %v", rs, err)
+	}
+}

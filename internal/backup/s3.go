@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sort"
 	"time"
@@ -78,6 +79,22 @@ func Upload(ctx context.Context, d Destination, key string, r io.Reader, allowPr
 	}
 	_, err = manager.NewUploader(cl).Upload(ctx, &s3.PutObjectInput{Bucket: &d.Bucket, Key: &key, Body: r})
 	return err
+}
+
+// Head returns the stored size (ContentLength) of the object at key.
+func Head(ctx context.Context, d Destination, key string, allowPrivate bool) (int64, error) {
+	cl, err := clientFor(ctx, d, allowPrivate)
+	if err != nil {
+		return 0, err
+	}
+	o, err := cl.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &d.Bucket, Key: &key})
+	if err != nil {
+		return 0, err
+	}
+	if o.ContentLength == nil {
+		return 0, errors.New("the storage reported no size for the object")
+	}
+	return *o.ContentLength, nil
 }
 
 func List(ctx context.Context, d Destination, prefix string, allowPrivate bool) ([]Object, error) {
