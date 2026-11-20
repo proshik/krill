@@ -34,8 +34,13 @@ type Settings struct {
 	UpdatedAt                           time.Time
 }
 
-// Configured reports whether a run can be made at all.
-func (s Settings) Configured() bool { return s.Enabled && s.Bucket != "" && s.Recipient != "" }
+// Ready reports whether storage and a recipient are set, so a manual run can
+// be made even while the state backup is paused.
+func (s Settings) Ready() bool { return s.Bucket != "" && s.Recipient != "" }
+
+// Configured reports whether an automatic run (scheduled or pre-update) may
+// be made: Ready and not paused.
+func (s Settings) Configured() bool { return s.Enabled && s.Ready() }
 
 // Destination is the S3 target of the settings.
 func (s Settings) Destination() backup.Destination {

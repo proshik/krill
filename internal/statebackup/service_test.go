@@ -21,6 +21,7 @@ import (
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/netguard"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/testutil"
 )
@@ -783,5 +784,84 @@ func TestRunsAndLastSuccess(t *testing.T) {
 	}
 	if rs, err := f.svc.Runs(ctx, 10); err != nil || len(rs) != 1 {
 		t.Fatalf("Runs = %+v, %v", rs, err)
+	}
+}
+
+// TestManualRunWhilePaused: pausing stops automatic runs only; "Back up now"
+// still works.
+func TestManualRunWhilePaused(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	ctx := context.Background()
+	if err := f.svc.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Run(ctx, TriggerManual); err != nil {
+		t.Fatalf("Run while paused: %v", err)
+	}
+	keys := f.keys(t, ScheduledDir("ops"))
+	if len(keys) != 1 {
+		t.Fatalf("objects = %q", keys)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "ok" || runs[0].Trigger != TriggerManual || runs[0].ObjectKey != keys[0] {
+		t.Fatalf("runs = %+v", runs)
+	}
+
+	// Start takes the same path.
+	if err := f.svc.Start(TriggerManual); err != nil {
+		t.Fatalf("Start while paused: %v", err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for f.svc.InFlight() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("background run did not finish")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if runs := f.runs(t); len(runs) != 2 || runs[0].Status != "ok" {
+		t.Fatalf("runs after Start = %+v", runs)
+	}
+}
+
+func TestScheduledRunWhilePausedRefused(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	ctx := context.Background()
+	if err := f.svc.SetEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Run(ctx, TriggerSchedule); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("scheduled Run while paused: want ErrNotConfigured, got %v", err)
+	}
+	if err := f.svc.Start(TriggerSchedule); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("scheduled Start while paused: want ErrNotConfigured, got %v", err)
+	}
+	if n := len(f.runner.calls()); n != 0 {
+		t.Fatalf("runner called %d times", n)
+	}
+	if runs := f.runs(t); len(runs) != 0 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+// TestSaveAccessErrorKeepsCause: the storage error is sanitized for the page
+// but still matches its cause.
+func TestSaveAccessErrorKeepsCause(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	svc := New(fakeQuerier{version: "160004"}, f.runner, f.st, testDSN, false) // egress guard on
+	err := svc.Save(context.Background(), Input{
+		Endpoint: f.dst.Endpoint, Bucket: f.dst.Bucket, Region: f.dst.Region,
+		AccessKey: f.dst.AccessKey, SecretKey: testS3Secret, Prefix: "ops",
+		Recipient: f.id.Recipient().String(), Preset: "daily", Retention: 14,
+	})
+	if !errors.Is(err, netguard.ErrBlocked) {
+		t.Fatalf("Save to a loopback storage with the guard on: want netguard.ErrBlocked, got %v", err)
+	}
+	if strings.Contains(err.Error(), testS3Secret) || len(err.Error()) > 1200 {
+		t.Fatalf("error text = %q", err)
+	}
+	if v, verr := f.st.LoadView(context.Background()); verr != nil || v.Bucket != "" {
+		t.Fatalf("a refused save stored %+v, %v", v, verr)
 	}
 }

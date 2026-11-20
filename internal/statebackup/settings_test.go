@@ -155,3 +155,23 @@ func TestPrepareSecretKeyBinding(t *testing.T) {
 		t.Errorf("no key at all: %v", err)
 	}
 }
+
+func TestReadyAndConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		s                 Settings
+		ready, configured bool
+	}{
+		{Settings{}, false, false},
+		{Settings{Enabled: true, Bucket: "b"}, false, false},
+		{Settings{Enabled: true, Recipient: "age1x"}, false, false},
+		{Settings{Bucket: "b", Recipient: "age1x"}, true, false}, // paused
+		{Settings{Enabled: true, Bucket: "b", Recipient: "age1x"}, true, true},
+	} {
+		if got := tc.s.Ready(); got != tc.ready {
+			t.Errorf("%+v: Ready = %v", tc.s, got)
+		}
+		if got := tc.s.Configured(); got != tc.configured {
+			t.Errorf("%+v: Configured = %v", tc.s, got)
+		}
+	}
+}

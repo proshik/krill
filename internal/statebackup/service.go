@@ -112,7 +112,10 @@ func (s *Service) Save(ctx context.Context, in Input) error {
 		return err
 	}
 	if err := backup.CheckAccess(ctx, out.Destination(), s.allowPrivate); err != nil {
-		return fmt.Errorf("statebackup: the storage could not be reached: %w", err)
+		// The text is shown on the page: no secret, capped like run errors.
+		// The cause stays reachable for errors.Is (e.g. netguard.ErrBlocked).
+		msg := capText(redactAll(err.Error(), out.SecretKey))
+		return &runError{msg: "statebackup: the storage could not be reached: " + msg, sentinel: err}
 	}
 	if err := s.store.Save(ctx, out); err != nil {
 		return err
@@ -175,15 +178,25 @@ func checkTrigger(t Trigger) error {
 	return nil
 }
 
-// configured reports whether the stored settings allow a run, without
-// decrypting anything.
-func (s *Service) configured(ctx context.Context) (bool, error) {
+// allows reports whether v permits a run started by t: a manual run needs
+// only storage and a recipient (it works while paused); an automatic one also
+// needs the state backup to be enabled.
+func allows(v Settings, t Trigger) bool {
+	if t == TriggerManual {
+		return v.Ready()
+	}
+	return v.Configured()
+}
+
+// configured reports whether the stored settings allow a run started by t,
+// without decrypting anything.
+func (s *Service) configured(ctx context.Context, t Trigger) (bool, error) {
 	v, err := s.store.LoadView(ctx)
 	if err != nil {
 		slog.Error("state backup: reading the settings failed", "err", err)
 		return false, errSettings
 	}
-	return v.Configured(), nil
+	return allows(v, t), nil
 }
 
 // Start runs a backup in the background, bounded by RunTimeout. It returns
@@ -198,7 +211,7 @@ func (s *Service) Start(trigger Trigger) error {
 		return ErrStateBackupRunning
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), RunTimeout)
-	ok, err := s.configured(ctx)
+	ok, err := s.configured(ctx, trigger)
 	if err == nil && !ok {
 		err = ErrNotConfigured
 	}
@@ -235,7 +248,7 @@ func (s *Service) Run(ctx context.Context, trigger Trigger) error {
 // state backup is not set up or is paused; any failure, an undecryptable
 // secret key included, is an error that must block the update.
 func (s *Service) Snapshot(ctx context.Context, from, to string) (bool, error) {
-	ok, err := s.configured(ctx)
+	ok, err := s.configured(ctx, TriggerPreUpdate)
 	if err != nil {
 		return false, err
 	}
@@ -268,6 +281,16 @@ type runError struct {
 
 func (e *runError) Error() string { return e.msg }
 func (e *runError) Unwrap() error { return e.sentinel }
+
+// redactAll replaces every non-empty secret in t.
+func redactAll(t string, secrets ...string) string {
+	for _, sec := range secrets {
+		if sec != "" {
+			t = strings.ReplaceAll(t, sec, "[redacted]")
+		}
+	}
+	return t
+}
 
 // capText shortens external text to errTextCap bytes on a rune boundary.
 func capText(s string) string {
@@ -337,7 +360,7 @@ func (a schedStore) ListEnabledBackups(ctx context.Context) ([]backup.SchedBacku
 // returned without a journal row; every other outcome is journalled, and a
 // failure is alerted.
 func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) error {
-	ok, err := s.configured(ctx)
+	ok, err := s.configured(ctx, trigger)
 	if err != nil {
 		return err
 	}
@@ -347,14 +370,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 
 	rec := Run{Trigger: trigger, FromVersion: from, ToVersion: to, StartedAt: time.Now()}
 	secrets := []string{s.dsn}
-	redact := func(t string) string {
-		for _, sec := range secrets {
-			if sec != "" {
-				t = strings.ReplaceAll(t, sec, "[redacted]")
-			}
-		}
-		return t
-	}
+	redact := func(t string) string { return redactAll(t, secrets...) }
 	// ext cleans external text (runner stderr, S3 errors): secrets go first,
 	// so a cap can never leave part of one behind.
 	ext := func(t string) string { return capText(redact(t)) }
@@ -365,7 +381,9 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 		s.finish(ctx, rec)
 		slog.Error("state backup failed", "trigger", string(trigger), "err", msg)
 		if s.notifier != nil {
-			s.notifier.StateBackupFailed(context.WithoutCancel(ctx), string(trigger), from, to, msg)
+			nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			s.notifier.StateBackupFailed(nctx, string(trigger), from, to, msg)
+			cancel()
 		}
 		return e
 	}
@@ -378,8 +396,8 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 		slog.Error("state backup: reading the settings failed", "err", err)
 		return fail(errSettings, errSettings.Error())
 	}
-	if !st.Configured() {
-		return ErrNotConfigured // turned off since the check above
+	if !allows(st, trigger) {
+		return ErrNotConfigured // changed since the check above
 	}
 	secrets = append(secrets, st.SecretKey)
 	if s.runner == nil {
