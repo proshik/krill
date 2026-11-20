@@ -110,6 +110,12 @@ type Server struct {
 	// every action is refused.
 	updates selfUpdate
 
+	// sbk is the Krill state backup (see SetStateBackup and
+	// statebackup_handlers.go). Zero until wired.
+	sbk struct {
+		ctl          stateBackupCtl
+		secretKeySet bool
+	}
 	// obs runs Krill's own observability agent (see SetObservability and
 	// observability_handlers.go). Zero until wired: the page says so and
 	// every action is refused.
@@ -465,6 +471,10 @@ func (s *Server) Router() http.Handler {
 				r.Post("/observability/check", s.checkObservability)
 				r.Post("/observability/enable", s.enableObservability)
 				r.Post("/observability/disable", s.disableObservability)
+				r.Get("/krill-backups", s.stateBackupPage)
+				r.Post("/krill-backups", s.saveStateBackup)
+				r.Post("/krill-backups/run", s.runStateBackup)
+				r.Post("/krill-backups/enabled", s.setStateBackupEnabled)
 			})
 
 			r.Group(func(r chi.Router) {

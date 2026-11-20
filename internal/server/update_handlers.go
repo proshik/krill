@@ -181,12 +181,6 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	return v
 }
 
-// stateBackupMode reports whether Krill's state is backed up before an
-// update: "on", "off" (not set up) or "paused".
-func (s *Server) stateBackupMode(ctx context.Context) string {
-	return "off"
-}
-
 // checkUpdates looks up the latest release right away instead of waiting for
 // the daily check. The checker throttles it to one lookup a minute.
 func (s *Server) checkUpdates(w http.ResponseWriter, r *http.Request) {

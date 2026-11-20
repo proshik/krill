@@ -115,7 +115,7 @@ func (s *Service) Save(ctx context.Context, in Input) error {
 		// The text is shown on the page: no secret, capped like run errors.
 		// The cause stays reachable for errors.Is (e.g. netguard.ErrBlocked).
 		msg := capText(redactAll(err.Error(), out.SecretKey))
-		return &runError{msg: "statebackup: the storage could not be reached: " + msg, sentinel: err}
+		return &StorageError{Msg: msg, cause: err}
 	}
 	if err := s.store.Save(ctx, out); err != nil {
 		return err
@@ -281,6 +281,19 @@ type runError struct {
 
 func (e *runError) Error() string { return e.msg }
 func (e *runError) Unwrap() error { return e.sentinel }
+
+// StorageError is a Save refusal because the storage could not be reached with
+// the entered settings. Msg is shown on the page: it carries no secret and is
+// capped. The cause stays reachable for errors.Is (e.g. netguard.ErrBlocked).
+type StorageError struct {
+	Msg   string
+	cause error
+}
+
+func (e *StorageError) Error() string {
+	return "statebackup: the storage could not be reached: " + e.Msg
+}
+func (e *StorageError) Unwrap() error { return e.cause }
 
 // redactAll replaces every non-empty secret in t.
 func redactAll(t string, secrets ...string) string {

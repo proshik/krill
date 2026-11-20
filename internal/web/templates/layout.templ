@@ -101,6 +101,7 @@ templ settingsNav(orgID int64) {
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/firewall") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "firewall")) }>{ i18n.T(ctx, "firewall.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/panel-domain") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "panel-domain")) }>{ i18n.T(ctx, "panel.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/observability") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "observability")) }>{ i18n.T(ctx, "obs.link") }</a>
+			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/krill-backups") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "krill-backups")) }>{ i18n.T(ctx, "sbk.link") }</a>
 			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/updates") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "updates")) }>{ i18n.T(ctx, "update.link") }</a>
 		}
 		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
