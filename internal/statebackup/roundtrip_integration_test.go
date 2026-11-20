@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -86,6 +87,19 @@ func rtLocalDSN(t *testing.T, dsn, password, query string) string {
 	return u.String()
 }
 
+// rtLabel gives svc a dump-container label value of its own, so the leftover
+// checks below count and remove only this test's containers, never a live
+// Krill's dump running on the same Docker daemon.
+func rtLabel(t *testing.T, svc *Service) string {
+	t.Helper()
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	svc.labelValue = fmt.Sprintf("%s-test-%x", StateDumpLabelValue, b)
+	return svc.labelValue
+}
+
 type rtFixture struct {
 	pool   *pgxpool.Pool // the source database (also holds the settings)
 	dsn    string        // the source DSN as Krill would see it
@@ -93,6 +107,7 @@ type rtFixture struct {
 	dst    backup.Destination
 	id     *age.X25519Identity
 	svc    *Service
+	label  string // the fixture's dump-container label value
 }
 
 // newRTFixture starts the source database and MinIO, and saves enabled
@@ -119,6 +134,7 @@ func newRTFixture(t *testing.T, dsnPassword string) *rtFixture {
 	}
 	runner := &rtRunner{OneOffRunner: rtEngine(t)}
 	svc := New(pool, runner, NewDBStore(db.New(pool)), dsn, true)
+	label := rtLabel(t, svc)
 	if err := svc.Save(ctx, Input{
 		Endpoint: dst.Endpoint, Bucket: dst.Bucket, Region: dst.Region,
 		AccessKey: dst.AccessKey, SecretKey: dst.SecretKey, Prefix: rtPrefix,
@@ -129,7 +145,7 @@ func newRTFixture(t *testing.T, dsnPassword string) *rtFixture {
 	if err := svc.SetEnabled(ctx, true); err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
-	return &rtFixture{pool: pool, dsn: dsn, runner: runner, dst: dst, id: id, svc: svc}
+	return &rtFixture{pool: pool, dsn: dsn, runner: runner, dst: dst, id: id, svc: svc, label: label}
 }
 
 // lastRun returns the newest journal row.
@@ -307,7 +323,7 @@ func TestStateBackupRoundTrip(t *testing.T) {
 		t.Fatalf("restored metric_samples = %d, want 0", n)
 	}
 
-	n, err := f.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, StateDumpLabelValue)
+	n, err := f.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, f.label)
 	if err != nil || n != 0 {
 		t.Fatalf("leftover dump containers removed = %d, err = %v", n, err)
 	}
@@ -336,7 +352,7 @@ func TestStateBackupWrongPassword(t *testing.T) {
 	if objs := f.stateObjects(t); len(objs) != 0 {
 		t.Fatalf("objects left after a failed dump: %v", objs)
 	}
-	if n, err := f.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, StateDumpLabelValue); err != nil || n != 0 {
+	if n, err := f.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, f.label); err != nil || n != 0 {
 		t.Fatalf("leftover dump containers removed = %d, err = %v", n, err)
 	}
 }
@@ -483,6 +499,7 @@ func TestStateBackupVerifyFullCABundle(t *testing.T) {
 	runner := &rtRunner{OneOffRunner: rtEngine(t)}
 	svc := New(srcPool, runner, NewDBStore(db.New(storePool)), dsn, true)
 	svc.caBundles = []string{filepath.Join(dir, "missing-bundle.pem"), caFile}
+	label := rtLabel(t, svc)
 	if err := svc.Save(ctx, Input{
 		Endpoint: dst.Endpoint, Bucket: dst.Bucket, Region: dst.Region,
 		AccessKey: dst.AccessKey, SecretKey: dst.SecretKey, Prefix: rtPrefix,
@@ -530,7 +547,7 @@ func TestStateBackupVerifyFullCABundle(t *testing.T) {
 	if !bytes.Contains(plain, []byte("over-tls")) {
 		t.Fatal("the dump lacks the marker row")
 	}
-	if n, err := runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, StateDumpLabelValue); err != nil || n != 0 {
+	if n, err := runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, label); err != nil || n != 0 {
 		t.Fatalf("leftover dump containers removed = %d, err = %v", n, err)
 	}
 }

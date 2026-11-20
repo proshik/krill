@@ -84,6 +84,10 @@ type Service struct {
 	head func(ctx context.Context, d backup.Destination, key string, allowPrivate bool) (int64, error)
 
 	now func() time.Time // time.Now; a test hook
+	// labelValue is the dump container's docker.OneOffRoleLabel value
+	// (StateDumpLabelValue). Integration tests use their own, so their
+	// leftover checks never touch a live Krill's dump on a shared daemon.
+	labelValue string
 
 	mu       sync.Mutex
 	inFlight bool
@@ -95,7 +99,7 @@ type Service struct {
 // New builds the service. A nil runner is allowed; every run then fails with
 // ErrNoRunner.
 func New(q Querier, runner docker.OneOffRunner, store Store, dsn string, allowPrivate bool) *Service {
-	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles, head: backup.Head, now: time.Now}
+	return &Service{q: q, runner: runner, store: store, dsn: dsn, allowPrivate: allowPrivate, caBundles: DefaultCABundles, head: backup.Head, now: time.Now, labelValue: StateDumpLabelValue}
 }
 
 // SetNotifier wires failure alerts (no-op if never set).
@@ -233,7 +237,7 @@ func (s *Service) RemoveLeftovers(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	defer release()
-	return s.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, StateDumpLabelValue)
+	return s.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, s.labelValue)
 }
 
 func checkTrigger(t Trigger) error {
@@ -536,7 +540,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 		// and the container's config (docker inspect, a debug daemon log).
 		Stdin:         strings.NewReader(conn.Password + "\n"),
 		ReadOnlyFiles: conn.Files,
-		Labels:        map[string]string{docker.OneOffRoleLabel: StateDumpLabelValue},
+		Labels:        map[string]string{docker.OneOffRoleLabel: s.labelValue},
 	}
 
 	n, msg := s.stream(ctx, spec, recipient, dst, key, completionMarker(nonce), ext)

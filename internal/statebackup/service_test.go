@@ -1345,6 +1345,24 @@ func TestRemoveLeftovers(t *testing.T) {
 	}
 }
 
+// The label value is per service: a run and the sweep use the same one, so
+// a test can scope both to its own containers.
+func TestDumpLabelValueIsPerService(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	f.svc.labelValue = "state-dump-test-x"
+	_ = f.svc.Run(context.Background(), TriggerManual) // the storage is unreachable; only the spec matters
+	if sp := f.runner.calls(); len(sp) != 1 || sp[0].Labels[docker.OneOffRoleLabel] != "state-dump-test-x" {
+		t.Fatalf("specs = %+v", sp)
+	}
+	if _, err := f.svc.RemoveLeftovers(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.runner.removeCalls(); len(got) != 1 || got[0] != docker.OneOffRoleLabel+"=state-dump-test-x" {
+		t.Fatalf("remove calls = %v", got)
+	}
+}
+
 func TestRemoveLeftoversNoRunner(t *testing.T) {
 	svc := New(fakeQuerier{version: "160004"}, nil, NewDBStore(db.New(testutil.NewTestDB(t))), testDSN, true)
 	if n, err := svc.RemoveLeftovers(context.Background()); n != 0 || err != nil {
