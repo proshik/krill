@@ -290,23 +290,63 @@ empty input, or only the beginning of the dump, and commits that.
    ```
    `dirty` must be `f`, and the counts must look like your installation.
 
+**Match the client to the dump.** `pg_dump` from the 17.6 release (and the matching patch
+releases of older majors) writes `\restrict` / `\unrestrict` lines that an older `psql` rejects.
+Read the header of the dump, then use a `psql` at least that new, for example the one in the
+`postgres:<major>-alpine` image (the same image Krill dumps with):
+
+```sh
+age -d -i krill-backup-key.txt <object> | gunzip | head -n 5 | grep 'Dumped by pg_dump'
+psql --version        # must be >= the version printed above
+```
+
+Check this before you reset anything: a restore that stops on the first line of the dump has
+already lost the old data. If your `psql` is older, prefix every `psql` below with
+`docker run --rm -i --network host -e PGHOST -e PGPORT -e PGUSER -e PGSSLMODE -e PGPASSFILE -v "$PGPASSFILE:$PGPASSFILE:ro" postgres:<major>-alpine`
+(drop `--network host` and the SSL variables you do not need; a `verify-full` connection also
+needs the CA file mounted and `PGSSLROOTCERT` set).
+
 For an **external database**, do not put the connection string on the command line: it would be
 visible to every process listing and audit log on the host. Use libpq's environment variables and
 a password file readable only by you instead, and run the same `psql` command without
-`docker exec`:
+`docker exec`. First read the real database name, user and host from `KRILL_DATABASE_URL` in
+`/etc/krill/krill.env` (the path is its database; `<db>` and `<owner>` below mean those values,
+not necessarily `krill`) and use them in every command, including the checks:
 
 ```sh
-export PGHOST=db.example.com PGPORT=5432 PGUSER=krill PGSSLMODE=verify-full
+export PGHOST=db.example.com PGPORT=5432 PGUSER=<owner> PGSSLMODE=verify-full
 export PGPASSFILE="$HOME/.krill-pgpass"
-( umask 077; printf '%s\n' 'db.example.com:5432:*:krill:<password>' > "$PGPASSFILE" )
-psql -d postgres -c 'DROP DATABASE krill' -c 'CREATE DATABASE krill OWNER krill'   # step 2
-age -d -i krill-backup-key.txt <object> | gunzip | psql -v ON_ERROR_STOP=1 --single-transaction -d krill   # step 3
-rm -f "$PGPASSFILE"
+# Type the password at the silent prompt; it never appears on a command line or in shell history.
+# In a password file, write \ for a backslash and \: for a colon in the password.
+( umask 077; read -rs -p 'Database password: ' PW && echo \
+  && printf '%s:%s:*:%s:%s\n' "$PGHOST" "$PGPORT" "$PGUSER" "$PW" > "$PGPASSFILE" ); unset PW
 ```
 
-A managed service may not let you drop the database; drop and recreate the `public` schema
-instead (or use the provider's own reset), so that the target is empty. To keep the private key
-off the host, decrypt on your workstation and pipe the result over `ssh`.
+(Or create the file with an editor under `umask 077`. Do not use a literal password in a command.)
+Then run steps 2 to 4 with `<db>` in place of `krill` and without `docker exec`; step 2 becomes:
+
+```sh
+psql -d postgres -c 'DROP DATABASE "<db>"' -c 'CREATE DATABASE "<db>" OWNER "<owner>"'
+```
+
+A managed service may not let you drop the database, or your role may only own objects inside
+it. Then reset the schemas instead, and do not assume they are only `public`. List what exists
+and what the dump creates:
+
+```sh
+psql -d <db> -c '\dn'
+age -d -i krill-backup-key.txt <object> | gunzip | grep '^CREATE SCHEMA'
+```
+
+Drop every non-system schema that appears in either list with `DROP SCHEMA "<name>" CASCADE`,
+then `CREATE SCHEMA public` if it is gone (or use the provider's own reset). The dump has no
+`CREATE DATABASE` and does not carry database-level settings, so a `search_path` set with
+`ALTER DATABASE` or `ALTER ROLE` is not restored: if your installation had one, set it again
+(`ALTER DATABASE "<db>" SET search_path = ...`) before step 3. For the check in step 4, connect
+exactly as Krill does (same `KRILL_DATABASE_URL`, so its options apply) and read
+`SHOW search_path` together with `SELECT version, dirty FROM schema_migrations`: it must find the
+restored table without schema qualification. Finally `rm -f "$PGPASSFILE"`. To keep the private
+key off the host, decrypt on your workstation and pipe the result over `ssh`.
 
 ### A. Lost host, new host
 
@@ -328,8 +368,23 @@ off the host, decrypt on your workstation and pipe the result over `ssh`.
    an existing user). Migrations bring an older snapshot forward.
 7. **Bring the cluster back before redeploying anything**, because the restored state refers to
    the old swarm:
-   - On the Nodes page remove each old worker, then add it again (a worker that is still in
-     another swarm must leave it first). Every worker comes back with a **new** Swarm node ID.
+   - The restored `cluster_nodes` rows describe workers of the old swarm. The Nodes page lists
+     only nodes the **live** swarm reports, so a restored worker that has not joined the new
+     swarm has no row there and no Remove button, yet its name still blocks adding a worker
+     with the same name. Clean them up by hand, with Krill stopped (`systemctl stop krill`),
+     before you rejoin the workers:
+     ```sh
+     docker exec -i krill-postgres psql -U krill -d krill -c 'SELECT id, name, swarm_node_id FROM cluster_nodes'
+     docker exec -i krill-postgres psql -U krill -d krill -c "DELETE FROM node_labels WHERE swarm_node_id IN (SELECT swarm_node_id FROM cluster_nodes WHERE swarm_node_id <> '')" \
+       -c "DELETE FROM firewall_checks WHERE node LIKE 'node-%'" -c 'DELETE FROM cluster_nodes'
+     ```
+     (With an external database, use your `psql` setup and the real database name instead of
+     `docker exec`.) Nothing has a foreign key to `cluster_nodes`; `node_labels` and
+     `firewall_checks` only hold display names and last-check times for the old IDs. Start
+     Krill again, and on the Nodes page add each worker again by SSH (a worker still in another
+     swarm must leave it first: `docker swarm leave --force`). Every worker comes back with a
+     **new** Swarm node ID. A worker whose firewall Krill had locked down keeps its persisted
+     ruleset: after re-adding it, check the Firewall page.
    - Apps pinned to nodes (placement `pin` or `global`) store the old node IDs, and a deploy
      rejects an ID that no longer exists. Open each such app's Advanced tab, choose its nodes
      again from the list and save (or switch it to "Any node").
@@ -341,6 +396,19 @@ off the host, decrypt on your workstation and pipe the result over `ssh`.
      `UPDATE db_instances SET node_hostname = '<hostname>' WHERE id = <id>;` in Krill's database
      (`docker exec -i krill-postgres psql -U krill -d krill`).
 8. Recover the workloads:
+   - Do not leave the restored backup schedules on: against an empty database, volume or bucket
+     a scheduled run uploads an empty backup and, through its retention count, deletes the last
+     populated one you need. Pause them **in step 5, right after the restore checks and before
+     `systemctl start krill`** (the scheduler reads these flags at start), in the same `psql`
+     session as the restore:
+     ```sql
+     UPDATE backups SET enabled = false;
+     UPDATE volume_backups SET enabled = false;
+     UPDATE bucket_backups SET enabled = false;
+     ```
+     Resume them from the Backups pages only after every restore below has finished and been
+     checked. Alternatively copy the objects you will restore from to a prefix no schedule
+     writes to.
    - Point DNS at the new IP address.
    - Redeploy the database instances.
    - For each logical database, recreate its user and database by hand: a redeployed instance
@@ -352,8 +420,14 @@ off the host, decrypt on your workstation and pipe the result over `ssh`.
      CREATE DATABASE "<db>" OWNER "<user>";
      REVOKE CONNECT ON DATABASE "<db>" FROM PUBLIC;
      ```
-   - Restore the app database backups, then the volume and bucket backups.
+   - Restore the app database backups, then the volume and bucket backups. A bucket is restored
+     into a **new** bucket, and each restore must finish first (see
+     [Buckets](guides/buckets.md#back-up-and-restore-a-bucket)). Then relink each app to the
+     restored bucket, and change any bucket name, endpoint or key written literally in the app's
+     environment, before you redeploy: an app redeployed with its old bucket links points at a
+     bucket that is gone or empty.
    - Redeploy the apps.
+   - Resume the backup schedules you paused (the Pause/Resume toggle on each backup).
    - Re-check Settings → Panel domain and the Firewall page.
 
 ### B. Failed upgrade on the same host

@@ -58,7 +58,13 @@ The credentials need these S3 permissions on the bucket and the prefix:
 The save check covers only the bucket, not the objects, so a key that lacks the rest passes it
 and fails at the first real backup. That could be the snapshot before an update, which then
 refuses to start. **Press Back up now right after saving and check that the run in "Recent
-backups" says OK**; this proves the key, the endpoint and the permissions in one step.
+backups" says OK**; this proves the key, the endpoint and the write path (upload and size read-back).
+
+The first run does not exercise delete or multipart abort, because nothing is pruned or aborted
+yet. Check `s3:DeleteObject` by letting more backups run than **Keep last N** (set it to 1 or 2
+and press Back up now a few times) and confirming the oldest objects disappear from the bucket; a failed prune is
+reported as a note on the run ("old backups could not be pruned"), while the new backup itself is stored. `s3:AbortMultipartUpload` only matters
+after a failed upload, so check it in the provider's policy simulator or the policy text itself.
 
 Add a lifecycle rule to the bucket that aborts incomplete multipart uploads after one day. If
 Krill is killed in the middle of a backup, the unfinished upload stays in the bucket, invisible
