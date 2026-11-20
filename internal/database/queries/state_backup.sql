@@ -36,4 +36,11 @@ SELECT * FROM state_backup_runs WHERE finished_at >= $1 ORDER BY finished_at, id
 SELECT * FROM state_backup_runs WHERE status = 'ok' ORDER BY finished_at DESC, id DESC LIMIT 1;
 
 -- name: PruneStateBackupRuns :exec
-DELETE FROM state_backup_runs WHERE finished_at < $1;
+-- The newest successful run is kept however old it is: the settings page and
+-- the digest read the last success from it, and a monthly schedule's last run
+-- would otherwise drop out of the journal before the next one is due.
+DELETE FROM state_backup_runs AS r
+WHERE r.finished_at < $1
+  AND r.id IS DISTINCT FROM (
+    SELECT l.id FROM state_backup_runs AS l WHERE l.status = 'ok' ORDER BY l.finished_at DESC, l.id DESC LIMIT 1
+  );

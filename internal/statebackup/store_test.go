@@ -197,8 +197,34 @@ func TestStoreRuns(t *testing.T) {
 	if len(l) != 2 {
 		t.Fatalf("after prune: %+v", l)
 	}
+	// Pruning everything still keeps the newest success: the page and the
+	// digest read the last success from the journal.
 	if err := st.PruneRuns(ctx, base.Add(time.Hour)); err != nil {
 		t.Fatal(err)
+	}
+	if l, _ = st.ListRuns(ctx, 10); len(l) != 1 || l[0].ObjectKey != "k2" {
+		t.Fatalf("after pruning everything: %+v", l)
+	}
+	if last, ok, err := st.LastSuccess(ctx); !ok || err != nil || last.ObjectKey != "k2" {
+		t.Errorf("LastSuccess after pruning everything = %+v, %v, %v", last, ok, err)
+	}
+}
+
+// With no successful run at all, pruning removes every old row.
+func TestStorePruneRunsWithoutSuccess(t *testing.T) {
+	st := NewDBStore(db.New(testutil.NewTestDB(t)))
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-40 * 24 * time.Hour)
+	for range 2 {
+		if err := st.RecordRun(ctx, Run{Trigger: TriggerSchedule, Status: "error", Error: "boom", StartedAt: old, FinishedAt: old}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PruneRuns(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := st.ListRuns(ctx, 10); err != nil || len(l) != 0 {
+		t.Fatalf("after prune: %+v, %v", l, err)
 	}
 	if _, ok, err := st.LastSuccess(ctx); ok || err != nil {
 		t.Errorf("LastSuccess on empty = %v, %v", ok, err)

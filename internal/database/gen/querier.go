@@ -305,6 +305,9 @@ type Querier interface {
 	PruneNodeDisks(ctx context.Context, sampledAt time.Time) error
 	// Drops disks of nodes no longer in the cluster.
 	PruneNodeDisksExcept(ctx context.Context, dollar_1 []string) error
+	// The newest successful run is kept however old it is: the settings page and
+	// the digest read the last success from it, and a monthly schedule's last run
+	// would otherwise drop out of the journal before the next one is due.
 	PruneStateBackupRuns(ctx context.Context, finishedAt time.Time) error
 	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)

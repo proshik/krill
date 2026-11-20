@@ -159,9 +159,16 @@ func (q *Queries) ListStateBackupRunsSince(ctx context.Context, finishedAt time.
 }
 
 const pruneStateBackupRuns = `-- name: PruneStateBackupRuns :exec
-DELETE FROM state_backup_runs WHERE finished_at < $1
+DELETE FROM state_backup_runs AS r
+WHERE r.finished_at < $1
+  AND r.id IS DISTINCT FROM (
+    SELECT l.id FROM state_backup_runs AS l WHERE l.status = 'ok' ORDER BY l.finished_at DESC, l.id DESC LIMIT 1
+  )
 `
 
+// The newest successful run is kept however old it is: the settings page and
+// the digest read the last success from it, and a monthly schedule's last run
+// would otherwise drop out of the journal before the next one is due.
 func (q *Queries) PruneStateBackupRuns(ctx context.Context, finishedAt time.Time) error {
 	_, err := q.db.Exec(ctx, pruneStateBackupRuns, finishedAt)
 	return err
