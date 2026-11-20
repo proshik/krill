@@ -346,7 +346,7 @@ func TestUpdatesPage(t *testing.T) {
 		}
 		// Only the backing-up phase is the update's own snapshot: in any
 		// other active phase a running state backup is someone else's.
-		for _, ph := range []selfupdate.Phase{selfupdate.PhaseDownloading, selfupdate.PhaseVerifying, selfupdate.PhaseInstalling} {
+		for _, ph := range []selfupdate.Phase{selfupdate.PhaseDownloading, selfupdate.PhaseVerifying, selfupdate.PhaseInstalling, selfupdate.PhaseRestarting} {
 			c, i = newUpdateFakes()
 			i.busy = "state_backup"
 			i.status = selfupdate.Status{Phase: ph, Tag: updLatest}

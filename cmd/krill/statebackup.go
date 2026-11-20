@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/proshik/krill/internal/backup"
-	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/selfupdate"
 	"github.com/proshik/krill/internal/statebackup"
@@ -36,6 +35,9 @@ func snapshotHook(svc *statebackup.Service) selfupdate.SnapshotFunc {
 // or journalled.
 func scheduledStateRun(svc *statebackup.Service, updating func() bool) backup.RunFunc {
 	return func(context.Context, int64) {
+		// Check-then-act: an update starting right after this check still
+		// finds the slot taken and refuses as busy "state_backup", which is
+		// the spec's chosen behaviour for that tiny window.
 		if updating() {
 			slog.Info("scheduled state backup skipped: an update is in progress")
 			return
@@ -53,11 +55,13 @@ func scheduledStateRun(svc *statebackup.Service, updating func() bool) backup.Ru
 }
 
 // cleanupStateDumps removes dump containers a crashed run left behind: their
-// environment still holds the database password.
-func cleanupStateDumps(ctx context.Context, runner docker.OneOffRunner) {
+// environment still holds the database password. The service holds its run
+// slot while it sweeps, so a run in flight keeps its container (it logs the
+// skip itself).
+func cleanupStateDumps(ctx context.Context, svc *statebackup.Service) {
 	ctx, cancel := context.WithTimeout(ctx, stateDumpCleanupTimeout)
 	defer cancel()
-	n, err := runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, statebackup.StateDumpLabelValue)
+	n, err := svc.RemoveLeftovers(ctx)
 	if n > 0 {
 		slog.Info("removed leftover state backup containers", "count", n)
 	}

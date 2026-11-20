@@ -171,6 +171,24 @@ func (s *Service) claim() (release func(), ok bool) {
 	}, true
 }
 
+// RemoveLeftovers removes the dump containers a crashed run left behind
+// (their environment still holds the database password) and returns how many
+// went. It holds the run slot while it sweeps, so it never removes the
+// container of a run in flight, and a run cannot start meanwhile; with the
+// slot taken it removes nothing and returns (0, nil).
+func (s *Service) RemoveLeftovers(ctx context.Context) (int, error) {
+	if s.runner == nil {
+		return 0, nil
+	}
+	release, ok := s.claim()
+	if !ok {
+		slog.Info("state backup: leftover container sweep skipped: a run is in flight")
+		return 0, nil
+	}
+	defer release()
+	return s.runner.RemoveContainersByLabel(ctx, docker.OneOffRoleLabel, StateDumpLabelValue)
+}
+
 func checkTrigger(t Trigger) error {
 	if t != TriggerManual && t != TriggerSchedule {
 		return fmt.Errorf("statebackup: a run cannot be started with trigger %q", t)

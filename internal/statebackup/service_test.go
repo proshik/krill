@@ -40,6 +40,10 @@ type fakeRunner struct {
 	emit  []byte
 	err   error
 	fn    func(ctx context.Context, out io.Writer) error
+	// rm, when set, answers RemoveContainersByLabel; rmCalls records each
+	// call's key=value.
+	rm      func(ctx context.Context) (int, error)
+	rmCalls []string
 }
 
 func (f *fakeRunner) RunOneOff(ctx context.Context, spec docker.OneOffSpec, out io.Writer) error {
@@ -58,8 +62,21 @@ func (f *fakeRunner) RunOneOff(ctx context.Context, spec docker.OneOffSpec, out 
 	return err
 }
 
-func (f *fakeRunner) RemoveContainersByLabel(context.Context, string, string) (int, error) {
+func (f *fakeRunner) RemoveContainersByLabel(ctx context.Context, key, value string) (int, error) {
+	f.mu.Lock()
+	f.rmCalls = append(f.rmCalls, key+"="+value)
+	rm := f.rm
+	f.mu.Unlock()
+	if rm != nil {
+		return rm(ctx)
+	}
 	return 0, nil
+}
+
+func (f *fakeRunner) removeCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.rmCalls...)
 }
 
 func (f *fakeRunner) calls() []docker.OneOffSpec {
@@ -863,5 +880,89 @@ func TestSaveAccessErrorKeepsCause(t *testing.T) {
 	}
 	if v, verr := f.st.LoadView(context.Background()); verr != nil || v.Bucket != "" {
 		t.Fatalf("a refused save stored %+v, %v", v, verr)
+	}
+}
+
+func TestRemoveLeftovers(t *testing.T) {
+	f := newFixture(t, testDSN, false)
+	f.configure(t, nil)
+	ctx := context.Background()
+
+	// No run in flight: the runner is asked for the dump label, and its
+	// count comes back.
+	f.runner.rm = func(context.Context) (int, error) { return 3, nil }
+	if n, err := f.svc.RemoveLeftovers(ctx); n != 3 || err != nil {
+		t.Fatalf("RemoveLeftovers = %d, %v; want 3, nil", n, err)
+	}
+	if got := f.runner.removeCalls(); len(got) != 1 || got[0] != docker.OneOffRoleLabel+"="+StateDumpLabelValue {
+		t.Fatalf("remove calls = %v", got)
+	}
+	rmErr := errors.New("docker is slow")
+	f.runner.rm = func(context.Context) (int, error) { return 1, rmErr }
+	if n, err := f.svc.RemoveLeftovers(ctx); n != 1 || !errors.Is(err, rmErr) {
+		t.Fatalf("RemoveLeftovers with a failing runner = %d, %v", n, err)
+	}
+
+	// A run holds the slot: its own container must not be swept.
+	entered, gate := make(chan struct{}), make(chan struct{})
+	f.runner.fn = func(_ context.Context, out io.Writer) error {
+		close(entered)
+		<-gate
+		_, err := out.Write([]byte(dumpDone))
+		return err
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- f.svc.Run(ctx, TriggerManual) }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("run never reached the runner")
+	}
+	before := len(f.runner.removeCalls())
+	if n, err := f.svc.RemoveLeftovers(ctx); n != 0 || err != nil {
+		t.Errorf("RemoveLeftovers during a run = %d, %v; want 0, nil", n, err)
+	}
+	if got := len(f.runner.removeCalls()); got != before {
+		t.Errorf("the runner was asked to remove containers while a run was in flight")
+	}
+	close(gate)
+	select {
+	case <-errCh: // the storage is unreachable; only the slot matters here
+	case <-time.After(30 * time.Second):
+		t.Fatal("run did not finish")
+	}
+
+	// The sweep holds the slot: a run started meanwhile is refused.
+	f.runner.fn = nil
+	sweeping, done := make(chan struct{}), make(chan struct{})
+	f.runner.rm = func(context.Context) (int, error) {
+		close(sweeping)
+		<-done
+		return 0, nil
+	}
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		_, _ = f.svc.RemoveLeftovers(ctx)
+	}()
+	select {
+	case <-sweeping:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the sweep never reached the runner")
+	}
+	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrStateBackupRunning) {
+		t.Errorf("Start during the sweep: %v; want ErrStateBackupRunning", err)
+	}
+	close(done)
+	<-swept
+	if n := f.svc.InFlight(); n != 0 {
+		t.Errorf("InFlight after the sweep = %d", n)
+	}
+}
+
+func TestRemoveLeftoversNoRunner(t *testing.T) {
+	svc := New(fakeQuerier{version: "160004"}, nil, NewDBStore(db.New(testutil.NewTestDB(t))), testDSN, true)
+	if n, err := svc.RemoveLeftovers(context.Background()); n != 0 || err != nil {
+		t.Fatalf("RemoveLeftovers without a runner = %d, %v", n, err)
 	}
 }

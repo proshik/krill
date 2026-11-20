@@ -581,10 +581,10 @@ func run() error {
 		defer stateSched.Stop()
 		// A dump container left by a crash still holds the database password
 		// in its environment. Remove it in the background (a slow Docker must
-		// not hold boot), and only then load the schedule, so the cleanup can
-		// never remove the container of a scheduled run that just started.
+		// not hold boot); the sweep holds the run slot, so it never removes a
+		// live run's container. The schedule is loaded after it.
 		go func() {
-			cleanupStateDumps(ctx, stateRunner)
+			cleanupStateDumps(ctx, stateSvc)
 			if err := stateSched.Reload(); err != nil {
 				slog.Warn("state backup scheduler reload failed", "err", err)
 			}

@@ -238,30 +238,51 @@ func TestScheduledStateRunSkipsDuringUpdate(t *testing.T) {
 	}
 }
 
+func (g *gatedRunner) removeCalls() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.removed...)
+}
+
 func TestCleanupStateDumps(t *testing.T) {
+	f := newStateFixture(t)
 	logs := captureLogs(t)
-	g := newGatedRunner()
-	g.n = 2
-	cleanupStateDumps(context.Background(), g)
-	if len(g.removed) != 1 || g.removed[0] != "krill.role=state-dump" {
-		t.Fatalf("removed = %v", g.removed)
+	f.runner.n = 2
+	cleanupStateDumps(context.Background(), f.svc)
+	if got := f.runner.removeCalls(); len(got) != 1 || got[0] != "krill.role=state-dump" {
+		t.Fatalf("removed = %v", got)
 	}
 	if !strings.Contains(logs.String(), "level=INFO") || !strings.Contains(logs.String(), "count=2") {
 		t.Errorf("removed containers not logged at INFO: %q", logs.String())
 	}
 
 	mark := len(logs.String())
-	g = newGatedRunner()
-	g.rmErr = errors.New("docker is slow")
-	cleanupStateDumps(context.Background(), g)
+	f.runner.n, f.runner.rmErr = 0, errors.New("docker is slow")
+	cleanupStateDumps(context.Background(), f.svc)
 	if got := since(logs, mark); !strings.Contains(got, "level=WARN") {
 		t.Errorf("a failed cleanup not logged at WARN: %q", got)
 	}
 
 	mark = len(logs.String())
-	cleanupStateDumps(context.Background(), newGatedRunner())
+	f.runner.rmErr = nil
+	cleanupStateDumps(context.Background(), f.svc)
 	if got := since(logs, mark); got != "" {
 		t.Errorf("nothing removed, yet logged: %q", got)
+	}
+
+	// A run in flight keeps its container: the sweep is skipped, with INFO.
+	if err := f.svc.Start(statebackup.TriggerManual); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	f.runner.waitEntered(t)
+	calls := len(f.runner.removeCalls())
+	mark = len(logs.String())
+	cleanupStateDumps(context.Background(), f.svc)
+	if len(f.runner.removeCalls()) != calls {
+		t.Errorf("the sweep removed containers while a run was in flight")
+	}
+	if got := since(logs, mark); !strings.Contains(got, "level=INFO") || !strings.Contains(got, "a run is in flight") {
+		t.Errorf("a skipped sweep not logged at INFO: %q", got)
 	}
 }
 
