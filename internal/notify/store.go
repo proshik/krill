@@ -50,7 +50,7 @@ func (c Channel) wants(k EventKind) bool {
 		return c.NotifyBackup
 	case AppDown, AppRecovered:
 		return c.NotifyHealth
-	case DiskHigh, DiskRecovered, MemOvercommit:
+	case DiskHigh, DiskRecovered, MemOvercommit, StateBackupFailed:
 		return c.NotifyInfra
 	}
 	return false

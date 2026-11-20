@@ -25,6 +25,7 @@ const (
 	DiskHigh
 	DiskRecovered
 	MemOvercommit
+	StateBackupFailed
 )
 
 // Event is a resolved, human-targetable description of something that happened.
@@ -44,6 +45,7 @@ type Event struct {
 	Deploy *DeployDetail // DeploySucceeded
 	Disk   *DiskDetail   // DiskHigh, DiskRecovered
 	Mem    *MemDetail    // MemOvercommit
+	State  *StateDetail  // StateBackupFailed
 }
 
 // DeployDetail is what a success message says about the deploy.
