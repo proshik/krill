@@ -141,6 +141,8 @@ func (s *Server) flashStateBackupErr(w http.ResponseWriter, r *http.Request, op 
 		s.flashErrT(w, r, "flash.err.sbk_bucket")
 	case errors.Is(err, statebackup.ErrStateBackupRunning):
 		s.flashErrT(w, r, "flash.err.sbk_running")
+	case errors.Is(err, statebackup.ErrUpdateInProgress):
+		s.flashErrT(w, r, "flash.err.sbk_update_running")
 	case errors.Is(err, statebackup.ErrNotConfigured):
 		s.flashErrT(w, r, "flash.err.sbk_not_configured")
 	case errors.As(err, &storage):

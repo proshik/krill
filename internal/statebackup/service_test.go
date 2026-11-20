@@ -652,6 +652,32 @@ func TestStartRunsInBackground(t *testing.T) {
 	}
 }
 
+// The updater's last busy check runs after its own snapshot; a manual or
+// scheduled run admitted after it would be cut short by the restart.
+func TestStartRefusedWhileUpdating(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	f.svc.SetUpdateActive(func() bool { return true })
+	for _, tr := range []Trigger{TriggerManual, TriggerSchedule} {
+		if err := f.svc.Start(tr); !errors.Is(err, ErrUpdateInProgress) {
+			t.Fatalf("Start(%s) during an update: %v", tr, err)
+		}
+		if err := f.svc.Run(context.Background(), tr); !errors.Is(err, ErrUpdateInProgress) {
+			t.Fatalf("Run(%s) during an update: %v", tr, err)
+		}
+	}
+	if n := f.svc.InFlight(); n != 0 {
+		t.Fatalf("InFlight = %d: a refused run kept the slot", n)
+	}
+	if runs := f.runs(t); len(runs) != 0 || len(f.runner.calls()) != 0 {
+		t.Fatalf("a refused run was journalled or dumped: %+v", runs)
+	}
+	// The update's own snapshot still runs.
+	if took, err := f.svc.Snapshot(context.Background(), "v1.0.0", "v1.0.1"); !took || err != nil {
+		t.Fatalf("Snapshot during the update = %v, %v", took, err)
+	}
+}
+
 func TestRunNotConfigured(t *testing.T) {
 	f := newFixture(t, testDSN, false)
 	if err := f.svc.Start(TriggerManual); !errors.Is(err, ErrNotConfigured) {

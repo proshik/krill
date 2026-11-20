@@ -570,9 +570,8 @@ func run() error {
 
 	if stateSvc != nil {
 		updater.SetSnapshot(snapshotHook(stateSvc))
-		stateSched := backup.NewScheduler(stateSvc.SchedStore(), scheduledStateRun(stateSvc, func() bool {
-			return updater.Status().Phase.Active()
-		}))
+		stateSvc.SetUpdateActive(func() bool { return updater.Status().Phase.Active() })
+		stateSched := backup.NewScheduler(stateSvc.SchedStore(), scheduledStateRun(stateSvc))
 		stateSvc.SetOnChange(func() {
 			if err := stateSched.Reload(); err != nil {
 				slog.Error("state backup scheduler reload failed", "err", err)

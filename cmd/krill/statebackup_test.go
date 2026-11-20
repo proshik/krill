@@ -201,18 +201,25 @@ func TestSnapshotHookPassesThrough(t *testing.T) {
 func TestScheduledStateRunSkipsDuringUpdate(t *testing.T) {
 	f := newStateFixture(t)
 	logs := captureLogs(t)
+	var mu sync.Mutex
 	updating := true
-	run := scheduledStateRun(f.svc, func() bool { return updating })
+	f.svc.SetUpdateActive(func() bool { mu.Lock(); defer mu.Unlock(); return updating })
+	run := scheduledStateRun(f.svc)
 
 	run(context.Background(), 1)
 	if n := f.svc.InFlight(); n != 0 {
 		t.Fatalf("a run started during an update (InFlight = %d)", n)
 	}
+	if got := logs.String(); !strings.Contains(got, "level=INFO") || !strings.Contains(got, "update is in progress") {
+		t.Errorf("a run skipped for an update did not log at INFO: %q", got)
+	}
 	if n := f.runCount(t); n != 0 {
 		t.Fatalf("a skipped run was journalled (%d rows)", n)
 	}
 
+	mu.Lock()
 	updating = false
+	mu.Unlock()
 	run(context.Background(), 1)
 	if n := f.svc.InFlight(); n != 1 {
 		t.Fatalf("the scheduled run did not start (InFlight = %d)", n)

@@ -69,6 +69,10 @@ the page shows why: an update that cannot be undone from a backup is not worth t
 To update anyway (for instance, while the storage is down), pause the backups, run the update,
 and resume them afterwards. If backups are not set up at all, updates proceed as before.
 
+While an update is running, **Back up now** is refused and a scheduled backup is skipped: the
+restart at the end of the update would cut it short, and the update's own snapshot covers that
+moment.
+
 ## 5. What is in a backup
 
 The dump is a plain `pg_dump` of the Krill database, compressed and encrypted as it streams.

@@ -1132,6 +1132,7 @@ var en = map[string]string{
 	"flash.err.sbk_bucket":                   "Enter a bucket name.",
 	"flash.err.sbk_running":                  "A backup of Krill's state is already running.",
 	"flash.err.sbk_not_configured":           "Krill backups are not set up yet: save the storage and the age public key first.",
+	"flash.err.sbk_update_running":           "A Krill update is in progress: back up after it has finished.",
 	"update.result.updated":                  "Updated from %s to %s.",
 	"update.result.rollback":                 "Rolled back from %s to %s.",
 	"update.result.reverted":                 "The update to %s did not start and was rolled back. See journalctl -u krill on the server.",

@@ -29,21 +29,16 @@ func snapshotHook(svc *statebackup.Service) selfupdate.SnapshotFunc {
 	}
 }
 
-// scheduledStateRun is the state backup scheduler's run function. It skips
-// a run while a self-update job is active (that job's own pre-update snapshot
-// covers the moment) and one that finds the slot taken; neither is alerted
-// or journalled.
-func scheduledStateRun(svc *statebackup.Service, updating func() bool) backup.RunFunc {
+// scheduledStateRun is the state backup scheduler's run function. A run is
+// skipped while a self-update job is active (that job's own pre-update
+// snapshot covers the moment) and when it finds the slot taken; neither is
+// alerted or journalled.
+func scheduledStateRun(svc *statebackup.Service) backup.RunFunc {
 	return func(context.Context, int64) {
-		// Check-then-act: an update starting right after this check still
-		// finds the slot taken and refuses as busy "state_backup", which is
-		// the spec's chosen behaviour for that tiny window.
-		if updating() {
-			slog.Info("scheduled state backup skipped: an update is in progress")
-			return
-		}
 		switch err := svc.Start(statebackup.TriggerSchedule); {
 		case err == nil:
+		case errors.Is(err, statebackup.ErrUpdateInProgress):
+			slog.Info("scheduled state backup skipped: an update is in progress")
 		case errors.Is(err, statebackup.ErrStateBackupRunning):
 			slog.Info("scheduled state backup skipped: another state backup is still running")
 		case errors.Is(err, statebackup.ErrNotConfigured):

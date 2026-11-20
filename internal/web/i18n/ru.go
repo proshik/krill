@@ -1132,6 +1132,7 @@ var ru = map[string]string{
 	"flash.err.sbk_bucket":                   "Укажите имя бакета.",
 	"flash.err.sbk_running":                  "Бэкап состояния Krill уже выполняется.",
 	"flash.err.sbk_not_configured":           "Бэкапы Krill ещё не настроены: сначала сохраните хранилище и публичный ключ age.",
+	"flash.err.sbk_update_running":           "Идёт обновление Krill: запустите бэкап, когда оно завершится.",
 	"update.result.updated":                  "Krill обновлён с %s до %s.",
 	"update.result.rollback":                 "Krill откачен с %s на %s.",
 	"update.result.reverted":                 "Обновление до %s не запустилось и было откачено. Подробности — в journalctl -u krill на сервере.",

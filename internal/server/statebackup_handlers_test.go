@@ -329,6 +329,7 @@ func TestRunStateBackupNow(t *testing.T) {
 	}{
 		{statebackup.ErrStateBackupRunning, "already running"},
 		{statebackup.ErrNotConfigured, "not set up"},
+		{statebackup.ErrUpdateInProgress, "update is in progress"},
 	} {
 		env.ctl.startErr = c.err
 		rec := env.do(t, http.MethodPost, env.base+"/run", url.Values{}, env.cookie)

@@ -46,6 +46,7 @@ var (
 	ErrNotConfigured      = errors.New("statebackup: Krill backups are not set up or are paused")
 	ErrServerTooOld       = errors.New("statebackup: the database server is older than PostgreSQL 13")
 	ErrNoRunner           = errors.New("statebackup: this Docker engine cannot run the dump container")
+	ErrUpdateInProgress   = errors.New("statebackup: a Krill update is in progress")
 
 	errSettings = errors.New("statebackup: the settings could not be read")
 )
@@ -71,6 +72,7 @@ type Service struct {
 	caBundles    []string
 	notifier     Notifier
 	onChange     func()
+	updateActive func() bool
 
 	mu       sync.Mutex
 	inFlight bool
@@ -84,6 +86,12 @@ func New(q Querier, runner docker.OneOffRunner, store Store, dsn string, allowPr
 
 // SetNotifier wires failure alerts (no-op if never set).
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
+
+// SetUpdateActive registers f, which reports whether a self-update job is
+// active. A manual or scheduled run is refused meanwhile: the updater's last
+// busy check may already be behind it, and its restart would cut the run
+// short. The update's own Snapshot is not affected.
+func (s *Service) SetUpdateActive(f func() bool) { s.updateActive = f }
 
 // SetOnChange registers f, called after the settings were saved or the
 // feature was turned on or off (the scheduler's Reload).
@@ -156,6 +164,21 @@ func (s *Service) InFlight() int {
 	return 0
 }
 
+// claimRun reserves the slot for a manual or scheduled run, refusing while a
+// self-update is active. The update is asked with the slot already held, so
+// an update starting after the check still finds the slot taken (busy).
+func (s *Service) claimRun() (release func(), err error) {
+	release, ok := s.claim()
+	if !ok {
+		return nil, ErrStateBackupRunning
+	}
+	if s.updateActive != nil && s.updateActive() {
+		release()
+		return nil, ErrUpdateInProgress
+	}
+	return release, nil
+}
+
 // claim reserves the service's single slot; release must be called when the
 // run ends.
 func (s *Service) claim() (release func(), ok bool) {
@@ -219,15 +242,16 @@ func (s *Service) configured(ctx context.Context, t Trigger) (bool, error) {
 }
 
 // Start runs a backup in the background, bounded by RunTimeout. It returns
-// ErrStateBackupRunning when the slot is taken and ErrNotConfigured when there
-// is nothing to run, and nil once the run has started.
+// ErrStateBackupRunning when the slot is taken, ErrUpdateInProgress while a
+// self-update is active and ErrNotConfigured when there is nothing to run,
+// and nil once the run has started.
 func (s *Service) Start(trigger Trigger) error {
 	if err := checkTrigger(trigger); err != nil {
 		return err
 	}
-	release, ok := s.claim()
-	if !ok {
-		return ErrStateBackupRunning
+	release, err := s.claimRun()
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), RunTimeout)
 	ok, err := s.configured(ctx, trigger)
@@ -252,9 +276,9 @@ func (s *Service) Run(ctx context.Context, trigger Trigger) error {
 	if err := checkTrigger(trigger); err != nil {
 		return err
 	}
-	release, ok := s.claim()
-	if !ok {
-		return ErrStateBackupRunning
+	release, err := s.claimRun()
+	if err != nil {
+		return err
 	}
 	defer release()
 	ctx, cancel := context.WithTimeout(ctx, RunTimeout)
