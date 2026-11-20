@@ -20,7 +20,7 @@ type ConnEnv struct {
 }
 
 // DefaultCABundles is checked in order when sslmode is verify-ca/verify-full
-// and the DSN names no sslrootcert.
+// and the DSN names no sslrootcert, or when it names sslrootcert=system.
 var DefaultCABundles = []string{"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem"}
 
 // Sentinel errors. Their messages are fixed strings: a pgconn error echoes the
@@ -29,7 +29,7 @@ var (
 	ErrDSNParse    = errors.New("the database URL could not be parsed")
 	ErrUnixSocket  = errors.New("the database URL uses a unix socket, which the dump container cannot reach")
 	ErrSSLPassword = errors.New("the database URL uses sslpassword, which is not supported")
-	ErrNoCABundle  = errors.New("sslmode needs a CA bundle but none was found on this host and the URL has no sslrootcert")
+	ErrNoCABundle  = errors.New("sslmode or sslrootcert=system needs a CA bundle but none was found on this host")
 	ErrSSLFile     = errors.New("an SSL file named in the database URL or a PGSSL* environment variable is missing or not a regular file")
 	ErrServiceFile = errors.New("the database connection relies on a PostgreSQL service file (service= or PGSERVICE), which the dump container cannot reproduce; put its settings in KRILL_DATABASE_URL")
 )
@@ -132,6 +132,14 @@ func connFromDSN(dsn string, caBundles []string, getenv func(string) string) (Co
 		"PGDATABASE=" + cfg.Database,
 	}
 
+	// sslrootcert=system is libpq 16+ only (an older pg_dump reads it as a
+	// file name) and means verify-full against the system CAs, which is
+	// also what the pool does with it whatever sslmode says.
+	system := eff["sslrootcert"] == "system"
+	if system {
+		eff["sslrootcert"] = ""
+		eff["sslmode"] = "verify-full"
+	}
 	for _, a := range allowed {
 		if v := eff[a.param]; v != "" {
 			out.Env = append(out.Env, a.env+"="+v)

@@ -150,12 +150,37 @@ func TestConnFromDSNSSLFiles(t *testing.T) {
 	if _, err := ConnFromDSN("postgres://u:p@h/d?sslrootcert="+t.TempDir(), nil); !errors.Is(err, ErrSSLFile) {
 		t.Fatalf("dir: %v", err)
 	}
-	c, err = ConnFromDSN("postgres://u:p@h/d?sslrootcert=system", nil)
-	if err != nil {
-		t.Fatal(err)
+}
+
+// pg_dump 13–15 reads sslrootcert=system as a file name: it becomes the
+// host's CA bundle with verify-full, which is what the pool does with it.
+func TestConnFromDSNSystemRootCert(t *testing.T) {
+	ca := tmpFile(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	for _, dsn := range []string{
+		"postgres://u:p@h/d?sslrootcert=system",
+		"postgres://u:p@h/d?sslrootcert=system&sslmode=require",
+		"host=h user=u password=p dbname=d sslrootcert=system sslmode=verify-ca",
+	} {
+		c, err := connFromDSN(dsn, []string{missing, ca}, envOf(nil))
+		if err != nil {
+			t.Fatalf("%q: %v", dsn, err)
+		}
+		if !contains(c.Env, "PGSSLROOTCERT="+ca) || !contains(c.Env, "PGSSLMODE=verify-full") || len(c.Files) != 1 || c.Files[0] != ca {
+			t.Fatalf("%q: env %q files %v", dsn, c.Env, c.Files)
+		}
+		for _, e := range c.Env {
+			if e == "PGSSLROOTCERT=system" || (strings.HasPrefix(e, "PGSSLMODE=") && e != "PGSSLMODE=verify-full") {
+				t.Fatalf("%q: unexpected %q", dsn, e)
+			}
+		}
 	}
-	if !contains(c.Env, "PGSSLROOTCERT=system") || len(c.Files) != 0 {
-		t.Fatalf("env %q files %v", c.Env, c.Files)
+	c, err := connFromDSN("postgres://u:p@h/d", []string{ca}, envOf(map[string]string{"PGSSLROOTCERT": "system"}))
+	if err != nil || !contains(c.Env, "PGSSLROOTCERT="+ca) || !contains(c.Env, "PGSSLMODE=verify-full") {
+		t.Fatalf("env: err %v env %q", err, c.Env)
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d?sslrootcert=system", []string{missing}, envOf(nil)); !errors.Is(err, ErrNoCABundle) {
+		t.Fatalf("no bundle: %v", err)
 	}
 }
 
