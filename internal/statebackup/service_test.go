@@ -567,6 +567,35 @@ func TestRunRetention(t *testing.T) {
 	}
 }
 
+// After the clock was set back, the new backup sorts behind later-dated
+// ones; retention must still keep it (and N-1 others), not delete it.
+func TestRunRetentionKeepsCurrentAfterClockSetBack(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, func(s *Settings) { s.Retention = 2 })
+	future := time.Now().AddDate(1, 0, 0)
+	later := []string{
+		ScheduledKey("ops", future),
+		ScheduledKey("ops", future.Add(time.Hour)),
+		ScheduledKey("ops", future.Add(2*time.Hour)),
+	}
+	f.seed(t, later...)
+	if err := f.svc.Run(context.Background(), TriggerSchedule); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	runs := f.runs(t)
+	if len(runs) != 1 || runs[0].Status != "ok" || runs[0].Error != "" {
+		t.Fatalf("runs = %+v", runs)
+	}
+	keys := f.keys(t, ScheduledDir("ops"))
+	set := map[string]bool{}
+	for _, k := range keys {
+		set[k] = true
+	}
+	if len(keys) != 2 || !set[runs[0].ObjectKey] || !set[later[2]] {
+		t.Fatalf("after retention: %q; want the run's own %q and the newest other", keys, runs[0].ObjectKey)
+	}
+}
+
 // TestPreUpdateKeysArePrunable pins that what Snapshot writes is what
 // pre-update retention prunes.
 func TestPreUpdateKeysArePrunable(t *testing.T) {
@@ -574,7 +603,7 @@ func TestPreUpdateKeysArePrunable(t *testing.T) {
 	for i := range PreUpdateKeep + 2 {
 		objs = append(objs, backup.Object{Key: PreUpdateKey("ops", t0.Add(time.Duration(i)*time.Hour), "v0.9.3", "v0.9.4")})
 	}
-	got := Prunable(objs, PreUpdateDir("ops"), true, PreUpdateKeep)
+	got := Prunable(objs, PreUpdateDir("ops"), true, PreUpdateKeep, "")
 	if len(got) != 2 || got[0].Key != objs[1].Key || got[1].Key != objs[0].Key {
 		t.Fatalf("Prunable = %+v", got)
 	}

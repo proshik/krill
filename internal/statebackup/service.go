@@ -542,7 +542,7 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 	objs, lerr := backup.List(ctx, dst, dir, s.allowPrivate)
 	deleteFailures := 0
 	if lerr == nil {
-		for _, o := range Prunable(objs, dir, preUpdate, keep) {
+		for _, o := range Prunable(objs, dir, preUpdate, keep, key) {
 			if derr := backup.Delete(ctx, dst, o.Key, s.allowPrivate); derr != nil {
 				deleteFailures++
 				slog.Error("state backup retention delete failed", "key", o.Key, "err", ext(derr.Error()))

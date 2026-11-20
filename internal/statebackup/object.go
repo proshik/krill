@@ -48,9 +48,15 @@ func PreUpdateKey(prefix string, t time.Time, from, to string) string {
 // Prunable returns the objects retention may delete: only keys directly in dir
 // whose remainder matches that directory's exact pattern, newest first by key
 // name, everything after the first keep (at least one is always kept).
-func Prunable(objs []backup.Object, dir string, preUpdate bool, keep int) []backup.Object {
+// current, when set, is the run's own verified object: it is never returned and
+// takes one of the keep slots, so a clock set back (which sorts it behind
+// later-dated keys) cannot make retention delete the backup just taken.
+func Prunable(objs []backup.Object, dir string, preUpdate bool, keep int, current string) []backup.Object {
 	if keep < 1 {
 		keep = 1
+	}
+	if current != "" {
+		keep--
 	}
 	re := scheduledRe
 	if preUpdate {
@@ -58,6 +64,9 @@ func Prunable(objs []backup.Object, dir string, preUpdate bool, keep int) []back
 	}
 	var match []backup.Object
 	for _, o := range objs {
+		if o.Key == current && current != "" {
+			continue
+		}
 		if rest, ok := strings.CutPrefix(o.Key, dir); ok && re.MatchString(rest) {
 			match = append(match, o)
 		}
