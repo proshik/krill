@@ -112,6 +112,9 @@ certificate paths and unix-socket connections are refused. TLS settings Krill it
 `PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`) when the URL leaves them out reach the dump the same
 way. A connection that relies on a PostgreSQL service file (`service=` or `PGSERVICE`) is
 refused, because the container cannot read its settings: put them in `KRILL_DATABASE_URL`.
+A URL that gives a connection or TLS parameter (`sslmode`, `sslrootcert`, `channel_binding`,
+…) more than once is refused too: Krill's own connection and `pg_dump` would not agree on which
+value applies.
 
 ## 6. Key rotation
 
