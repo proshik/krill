@@ -39,6 +39,10 @@ const (
 // minServerMajor is the oldest Postgres major the dump supports.
 const minServerMajor = 13
 
+// cleanupTimeout bounds the deletion of an unverified object, which runs on a
+// fresh context: the run's own may be what expired.
+const cleanupTimeout = 30 * time.Second
+
 // errTextCap bounds the external text (runner stderr, an S3 error) carried in
 // a run's error.
 const errTextCap = 1024
@@ -528,7 +532,12 @@ func (s *Service) run(ctx context.Context, trigger Trigger, from, to string) err
 			cause = fmt.Sprintf("the storage holds %d bytes of the backup, but %d were sent", size, n)
 		}
 		// An unverified object must not count as one of the kept backups.
-		if derr := backup.Delete(ctx, dst, key, s.allowPrivate); derr != nil {
+		// The check may have used up the run's deadline, so the delete gets
+		// its own.
+		dctx, dcancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+		derr := backup.Delete(dctx, dst, key, s.allowPrivate)
+		dcancel()
+		if derr != nil {
 			slog.Error("state backup: deleting an unverified object failed", "key", key, "err", ext(derr.Error()))
 			return fail(nil, cause+"; deleting it failed too")
 		}

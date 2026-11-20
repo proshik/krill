@@ -573,6 +573,27 @@ func TestRunSizeMismatchDeletesNewObject(t *testing.T) {
 	}
 }
 
+// A check that used up the run's deadline still has its object deleted: the
+// cleanup does not inherit the expired context.
+func TestRunCheckTimeoutStillDeletesObject(t *testing.T) {
+	f := newFixture(t, testDSN, true)
+	f.configure(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.svc.head = func(hctx context.Context, _ backup.Destination, _ string, _ bool) (int64, error) {
+		cancel() // the run's deadline passes during the check
+		<-hctx.Done()
+		return 0, hctx.Err()
+	}
+	err := f.svc.Run(ctx, TriggerManual)
+	if err == nil || !strings.Contains(err.Error(), "could not be checked") || !strings.Contains(err.Error(), "it was deleted") {
+		t.Fatalf("Run = %v", err)
+	}
+	if keys := f.keys(t, ""); len(keys) != 0 {
+		t.Fatalf("an unverified object was left: %q", keys)
+	}
+}
+
 func TestRunRetention(t *testing.T) {
 	f := newFixture(t, testDSN, true)
 	f.configure(t, func(s *Settings) { s.Retention = 2 })
