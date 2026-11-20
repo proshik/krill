@@ -123,6 +123,24 @@ func (u *Updater) install(ctx context.Context, tag string) (err error) {
 		return &BusyError{Reason: reason}
 	}
 
+	// Back up Krill's state before the new binary can migrate it. Still
+	// nothing on the host has changed, so a failure needs no cleanup beyond
+	// the deferred one; it blocks the update.
+	u.mu.Lock()
+	snapshot := u.snapshot
+	u.mu.Unlock()
+	if snapshot != nil {
+		u.setPhase(PhaseBackingUp)
+		if err := u.runSnapshot(ctx, snapshot, tag); err != nil {
+			return err
+		}
+		// A deploy may have started during the dump. The snapshot has
+		// released its own busy slot by now, so it cannot trip this.
+		if reason := u.busyReason(); reason != "" {
+			return &BusyError{Reason: reason}
+		}
+	}
+
 	// 6. Keep a crash-looping new binary restarting until the timer fires.
 	u.setPhase(PhaseInstalling)
 	changed, err := writeDropIn(u.unitDir, u.unit)
@@ -178,6 +196,28 @@ func (u *Updater) install(ctx context.Context, tag string) (err error) {
 		return fmt.Errorf("scheduling the restart of %s: %w", u.unit, err)
 	}
 	slog.Info("self-update installed, restart scheduled", "from", u.current, "to", tag, "unit", u.unit)
+	return nil
+}
+
+// runSnapshot runs the pre-update snapshot under snapshotTimeout. A
+// *BusyError (another state backup holds the slot) comes back as is; every
+// other failure is a *SnapshotError.
+func (u *Updater) runSnapshot(ctx context.Context, snapshot SnapshotFunc, tag string) error {
+	sctx, cancel := context.WithTimeout(ctx, u.snapshotTimeout)
+	defer cancel()
+	took, err := snapshot(sctx, u.current, tag)
+	if err != nil {
+		var busy *BusyError
+		if errors.As(err, &busy) {
+			return busy
+		}
+		return &SnapshotError{Err: err}
+	}
+	if took {
+		slog.Info("self-update: state snapshot taken", "from", u.current, "to", tag)
+	} else {
+		slog.Info("self-update: no state snapshot (state backup not configured or paused)", "from", u.current, "to", tag)
+	}
 	return nil
 }
 

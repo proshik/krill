@@ -150,12 +150,22 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	if job.Err != nil {
 		// A job gives up with a BusyError when work started while it
 		// downloaded; say what, in the words the refusal at the button uses.
+		// A failed state snapshot says the update did not start and how to
+		// update anyway; its text is the run's error, already free of secrets.
 		var busy *selfupdate.BusyError
-		if errors.As(job.Err, &busy) {
-			v.JobErr = i18n.T(ctx, "update.busy."+busy.Reason)
-		} else {
-			v.JobErr = job.Err.Error()
+		var snap *selfupdate.SnapshotError
+		switch {
+		case errors.As(job.Err, &busy):
+			v.JobErr = i18n.Tf(ctx, "update.job_failed", i18n.T(ctx, "update.busy."+busy.Reason))
+		case errors.As(job.Err, &snap):
+			v.JobErr = i18n.Tf(ctx, "update.err.snapshot", snap.Err.Error())
+		default:
+			v.JobErr = i18n.Tf(ctx, "update.job_failed", job.Err.Error())
 		}
+	}
+	if v.IsRelease && v.Available {
+		// Shown above the Install button only.
+		v.StateLine = "update.state." + s.stateBackupMode(ctx)
 	}
 	if prev, ok := i.Previous(ctx); ok {
 		v.Previous = prev
@@ -165,6 +175,12 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 		v.LastFrom, v.LastTo, v.LastOK, v.LastReason = last.From, last.To, last.OK, last.Reason
 	}
 	return v
+}
+
+// stateBackupMode reports whether Krill's state is backed up before an
+// update: "on", "off" (not set up) or "paused".
+func (s *Server) stateBackupMode(ctx context.Context) string {
+	return "off"
 }
 
 // checkUpdates looks up the latest release right away instead of waiting for

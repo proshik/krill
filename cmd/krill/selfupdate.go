@@ -15,12 +15,13 @@ type updateBusy struct {
 	volumes            interface{ InFlight() int }
 	buckets            interface{ InFlight() int }
 	clones             interface{ InFlight() int }
+	stateBackups       interface{ InFlight() int }
 }
 
 // reason reports why restarting Krill right now would be disruptive, as one
 // of the machine codes the Updates page knows how to explain ("deploy",
-// "backup", "volume_backup", "db_migration"), or "" when nothing is in
-// flight.
+// "backup", "state_backup", "volume_backup", "db_migration"), or "" when
+// nothing is in flight.
 func (b updateBusy) reason(ctx context.Context) string {
 	if b.clones != nil && b.clones.InFlight() > 0 {
 		return "environment_clone"
@@ -33,6 +34,9 @@ func (b updateBusy) reason(ctx context.Context) string {
 	}
 	if b.backups.InFlight() > 0 {
 		return "backup"
+	}
+	if b.stateBackups != nil && b.stateBackups.InFlight() > 0 {
+		return "state_backup"
 	}
 	if b.buckets != nil && b.buckets.InFlight() > 0 {
 		return "backup"

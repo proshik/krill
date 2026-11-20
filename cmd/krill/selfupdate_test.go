@@ -143,3 +143,24 @@ func TestUpdateBusyReason(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateBusyStateBackup(t *testing.T) {
+	b := updateBusy{
+		runningDeploys:     countFn(0, nil),
+		migratingInstances: countFn(0, nil),
+		backups:            fakeInFlight{0},
+		volumes:            fakeInFlight{0},
+		stateBackups:       fakeInFlight{1},
+	}
+	if got := b.reason(context.Background()); got != "state_backup" {
+		t.Errorf("reason() with a state backup in flight = %q, want state_backup", got)
+	}
+	b.stateBackups = fakeInFlight{0}
+	if got := b.reason(context.Background()); got != "" {
+		t.Errorf("reason() with an idle state backup = %q, want \"\"", got)
+	}
+	b.stateBackups = nil
+	if got := b.reason(context.Background()); got != "" {
+		t.Errorf("reason() with no state backup source = %q, want \"\"", got)
+	}
+}

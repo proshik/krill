@@ -21,10 +21,11 @@ type UpdatesView struct {
 	Supported      bool
 	UnsupportedKey string // "update.unsupported.<code>"
 	BusyKey        string // "update.busy.<reason>" when busy, else ""
+	StateLine      string // "update.state.<on|off|paused>": is Krill's state backed up first
 	Phase          string // installer status phase
 	PhaseActive    bool
 	JobTag         string
-	JobErr         string
+	JobErr         string // the whole failure sentence, already translated
 	Previous       string // version of krill.prev, "" when none
 	HasLast        bool
 	LastFrom       string
@@ -41,6 +42,11 @@ func (v UpdatesView) blocked() bool {
 // updatesPath is the Updates page of an organization.
 func updatesPath(orgID int64) string {
 	return "/orgs/" + itoa(orgID) + "/updates"
+}
+
+// krillBackupsPath is the Krill backups settings page of an organization.
+func krillBackupsPath(orgID int64) string {
+	return "/orgs/" + itoa(orgID) + "/krill-backups"
 }
 
 // updateStatusURL is the status fragment's poll address; from is the version
@@ -104,6 +110,9 @@ templ Updates(org db.Organization, role string, v UpdatesView) {
 				<div class="k-card mb-4">
 					<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "update.available", v.Latest) }</p>
 					@updateBlockedReason(v)
+					if v.StateLine != "" {
+						@updateStateLine(org.ID, v.StateLine)
+					}
 					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/install") } data-confirm={ i18n.Tf(ctx, "update.confirm.install", v.Latest) } data-confirm-label={ i18n.T(ctx, "update.install") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel, 'primary')">
 						<input type="hidden" name="tag" value={ v.Latest }/>
 						<button class="k-btn k-btn-primary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.install_to", v.Latest) }</button>
@@ -159,7 +168,7 @@ templ updateBlockedReason(v UpdatesView) {
 // "failed" (the page never renders it for an idle installer). While the job is
 // active it polls itself every 2 seconds; the poll answers with a full page
 // refresh as soon as the job is no longer active, so the failed card only ever
-// comes from a page render.
+// comes from a page render. errText is the whole, translated failure sentence.
 templ UpdateStatus(orgID int64, current, phase string, active bool, tag, errText string) {
 	<div
 		id="k-update-status"
@@ -184,7 +193,19 @@ templ UpdateStatus(orgID int64, current, phase string, active bool, tag, errText
 			<p class="mt-3" style="max-width:720px">{ i18n.T(ctx, "update.restarting_hint") }</p>
 		}
 		if phase == "failed" {
-			<p class="mt-3" style="color:var(--color-err);max-width:720px">{ i18n.Tf(ctx, "update.job_failed", errText) }</p>
+			<p class="mt-3" style="color:var(--color-err);max-width:720px">{ errText }</p>
 		}
 	</div>
+}
+
+// updateStateLine says whether Krill's state is backed up before the update:
+// key is "update.state.on", "update.state.off" (with a link to set the
+// backup up) or "update.state.paused".
+templ updateStateLine(orgID int64, key string) {
+	<p class="mb-3" style="color:var(--color-muted);max-width:720px">
+		{ i18n.T(ctx, key) }
+		if key == "update.state.off" {
+			<a href={ templ.SafeURL(krillBackupsPath(orgID)) } style="color:var(--color-accent)">{ i18n.T(ctx, "update.state.off_link") }</a>
+		}
+	</p>
 }

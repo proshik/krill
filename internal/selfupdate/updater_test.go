@@ -1584,3 +1584,260 @@ func TestRunVersion_EmptyEnvAndBoundedOutput(t *testing.T) {
 		t.Errorf("output length = %d, want at most 4 KiB", len(out))
 	}
 }
+
+// --- The pre-update state snapshot ----------------------------------------------
+
+// eventLog records the order of the job's steps across the smoke test, the
+// busy callback, the snapshot and the runner.
+type eventLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *eventLog) add(e string) {
+	l.mu.Lock()
+	l.events = append(l.events, e)
+	l.mu.Unlock()
+}
+
+func (l *eventLog) get() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
+}
+
+// recordSteps wires the harness so every smoke test, busy check and runner
+// command lands in log, in order.
+func (h *harness) recordSteps(log *eventLog, busy func() string) {
+	exec := h.u.execVersion
+	h.u.execVersion = func(ctx context.Context, path string) (string, error) {
+		log.add("smoke")
+		return exec(ctx, path)
+	}
+	h.u.busy = func(context.Context) string {
+		log.add("busy")
+		return busy()
+	}
+	revert := h.systemdRunCmd()
+	h.runner.onRun = func(cmd string) {
+		switch cmd {
+		case stopTimerCmd:
+			log.add("stop-timers")
+		case daemonReloadCmd:
+			log.add("daemon-reload")
+		case revert:
+			log.add("arm-timer")
+		case restartCmd:
+			log.add("restart")
+		default:
+			log.add(cmd)
+		}
+	}
+}
+
+func (h *harness) dropIn() string {
+	return filepath.Join(h.unitDir, "krill.service.d", "10-krill-update.conf")
+}
+
+func TestInstallSnapshotOrder(t *testing.T) {
+	h := newHarness(t)
+	var log eventLog
+	h.recordSteps(&log, func() string { return "" })
+	var gotFrom, gotTo string
+	var gotPhase Phase
+	var dropInAtSnapshot bool
+	h.u.SetSnapshot(func(_ context.Context, from, to string) (bool, error) {
+		log.add("snapshot")
+		gotFrom, gotTo, gotPhase = from, to, h.u.Status().Phase
+		_, err := os.Stat(h.dropIn())
+		dropInAtSnapshot = err == nil
+		return true, nil
+	})
+
+	st := h.startAndWait(t)
+
+	if st.Phase != PhaseRestarting || st.Err != nil {
+		t.Fatalf("Status() = %+v, want restarting with no error", st)
+	}
+	want := []string{"busy", "stop-timers", "smoke", "busy", "snapshot", "busy", "daemon-reload", "arm-timer", "restart"}
+	if got := log.get(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("job steps = %v, want %v", got, want)
+	}
+	if gotFrom != testCurrent || gotTo != testTag {
+		t.Errorf("snapshot got from=%q to=%q, want %q %q", gotFrom, gotTo, testCurrent, testTag)
+	}
+	if gotPhase != PhaseBackingUp {
+		t.Errorf("phase during the snapshot = %q, want %q", gotPhase, PhaseBackingUp)
+	}
+	if dropInAtSnapshot {
+		t.Errorf("the drop-in was written before the snapshot")
+	}
+}
+
+func TestInstallSnapshotFailureLeavesNothing(t *testing.T) {
+	h := newHarness(t)
+	h.u.SetSnapshot(func(context.Context, string, string) (bool, error) {
+		return false, errors.New("s3 down")
+	})
+
+	st := h.startAndWait(t)
+
+	assertFailed(t, st, "s3 down")
+	var se *SnapshotError
+	if !errors.As(st.Err, &se) {
+		t.Fatalf("Status().Err = %v (%T), want a *SnapshotError", st.Err, st.Err)
+	}
+	if got, want := st.Err.Error(), "selfupdate: state snapshot failed: s3 down"; got != want {
+		t.Errorf("Status().Err = %q, want %q", got, want)
+	}
+	h.assertUntouched(t)
+	h.assertNoTimer(t)
+	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertMissing(t, h.dropIn())
+	assertMissing(t, filepath.Join(h.binDir, ".krill-"+testTag+".tmp"))
+}
+
+func TestInstallSnapshotBusyPassesThrough(t *testing.T) {
+	h := newHarness(t)
+	busy := &BusyError{Reason: "state_backup"}
+	h.u.SetSnapshot(func(context.Context, string, string) (bool, error) {
+		return false, busy
+	})
+
+	st := h.startAndWait(t)
+
+	if st.Phase != PhaseFailed {
+		t.Fatalf("Status() = %+v, want failed", st)
+	}
+	if be, ok := st.Err.(*BusyError); !ok || be != busy {
+		t.Fatalf("Status().Err = %v (%T), want the snapshot's own *BusyError", st.Err, st.Err)
+	}
+	h.assertUntouched(t)
+	h.assertNoTimer(t)
+	assertMissing(t, h.dropIn())
+}
+
+func TestInstallSnapshotSkipped(t *testing.T) {
+	h := newHarness(t)
+	calls := 0
+	h.u.SetSnapshot(func(context.Context, string, string) (bool, error) {
+		calls++
+		return false, nil
+	})
+
+	st := h.startAndWait(t)
+
+	if st.Phase != PhaseRestarting || st.Err != nil {
+		t.Fatalf("Status() = %+v, want restarting with no error", st)
+	}
+	if calls != 1 {
+		t.Errorf("snapshot called %d times, want 1", calls)
+	}
+	assertCmds(t, h.runner.cmds(), stopTimerCmd, daemonReloadCmd, h.systemdRunCmd(), restartCmd)
+	assertContent(t, h.bin, string(h.asset))
+}
+
+// A deploy that started while the dump ran must not be cut short: the job
+// asks again after the snapshot.
+func TestInstallBusyAfterSnapshot(t *testing.T) {
+	h := newHarness(t)
+	var snapshotted atomic.Bool
+	h.u.busy = func(context.Context) string {
+		if snapshotted.Load() {
+			return "deploy"
+		}
+		return ""
+	}
+	h.u.SetSnapshot(func(context.Context, string, string) (bool, error) {
+		snapshotted.Store(true)
+		return true, nil
+	})
+
+	st := h.startAndWait(t)
+
+	assertBusyFailure(t, st, "deploy")
+	h.assertUntouched(t)
+	h.assertNoTimer(t)
+	assertCmds(t, h.runner.cmds(), stopTimerCmd)
+	assertMissing(t, h.dropIn())
+}
+
+func TestInstallNoSnapshotFunc(t *testing.T) {
+	h := newHarness(t)
+	h.u.SetSnapshot(nil)
+	var log eventLog
+	h.recordSteps(&log, func() string { return "" })
+
+	st := h.startAndWait(t)
+
+	if st.Phase != PhaseRestarting || st.Err != nil {
+		t.Fatalf("Status() = %+v, want restarting with no error", st)
+	}
+	want := []string{"busy", "stop-timers", "smoke", "busy", "daemon-reload", "arm-timer", "restart"}
+	if got := log.get(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("job steps = %v, want %v", got, want)
+	}
+}
+
+func TestRollbackSkipsSnapshot(t *testing.T) {
+	h := newHarness(t)
+	writeFile(t, h.prev, prevContent)
+	h.set(func() { h.prevOut = "krill v0.0.9\n" })
+	var calls atomic.Int32
+	h.u.SetSnapshot(func(context.Context, string, string) (bool, error) {
+		calls.Add(1)
+		return true, nil
+	})
+
+	if err := h.u.Rollback(); err != nil {
+		t.Fatalf("Rollback() error = %v", err)
+	}
+	h.u.wg.Wait()
+
+	if st := h.u.Status(); st.Phase != PhaseRestarting || st.Err != nil {
+		t.Fatalf("Status() = %+v, want restarting", st)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("snapshot called %d times during a rollback, want 0", n)
+	}
+}
+
+func TestSnapshotTimeout(t *testing.T) {
+	h := newHarness(t)
+	h.u.snapshotTimeout = 50 * time.Millisecond
+	h.u.SetSnapshot(func(ctx context.Context, _, _ string) (bool, error) {
+		<-ctx.Done()
+		return false, ctx.Err()
+	})
+
+	st := h.startAndWait(t)
+
+	var se *SnapshotError
+	if st.Phase != PhaseFailed || !errors.As(st.Err, &se) {
+		t.Fatalf("Status() = %+v, want failed with a *SnapshotError", st)
+	}
+	if !errors.Is(st.Err, context.DeadlineExceeded) {
+		t.Errorf("Status().Err = %v, want it to wrap context.DeadlineExceeded", st.Err)
+	}
+	h.assertUntouched(t)
+	h.assertNoTimer(t)
+}
+
+func TestPhaseBackingUpActive(t *testing.T) {
+	if PhaseBackingUp != "backing_up" {
+		t.Errorf("PhaseBackingUp = %q, want backing_up", PhaseBackingUp)
+	}
+	if !PhaseBackingUp.Active() {
+		t.Errorf("PhaseBackingUp.Active() = false, want true")
+	}
+}
+
+func TestDefaultJobTimeout(t *testing.T) {
+	u := NewUpdater(&fakeRunner{}, nil, testRepo, false, nil)
+	if u.jobTimeout != 25*time.Minute {
+		t.Errorf("jobTimeout = %v, want 25m", u.jobTimeout)
+	}
+	if u.snapshotTimeout != 10*time.Minute {
+		t.Errorf("snapshotTimeout = %v, want 10m", u.snapshotTimeout)
+	}
+}

@@ -395,6 +395,37 @@ func TestUpdatesPage(t *testing.T) {
 		}
 	})
 
+	// A failed pre-update snapshot says the update did not start and how to
+	// update anyway, never the raw wrapper text.
+	t.Run("job given up for a failed state snapshot", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		i.status = selfupdate.Status{Phase: selfupdate.PhaseFailed, Tag: updLatest, Err: &selfupdate.SnapshotError{Err: errors.New("s3 down")}}
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		for _, want := range []string{"so the update did not start: s3 down.", "To update anyway, pause Krill backups first."} {
+			if !strings.Contains(body, want) {
+				t.Errorf("page does not contain %q", want)
+			}
+		}
+		for _, bad := range []string{"selfupdate: state snapshot failed", "The update failed: The backup"} {
+			if strings.Contains(body, bad) {
+				t.Errorf("page contains %q", bad)
+			}
+		}
+	})
+
+	// Until Task 9 wires the state backup, the line above Install says it is
+	// not set up and links to its page.
+	t.Run("state backup line", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if !strings.Contains(body, "is not backed up before updates") {
+			t.Errorf("page does not say the state is not backed up before updates")
+		}
+		if !strings.Contains(body, `href="`+base+`/krill-backups"`) {
+			t.Errorf("page does not link to the Krill backups page")
+		}
+	})
+
 	t.Run("development build", func(t *testing.T) {
 		// Available is forced on as well: the build kind alone must hide the
 		// install card, whatever the checker says.
