@@ -213,3 +213,91 @@ func TestConnFromDSNClientCertPassthroughAndDedupe(t *testing.T) {
 		t.Fatalf("missing key: %v", err)
 	}
 }
+
+func envOf(m map[string]string) func(string) string {
+	return func(k string) string { return m[k] }
+}
+
+func TestConnFromDSNInheritsTLSFromEnvironment(t *testing.T) {
+	ca, cert, key := tmpFile(t), tmpFile(t), tmpFile(t)
+	env := envOf(map[string]string{
+		"PGSSLMODE": "verify-full", "PGSSLROOTCERT": ca, "PGSSLCERT": cert, "PGSSLKEY": key,
+		"PGCONNECT_TIMEOUT": "7",
+	})
+	c, err := connFromDSN("postgres://u:p@h/d", nil, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PGSSLMODE=verify-full", "PGSSLROOTCERT=" + ca, "PGSSLCERT=" + cert, "PGSSLKEY=" + key, "PGCONNECT_TIMEOUT=7"} {
+		if !contains(c.Env, want) {
+			t.Fatalf("missing %q in %q", want, c.Env)
+		}
+	}
+	if len(c.Files) != 3 {
+		t.Fatalf("files %v", c.Files)
+	}
+
+	// The DSN's own value wins, as it does for the pool.
+	c, err = connFromDSN("postgres://u:p@h/d?sslmode=require", nil, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(c.Env, "PGSSLMODE=require") || contains(c.Env, "PGSSLMODE=verify-full") {
+		t.Fatalf("env %q", c.Env)
+	}
+
+	// verify-full from the environment without a root cert uses the CA bundle.
+	c, err = connFromDSN("host=h user=u password=p dbname=d", []string{ca}, envOf(map[string]string{"PGSSLMODE": "verify-full"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(c.Env, "PGSSLMODE=verify-full") || !contains(c.Env, "PGSSLROOTCERT="+ca) {
+		t.Fatalf("env %q", c.Env)
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d", nil, envOf(map[string]string{"PGSSLMODE": "verify-ca"})); !errors.Is(err, ErrNoCABundle) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestConnFromDSNEnvironmentSSLFilesChecked(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	for _, k := range []string{"PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"} {
+		for _, v := range []string{missing, "rel/file.pem", t.TempDir()} {
+			if _, err := connFromDSN("postgres://u:p@h/d", nil, envOf(map[string]string{k: v})); !errors.Is(err, ErrSSLFile) {
+				t.Fatalf("%s=%s: %v", k, v, err)
+			}
+		}
+	}
+}
+
+func TestConnFromDSNRefusesServiceFileAndEnvSSLPassword(t *testing.T) {
+	for _, dsn := range []string{"postgres://u:p@h/d?service=krill", "service=krill user=u password=pw"} {
+		_, err := connFromDSN(dsn, nil, envOf(nil))
+		if !errors.Is(err, ErrServiceFile) || strings.Contains(err.Error(), "pw") {
+			t.Fatalf("%q: %v", dsn, err)
+		}
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d", nil, envOf(map[string]string{"PGSERVICE": "krill"})); !errors.Is(err, ErrServiceFile) {
+		t.Fatalf("PGSERVICE: %v", err)
+	}
+	if _, err := connFromDSN("postgres://u:p@h/d", nil, envOf(map[string]string{"PGSSLPASSWORD": "x"})); !errors.Is(err, ErrSSLPassword) {
+		t.Fatalf("PGSSLPASSWORD: %v", err)
+	}
+}
+
+// pgconn reads Krill's PGSSL* environment while parsing; the parse must not
+// load a certificate file that only the dump container reads.
+func TestConnFromDSNParseIgnoresEnvironmentCertificates(t *testing.T) {
+	notPEM := tmpFile(t)
+	t.Setenv("PGSSLROOTCERT", notPEM)
+	t.Setenv("PGSSLMODE", "verify-ca")
+	for _, dsn := range []string{"postgres://u:p@h/d", "host=h user=u password=p dbname=d"} {
+		c, err := ConnFromDSN(dsn, nil)
+		if err != nil {
+			t.Fatalf("%q: %v", dsn, err)
+		}
+		if !contains(c.Env, "PGSSLROOTCERT="+notPEM) || !contains(c.Env, "PGSSLMODE=verify-ca") {
+			t.Fatalf("env %q", c.Env)
+		}
+	}
+}

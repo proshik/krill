@@ -30,7 +30,8 @@ var (
 	ErrUnixSocket  = errors.New("the database URL uses a unix socket, which the dump container cannot reach")
 	ErrSSLPassword = errors.New("the database URL uses sslpassword, which is not supported")
 	ErrNoCABundle  = errors.New("sslmode needs a CA bundle but none was found on this host and the URL has no sslrootcert")
-	ErrSSLFile     = errors.New("an SSL file named in the database URL is missing or not a regular file")
+	ErrSSLFile     = errors.New("an SSL file named in the database URL or a PGSSL* environment variable is missing or not a regular file")
+	ErrServiceFile = errors.New("the database connection relies on a PostgreSQL service file (service= or PGSERVICE), which the dump container cannot reproduce; put its settings in KRILL_DATABASE_URL")
 )
 
 // allowed maps the libpq parameters that are passed through to their
@@ -49,19 +50,40 @@ var fileParams = map[string]bool{"sslrootcert": true, "sslcert": true, "sslkey":
 
 // ConnFromDSN maps a Postgres DSN to libpq environment variables so the
 // password reaches pg_dump through the environment, never through argv.
+//
+// The control-plane pool (pgconn) takes a parameter missing from the DSN from
+// Krill's own PG* environment, and the dump container does not inherit that
+// environment, so the passed-through parameters fall back to it here too.
 func ConnFromDSN(dsn string, caBundles []string) (ConnEnv, error) {
+	return connFromDSN(dsn, caBundles, os.Getenv)
+}
+
+func connFromDSN(dsn string, caBundles []string, getenv func(string) string) (ConnEnv, error) {
 	raw, err := rawParams(dsn)
 	if err != nil {
 		return ConnEnv{}, err
 	}
-	if _, ok := raw["sslpassword"]; ok {
+	if _, ok := raw["sslpassword"]; ok || getenv("PGSSLPASSWORD") != "" {
 		return ConnEnv{}, ErrSSLPassword
+	}
+	if _, ok := raw["service"]; ok || getenv("PGSERVICE") != "" {
+		return ConnEnv{}, ErrServiceFile
+	}
+	// eff holds what the pool uses: the DSN's value (even an empty one),
+	// else the environment's.
+	eff := map[string]string{}
+	for _, a := range allowed {
+		if v, ok := raw[a.param]; ok {
+			eff[a.param] = v
+		} else {
+			eff[a.param] = getenv(a.env)
+		}
 	}
 	// Checked before pgconn, which would reject a missing file with an
 	// error that echoes the DSN.
 	var out ConnEnv
 	for _, a := range allowed {
-		v := raw[a.param]
+		v := eff[a.param]
 		if v == "" || !fileParams[a.param] || (a.param == "sslrootcert" && v == "system") {
 			continue
 		}
@@ -111,15 +133,13 @@ func ConnFromDSN(dsn string, caBundles []string) (ConnEnv, error) {
 	}
 
 	for _, a := range allowed {
-		v, ok := raw[a.param]
-		if !ok || v == "" {
-			continue
+		if v := eff[a.param]; v != "" {
+			out.Env = append(out.Env, a.env+"="+v)
 		}
-		out.Env = append(out.Env, a.env+"="+v)
 	}
 
-	mode := raw["sslmode"]
-	if (mode == "verify-ca" || mode == "verify-full") && raw["sslrootcert"] == "" {
+	mode := eff["sslmode"]
+	if (mode == "verify-ca" || mode == "verify-full") && eff["sslrootcert"] == "" {
 		found := ""
 		for _, p := range caBundles {
 			if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
@@ -136,10 +156,11 @@ func ConnFromDSN(dsn string, caBundles []string) (ConnEnv, error) {
 	return out, nil
 }
 
-// withoutTLS returns dsn with every TLS parameter replaced by sslmode=disable.
+// withoutTLS returns dsn with every TLS parameter replaced by sslmode=disable
+// and empty file parameters, which also override Krill's PGSSL* environment.
 // pgconn would otherwise load the certificate files while parsing and reject
 // content that only the dump container will read; TLS settings reach the
-// container from raw, not from the parsed config.
+// container from raw and the environment, not from the parsed config.
 func withoutTLS(dsn string, raw map[string]string) string {
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		u, err := url.Parse(dsn)
@@ -148,7 +169,7 @@ func withoutTLS(dsn string, raw map[string]string) string {
 		}
 		q := u.Query()
 		for _, k := range []string{"sslrootcert", "sslcert", "sslkey", "sslpassword"} {
-			q.Del(k)
+			q.Set(k, "")
 		}
 		q.Set("sslmode", "disable")
 		u.RawQuery = q.Encode()
@@ -163,7 +184,7 @@ func withoutTLS(dsn string, raw map[string]string) string {
 		r := strings.NewReplacer(`\`, `\\`, `'`, `\'`)
 		b.WriteString(k + "='" + r.Replace(v) + "' ")
 	}
-	b.WriteString("sslmode=disable")
+	b.WriteString("sslrootcert='' sslcert='' sslkey='' sslpassword='' sslmode=disable")
 	return b.String()
 }
 

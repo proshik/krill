@@ -81,7 +81,10 @@ For the bundled database the dump runs in a short-lived container on the host ne
 same `postgres:<major>-alpine` image major as the server. For an external database the same
 container connects with your `KRILL_DATABASE_URL`. A `verify-full` or `verify-ca` connection
 without `sslrootcert` uses the host's CA bundle; relative certificate paths and unix-socket
-connections are refused.
+connections are refused. TLS settings Krill itself takes from its environment (`PGSSLMODE`,
+`PGSSLROOTCERT`, `PGSSLCERT`, `PGSSLKEY`) when the URL leaves them out reach the dump the same
+way. A connection that relies on a PostgreSQL service file (`service=` or `PGSERVICE`) is
+refused, because the container cannot read its settings: put them in `KRILL_DATABASE_URL`.
 
 ## 6. Key rotation
 
