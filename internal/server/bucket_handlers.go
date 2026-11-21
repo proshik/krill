@@ -547,6 +547,10 @@ func (s *Server) addBucketLink(w http.ResponseWriter, r *http.Request) {
 // cannot be a new link, or "": it must not shadow env_text, the metrics token
 // variable or another link of either kind.
 func (s *Server) linkVarTaken(r *http.Request, app db.Application, varName string) string {
+	return s.linkVarTakenCtx(r.Context(), logFrom(r), app, varName)
+}
+
+func (s *Server) linkVarTakenCtx(ctx context.Context, log *slog.Logger, app db.Application, varName string) string {
 	existing, _ := parseEnv(app.EnvText)
 	if _, dup := existing[varName]; dup {
 		return "flash.err.var_in_env"
@@ -554,9 +558,9 @@ func (s *Server) linkVarTaken(r *http.Request, app db.Application, varName strin
 	if app.MetricsEnabled && varName == app.MetricsTokenEnv {
 		return "flash.err.metrics_env_taken"
 	}
-	dbLinks, err := s.q.ListDBLinksByApplication(r.Context(), app.ID)
+	dbLinks, err := s.q.ListDBLinksByApplication(ctx, app.ID)
 	if err != nil {
-		logFrom(r).Error("link var check: list db links", "err", err, "app_id", app.ID)
+		log.Error("link var check: list db links", "err", err, "app_id", app.ID)
 		return "flash.err.link_var_taken"
 	}
 	for _, l := range dbLinks {
@@ -564,9 +568,9 @@ func (s *Server) linkVarTaken(r *http.Request, app db.Application, varName strin
 			return "flash.err.link_var_taken"
 		}
 	}
-	bLinks, err := s.q.ListBucketLinksByApplication(r.Context(), app.ID)
+	bLinks, err := s.q.ListBucketLinksByApplication(ctx, app.ID)
 	if err != nil {
-		logFrom(r).Error("link var check: list bucket links", "err", err, "app_id", app.ID)
+		log.Error("link var check: list bucket links", "err", err, "app_id", app.ID)
 		return "flash.err.link_var_taken"
 	}
 	for _, l := range bLinks {

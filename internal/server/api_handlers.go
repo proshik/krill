@@ -57,6 +57,8 @@ var apiVerbs = map[string]bool{
 	"rebuild":     true,
 	"reload":      true,
 	"stop":        true,
+	"domains":     true,
+	"db-links":    true,
 }
 
 // SplitAppRef splits the wildcard remainder of an /api/v1/apps/* request into
@@ -176,6 +178,10 @@ func (s *Server) apiAppRouter(w http.ResponseWriter, r *http.Request) {
 		s.apiStop(w, r, ref)
 	case r.Method == http.MethodPost && verb == "env":
 		s.apiSetEnv(w, r, ref)
+	case r.Method == http.MethodPost && verb == "domains":
+		s.apiAddDomain(w, r, ref)
+	case r.Method == http.MethodPost && verb == "db-links":
+		s.apiLinkDatabase(w, r, ref)
 	default:
 		http.NotFound(w, r)
 	}
@@ -395,4 +401,94 @@ func (s *Server) apiSetEnv(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	logFrom(r).Info("api set env requested", "app_ref", ref, "key", req.Key, "remove", req.Remove, "token_id", ident.TokenID, "user_id", ident.UserID)
 	writeAPIJSON(w, map[string]string{"status": "ok"})
+}
+
+// envRefParam is the "project/environment" reference of the provisioning
+// routes, taken from their two path segments.
+func envRefParam(r *http.Request) string {
+	return chi.URLParam(r, "project") + "/" + chi.URLParam(r, "env")
+}
+
+// apiCreateDatabase creates a logical database in an environment.
+func (s *Server) apiCreateDatabase(w http.ResponseWriter, r *http.Request) {
+	ident, ok := api.IdentityFrom(r.Context())
+	if !ok {
+		writeAPIError(w, r, errAPIIdentityMissing)
+		return
+	}
+	var req api.CreateDatabaseInput
+	if err := decodeAPIBody(r, &req); err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	res, err := s.apiSvc.CreateDatabase(r.Context(), ident, envRefParam(r), req)
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	logFrom(r).Info("api create database", "env", envRefParam(r), "ldb_id", res.ID, "created", res.Created, "token_id", ident.TokenID, "user_id", ident.UserID)
+	writeAPIJSON(w, res)
+}
+
+// apiCreateApp creates an image app in an environment (not deployed).
+func (s *Server) apiCreateApp(w http.ResponseWriter, r *http.Request) {
+	ident, ok := api.IdentityFrom(r.Context())
+	if !ok {
+		writeAPIError(w, r, errAPIIdentityMissing)
+		return
+	}
+	var req api.CreateAppInput
+	if err := decodeAPIBody(r, &req); err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	res, err := s.apiSvc.CreateApp(r.Context(), ident, envRefParam(r), req)
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	logFrom(r).Info("api create app", "env", envRefParam(r), "app_id", res.ID, "created", res.Created, "token_id", ident.TokenID, "user_id", ident.UserID)
+	writeAPIJSON(w, res)
+}
+
+// apiAddDomain adds a domain to an app.
+func (s *Server) apiAddDomain(w http.ResponseWriter, r *http.Request, ref string) {
+	ident, ok := api.IdentityFrom(r.Context())
+	if !ok {
+		writeAPIError(w, r, errAPIIdentityMissing)
+		return
+	}
+	var req api.DomainInput
+	if err := decodeAPIBody(r, &req); err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	res, err := s.apiSvc.AddDomain(r.Context(), ident, ref, req)
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	logFrom(r).Info("api add domain", "app_ref", ref, "domain_id", res.ID, "host", res.Host, "created", res.Created, "token_id", ident.TokenID, "user_id", ident.UserID)
+	writeAPIJSON(w, res)
+}
+
+// apiLinkDatabase links a database to one of an app's variables.
+func (s *Server) apiLinkDatabase(w http.ResponseWriter, r *http.Request, ref string) {
+	ident, ok := api.IdentityFrom(r.Context())
+	if !ok {
+		writeAPIError(w, r, errAPIIdentityMissing)
+		return
+	}
+	var req api.LinkDatabaseInput
+	if err := decodeAPIBody(r, &req); err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	res, err := s.apiSvc.LinkDatabase(r.Context(), ident, ref, req)
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	logFrom(r).Info("api link database", "app_ref", ref, "link_id", res.ID, "var", res.Var, "created", res.Created, "token_id", ident.TokenID, "user_id", ident.UserID)
+	writeAPIJSON(w, res)
 }

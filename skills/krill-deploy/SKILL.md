@@ -5,7 +5,7 @@ description: Use when shipping an application to Krill or working out why one th
 
 # Deploying and diagnosing apps on Krill
 
-Krill exposes twelve tools. They **operate apps that already exist**: nothing here creates or deletes an organization, project, environment, app, database, domain or volume, and there is no shell into a container. Anything outside that list needs a human in the Krill web UI — say so rather than looking for a workaround.
+Krill exposes sixteen tools. Twelve **operate apps that already exist**; four more, for a token issued at **provision** level, **create** a logical database, an image app, a domain or a database link. Nothing deletes or changes an existing organization, project, environment, app, database, domain or volume, and there is no shell into a container. Anything outside that list needs a human in the Krill web UI — say so rather than looking for a workaround.
 
 | Tool | Level | What it does |
 |---|---|---|
@@ -21,6 +21,10 @@ Krill exposes twelve tools. They **operate apps that already exist**: nothing he
 | `krill_reload` | write | Restart the running tasks in place — same image, no build, no pull. A stopped app is deployed instead (`action: "deploy"` + a deployment id to poll) |
 | `krill_stop` | write | Scale to zero replicas; `krill_deploy` brings it back |
 | `krill_set_env` | write | Set, add or remove one variable, leaving the rest of the file untouched |
+| `krill_create_database` | provision | Create a logical Postgres database in `environment` (`project/env`) on an existing `server` |
+| `krill_create_app` | provision | Create an image app in `environment` — not deployed; primary `domain` optional (default internal, no HTTPS) |
+| `krill_add_domain` | provision | Add a domain to an app: `exposed`, `tls`, `paths` |
+| `krill_link_database` | provision | Inject a database's connection value into one variable (`database` in the app's environment, or a non-Postgres `server`) |
 
 An app is addressed as `project/environment/app` or by numeric id — `krill_list_apps` returns both. If more than one app plausibly matches what the user named, ask which; do not guess.
 
@@ -37,6 +41,10 @@ An app is addressed as `project/environment/app` or by numeric id — `krill_lis
 6. On `error`, read the `log_tail` the same call returned, name the cause, and stop (rule 2).
 
 `krill_set_env` writes the variable but does **not** restart anything: the app keeps running the old value until the next deploy. If the change is meant to take effect, deploy after it — and say that you are about to.
+
+## Set up a new app
+
+With a provision-level token: `krill_create_database` (if it needs one) → `krill_create_app` → `krill_link_database` for the connection variable → `krill_set_env` for each variable the user gave you a value for → `krill_add_domain` (or the app's own `domain`) → `krill_deploy`. Every create is idempotent: repeating one that already worked returns `created: false`, so a retry after a timeout is safe. A `conflict` means something with that name already exists **with other settings** — report it, do not pick another name on your own. Exposing a domain to the internet and turning on HTTPS are production changes: ask first (rule 4).
 
 ## When the image has to be built locally
 

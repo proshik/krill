@@ -19,6 +19,7 @@ type Service struct {
 	q      *db.Queries
 	engine docker.Engine
 	dep    *deploy.Deployer
+	prov   Provisioner // creating operations; nil answers unavailable
 }
 
 // NewService wires a Service on top of the generated queries, the Docker
