@@ -103,7 +103,7 @@ JOIN projects p ON e.project_id = p.id;
 -- Returns ALL database servers across ALL orgs; used only by the internal health
 -- watcher. Never expose these rows in a user/org-scoped handler without
 -- re-filtering (IDOR).
-SELECT id, organization_id, name, app_name, node_hostname, status
+SELECT id, organization_id, name, app_name, node_hostname, status, updated_at
 FROM db_instances;
 
 -- name: VolumeBackupNotifyTarget :one

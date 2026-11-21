@@ -143,9 +143,10 @@ type WatchedDB struct {
 	InstanceID int64
 	OrgID      int64
 	Name       string
-	Service    string // Swarm service name (db_instances.app_name)
-	Node       string // pinned node hostname, "" = any
-	Status     string // db_instances.status
+	Service    string    // Swarm service name (db_instances.app_name)
+	Node       string    // pinned node hostname, "" = any
+	Status     string    // db_instances.status
+	UpdatedAt  time.Time // db_instances.updated_at: when the status last changed
 }
 
 // Store is the read-only persistence the notify package needs.
@@ -404,7 +405,7 @@ func (s *DBStore) ListWatchedDBs(ctx context.Context) ([]WatchedDB, error) {
 	}
 	out := make([]WatchedDB, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WatchedDB{InstanceID: r.ID, OrgID: r.OrganizationID, Name: r.Name, Service: r.AppName, Node: r.NodeHostname, Status: r.Status})
+		out = append(out, WatchedDB{InstanceID: r.ID, OrgID: r.OrganizationID, Name: r.Name, Service: r.AppName, Node: r.NodeHostname, Status: r.Status, UpdatedAt: r.UpdatedAt})
 	}
 	return out, nil
 }

@@ -50,7 +50,14 @@ type Watcher struct {
 	// running are taken as healthy before it, so an outage already in
 	// progress when Krill (re)starts is still reported.
 	primed bool
+	now    func() time.Time
 }
+
+// dbRunningGrace is how long a database server must have been recorded as
+// running before it counts as having run even if no poll saw a running task:
+// a server that starts and fails between two polls is still reported, while
+// a first start (an image pull) gets this long before it is.
+const dbRunningGrace = 5 * time.Minute
 
 func NewWatcher(engine stateEngine, store Store, emit emitter, interval time.Duration) *Watcher {
 	if interval <= 0 {
@@ -59,7 +66,7 @@ func NewWatcher(engine stateEngine, store Store, emit emitter, interval time.Dur
 	return &Watcher{
 		engine: engine, store: store, emit: emit,
 		interval: interval, debounce: 2, log: slog.Default(),
-		state: map[watchKey]*appHealth{},
+		state: map[watchKey]*appHealth{}, now: time.Now,
 	}
 }
 
@@ -135,12 +142,21 @@ func (w *Watcher) tick(ctx context.Context) {
 		st := states[d.Service]
 		if d.Status == "migrating" || oplock.Held(oplock.DBInstance(d.Service)) {
 			// A node move, a deploy or another operation holding the server
-			// stops or restarts it on purpose; that is not an outage (a failed
-			// move or deploy alerts itself).
-			st = docker.ServiceState{}
+			// stops or restarts it on purpose: nothing it shows meanwhile is an
+			// outage or a recovery (a failed move or deploy alerts itself). An
+			// alert already sent stays outstanding.
+			if h := w.state[k]; h != nil {
+				h.downStreak = 0
+			}
+			continue
 		}
-		if _, seen := w.state[k]; !seen && !w.primed && d.Status == "running" {
-			w.state[k] = &appHealth{everHealthy: true}
+		h := w.state[k]
+		if h == nil {
+			h = &appHealth{}
+			w.state[k] = h
+		}
+		if !h.everHealthy && d.Status == "running" && (!w.primed || w.now().Sub(d.UpdatedAt) >= dbRunningGrace) {
+			h.everHealthy = true
 		}
 		switch w.evaluate(k, st) {
 		case transitionDown:

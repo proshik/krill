@@ -418,7 +418,7 @@ func TestListWatchedDBsCoversEveryOrganization(t *testing.T) {
 		byService[w.Service] = w
 	}
 	pg := byService["krill-postgres-pg-w1"]
-	if pg.OrgID != orgs[0] || pg.Name != "pg" || pg.Node != "node-1" || pg.Status != "idle" || pg.InstanceID == 0 {
+	if pg.OrgID != orgs[0] || pg.Name != "pg" || pg.Node != "node-1" || pg.Status != "idle" || pg.InstanceID == 0 || pg.UpdatedAt.IsZero() {
 		t.Fatalf("postgres row = %+v", pg)
 	}
 	if byService["krill-redis-cache-w2"].OrgID != orgs[1] {

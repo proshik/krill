@@ -591,17 +591,18 @@ func (q *Queries) ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, er
 }
 
 const listWatchedDBInstances = `-- name: ListWatchedDBInstances :many
-SELECT id, organization_id, name, app_name, node_hostname, status
+SELECT id, organization_id, name, app_name, node_hostname, status, updated_at
 FROM db_instances
 `
 
 type ListWatchedDBInstancesRow struct {
-	ID             int64  `json:"id"`
-	OrganizationID int64  `json:"organization_id"`
-	Name           string `json:"name"`
-	AppName        string `json:"app_name"`
-	NodeHostname   string `json:"node_hostname"`
-	Status         string `json:"status"`
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	AppName        string    `json:"app_name"`
+	NodeHostname   string    `json:"node_hostname"`
+	Status         string    `json:"status"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Returns ALL database servers across ALL orgs; used only by the internal health
@@ -623,6 +624,7 @@ func (q *Queries) ListWatchedDBInstances(ctx context.Context) ([]ListWatchedDBIn
 			&i.AppName,
 			&i.NodeHostname,
 			&i.Status,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
