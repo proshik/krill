@@ -390,7 +390,12 @@ key off the host, decrypt on your workstation and pipe the result over `ssh`.
      Krill again, and on the Nodes page add each worker again by SSH (a worker still in another
      swarm must leave it first: `docker swarm leave --force`). Every worker comes back with a
      **new** Swarm node ID. A worker whose firewall Krill had locked down keeps its persisted
-     ruleset: after re-adding it, check the Firewall page.
+     ruleset, which allows only the OLD cluster's addresses and can block the new swarm.
+     Before re-adding such a worker, run on it, as root, what Krill's own node removal does:
+     ```sh
+     systemctl stop krill-fw-revert.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; rm -f /etc/krill/firewall.nft; systemctl disable krill-firewall.service
+     ```
+     Re-apply a lockdown afterwards from the Firewall page if you want one.
    - Apps pinned to nodes (placement `pin` or `global`) store the old node IDs, and a deploy
      rejects an ID that no longer exists. Open each such app's Advanced tab, choose its nodes
      again from the list and save (or switch it to "Any node").
