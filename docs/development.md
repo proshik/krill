@@ -138,7 +138,8 @@ it builds five throwaway releases of the current `HEAD` (`v0.90.0`–`v0.90.4`, 
 migrations, a crash right after migrating, a 45-second migration and a failing one), installs
 `v0.90.0` with `install.sh` into a disposable [Lima](https://lima-vm.io) VM (Ubuntu 24.04,
 4 CPUs, 6 GiB), and drives the Updates page over a port forward to `127.0.0.1:28080`. The
-tests carry the `acceptance` build tag and do nothing unless `KRILL_ACCEPT=1`, so `make test`
+variants' migrations are numbered after the last migration in `HEAD`, so they never collide
+with ones the branch gains. The tests carry the `acceptance` build tag and do nothing unless `KRILL_ACCEPT=1`, so `make test`
 never runs them.
 
 Prerequisites: `limactl` 2.x, Go, and for the full run the `gh` CLI signed in with write access

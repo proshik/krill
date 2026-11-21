@@ -15,12 +15,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/proshik/krill/test/acceptance/accept"
 )
 
 // Migration is one extra migration a release variant adds on top of the
-// branch's own (the branch ends at 000046).
+// branch's own. It carries no number: BuildRelease numbers a variant's
+// migrations after the highest one in the exported tree (Release.Base), so the
+// variants never collide with migrations the branch gains.
 type Migration struct {
-	Name string // file name stem, e.g. "000047_acceptance_a"
+	Stem string // file name stem without the number, e.g. "acceptance_a"
 	Up   string
 	Down string
 }
@@ -36,22 +40,22 @@ type Variant struct {
 
 var (
 	migA = Migration{
-		Name: "000047_acceptance_a",
+		Stem: "acceptance_a",
 		Up:   "CREATE TABLE acceptance_a (id BIGSERIAL PRIMARY KEY, note TEXT);\n",
 		Down: "DROP TABLE IF EXISTS acceptance_a;\n",
 	}
 	migB = Migration{
-		Name: "000048_acceptance_b",
+		Stem: "acceptance_b",
 		Up:   "ALTER TABLE acceptance_a ADD COLUMN extra TEXT;\n",
 		Down: "ALTER TABLE acceptance_a DROP COLUMN IF EXISTS extra;\n",
 	}
 	migSlow = Migration{
-		Name: "000049_acceptance_slow",
+		Stem: "acceptance_slow",
 		Up:   "SELECT pg_sleep(45); CREATE TABLE acceptance_c (id BIGSERIAL PRIMARY KEY);\n",
 		Down: "DROP TABLE IF EXISTS acceptance_c;\n",
 	}
 	migFail = Migration{
-		Name: "000050_acceptance_fail",
+		Stem: "acceptance_fail",
 		Up:   "ALTER TABLE acceptance_does_not_exist ADD COLUMN x TEXT;\n",
 		Down: "ALTER TABLE IF EXISTS acceptance_does_not_exist DROP COLUMN IF EXISTS x;\n",
 	}
@@ -84,6 +88,10 @@ type Release struct {
 	Binary    string // <Dir>/krill-linux-<arch>
 	Checksums string // <Dir>/checksums.txt
 	Source    string // <workdir>/src-<tag>, the exported and patched tree
+	// Base is the highest migration of the exported tree before the
+	// variant's own were added; Schema is the version the release migrates
+	// to (Base plus the variant's migrations).
+	Base, Schema int
 }
 
 // crashAnchor is the code right after the migrations call in cmd/krill/main.go:
@@ -121,17 +129,27 @@ func BuildRelease(ctx context.Context, t testing.TB, cfg Config, v Variant) (Rel
 	}
 
 	migDir := filepath.Join(rel.Source, "internal", "database", "migrations")
-	for _, m := range v.Migrations {
+	base, err := accept.HighestMigration(migDir)
+	if err != nil {
+		return rel, fmt.Errorf("reading the exported migrations: %w", err)
+	}
+	rel.Base, rel.Schema = base, base+len(v.Migrations)
+	for i, m := range v.Migrations {
+		n := base + i + 1
+		taken, err := filepath.Glob(filepath.Join(migDir, fmt.Sprintf("%06d_*", n)))
+		if err != nil {
+			return rel, err
+		}
+		if len(taken) > 0 {
+			return rel, fmt.Errorf("migration %d already exists in the exported tree: %v", n, taken)
+		}
 		for suffix, body := range map[string]string{".up.sql": m.Up, ".down.sql": m.Down} {
-			path := filepath.Join(migDir, m.Name+suffix)
-			if _, err := os.Stat(path); err == nil {
-				return rel, fmt.Errorf("%s already exists in the exported tree: the branch gained migrations, renumber the variants", path)
-			}
+			path := filepath.Join(migDir, accept.MigrationFile(n, m.Stem, suffix))
 			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 				return rel, err
 			}
 		}
-		t.Logf("%s: added migration %s", v.Tag, m.Name)
+		t.Logf("%s: added migration %s", v.Tag, accept.MigrationFile(n, m.Stem, ""))
 	}
 	if v.CrashAfterMigrations {
 		if err := patchCrash(filepath.Join(rel.Source, "cmd", "krill", "main.go")); err != nil {

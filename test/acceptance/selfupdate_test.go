@@ -37,6 +37,9 @@ type suite struct {
 	orgID  int64
 	rels   map[string]Release
 	app    appRef
+	// base is the highest migration of HEAD: the schema the base release
+	// runs; the variants' migrations are base+1, base+2, ...
+	base int
 }
 
 // appRef locates the image app the busy scenarios deploy.
@@ -105,7 +108,13 @@ func (s *suite) buildReleases(t *testing.T, ev *Evidence) {
 		ev.Note("built %s in %s: %s", v.Tag, time.Since(start).Round(time.Second), rel.Binary)
 		ev.Output("cat "+rel.Checksums, string(sums))
 		s.rels[v.Tag] = rel
+		if s.base == 0 {
+			s.base = rel.Base
+		} else if rel.Base != s.base {
+			t.Fatalf("%s was built on migration %d, the others on %d", v.Tag, rel.Base, s.base)
+		}
 	}
+	ev.Note("HEAD's highest migration (base): %d", s.base)
 	main := filepath.Join(s.rels["v0.90.2"].Source, "cmd", "krill", "main.go")
 	out, err := runHost(s.ctx, t, "", nil, "grep", "-n", "-B4", "-A1", "-F", "simulated crash after migrations", main)
 	must(t, err, "grepping the v0.90.2 patch")
@@ -145,7 +154,7 @@ func (s *suite) runInstaller(t *testing.T, ev *Evidence, rel Release) {
 
 // resetInstall removes a previous Krill install from the VM, following the
 // Uninstall section of docs/install.md, plus the Swarm services an earlier
-// run created, so every run starts from a fresh install on schema 46.
+// run created, so every run starts from a fresh install on schema base.
 func (s *suite) resetInstall(t *testing.T, ev *Evidence) {
 	t.Helper()
 	script := strings.Join([]string{
@@ -627,7 +636,7 @@ func TestVMSmoke(t *testing.T) {
 	s.run(t, "install_v0.90.0", func(t *testing.T, ev *Evidence) {
 		s.installFresh(t, ev, s.rels["v0.90.0"])
 		s.expectVersion(t, ev, "v0.90.0")
-		s.expectSchema(t, ev, 46)
+		s.expectSchema(t, ev, s.base)
 		s.expectUnitActive(t, ev)
 		s.sudo(t, ev, "cat /etc/systemd/system/krill.service; grep -v -e PASSWORD -e SECRET -e DATABASE_URL "+envFile)
 	})
@@ -724,7 +733,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 	s.run(t, "install_v0.90.0", func(t *testing.T, ev *Evidence) {
 		s.installFresh(t, ev, s.rels["v0.90.0"])
 		s.expectVersion(t, ev, "v0.90.0")
-		s.expectSchema(t, ev, 46)
+		s.expectSchema(t, ev, s.base)
 		s.expectUnitActive(t, ev)
 	})
 
@@ -779,7 +788,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		// Quiet the always-unhealthy app; a stopped app is not busy work.
 		s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
 		s.waitAvailable(t, ev, "v0.90.1")
-		s.updateTo(t, ev, "v0.90.0", "v0.90.1", 47)
+		s.updateTo(t, ev, "v0.90.0", "v0.90.1", s.base+1)
 	})
 
 	// 5.
@@ -796,7 +805,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 			t.Fatalf("page offers a rollback to the newer v0.90.1")
 		}
 		s.expectVersion(t, ev, "v0.90.0")
-		s.expectSchema(t, ev, 47)
+		s.expectSchema(t, ev, s.base+1)
 		prev, ok, err := s.host.PrevVersion(s.ctx)
 		must(t, err, "krill.prev")
 		ev.Note("krill.prev after the rollback: present=%v version=%s", ok, prev)
@@ -810,7 +819,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 	// 6.
 	s.run(t, "update_again_to_v0.90.1", func(t *testing.T, ev *Evidence) {
 		s.waitAvailable(t, ev, "v0.90.1")
-		s.updateTo(t, ev, "v0.90.0", "v0.90.1", 47)
+		s.updateTo(t, ev, "v0.90.0", "v0.90.1", s.base+1)
 	})
 
 	// 7.
@@ -865,7 +874,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		s.login(t, ev)
 		s.waitPage(t, ev, 2*time.Minute, "The update to v0.90.2 did not start and was rolled back")
 		s.expectVersion(t, ev, "v0.90.1")
-		s.expectSchema(t, ev, 48)
+		s.expectSchema(t, ev, s.base+2)
 		j := s.journal(t, ev, cursor)
 		for _, want := range []string{"acceptance: simulated crash after migrations", "database schema is newer than this binary"} {
 			if !strings.Contains(j, want) {
@@ -895,7 +904,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 				break
 			}
 			if time.Since(start) > 2*time.Minute {
-				t.Fatalf("migration 49's pg_sleep never showed up in pg_stat_activity (last %q, err %v)", out, err)
+				t.Fatalf("migration base+3's pg_sleep never showed up in pg_stat_activity (last %q, err %v)", out, err)
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
@@ -905,8 +914,8 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		v, dirty, err := s.host.SchemaVersion(s.ctx)
 		must(t, err, "schema")
 		ev.Note("schema after the stop: version=%d dirty=%v", v, dirty)
-		if dirty || (v != 48 && v != 49) {
-			t.Fatalf("schema after SIGTERM mid-migration is %d dirty=%v, want 48 or 49 clean", v, dirty)
+		if dirty || (v != s.base+2 && v != s.base+3) {
+			t.Fatalf("schema after SIGTERM mid-migration is %d dirty=%v, want %d or %d clean", v, dirty, s.base+2, s.base+3)
 		}
 		j := s.journal(t, ev, cursor)
 		ev.Note("journal mentions 'migrations stopped by shutdown': %v", strings.Contains(j, "migrations stopped by shutdown"))
@@ -915,7 +924,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		s.waitServing(t, ev, 5*time.Minute)
 		s.login(t, ev)
 		s.expectVersion(t, ev, "v0.90.3")
-		s.expectSchema(t, ev, 49)
+		s.expectSchema(t, ev, s.base+3)
 		s.expectPrev(t, ev, "")
 		drop, err := s.host.DropInPresent(s.ctx)
 		must(t, err, "drop-in")
@@ -963,7 +972,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 				j, err := s.host.JournalSince(s.ctx, cursor)
 				must(t, err, "journal")
 				i := strings.LastIndex(j, "version=v0.90.3")
-				if i >= 0 && strings.Contains(j[i:], "database schema is dirty at version 50") {
+				if i >= 0 && strings.Contains(j[i:], fmt.Sprintf("database schema is dirty at version %d", s.base+4)) {
 					ev.Note("v0.90.3 back and refusing the dirty schema %s after the click", time.Since(clicked).Round(time.Second))
 					break
 				}
@@ -977,8 +986,8 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		v, dirty, err := s.host.SchemaVersion(s.ctx)
 		must(t, err, "schema")
 		ev.Note("schema: version=%d dirty=%v", v, dirty)
-		if v != 50 || !dirty {
-			t.Fatalf("schema is %d dirty=%v, want 50 dirty", v, dirty)
+		if v != s.base+4 || !dirty {
+			t.Fatalf("schema is %d dirty=%v, want %d dirty", v, dirty, s.base+4)
 		}
 		st, err := s.host.UnitState(s.ctx)
 		must(t, err, "unit state")
@@ -994,19 +1003,19 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 				break
 			}
 		}
-		// 3. Migration 50 ran in a transaction, so nothing of it is applied:
-		// the schema matches version 49 as it is.
+		// 3. Migration base+4 ran in a transaction, so nothing of it is
+		// applied: the schema matches version base+3 as it is.
 		out, err := s.host.Psql(s.ctx, "select to_regclass('acceptance_c') is not null, to_regclass('acceptance_does_not_exist') is null")
-		must(t, err, "verifying the schema matches 49")
-		ev.Output("schema matches 49 (acceptance_c exists, migration 50 left nothing)", out)
+		must(t, err, "verifying the schema matches base+3")
+		ev.Output("schema matches base+3 (acceptance_c exists, migration base+4 left nothing)", out)
 		if out != "t|t" {
-			t.Fatalf("schema does not match version 49: %q", out)
+			t.Fatalf("schema does not match version %d: %q", s.base+3, out)
 		}
-		// 4. Mark the version clean so the binary without migration 50
+		// 4. Mark the version clean so the binary without migration base+4
 		// starts. The doc's `docker exec -it` needs a terminal; the
 		// harness has none, so the same psql session gets its SQL on stdin
 		// (-i, without -t).
-		s.sudo(t, ev, `echo 'UPDATE schema_migrations SET version = 49, dirty = false;' | docker exec -i krill-postgres psql -U krill krill`)
+		s.sudo(t, ev, fmt.Sprintf(`echo 'UPDATE schema_migrations SET version = %d, dirty = false;' | docker exec -i krill-postgres psql -U krill krill`, s.base+3))
 		// 5. Restart (after clearing a failed state, as the manual rollback
 		// command in the same section does).
 		s.sudo(t, ev, "systemctl reset-failed krill && systemctl restart krill")
@@ -1014,7 +1023,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		s.waitServing(t, ev, 5*time.Minute)
 		s.login(t, ev)
 		s.expectVersion(t, ev, "v0.90.3")
-		s.expectSchema(t, ev, 49)
+		s.expectSchema(t, ev, s.base+3)
 		s.expectUnitActive(t, ev)
 		text := s.page(t, ev)
 		ev.Note("page reports the revert: %v", strings.Contains(text, "The update to v0.90.4 did not start and was rolled back"))
