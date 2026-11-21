@@ -161,17 +161,19 @@ func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
 
 	token := r.FormValue("bot_token")
 	chatID := r.FormValue("chat_id")
-	encToken := existing.BotToken
-	if token != "" {
-		encToken = secret.Enc(token)
-	}
+	enabled := r.FormValue("enabled") == "on"
+	notifyDeploy := r.FormValue("notify_deploy") == "on"
+	notifyBackup := r.FormValue("notify_backup") == "on"
+	notifyHealth := r.FormValue("notify_health") == "on"
+	notifyDeploySuccess := r.FormValue("notify_deploy_success") == "on"
+	digestEnabled := r.FormValue("digest_enabled") == "on"
 
-	infra, disk, mem := false, defaultDiskThreshold, defaultMemThreshold
-	if found {
-		infra, disk, mem = existing.NotifyInfra, int(existing.DiskThresholdPct), int(existing.MemThresholdPct)
-	}
-	infraReset := false
+	var infra, infraReset bool
 	if auth.IsInstanceAdmin(r.Context()) {
+		disk, mem := defaultDiskThreshold, defaultMemThreshold
+		if found {
+			disk, mem = int(existing.DiskThresholdPct), int(existing.MemThresholdPct)
+		}
 		if v, sent := formValue(r, "disk_threshold"); sent {
 			if disk, ok = parseThreshold(v, 50, 99); !ok {
 				s.flashErrT(w, r, "flash.err.notif_disk_threshold")
@@ -185,31 +187,61 @@ func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		infra = r.FormValue("notify_infra") == "on"
-	} else if infra && (token != "" || chatID != existing.ChatID) {
-		infra, infraReset = false, true
-	}
-
-	if _, err := s.q.UpsertNotificationChannel(r.Context(), db.UpsertNotificationChannelParams{
-		OrgID:               o.ID,
-		Type:                telegramType,
-		Enabled:             r.FormValue("enabled") == "on",
-		BotToken:            encToken,
-		ChatID:              chatID,
-		NotifyDeploy:        r.FormValue("notify_deploy") == "on",
-		NotifyBackup:        r.FormValue("notify_backup") == "on",
-		NotifyHealth:        r.FormValue("notify_health") == "on",
-		NotifyDeploySuccess: r.FormValue("notify_deploy_success") == "on",
-		NotifyInfra:         infra,
-		DiskThresholdPct:    int16(disk),
-		MemThresholdPct:     int16(mem),
-		DigestEnabled:       r.FormValue("digest_enabled") == "on",
-		DigestMinute:        int16(minute),
-		DigestTz:            tz,
-		Lang:                lang,
-	}); err != nil {
-		logFrom(r).Error("saveNotifications: upsert failed", "err", err, "org_id", o.ID)
-		s.flashErr(w, r, err.Error())
-		return
+		encToken := existing.BotToken
+		if token != "" {
+			encToken = secret.Enc(token)
+		}
+		if _, err := s.q.UpsertNotificationChannel(r.Context(), db.UpsertNotificationChannelParams{
+			OrgID:               o.ID,
+			Type:                telegramType,
+			Enabled:             enabled,
+			BotToken:            encToken,
+			ChatID:              chatID,
+			NotifyDeploy:        notifyDeploy,
+			NotifyBackup:        notifyBackup,
+			NotifyHealth:        notifyHealth,
+			NotifyDeploySuccess: notifyDeploySuccess,
+			NotifyInfra:         infra,
+			DiskThresholdPct:    int16(disk),
+			MemThresholdPct:     int16(mem),
+			DigestEnabled:       digestEnabled,
+			DigestMinute:        int16(minute),
+			DigestTz:            tz,
+			Lang:                lang,
+		}); err != nil {
+			logFrom(r).Error("saveNotifications: upsert failed", "err", err, "org_id", o.ID)
+			s.flashErr(w, r, err.Error())
+			return
+		}
+	} else {
+		// The node-alert settings are decided by the statement against the
+		// row as it is now: an operator's change made after the read above
+		// must not be written back. A blank token keeps the stored bot.
+		encToken := ""
+		if token != "" {
+			encToken = secret.Enc(token)
+		}
+		saved, err := s.q.UpsertNotificationChannelKeepInfra(r.Context(), db.UpsertNotificationChannelKeepInfraParams{
+			OrgID:               o.ID,
+			Type:                telegramType,
+			Enabled:             enabled,
+			BotToken:            encToken,
+			ChatID:              chatID,
+			NotifyDeploy:        notifyDeploy,
+			NotifyBackup:        notifyBackup,
+			NotifyHealth:        notifyHealth,
+			NotifyDeploySuccess: notifyDeploySuccess,
+			DigestEnabled:       digestEnabled,
+			DigestMinute:        int16(minute),
+			DigestTz:            tz,
+			Lang:                lang,
+		})
+		if err != nil {
+			logFrom(r).Error("saveNotifications: upsert failed", "err", err, "org_id", o.ID)
+			s.flashErr(w, r, err.Error())
+			return
+		}
+		infra, infraReset = saved.NotifyInfra, saved.WasInfra && !saved.NotifyInfra
 	}
 	logFrom(r).Info("notifications saved", "org_id", o.ID, "infra", infra, "infra_reset", infraReset)
 	msg := i18n.T(r.Context(), "notif.saved")

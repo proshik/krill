@@ -25,6 +25,50 @@ ON CONFLICT (org_id, type) DO UPDATE SET
     updated_at = now()
 RETURNING *;
 
+-- name: UpsertNotificationChannelKeepInfra :one
+-- The save of a user who is not the instance operator. The node-alert switch
+-- and its thresholds are never taken from the caller: a new channel starts
+-- with the column defaults, an existing one keeps the values its row holds
+-- now, not ones the caller read earlier. A blank bot_token keeps the stored
+-- bot, and a new bot or another chat turns node alerts off, judged against
+-- the current row. `old` locks that row first (it is read by `saved`'s
+-- source, so it runs before the insert) and reports whether node alerts were
+-- on, so the caller can tell the user this save turned them off.
+WITH old AS MATERIALIZED (
+    SELECT notify_infra FROM notification_channels
+    WHERE org_id = @org_id::bigint AND type = @type::text
+    FOR UPDATE
+), saved AS (
+    INSERT INTO notification_channels (
+        org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health,
+        notify_deploy_success, digest_enabled, digest_minute, digest_tz, lang)
+    SELECT @org_id::bigint, @type::text, @enabled::boolean, @bot_token::text, @chat_id::text,
+        @notify_deploy::boolean, @notify_backup::boolean, @notify_health::boolean,
+        @notify_deploy_success::boolean, @digest_enabled::boolean, @digest_minute::smallint,
+        @digest_tz::text, @lang::text
+    FROM (SELECT count(*) FROM old) AS locked
+    ON CONFLICT (org_id, type) DO UPDATE SET
+        enabled = excluded.enabled,
+        bot_token = CASE WHEN excluded.bot_token = '' THEN notification_channels.bot_token
+                         ELSE excluded.bot_token END,
+        chat_id = excluded.chat_id,
+        notify_deploy = excluded.notify_deploy,
+        notify_backup = excluded.notify_backup,
+        notify_health = excluded.notify_health,
+        notify_deploy_success = excluded.notify_deploy_success,
+        notify_infra = notification_channels.notify_infra
+            AND excluded.bot_token = ''
+            AND excluded.chat_id = notification_channels.chat_id,
+        digest_enabled = excluded.digest_enabled,
+        digest_minute = excluded.digest_minute,
+        digest_tz = excluded.digest_tz,
+        lang = excluded.lang,
+        updated_at = now()
+    RETURNING notify_infra
+)
+SELECT saved.notify_infra, COALESCE(old.notify_infra, false)::boolean AS was_infra
+FROM saved LEFT JOIN old ON true;
+
 -- name: ChannelsForOrg :many
 SELECT * FROM notification_channels WHERE org_id = $1 AND enabled;
 

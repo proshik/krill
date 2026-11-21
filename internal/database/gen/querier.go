@@ -395,6 +395,15 @@ type Querier interface {
 	UpsertNodeDisk(ctx context.Context, arg UpsertNodeDiskParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
+	// The save of a user who is not the instance operator. The node-alert switch
+	// and its thresholds are never taken from the caller: a new channel starts
+	// with the column defaults, an existing one keeps the values its row holds
+	// now, not ones the caller read earlier. A blank bot_token keeps the stored
+	// bot, and a new bot or another chat turns node alerts off, judged against
+	// the current row. `old` locks that row first (it is read by `saved`'s
+	// source, so it runs before the insert) and reports whether node alerts were
+	// on, so the caller can tell the user this save turned them off.
+	UpsertNotificationChannelKeepInfra(ctx context.Context, arg UpsertNotificationChannelKeepInfraParams) (UpsertNotificationChannelKeepInfraRow, error)
 	// enabled is left out on purpose: a new row starts paused (the column's
 	// default) and only SetStateBackupEnabled changes it, so a save that read
 	// the flag before a concurrent pause or resume cannot undo it.

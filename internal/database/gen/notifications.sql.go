@@ -730,6 +730,93 @@ func (q *Queries) UpsertNotificationChannel(ctx context.Context, arg UpsertNotif
 	return i, err
 }
 
+const upsertNotificationChannelKeepInfra = `-- name: UpsertNotificationChannelKeepInfra :one
+WITH old AS MATERIALIZED (
+    SELECT notify_infra FROM notification_channels
+    WHERE org_id = $1::bigint AND type = $2::text
+    FOR UPDATE
+), saved AS (
+    INSERT INTO notification_channels (
+        org_id, type, enabled, bot_token, chat_id, notify_deploy, notify_backup, notify_health,
+        notify_deploy_success, digest_enabled, digest_minute, digest_tz, lang)
+    SELECT $1::bigint, $2::text, $3::boolean, $4::text, $5::text,
+        $6::boolean, $7::boolean, $8::boolean,
+        $9::boolean, $10::boolean, $11::smallint,
+        $12::text, $13::text
+    FROM (SELECT count(*) FROM old) AS locked
+    ON CONFLICT (org_id, type) DO UPDATE SET
+        enabled = excluded.enabled,
+        bot_token = CASE WHEN excluded.bot_token = '' THEN notification_channels.bot_token
+                         ELSE excluded.bot_token END,
+        chat_id = excluded.chat_id,
+        notify_deploy = excluded.notify_deploy,
+        notify_backup = excluded.notify_backup,
+        notify_health = excluded.notify_health,
+        notify_deploy_success = excluded.notify_deploy_success,
+        notify_infra = notification_channels.notify_infra
+            AND excluded.bot_token = ''
+            AND excluded.chat_id = notification_channels.chat_id,
+        digest_enabled = excluded.digest_enabled,
+        digest_minute = excluded.digest_minute,
+        digest_tz = excluded.digest_tz,
+        lang = excluded.lang,
+        updated_at = now()
+    RETURNING notify_infra
+)
+SELECT saved.notify_infra, COALESCE(old.notify_infra, false)::boolean AS was_infra
+FROM saved LEFT JOIN old ON true
+`
+
+type UpsertNotificationChannelKeepInfraParams struct {
+	OrgID               int64  `json:"org_id"`
+	Type                string `json:"type"`
+	Enabled             bool   `json:"enabled"`
+	BotToken            string `json:"bot_token"`
+	ChatID              string `json:"chat_id"`
+	NotifyDeploy        bool   `json:"notify_deploy"`
+	NotifyBackup        bool   `json:"notify_backup"`
+	NotifyHealth        bool   `json:"notify_health"`
+	NotifyDeploySuccess bool   `json:"notify_deploy_success"`
+	DigestEnabled       bool   `json:"digest_enabled"`
+	DigestMinute        int16  `json:"digest_minute"`
+	DigestTz            string `json:"digest_tz"`
+	Lang                string `json:"lang"`
+}
+
+type UpsertNotificationChannelKeepInfraRow struct {
+	NotifyInfra bool `json:"notify_infra"`
+	WasInfra    bool `json:"was_infra"`
+}
+
+// The save of a user who is not the instance operator. The node-alert switch
+// and its thresholds are never taken from the caller: a new channel starts
+// with the column defaults, an existing one keeps the values its row holds
+// now, not ones the caller read earlier. A blank bot_token keeps the stored
+// bot, and a new bot or another chat turns node alerts off, judged against
+// the current row. `old` locks that row first (it is read by `saved`'s
+// source, so it runs before the insert) and reports whether node alerts were
+// on, so the caller can tell the user this save turned them off.
+func (q *Queries) UpsertNotificationChannelKeepInfra(ctx context.Context, arg UpsertNotificationChannelKeepInfraParams) (UpsertNotificationChannelKeepInfraRow, error) {
+	row := q.db.QueryRow(ctx, upsertNotificationChannelKeepInfra,
+		arg.OrgID,
+		arg.Type,
+		arg.Enabled,
+		arg.BotToken,
+		arg.ChatID,
+		arg.NotifyDeploy,
+		arg.NotifyBackup,
+		arg.NotifyHealth,
+		arg.NotifyDeploySuccess,
+		arg.DigestEnabled,
+		arg.DigestMinute,
+		arg.DigestTz,
+		arg.Lang,
+	)
+	var i UpsertNotificationChannelKeepInfraRow
+	err := row.Scan(&i.NotifyInfra, &i.WasInfra)
+	return i, err
+}
+
 const volumeBackupNotifyTarget = `-- name: VolumeBackupNotifyTarget :one
 SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, (a.name || ' / ' || av.name)::text AS target_name
 FROM volume_backups vb
