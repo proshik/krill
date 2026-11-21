@@ -87,8 +87,13 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `POST /api/v1/apps/{app}/env` | write | `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, the rest untouched. The value must be a single line (base64-encode a PEM key or JSON). |
 | `POST /api/v1/environments/{project}/{env}/databases` | provision | `{"name":"app","server":"main"}` (+ optional `db_name`, `username`) — a logical database and its owner user inside an existing Postgres server, which must be running. The password is never returned. |
 | `POST /api/v1/environments/{project}/{env}/apps` | provision | `{"name":"bot","image":"ghcr.io/acme/bot","tag":"v1","port":8080}` (+ optional `registry`, `domain`) — an image app, **not deployed**. `domain` is `{"host","tls","exposed","paths"}`; without it the app gets `<name>.<base domain>`, internal and without HTTPS. |
-| `POST /api/v1/apps/{app}/domains` | provision | `{"host":"bot.example.com","tls":true,"exposed":true,"paths":["/webhook"]}` — another domain of the app; routing applies at once to a deployed app. |
-| `POST /api/v1/apps/{app}/db-links` | provision | `{"var":"DATABASE_URL","database":"app"}` (a logical database of the app's environment) or `{"var":"REDIS_URL","server":"cache"}` (a non-Postgres server); optional `field` (default `url`) and, for Postgres, `scheme` (`postgres` or `postgresql`). Applied on the next deploy. |
+| `POST /api/v1/apps/{app}/domains` | provision | `{"host":"bot.example.com","tls":true,"exposed":true,"paths":["/webhook"]}` — another domain of the app; routing applies at once to a deployed app. A host other apps already use has one HTTPS setting for all of them: omit `tls` to take it, or pass the same value. |
+| `POST /api/v1/apps/{app}/db-links` | provision | `{"var":"DATABASE_URL","database":"app"}` (a logical database of the app's environment) or `{"var":"REDIS_URL","server":"cache"}` (a Redis-compatible server); optional `field` — default `url`; an S3 server needs one of `endpoint`, `access_key`, `secret_key`, `region` (`{"var":"S3_ENDPOINT","server":"files","field":"endpoint"}`) — and, for Postgres, `scheme` (`postgres` or `postgresql`). Applied on the next deploy. |
+
+A database server or registry is named by its name or id; a reference that is one's name and
+another's id is refused as ambiguous, and so is an environment path when two projects share a
+name. A new database is refused (`409`) when the server already has a database or role of that
+name that Krill does not manage — it is never touched.
 
 The four creating routes are **idempotent** on a natural key — the name in the environment, the
 host on the app, the variable on the app. Repeating a request that already took effect returns
@@ -128,7 +133,8 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
   the API is on and the public URL isn't `https://` — put Krill behind TLS.
 - Every write is logged with the token id and user id — never the token or an env value.
 - An app named like one of the route verbs (`logs`, `env`, `deployments`, `deploy`, `rebuild`,
-  `reload`, `stop`, `domains`, `db-links`) can only be addressed over REST by its numeric id.
+  `reload`, `stop`) can only be addressed over REST by its numeric id; one named `domains` or
+  `db-links` only for the provisioning POSTs.
 
 ## Webhooks
 

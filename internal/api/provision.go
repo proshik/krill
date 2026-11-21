@@ -52,10 +52,12 @@ type DatabaseResult struct {
 	Created  bool   `json:"created"`
 }
 
-// DomainInput is one domain of an application.
+// DomainInput is one domain of an application. TLS is a pointer because a
+// host shared by several apps has one TLS setting for all of them: an omitted
+// value takes the host's, an explicit one must agree with it.
 type DomainInput struct {
 	Host    string   `json:"host"`
-	TLS     bool     `json:"tls,omitempty"`
+	TLS     *bool    `json:"tls,omitempty"`
 	Exposed bool     `json:"exposed,omitempty"`
 	Paths   []string `json:"paths,omitempty"`
 }
@@ -97,7 +99,7 @@ type LinkDatabaseInput struct {
 	Var      string `json:"var"`
 	Database string `json:"database,omitempty"`
 	Server   string `json:"server,omitempty"`
-	Field    string `json:"field,omitempty"`  // default "url"
+	Field    string `json:"field,omitempty"`  // default "url" (Postgres, Redis-compatible); S3: endpoint, access_key, secret_key or region
 	Scheme   string `json:"scheme,omitempty"` // postgres links: "postgres" (default) or "postgresql"
 }
 
@@ -151,6 +153,7 @@ func (s *Service) resolveEnv(ctx context.Context, id Identity, ref string) (EnvR
 	if err != nil {
 		return EnvRef{}, fmt.Errorf("resolve environment: list projects: %w", err)
 	}
+	var found []EnvRef
 	for _, p := range projects {
 		if p.Name != parts[0] {
 			continue
@@ -161,11 +164,19 @@ func (s *Service) resolveEnv(ctx context.Context, id Identity, ref string) (EnvR
 		}
 		for _, e := range envs {
 			if e.Name == parts[1] {
-				return EnvRef{OrgID: id.OrgID, ProjectID: p.ID, EnvID: e.ID, ProjectName: p.Name, EnvName: e.Name}, nil
+				found = append(found, EnvRef{OrgID: id.OrgID, ProjectID: p.ID, EnvID: e.ID, ProjectName: p.Name, EnvName: e.Name})
 			}
 		}
 	}
-	return EnvRef{}, NotFound(fmt.Sprintf("no environment %q in this organization", ref))
+	switch len(found) {
+	case 0:
+		return EnvRef{}, NotFound(fmt.Sprintf("no environment %q in this organization", ref))
+	case 1:
+		return found[0], nil
+	}
+	// Project names are display names; two can be equal. Creating in a guessed
+	// one is worse than refusing.
+	return EnvRef{}, Invalid(fmt.Sprintf("environment %q is ambiguous: %d projects share that name; rename one in the web UI", ref, len(found)))
 }
 
 // CreateDatabase creates a logical database in env on an existing Postgres

@@ -61,6 +61,11 @@ var apiVerbs = map[string]bool{
 	"db-links":    true,
 }
 
+// postOnlyVerbs are verbs only POST routes use. On any other method they are
+// not peeled off, so an app literally named "domains" or "db-links" keeps its
+// path-form status route (they were added after apps could take those names).
+var postOnlyVerbs = map[string]bool{"domains": true, "db-links": true}
+
 // SplitAppRef splits the wildcard remainder of an /api/v1/apps/* request into
 // an application reference and an optional trailing verb.
 //
@@ -157,7 +162,11 @@ func (s *Server) apiListApps(w http.ResponseWriter, r *http.Request) {
 // paired with the wrong HTTP method — 404s exactly like a route that was
 // never registered; there is nothing here to disclose either way.
 func (s *Server) apiAppRouter(w http.ResponseWriter, r *http.Request) {
-	ref, verb := SplitAppRef(chi.URLParam(r, "*"))
+	rest := chi.URLParam(r, "*")
+	ref, verb := SplitAppRef(rest)
+	if r.Method != http.MethodPost && postOnlyVerbs[verb] {
+		ref, verb = strings.TrimRight(rest, "/"), ""
+	}
 
 	switch {
 	case r.Method == http.MethodGet && verb == "":

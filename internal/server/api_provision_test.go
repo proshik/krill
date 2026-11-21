@@ -318,3 +318,159 @@ func TestProvisionTokenCanWrite(t *testing.T) {
 		t.Fatalf("set env with a provision token: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A repeat that differs only in the tag is not a repeat: it would leave the
+// old tag configured and the next deploy shipping the old version.
+func TestProvisionCreateAppTagOnlyDifferenceConflicts(t *testing.T) {
+	fx := seedProvision(t)
+	path := "/api/v1/environments/" + fx.envPath + "/apps"
+	var first api.AppResult
+	decodeInto(t, provCall(t, fx.h, fx.provTok, path, `{"name":"tagged","image":"nginx","tag":"v1","port":80}`), &first)
+	if rec := provCall(t, fx.h, fx.provTok, path, `{"name":"tagged","image":"nginx","tag":"v2","port":80}`); rec.Code != http.StatusConflict {
+		t.Fatalf("tag-only difference: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := provCall(t, fx.h, fx.provTok, path, `{"name":"tagged","image":"nginx","port":80}`); rec.Code != http.StatusConflict {
+		t.Fatalf("default tag vs v1: want 409, got %d", rec.Code)
+	}
+	app, _ := fx.q.GetApplication(context.Background(), first.ID)
+	if app.Tag != "v1" {
+		t.Fatalf("tag = %q, want v1 kept", app.Tag)
+	}
+}
+
+// Identical requests in flight together (an agent retrying after a timeout)
+// all succeed, and exactly one creates.
+func TestProvisionConcurrentIdenticalCreates(t *testing.T) {
+	fx := seedProvision(t)
+	path := "/api/v1/environments/" + fx.envPath + "/apps"
+	body := `{"name":"race","image":"nginx","port":80,"domain":{"host":"race.example.test","exposed":true}}`
+	const n = 6
+	codes := make(chan int, n)
+	created := make(chan bool, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			rec := provCall(t, fx.h, fx.provTok, path, body)
+			codes <- rec.Code
+			var r api.AppResult
+			_ = json.Unmarshal(rec.Body.Bytes(), &r)
+			created <- r.Created
+		}()
+	}
+	made := 0
+	for i := 0; i < n; i++ {
+		if c := <-codes; c != http.StatusOK {
+			t.Errorf("a concurrent identical create answered %d", c)
+		}
+		if <-created {
+			made++
+		}
+	}
+	if made != 1 {
+		t.Fatalf("%d requests reported creating the app, want exactly 1", made)
+	}
+}
+
+// Adding "domains" and "db-links" as POST verbs must not take the path-form
+// status route away from an app with that name.
+func TestProvisionVerbsKeepStatusRouteForSameNamedApps(t *testing.T) {
+	fx := seedProvision(t)
+	for _, name := range []string{"domains", "db-links"} {
+		decodeInto(t, provCall(t, fx.h, fx.provTok, "/api/v1/environments/"+fx.envPath+"/apps", `{"name":"`+name+`","image":"nginx","port":80}`), &api.AppResult{})
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/apps/proj/prod/"+name, nil)
+		req.Header.Set("Authorization", "Bearer "+fx.readTok)
+		rec := httptest.NewRecorder()
+		fx.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET status of app %q: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// A reference that is one server's name and another's id is refused rather
+// than guessed; so is an environment path two projects share.
+func TestProvisionRefusesAmbiguousReferences(t *testing.T) {
+	fx := seedProvision(t)
+	ctx := context.Background()
+	if _, err := fx.q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: fx.orgID, Engine: "postgres", Name: itoaTest(fx.cacheID), AppName: "krill-postgres-num-p1", Image: "postgres:17", Superuser: "postgres", SuperuserPassword: secret.Enc("x")}); err != nil {
+		t.Fatal(err)
+	}
+	rec := provCall(t, fx.h, fx.provTok, "/api/v1/environments/"+fx.envPath+"/databases", `{"name":"x","server":"`+itoaTest(fx.cacheID)+`"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "name and another's id") {
+		t.Fatalf("ambiguous server: %d %s", rec.Code, rec.Body.String())
+	}
+
+	orgSvc := org.NewService(fx.q)
+	p2, err := orgSvc.CreateProject(ctx, fx.orgID, "proj-two", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orgSvc.CreateEnvironment(ctx, p2.ID, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := orgSvc.RenameProject(ctx, p2.ID, "proj"); err != nil {
+		t.Fatal(err)
+	}
+	rec = provCall(t, fx.h, fx.provTok, "/api/v1/environments/proj/prod/apps", `{"name":"amb","image":"nginx","port":80}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ambiguous") {
+		t.Fatalf("ambiguous environment: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A host other apps use has one HTTPS setting: an explicit different value is
+// a conflict that changes nothing, an omitted one takes the host's, and the
+// repeat of that omitted request is a repeat, not a conflict.
+func TestProvisionSharedHostTLS(t *testing.T) {
+	fx := seedProvision(t)
+	decodeInto(t, provCall(t, fx.h, fx.provTok, "/api/v1/apps/proj/prod/web/domains", `{"host":"shared.example.test","tls":true,"exposed":true}`), &api.DomainResult{})
+	decodeInto(t, provCall(t, fx.h, fx.provTok, "/api/v1/environments/"+fx.envPath+"/apps", `{"name":"api","image":"nginx","port":80}`), &api.AppResult{})
+	path := "/api/v1/apps/proj/prod/api/domains"
+	if rec := provCall(t, fx.h, fx.provTok, path, `{"host":"shared.example.test","tls":false,"exposed":true,"paths":["/api"]}`); rec.Code != http.StatusConflict {
+		t.Fatalf("explicit HTTP on an HTTPS host: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := `{"host":"shared.example.test","exposed":true,"paths":["/api"]}`
+	var first, again api.DomainResult
+	decodeInto(t, provCall(t, fx.h, fx.provTok, path, body), &first)
+	if !first.Created || !first.TLS {
+		t.Fatalf("omitted tls on an HTTPS host: %+v, want created with HTTPS", first)
+	}
+	decodeInto(t, provCall(t, fx.h, fx.provTok, path, body), &again)
+	if again.Created || again.ID != first.ID {
+		t.Fatalf("repeat with omitted tls: %+v", again)
+	}
+}
+
+// The response carries exactly the documented fields — never a password —
+// and the stored password is encrypted.
+func TestProvisionDatabaseResponseAndStorage(t *testing.T) {
+	secret.Init("provision-test-key")
+	t.Cleanup(func() { secret.Init("") })
+	fx := seedProvision(t)
+	rec := provCall(t, fx.h, fx.provTok, "/api/v1/environments/"+fx.envPath+"/databases", `{"name":"sealed","server":"main"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for k := range raw {
+		switch k {
+		case "id", "name", "db_name", "username", "server", "created":
+		default:
+			t.Fatalf("unexpected response field %q: %s", k, rec.Body.String())
+		}
+	}
+	var id int64
+	_ = json.Unmarshal(raw["id"], &id)
+	ld, err := fx.q.GetLogicalDatabase(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(ld.Password, "enc:v1:") {
+		t.Fatal("the database password is stored in plain text")
+	}
+	plain, err := secret.Dec(ld.Password)
+	if err != nil || plain == "" || strings.Contains(rec.Body.String(), plain) {
+		t.Fatalf("stored password unusable or leaked (err %v)", err)
+	}
+}

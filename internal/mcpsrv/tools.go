@@ -506,7 +506,7 @@ func registerCreateApp(srv *mcp.Server, svc *api.Service) {
 func registerAddDomain(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAddDomain,
-		Description: "Add a domain to an app: exposed makes it reachable from the internet, tls turns on a Let's Encrypt certificate, paths limits it to those path prefixes. The host's DNS must point at the cluster for HTTPS to be issued. Takes effect on the gateway at once for a deployed app." + provisionNote,
+		Description: "Add a domain to an app: exposed makes it reachable from the internet, tls turns on a Let's Encrypt certificate, paths limits it to those path prefixes. A host other apps already use has one HTTPS setting for all: omit tls to take it. The host's DNS must point at the cluster for HTTPS to be issued. Takes effect on the gateway at once for a deployed app." + provisionNote,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in addDomainArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
@@ -524,7 +524,7 @@ func registerAddDomain(srv *mcp.Server, svc *api.Service) {
 func registerLinkDatabase(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolLinkDatabase,
-		Description: "Inject a database's connection value into one of an app's environment variables on every deploy: database names a logical database of the app's environment, server a non-Postgres server (Redis, Valkey, S3). field selects the value (default url). The value is never shown; deploy the app for it to take effect." + provisionNote,
+		Description: "Inject a database's connection value into one of an app's environment variables on every deploy: database names a logical database of the app's environment, server a non-Postgres server (Redis, Valkey, S3). field selects the value: default url for Postgres and Redis-compatible servers; an S3 server needs endpoint, access_key, secret_key or region. The value is never shown; deploy the app for it to take effect." + provisionNote,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in linkDatabaseArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {

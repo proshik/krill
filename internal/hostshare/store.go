@@ -311,6 +311,58 @@ func (s *Store) CreateApplication(ctx context.Context, p db.CreateApplicationPar
 	return out, tx.Commit(ctx)
 }
 
+// PrimarySettings are the primary domain's settings and the registry a new
+// application gets in the same transaction as its creation.
+type PrimarySettings struct {
+	Exposed    bool
+	Paths      []string
+	TLS        bool
+	RegistryID *int64
+}
+
+// CreateApplicationConfigured is CreateApplication with the primary domain's
+// exposure, paths and TLS and the app's registry written in the same
+// transaction, under the host reservation: a failure leaves neither the name
+// nor the host taken, and no other app can claim the host in between. The
+// host is exclusive to the new app, so no sharing rule applies.
+func (s *Store) CreateApplicationConfigured(ctx context.Context, p db.CreateApplicationParams, set PrimarySettings) (db.Application, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return db.Application{}, err
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}()
+	out, err := CreateApplicationTx(ctx, tx, p)
+	if err != nil {
+		return db.Application{}, err
+	}
+	q := db.New(tx)
+	paths := traefik.NormalizePaths(set.Paths)
+	if set.Exposed || len(paths) > 0 {
+		doms, err := q.ListDomainsByApplication(ctx, out.ID)
+		if err != nil || len(doms) != 1 {
+			return db.Application{}, fmt.Errorf("read back primary domain: %v", err)
+		}
+		if err := q.UpdateDomainExposure(ctx, db.UpdateDomainExposureParams{ID: doms[0].ID, Exposed: set.Exposed, Paths: strings.Join(paths, "\n")}); err != nil {
+			return db.Application{}, err
+		}
+	}
+	if set.TLS {
+		if err := q.SetDomainTLSByHost(ctx, db.SetDomainTLSByHostParams{Host: p.Domain, Tls: true}); err != nil {
+			return db.Application{}, err
+		}
+	}
+	if set.RegistryID != nil {
+		if err := q.SetApplicationRegistry(ctx, db.SetApplicationRegistryParams{ID: out.ID, RegistryID: set.RegistryID}); err != nil {
+			return db.Application{}, err
+		}
+	}
+	return out, tx.Commit(ctx)
+}
+
 // ReservePrimaryHost must run in the same transaction as the app/domain writes.
 // Environment cloning uses it with a preallocated app ID and captured fields.
 // The namespace and panel reservation are shared with every domain mutation.

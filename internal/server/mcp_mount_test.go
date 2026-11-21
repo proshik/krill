@@ -15,6 +15,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
@@ -35,8 +36,9 @@ func newMCPServers(t *testing.T) (enabled, disabled http.Handler, q *db.Queries,
 		cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AgentAPIEnabled: mcpEnabled}
 		dbSvc := dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")
 		srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
-		// Engine/deployer nil: krill_whoami, the only tool called here, touches
-		// nothing but the database.
+		srv.SetHostShare(hostshare.NewStore(pool)) // krill_create_app reserves hosts
+		// Engine/deployer nil: the tools called here touch nothing but the
+		// database.
 		srv.SetAPI(api.NewAuthenticator(q, orgSvc), api.NewService(q, nil, nil))
 		return srv.Router()
 	}
@@ -364,5 +366,56 @@ func TestMCPSessionRejectsAnotherToken(t *testing.T) {
 	}
 	if who := mcpWhoami(t, res); who.UserID != uidA {
 		t.Fatalf("owner's whoami: user %d, want %d", who.UserID, uidA)
+	}
+}
+
+// A provision token's right to create is re-checked on every call of an open
+// MCP session: demote its owner and the next create is refused, and nothing
+// is created.
+func TestMCPProvisionSeesDemotion(t *testing.T) {
+	h, _, q, orgSvc := newMCPServers(t)
+	ctx := context.Background()
+	uid := mkUser(t, q, "mcp-prov-demote@k.local")
+	o, err := orgSvc.CreateOrg(ctx, uid, "MCPProvDemoteOrg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appID := seedMCPApp(t, q, orgSvc, o.ID)
+	token := issueAPIToken(t, q, uid, o.ID, api.LevelProvision)
+	sid := mcpInit(t, h, token)
+	create := func(name string) mcpToolResult {
+		t.Helper()
+		code, res := mcpCall(t, h, token, sid, fmt.Sprintf(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"krill_create_app","arguments":{"environment":"Proj/production","name":%q,"image":"nginx","port":80}}}`, name))
+		if code != http.StatusOK {
+			t.Fatalf("create %s: status %d", name, code)
+		}
+		return res
+	}
+	if res := create("before"); res.IsError {
+		t.Fatalf("create before demotion failed: %+v", res)
+	}
+	m, err := q.GetMembership(ctx, db.GetMembershipParams{OrganizationID: o.ID, UserID: uid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateMemberRole(ctx, db.UpdateMemberRoleParams{ID: m.ID, Role: "member"}); err != nil {
+		t.Fatal(err)
+	}
+	res := create("after")
+	if !res.IsError || len(res.Content) == 0 || !strings.HasPrefix(res.Content[0].Text, "forbidden:") {
+		t.Fatalf("create after demotion: want forbidden, got %+v", res)
+	}
+	seed, err := q.GetApplication(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := q.ListApplicationsByEnvironment(ctx, seed.EnvironmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range apps {
+		if a.Name == "after" {
+			t.Fatal("a demoted member's session created an app")
+		}
 	}
 }

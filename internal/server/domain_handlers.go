@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"regexp"
@@ -384,6 +385,12 @@ func (s *Server) syncAppLabelsCtx(ctx context.Context, log *slog.Logger, appID i
 		return false
 	}
 	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net, hidden)
+	// Labels already in place need no write. A ServiceUpdate with an unchanged
+	// spec is not free: Swarm resets the service's UpdateStatus, which a
+	// deploy still converging would read as a finished rollout.
+	if cur, found, err := s.engine.ServiceLabels(ctx, docker.ServiceName(appID)); err == nil && found && maps.Equal(cur, labels) {
+		return true
+	}
 	if err := s.engine.ServiceUpdateLabels(ctx, docker.ServiceName(appID), labels); err != nil {
 		log.Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
 		return false
