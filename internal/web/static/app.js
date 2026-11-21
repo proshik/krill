@@ -636,6 +636,54 @@ if (!window.__krillConfirmInit) {
   }, true);
 }
 
+// ── Unsaved changes in a sibling form ───────────────────────────────────────
+// A card such as a domain holds several small forms side by side (exposure
+// and paths with their own Save, a TLS toggle, primary, delete). Submitting
+// one reloads the page and silently drops what was changed but not saved in
+// another — a ticked "Open to the internet" was lost this way by pressing
+// "Toggle HTTPS". Within a [data-unsaved-scope], submitting one form while
+// another has unsaved changes asks first.
+function krillFormDirty(form) {
+  for (const el of form.elements) {
+    if (!el.name || el.disabled) continue;
+    const t = (el.type || "").toLowerCase();
+    if (t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+    if (t === "checkbox" || t === "radio") {
+      if (el.checked !== el.defaultChecked) return true;
+    } else if (el.tagName === "SELECT") {
+      for (const o of el.options) if (o.selected !== o.defaultSelected) return true;
+    } else if (el.value !== el.defaultValue) {
+      return true;
+    }
+  }
+  return false;
+}
+if (!window.__krillUnsavedInit) {
+  window.__krillUnsavedInit = true;
+  // Capture phase: runs before htmx and before a form's own onsubmit.
+  document.addEventListener("submit", function (e) {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || form.__krillUnsavedOK) {
+      if (form) form.__krillUnsavedOK = false;
+      return;
+    }
+    const scope = form.closest("[data-unsaved-scope]");
+    if (!scope) return;
+    const dirty = Array.from(scope.querySelectorAll("form")).some(function (f) { return f !== form && krillFormDirty(f); });
+    if (!dirty) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const submitter = e.submitter || null;
+    krillConfirm(form, scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?", scope.dataset.unsavedLabel || "Continue", "primary");
+    // Re-dispatch through the normal path (htmx, the form's own confirm),
+    // skipping this check once.
+    window.__krillConfirmAction = function () {
+      form.__krillUnsavedOK = true;
+      form.requestSubmit(submitter);
+    };
+  }, true);
+}
+
 // ── Double-submit guard ─────────────────────────────────────────────────────
 // A slow POST (closing the panel's direct port, a lockdown, a deploy) used to
 // leave its button live, and a second click sent the request again. Boosted

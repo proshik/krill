@@ -215,6 +215,8 @@ var ru = map[string]string{
 	"app.healthcheck_timeout":              "Таймаут",
 	"app.healthcheck_retries":              "Попытки",
 	"app.healthcheck_start_period":         "Период старта",
+	"domains.unsaved":                      "В домене %s есть несохранённые изменения (галочка, пути или список IP). Если продолжить, они пропадут — чтобы их сохранить, сначала нажмите «Сохранить».",
+	"domains.unsaved_continue":             "Продолжить без сохранения",
 	"domains.tab":                          "Домены",
 	"domains.host":                         "Хост",
 	"domains.add":                          "Добавить домен",

@@ -215,6 +215,8 @@ var en = map[string]string{
 	"app.healthcheck_timeout":              "Timeout",
 	"app.healthcheck_retries":              "Retries",
 	"app.healthcheck_start_period":         "Start period",
+	"domains.unsaved":                      "%s has unsaved changes above (a checkbox, paths or IP list). They will be lost if you continue — press Save first to keep them.",
+	"domains.unsaved_continue":             "Continue without saving",
 	"domains.tab":                          "Domains",
 	"domains.host":                         "Host",
 	"domains.add":                          "Add domain",
