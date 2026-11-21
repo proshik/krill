@@ -235,17 +235,24 @@ access log with `KRILL_GATEWAY_ACCESS_LOG` in `/etc/krill/krill.env` and restart
 (`systemctl restart krill`):
 
 - `filtered` logs requests that ended with a 4xx/5xx status, were retried, or took 10 s or
-  more — streams, long downloads and WebSockets, logged when they end. This is the one to leave
-  on.
+  more — streams, long downloads and WebSockets, logged when they end.
 - `all` logs every request; expect a line per request.
 
 Each request is one JSON line in `docker service logs krill-traefik` (and in your Loki when the
-[observability agent](observability.md) ships logs). `DownstreamStatus` and
-`DownstreamContentSize` are what the gateway sent to the client, `OriginStatus` and
-`OriginContentSize` what the app sent, `Duration` is in nanoseconds. If the gateway sent every
-byte the app wrote, the rest was lost after the gateway. Request headers (cookies,
-`Authorization`) are not logged; the client address and the path **including its query string**
-are, so an app that takes secrets in the URL will have them in the log.
+[observability agent](observability.md) ships logs). The gateway's container keeps at most
+5 × 20 MB of its own log, whatever Docker's default logging is, so an access log left on can't
+fill the disk — but older lines rotate out; ship them with the observability agent to keep
+them.
+
+`DownstreamStatus` and `DownstreamContentSize` are the status and HTTP response body bytes the
+gateway handed on towards the client, `OriginStatus` and `OriginContentSize` what the app
+answered, `Duration` is in nanoseconds. If the gateway handed on every byte the app wrote, look
+for the loss further along — between the gateway and the client — though a write the gateway
+accepted can still fail on the client's connection, so equal counts are a strong hint, not
+proof. For a WebSocket the line records the upgrade and how long the connection lasted; the
+frames bypass these counters. Request headers (cookies, `Authorization`) are not logged; the
+client address and the path **including its query string** are, so an app that takes secrets in
+the URL will have them in the log.
 
 ## Raw TCP and UDP ports
 

@@ -151,3 +151,12 @@ func TestParseAccessLog(t *testing.T) {
 		t.Error("an unknown mode was accepted")
 	}
 }
+
+// The gateway's own logs, the access log included, are bounded regardless of
+// the daemon's default driver.
+func TestTraefikSpecBoundsItsLogs(t *testing.T) {
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, PanelProvider{})
+	if s.LogDriver == nil || s.LogDriver.Name != "json-file" || s.LogDriver.Options["max-size"] == "" || s.LogDriver.Options["max-file"] == "" {
+		t.Fatalf("gateway log driver = %+v, want bounded json-file", s.LogDriver)
+	}
+}

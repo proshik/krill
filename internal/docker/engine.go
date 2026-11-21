@@ -81,6 +81,15 @@ type ServiceSpec struct {
 	RestartCondition   string // "any" | "on-failure" | "none"; "" => "any"
 	RestartMaxAttempts uint64 // 0 = unlimited
 	Healthcheck        *HealthcheckSpec
+	// LogDriver overrides the daemon's logging driver for the service's
+	// containers; nil keeps the daemon default.
+	LogDriver *LogDriverSpec
+}
+
+// LogDriverSpec is a container logging driver and its options.
+type LogDriverSpec struct {
+	Name    string
+	Options map[string]string
 }
 
 // SwarmNode is one cluster node (from the Swarm API).

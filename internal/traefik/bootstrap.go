@@ -63,7 +63,8 @@ const (
 	// AccessLogFiltered logs only requests worth looking at: an error status
 	// (400-599), a retried request, or one that took at least
 	// accessLogMinDuration — a long download, stream or WebSocket, logged when
-	// it ends with its duration and the bytes actually sent.
+	// it ends with its duration and the HTTP response bytes handed on (a
+	// WebSocket's frames bypass those counters).
 	AccessLogFiltered AccessLog = "filtered"
 	// AccessLogAll logs every request.
 	AccessLogAll AccessLog = "all"
@@ -193,6 +194,11 @@ func TraefikSpec(networks []string, acme AcmeConfig, panel PanelProvider) docker
 			{Type: "volume", Source: "krill-traefik-acme", Target: "/letsencrypt"},
 		},
 		Constraints: []string{"node.role==manager"},
+		// The access log goes to stdout; bound what Docker keeps of it so
+		// a busy gateway cannot fill the manager's disk whatever the
+		// daemon's default (often json-file without rotation). json-file
+		// keeps `docker service logs` working.
+		LogDriver: &docker.LogDriverSpec{Name: "json-file", Options: map[string]string{"max-size": "20m", "max-file": "5"}},
 	}
 	spec.Labels = map[string]string{specHashLabel: specFingerprint(spec)}
 	return spec

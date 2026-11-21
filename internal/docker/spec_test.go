@@ -286,3 +286,15 @@ func TestBuildSwarmSpecUpdateStopFirst(t *testing.T) {
 		t.Errorf("UpdateStopFirst order = %q, want stop-first", o)
 	}
 }
+
+func TestBuildSwarmSpecLogDriver(t *testing.T) {
+	plain := buildSwarmSpec(ServiceSpec{Name: "a", Image: "x", Replicas: 1, Network: "n"})
+	if plain.TaskTemplate.LogDriver != nil {
+		t.Fatalf("no LogDriver requested, got %+v", plain.TaskTemplate.LogDriver)
+	}
+	s := buildSwarmSpec(ServiceSpec{Name: "a", Image: "x", Replicas: 1, Network: "n",
+		LogDriver: &LogDriverSpec{Name: "json-file", Options: map[string]string{"max-size": "20m"}}})
+	if d := s.TaskTemplate.LogDriver; d == nil || d.Name != "json-file" || d.Options["max-size"] != "20m" {
+		t.Fatalf("LogDriver = %+v", d)
+	}
+}
