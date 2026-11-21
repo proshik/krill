@@ -180,10 +180,16 @@ Verified in code and tests, but not yet exercised on a real environment:
     install that cannot reach Telegram directly. Covered so far by unit tests with fake senders,
     test SOCKS5/HTTP proxies and store tests against a real Postgres. See
     [Notifications](docs/guides/notifications.md).
-18. Krill state backups on a real install: the bundled database, an external database with
-    `verify-full`, the pre-update snapshot on a real VPS (including a blocked update and the
-    pause escape hatch), and runbook A on a fresh VM. Covered so far by unit tests and
-    integration tests against a real Postgres and MinIO.
+18. Krill state backups on a real install: an external database with `verify-full`, and the
+    pre-update snapshot on a real VPS (including a blocked update and the pause escape hatch).
+    Accepted on 2026-11-21 on a disposable Lima VM with throwaway releases
+    (`make acceptance-statebackup`): the bundled database backed up to S3 (MinIO) and restored
+    into a throwaway container, runbook A on one VM after a full wipe (a newer release
+    reinstalled, the dump restored and brought forward by its migration, the old password and
+    operator kept, old sessions refused, a database server, its logical database and backup,
+    and an app recovered, Back up now working on the restored system), and runbook B from the
+    pre-update snapshot of an update whose migration failed, with its revert timer still armed.
+    The run also fixed six places in those runbooks (`docs/install.md`).
 
 ## Open
 
