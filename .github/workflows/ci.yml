@@ -30,7 +30,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          # Pins to the exact Go version declared in go.mod (1.26.1).
+          # Pins to the exact Go version declared in go.mod (1.26.11).
           go-version-file: go.mod
           cache: true # build + module cache, keyed off go.sum
 
