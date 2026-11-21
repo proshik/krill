@@ -35,7 +35,7 @@ Leaving the token field empty keeps the stored one.
 | Deploy failures | A deploy fails, or a database server's move to another node fails. | At once |
 | Successful deploys | A deploy finishes with the app running. Deploys Krill makes itself (moving apps to their organization's network after an upgrade) are not reported. | At once |
 | Backup failures | A database, volume or bucket backup (or restore) fails. | At once |
-| App or database server down / recovered | An app or a database server that was running loses its tasks — a crash, or its node switched off — and when it comes back. Stopping a server, or moving it to another node, is not reported. | After two health checks in a row (`KRILL_HEALTH_POLL_INTERVAL`, 30 s by default) |
+| App or database server down / recovered | An app or a database server that was running loses its tasks — a crash, or its node switched off — and when it comes back. Stopping a server, or moving it to another node, is not reported. | Down: after two failed health checks in a row (`KRILL_HEALTH_POLL_INTERVAL`, 30 s by default). Recovered: at the first healthy check after a down alert. |
 
 Successful backups have no message of their own: they usually run at night, so they are listed in
 the [daily digest](#3-daily-digest) instead. A failed restore is alerted like a failed backup but

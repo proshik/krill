@@ -84,9 +84,11 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 
 Deploys are **asynchronous**: `deploy` and `rebuild` return a `deployment_id` at once, and the
 caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. `done`
-means Swarm finished the rolling update with the new tasks running. A deploy whose image is
-still pulling stays `running` for up to `KRILL_CONVERGE_TIMEOUT` + 20 minutes and then becomes
-`done` or `error`; keep polling. While it runs, `log_tail` is empty — the build log is saved
+means Swarm finished the rolling update with the new tasks running. A deployment is `running`
+while it waits in the queue and builds, then for the convergence wait —
+`KRILL_CONVERGE_TIMEOUT`, or a healthcheck's start period plus a minute when that is longer —
+and, if the service is still starting then (an image still pulling), for up to 20 more
+minutes before it becomes `done` or `error`; keep polling. While it runs, `log_tail` is empty — the build log is saved
 when the deployment ends, and the live log is on the app's Deploys tab. A deploy that never
 converges ends `error` with `⚠ service still starting` and `❌ service did not converge` in its
 log. An env

@@ -678,13 +678,20 @@ if (!window.__krillUnsavedInit) {
     e.preventDefault();
     e.stopImmediatePropagation();
     const submitter = e.submitter || null;
-    krillConfirm(form, scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?", scope.dataset.unsavedLabel || "Continue", "primary");
+    const msg = scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?";
     // Re-dispatch through the normal path (htmx, the form's own confirm),
     // skipping this check once.
-    window.__krillConfirmAction = function () {
+    const resubmit = function () {
       form.__krillUnsavedOK = true;
       form.requestSubmit(submitter);
     };
+    const dlg = document.getElementById("k-confirm");
+    if (!dlg || typeof dlg.showModal !== "function") {
+      if (confirm(msg)) resubmit();
+      return;
+    }
+    krillConfirm(form, msg, scope.dataset.unsavedLabel || "Continue", "primary");
+    window.__krillConfirmAction = resubmit;
   }, true);
 }
 
