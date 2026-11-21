@@ -290,15 +290,20 @@ empty input, or only the beginning of the dump, and commits that.
    ```
    `dirty` must be `f`, and the counts must look like your installation.
 
-**Match the client to the dump.** `pg_dump` from the 17.6 release (and the matching patch
-releases of older majors) writes `\restrict` / `\unrestrict` lines that an older `psql` rejects.
-Read the header of the dump, then use a `psql` at least that new, for example the one in the
-`postgres:<major>-alpine` image (the same image Krill dumps with):
+**Match the client to the dump.** Recent `pg_dump` releases write `\restrict` / `\unrestrict`
+lines, and a `psql` that is too old for them rejects the dump. Check for the line and read the
+header (the "Dumped by pg_dump version" line sits a few lines down, after `\restrict`):
 
 ```sh
-age -d -i krill-backup-key.txt <object> | gunzip | head -n 5 | grep 'Dumped by pg_dump'
-psql --version        # must be >= the version printed above
+age -d -i krill-backup-key.txt <object> | gunzip | grep -m1 '^\\restrict'
+age -d -i krill-backup-key.txt <object> | gunzip | sed -n '1,12p'
+psql --version
 ```
+
+If the dump contains `\restrict`, use a `psql` of at least 13.22, 14.19, 15.14, 16.10 or 17.6
+within its own major, or any 18 or newer: a `psql` of a different major below its own threshold
+(for example 17.5) rejects the dump even when its version number is larger. The simplest safe
+choice is the `postgres:<dump major>-alpine` image (the same image Krill dumps with).
 
 Check this before you reset anything: a restore that stops on the first line of the dump has
 already lost the old data. If your `psql` is older, prefix every `psql` below with
