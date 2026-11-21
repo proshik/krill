@@ -10,6 +10,7 @@
 .claude/
 internal/database/schema.sql
 .superpowers/
+.revust/
 /tools/tailwindcss
 /tools/squawk
 # Maintainer design specs/plans and Russian planning notes: local-only, never published
