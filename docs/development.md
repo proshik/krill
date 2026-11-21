@@ -12,7 +12,7 @@ Contribution rules — conventions, what a pull request needs — are in
 
 ## Prerequisites
 
-- **Go 1.26.1**
+- **Go 1.26.11**
 - **Docker** with Swarm initialized: `docker swarm init`. On macOS,
   [Colima](https://github.com/abiosoft/colima) works in place of Docker Desktop.
 - **Tailwind CSS v4 standalone binary** in `./tools/tailwindcss` — no Node.js or npm:

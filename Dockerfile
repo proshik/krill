@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # ---- Builder stage ----
-# Pinned to the exact Go version declared in go.mod (go 1.26.1).
-FROM golang:1.26.1-alpine AS builder
+# Pinned to the exact Go version declared in go.mod (go 1.26.11).
+FROM golang:1.26.11-alpine AS builder
 
 # The release version, stamped into internal/buildinfo.Version so the running
 # server can report it (e.g. via `krill --version`). Passed by CI as
