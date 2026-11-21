@@ -177,6 +177,11 @@ func run() error {
 		ov.SetOverlayMTU(cfg.OverlayMTU)
 	}
 	acme := traefik.AcmeConfig{Email: cfg.AcmeContact(), Staging: cfg.AcmeStaging}
+	accessLog, err := traefik.ParseAccessLog(cfg.GatewayAccessLog)
+	if err != nil {
+		return err
+	}
+	traefik.SetAccessLog(accessLog)
 
 	// The panel domain: the gateway polls Krill for the UI's own routes, so it
 	// needs an address it can reach Krill at. Without one the provider is left

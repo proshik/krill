@@ -211,6 +211,42 @@ leaves `:8080` open until you close it again.
   message like `Cannot fetch configuration data` means the gateway can't reach Krill at
   `KRILL_ADVERTISE_ADDR:8080`.
 
+## Timeouts, long responses and the access log
+
+The gateway's timeouts are set explicitly (they are Traefik v3.6's own defaults, pinned so an
+upgrade can't change them):
+
+| What | Limit | What it means for an app |
+|------|-------|--------------------------|
+| Reading a request, body included | 60 s | An upload that takes longer than a minute fails. It does **not** limit the response. |
+| Sending a response | none | Downloads, server-sent events and streamed responses may run for as long as they like, and may stay silent for minutes; the gateway delivers them whole. |
+| Idle keep-alive connection | 180 s | Closes a connection with no request in flight. It does not apply while a response is being sent, nor to an upgraded WebSocket. |
+| Waiting for the app's first byte | none | A slow handler is not cut off by the gateway. |
+| Connecting to the app | 30 s | |
+
+So a WebSocket or a long stream survives through the gateway. What usually ends one is
+something else on the way: the app's own server timeouts (Go's `http.Server.WriteTimeout`, for
+one, also cuts a streamed response), or a proxy or VPN on the client side. A WebSocket that
+must stay up for hours should still send pings — ten seconds to a minute apart — because
+intermediaries outside Krill close quiet connections.
+
+When a response goes missing somewhere between the app and the client, turn on the gateway's
+access log with `KRILL_GATEWAY_ACCESS_LOG` in `/etc/krill/krill.env` and restart Krill
+(`systemctl restart krill`):
+
+- `filtered` logs requests that ended with a 4xx/5xx status, were retried, or took 10 s or
+  more — streams, long downloads and WebSockets, logged when they end. This is the one to leave
+  on.
+- `all` logs every request; expect a line per request.
+
+Each request is one JSON line in `docker service logs krill-traefik` (and in your Loki when the
+[observability agent](observability.md) ships logs). `DownstreamStatus` and
+`DownstreamContentSize` are what the gateway sent to the client, `OriginStatus` and
+`OriginContentSize` what the app sent, `Duration` is in nanoseconds. If the gateway sent every
+byte the app wrote, the rest was lost after the gateway. Request headers (cookies,
+`Authorization`) are not logged; the client address and the path **including its query string**
+are, so an app that takes secrets in the URL will have them in the log.
+
 ## Raw TCP and UDP ports
 
 For services that don't speak HTTP — an SSH port for Gitea, mail, DNS, a game server — publish

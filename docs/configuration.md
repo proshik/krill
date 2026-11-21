@@ -29,6 +29,12 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | `KRILL_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `KRILL_LOG_FORMAT` | `text` | `text` or `json`. |
 
+## Gateway
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `KRILL_GATEWAY_ACCESS_LOG` | `off` | The gateway's (Traefik's) access log: `off`, `filtered` (error statuses, retried requests and requests that took 10 s or more) or `all`. See [Timeouts and the access log](guides/domains.md#timeouts-long-responses-and-the-access-log). Changing it restarts the gateway, which blips ingress for a few seconds. |
+
 ## TLS
 
 | Variable | Default | Purpose |
