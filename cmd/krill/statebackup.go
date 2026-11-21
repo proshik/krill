@@ -19,11 +19,12 @@ const stateDumpCleanupTimeout = 30 * time.Second
 
 // Reload retries after a failed state backup schedule reload: the first
 // waits reloadRetryFirst, each next one twice as long up to reloadRetryMax,
-// and retrying stops after reloadRetryFor.
+// and retrying goes on until the reload succeeds or the process ends. A
+// reload that keeps failing is logged at most once per reloadLogEvery.
 const (
 	reloadRetryFirst = 2 * time.Second
 	reloadRetryMax   = time.Minute
-	reloadRetryFor   = time.Hour
+	reloadLogEvery   = 10 * time.Minute
 )
 
 // schedReloader reloads the state backup schedule after its settings change
@@ -37,14 +38,15 @@ type schedReloader struct {
 	reload func() error
 	first  time.Duration
 	max    time.Duration
-	giveUp time.Duration
+	logGap time.Duration    // minimum time between failure logs while retrying
+	now    func() time.Time // injectable clock for the log throttle
 
 	mu     sync.Mutex
 	cancel context.CancelFunc // the pending retry, if any
 }
 
 func newSchedReloader(ctx context.Context, reload func() error) *schedReloader {
-	return &schedReloader{ctx: ctx, reload: reload, first: reloadRetryFirst, max: reloadRetryMax, giveUp: reloadRetryFor}
+	return &schedReloader{ctx: ctx, reload: reload, first: reloadRetryFirst, max: reloadRetryMax, logGap: reloadLogEvery, now: time.Now}
 }
 
 // Reload reloads the schedule now and, on failure, starts retrying.
@@ -65,7 +67,7 @@ func (r *schedReloader) Reload() {
 	if r.cancel != nil { // a concurrent Reload failed too: one retry is enough
 		r.cancel()
 	}
-	ctx, cancel := context.WithTimeout(r.ctx, r.giveUp)
+	ctx, cancel := context.WithCancel(r.ctx)
 	r.cancel = cancel
 	go r.retry(ctx, cancel)
 }
@@ -73,19 +75,20 @@ func (r *schedReloader) Reload() {
 func (r *schedReloader) retry(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
 	wait := r.first
+	lastLog := r.now() // Reload has just logged the first failure
 	for {
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) && r.ctx.Err() == nil {
-				slog.Error("state backup scheduler reload: giving up; save the settings again to retry", "after", r.giveUp)
-			}
 			return
 		case <-t.C:
 		}
 		if err := r.reload(); err != nil {
-			slog.Error("state backup scheduler reload failed again", "err", err)
+			if now := r.now(); now.Sub(lastLog) >= r.logGap {
+				slog.Error("state backup scheduler reload still failing; retrying in the background", "err", err)
+				lastLog = now
+			}
 		} else {
 			slog.Info("state backup scheduler reloaded after an earlier failure")
 			return

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -404,7 +405,7 @@ func (f *fakeReload) count() int {
 
 func fastReloader(ctx context.Context, f *fakeReload) *schedReloader {
 	r := newSchedReloader(ctx, f.reload)
-	r.first, r.max, r.giveUp = time.Millisecond, 5*time.Millisecond, time.Minute
+	r.first, r.max = time.Millisecond, 5*time.Millisecond
 	return r
 }
 
@@ -440,28 +441,70 @@ func TestSchedReloaderNoRetryOnSuccess(t *testing.T) {
 	}
 }
 
-// Shutdown ends the retrying, and so does the give-up bound.
-func TestSchedReloaderStops(t *testing.T) {
+// Retrying has no give-up bound: it outlasts any outage and ends only on
+// success or shutdown.
+func TestSchedReloaderOutlastsLongOutage(t *testing.T) {
+	f := &fakeReload{fails: 200, done: make(chan struct{})}
+	fastReloader(context.Background(), f).Reload()
+	select {
+	case <-f.done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("reload never succeeded after %d calls", f.count())
+	}
+}
+
+// Shutdown ends the retrying.
+func TestSchedReloaderStopsOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &fakeReload{fails: 1 << 30, done: make(chan struct{})}
 	fastReloader(ctx, f).Reload()
-	time.Sleep(30 * time.Millisecond)
+	for f.count() < 3 {
+		time.Sleep(time.Millisecond)
+	}
 	cancel()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // let an in-flight attempt finish
 	n := f.count()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	if f.count() != n {
 		t.Fatal("reload is still retried after shutdown")
 	}
+}
 
-	g := &fakeReload{fails: 1 << 30, done: make(chan struct{})}
-	r := fastReloader(context.Background(), g)
-	r.giveUp = 30 * time.Millisecond
+// Failures while retrying are logged at most once per logGap.
+func TestSchedReloaderThrottlesLogs(t *testing.T) {
+	var buf syncBuf
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fakeReload{fails: 1 << 30, done: make(chan struct{})}
+	r := fastReloader(ctx, f)
+	r.logGap = time.Hour
+	r.now = func() time.Time { return time.Unix(0, 0) } // the clock never moves
 	r.Reload()
-	time.Sleep(80 * time.Millisecond)
-	m := g.count()
-	time.Sleep(50 * time.Millisecond)
-	if g.count() != m {
-		t.Fatal("reload is still retried after the give-up bound")
+	for f.count() < 10 {
+		time.Sleep(time.Millisecond)
 	}
+	if n := strings.Count(buf.String(), "level=ERROR"); n != 1 {
+		t.Fatalf("ERROR lines = %d, want 1 (only the first failure)", n)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
