@@ -44,6 +44,41 @@ const (
 // multi-arch, ships mc and curl.
 var minioImage = drivers.MinIOImage
 
+// The run's images, all from Docker Hub: the bundled Postgres and the gateway
+// (install.sh and Krill's first start), the fixtures, the app, and the DB
+// server's default image.
+var prefetchImages = []string{"postgres:17-alpine", "traefik:v3.6.1", minioImage, registryImage, appSrcImage, "postgres:17"}
+
+// dockerMirrorJSON makes dockerd fetch Docker Hub images through Google's
+// pull-through mirror first (it falls back to Docker Hub by itself). On
+// 2026-11-21 Docker Hub's CDN served this Mac's VMs at ~30 KB/s and then
+// stalled a blob download for over an hour; the mirror took seconds. This
+// is the test environment, not the product under test.
+const dockerMirrorJSON = `{"registry-mirrors": ["https://mirror.gcr.io"]}`
+
+// prefetchScript installs Docker the way install.sh would (get.docker.com)
+// when it is missing, after writing the mirror configuration, then pulls
+// every image of the run. A pull that does not finish in 5 minutes is taken
+// as stalled: dockerd is restarted (which drops the stuck download) and the
+// pull retried, up to 5 times.
+func prefetchScript() string {
+	lines := []string{
+		"set -e",
+		"mkdir -p /etc/docker",
+		"if [ \"$(cat /etc/docker/daemon.json 2>/dev/null)\" != " + shQuote(dockerMirrorJSON) + " ]; then",
+		"  printf '%s\\n' " + shQuote(dockerMirrorJSON) + " > /etc/docker/daemon.json",
+		"  if command -v docker >/dev/null 2>&1; then systemctl restart docker; fi",
+		"fi",
+		"command -v docker >/dev/null 2>&1 || (curl -fsSL https://get.docker.com | sh)",
+		"docker info --format 'mirrors: {{.RegistryConfig.Mirrors}}'",
+		"pull() { for i in 1 2 3 4 5; do s=$(date +%s); if timeout 300 docker pull -q \"$1\"; then echo \"$1 pulled in $(( $(date +%s)-s ))s (attempt $i)\"; return 0; fi; echo \"$1 stalled or failed (attempt $i); restarting dockerd\"; systemctl restart docker; sleep 3; done; return 1; }",
+	}
+	for _, img := range prefetchImages {
+		lines = append(lines, "pull "+shQuote(img))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Fixtures are the random credentials of one run's storage and registry.
 type Fixtures struct {
 	S3RootUser, S3RootPassword string

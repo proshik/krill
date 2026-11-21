@@ -196,8 +196,11 @@ make acceptance-statebackup
 Scenario A writes nothing to GitHub; scenario B publishes `v0.91.0`–`v0.91.2` to the same test
 repository and moves its "latest" release, so **do not run it at the same time as
 `make acceptance-selfupdate`**. It needs no `age` on the Mac (the key is generated in Go; the VM
-gets the `age` package). It takes about ten minutes on a kept VM whose image cache is warm; on a
-fresh VM image downloads dominate, up to an hour or more when Docker Hub is slow. Its
+gets the `age` package). It takes about ten minutes on a kept VM whose image cache is warm. Before
+`install.sh` it points the VM's Docker at the `mirror.gcr.io` pull-through mirror and pulls every
+image the run needs, restarting dockerd when a pull stalls for five minutes: Docker Hub's CDN has
+been seen to stall a download for over an hour. That is the test environment only; the installed
+Krill is unchanged. Its
 workdir is `.superpowers/acceptance-statebackup` (`report.md` with the evidence and a summary of
 every runbook command, `test.log`, the key and the backup object); a last step fails the run if
 any secret the harness knows of shows up in either file. `KRILL_ACCEPT_KEEP_VM=1` and the other

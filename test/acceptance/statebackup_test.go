@@ -106,14 +106,16 @@ func (b *sbk) fingerprint(t *testing.T, ev *Evidence, name, container, user, db 
 }
 
 // ruleSOptions narrow rule S to what spec §8 allows after the start: the
-// status columns, the backup's run result, the network migrator's mark, and
+// status columns (with the updated_at a status write sets), the backup's run result, the network migrator's mark, and
 // in deployments (and their releases) only the rows that existed at the
 // restore; new deployments are checked on their own.
 func ruleSOptions(maxDeployment int64) accept.Options {
 	return accept.Options{
 		Ignore: map[string][]string{
-			"applications":  {"status"},
-			"db_instances":  {"status"},
+			// A status write sets updated_at too (UpdateApplicationStatus,
+			// UpdateDBInstanceStatus).
+			"applications":  {"status", "updated_at"},
+			"db_instances":  {"status", "updated_at"},
 			"backups":       {"last_error", "last_run_at", "last_status"},
 			"organizations": {"network_migrated_at"},
 		},
@@ -513,6 +515,13 @@ func TestStateBackupAcceptance(t *testing.T) {
 			"command -v age >/dev/null || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq age)",
 			"age --version",
 		}, "\n"))
+	})
+
+	b.run(t, "prefetch_images", func(t *testing.T, ev *Evidence) {
+		ev.Note("environment, not the product under test: Docker Hub images come through mirror.gcr.io (dockerd registry-mirrors), and a pull stalled for 5 minutes is retried after a dockerd restart")
+		start := time.Now()
+		b.sudo(t, ev, prefetchScript())
+		ev.Note("all %d images in place after %s", len(prefetchImages), time.Since(start).Round(time.Second))
 	})
 
 	b.run(t, "install_v0.91.0", func(t *testing.T, ev *Evidence) {
