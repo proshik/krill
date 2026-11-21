@@ -99,6 +99,13 @@ FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id;
 
+-- name: ListWatchedDBInstances :many
+-- Returns ALL database servers across ALL orgs; used only by the internal health
+-- watcher. Never expose these rows in a user/org-scoped handler without
+-- re-filtering (IDOR).
+SELECT id, organization_id, name, app_name, node_hostname, status
+FROM db_instances;
+
 -- name: VolumeBackupNotifyTarget :one
 SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, (a.name || ' / ' || av.name)::text AS target_name
 FROM volume_backups vb

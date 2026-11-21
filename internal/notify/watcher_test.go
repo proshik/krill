@@ -10,6 +10,18 @@ import (
 type fakeEmitter struct {
 	down      []int64
 	recovered []int64
+
+	dbDown      []int64
+	dbDetail    []string
+	dbRecovered []int64
+}
+
+func (f *fakeEmitter) DBDown(_ context.Context, id int64, detail string) {
+	f.dbDown = append(f.dbDown, id)
+	f.dbDetail = append(f.dbDetail, detail)
+}
+func (f *fakeEmitter) DBRecovered(_ context.Context, id int64) {
+	f.dbRecovered = append(f.dbRecovered, id)
 }
 
 func (f *fakeEmitter) AppDown(_ context.Context, appID int64, _ string) {
@@ -118,7 +130,7 @@ func TestWatcherPrunesDeletedApps(t *testing.T) {
 	if len(w.state) != 1 {
 		t.Fatalf("want 1 state entry after prune, got %d", len(w.state))
 	}
-	if _, ok := w.state[6]; ok {
+	if _, ok := w.state[watchKey{id: 6}]; ok {
 		t.Fatal("deleted app 6 should be pruned from state")
 	}
 }
@@ -136,5 +148,84 @@ func TestWatcherInactiveNotAlerted(t *testing.T) {
 	w.tick(ctx)
 	if len(em.down) != 0 {
 		t.Fatalf("intentionally stopped app must not alert: %v", em.down)
+	}
+}
+
+// A database server whose node is powered off: Swarm keeps desired=1 and
+// queues a replacement task that cannot be placed (the service is pinned), so
+// nothing runs. That must alert once and recover once — before this, only
+// apps were watched and a four-hour database outage went unreported.
+func TestWatcherDatabaseServerDownAndRecovered(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Node: "node-1", Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+
+	w.tick(ctx)
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || em.dbDown[0] != 1 {
+		t.Fatalf("expected one DBDown for instance 1, got %v", em.dbDown)
+	}
+	if em.dbDetail[0] != "0/1 tasks running · node-1" {
+		t.Fatalf("detail = %q", em.dbDetail[0])
+	}
+	if len(em.down) != 0 {
+		t.Fatalf("a database server must not be reported as an app: %v", em.down)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 1 || em.dbRecovered[0] != 1 {
+		t.Fatalf("expected one DBRecovered, got %v", em.dbRecovered)
+	}
+}
+
+// App 1 and database server 1 are different services: their health states
+// must not share an entry.
+func TestWatcherAppAndDatabaseWithSameIDAreIndependent(t *testing.T) {
+	const svc = "krill-redis-cache-def456"
+	app := docker.ServiceName(1)
+	eng := &scriptEngine{states: map[string]docker.ServiceState{app: healthyState(), svc: healthyState()}}
+	st := &fakeStore{health: 1,
+		watched:    []WatchedApp{{AppID: 1, OrgID: 7, Name: "web"}},
+		watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "cache", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || len(em.down) != 0 {
+		t.Fatalf("dbDown=%v appDown=%v", em.dbDown, em.down)
+	}
+}
+
+// Stopping a server (desired 0) and moving it to another node are intentional:
+// neither alerts.
+func TestWatcherDatabaseServerIntentionalStopsAreSilent(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+
+	eng.states[svc] = docker.ServiceState{Found: true, Desired: 0}
+	w.tick(ctx)
+	w.tick(ctx)
+
+	eng.states[svc] = downState()
+	st.watchedDBs[0].Status = "migrating"
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 0 || len(em.dbRecovered) != 0 {
+		t.Fatalf("intentional stop alerted: down=%v recovered=%v", em.dbDown, em.dbRecovered)
 	}
 }

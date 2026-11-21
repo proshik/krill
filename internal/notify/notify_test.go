@@ -17,6 +17,7 @@ type fakeStore struct {
 
 	volumeBackups, bucketBackups map[int64]Target
 	watched                      []WatchedApp
+	watchedDBs                   []WatchedDB
 	health                       int
 
 	mu          sync.Mutex
@@ -123,6 +124,7 @@ func (f *fakeStore) DBInstanceTarget(_ context.Context, id int64) (Target, error
 	return f.dbTargets[id], nil
 }
 func (f *fakeStore) ListWatchedApps(_ context.Context) ([]WatchedApp, error) { return f.watched, nil }
+func (f *fakeStore) ListWatchedDBs(_ context.Context) ([]WatchedDB, error)   { return f.watchedDBs, nil }
 func (f *fakeStore) EnabledHealthChannels(_ context.Context) (int, error)    { return f.health, nil }
 
 type capturedSend struct {

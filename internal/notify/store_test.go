@@ -386,3 +386,42 @@ func TestDeploymentQueries(t *testing.T) {
 		t.Fatalf("OrgApps = %+v, %v", apps, err)
 	}
 }
+
+func TestListWatchedDBsCoversEveryOrganization(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	orgSvc := org.NewService(q)
+	ctx := context.Background()
+	var orgs []int64
+	for _, name := range []string{"wa", "wb"} {
+		o, err := orgSvc.CreateOrg(ctx, mkUser(t, q, name+"@k.local"), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		orgs = append(orgs, o.ID)
+	}
+	if _, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: orgs[0], Engine: "postgres", Name: "pg", AppName: "krill-postgres-pg-w1", Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "x", NodeHostname: "node-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: orgs[1], Engine: "redis", Name: "cache", AppName: "krill-redis-cache-w2", Image: "redis:7", Superuser: "default", SuperuserPassword: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := notify.NewDBStore(q).ListWatchedDBs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want both organizations' servers, got %+v", got)
+	}
+	byService := map[string]notify.WatchedDB{}
+	for _, w := range got {
+		byService[w.Service] = w
+	}
+	pg := byService["krill-postgres-pg-w1"]
+	if pg.OrgID != orgs[0] || pg.Name != "pg" || pg.Node != "node-1" || pg.Status != "idle" || pg.InstanceID == 0 {
+		t.Fatalf("postgres row = %+v", pg)
+	}
+	if byService["krill-redis-cache-w2"].OrgID != orgs[1] {
+		t.Fatalf("redis row = %+v", byService["krill-redis-cache-w2"])
+	}
+}

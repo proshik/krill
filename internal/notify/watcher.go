@@ -13,11 +13,20 @@ import (
 type emitter interface {
 	AppDown(ctx context.Context, appID int64, detail string)
 	AppRecovered(ctx context.Context, appID int64)
+	DBDown(ctx context.Context, instanceID int64, detail string)
+	DBRecovered(ctx context.Context, instanceID int64)
 }
 
 // stateEngine is the slice of docker.Engine the watcher needs.
 type stateEngine interface {
 	ServiceStates(ctx context.Context, names []string) (map[string]docker.ServiceState, error)
+}
+
+// watchKey identifies one watched service: apps and database servers have
+// independent id sequences.
+type watchKey struct {
+	db bool
+	id int64
 }
 
 type appHealth struct {
@@ -26,7 +35,8 @@ type appHealth struct {
 	alerted     bool
 }
 
-// Watcher polls service state and emits AppDown/AppRecovered on transitions.
+// Watcher polls service state and emits AppDown/AppRecovered (apps) and
+// DBDown/DBRecovered (database servers) on transitions.
 type Watcher struct {
 	engine   stateEngine
 	store    Store
@@ -34,7 +44,7 @@ type Watcher struct {
 	interval time.Duration
 	debounce int
 	log      *slog.Logger
-	state    map[int64]*appHealth
+	state    map[watchKey]*appHealth
 }
 
 func NewWatcher(engine stateEngine, store Store, emit emitter, interval time.Duration) *Watcher {
@@ -44,7 +54,7 @@ func NewWatcher(engine stateEngine, store Store, emit emitter, interval time.Dur
 	return &Watcher{
 		engine: engine, store: store, emit: emit,
 		interval: interval, debounce: 2, log: slog.Default(),
-		state: map[int64]*appHealth{},
+		state: map[watchKey]*appHealth{},
 	}
 }
 
@@ -77,12 +87,20 @@ func (w *Watcher) tick(ctx context.Context) {
 		w.log.Warn("notify watcher: list apps failed", "err", err)
 		return
 	}
-	if len(apps) == 0 {
+	dbs, err := w.store.ListWatchedDBs(ctx)
+	if err != nil {
+		w.log.Warn("notify watcher: list database servers failed", "err", err)
+		return
+	}
+	if len(apps) == 0 && len(dbs) == 0 {
 		return // nothing to poll — avoid a pointless full ServiceList round-trip
 	}
-	names := make([]string, 0, len(apps))
+	names := make([]string, 0, len(apps)+len(dbs))
 	for _, a := range apps {
 		names = append(names, docker.ServiceName(a.AppID))
+	}
+	for _, d := range dbs {
+		names = append(names, d.Service)
 	}
 	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -91,34 +109,69 @@ func (w *Watcher) tick(ctx context.Context) {
 		w.log.Warn("notify watcher: service states failed", "err", err)
 		return
 	}
+	live := make(map[watchKey]struct{}, len(apps)+len(dbs))
 	for _, a := range apps {
-		w.evaluate(ctx, a.AppID, states[docker.ServiceName(a.AppID)])
+		k := watchKey{id: a.AppID}
+		live[k] = struct{}{}
+		st := states[docker.ServiceName(a.AppID)]
+		switch w.evaluate(k, st) {
+		case transitionDown:
+			w.emit.AppDown(ctx, a.AppID, downDetail(st))
+		case transitionRecovered:
+			w.emit.AppRecovered(ctx, a.AppID)
+		}
 	}
-	w.pruneState(apps)
+	for _, d := range dbs {
+		k := watchKey{db: true, id: d.InstanceID}
+		live[k] = struct{}{}
+		st := states[d.Service]
+		if d.Status == "migrating" {
+			// A node move stops the server on purpose and redeploys it on the
+			// target node; that is not an outage (a failed move alerts itself).
+			st = docker.ServiceState{}
+		}
+		switch w.evaluate(k, st) {
+		case transitionDown:
+			detail := downDetail(st)
+			if d.Node != "" {
+				detail += " · " + d.Node
+			}
+			w.emit.DBDown(ctx, d.InstanceID, detail)
+		case transitionRecovered:
+			w.emit.DBRecovered(ctx, d.InstanceID)
+		}
+	}
+	w.pruneState(live)
 }
 
-// pruneState drops per-app health entries for apps no longer watched (deleted),
-// so the in-memory state map cannot grow without bound under app churn.
-func (w *Watcher) pruneState(apps []WatchedApp) {
-	if len(w.state) <= len(apps) {
+// pruneState drops health entries for services no longer watched (deleted),
+// so the in-memory state map cannot grow without bound under churn.
+func (w *Watcher) pruneState(live map[watchKey]struct{}) {
+	if len(w.state) <= len(live) {
 		return
 	}
-	live := make(map[int64]struct{}, len(apps))
-	for _, a := range apps {
-		live[a.AppID] = struct{}{}
-	}
-	for id := range w.state {
-		if _, ok := live[id]; !ok {
-			delete(w.state, id)
+	for k := range w.state {
+		if _, ok := live[k]; !ok {
+			delete(w.state, k)
 		}
 	}
 }
 
-func (w *Watcher) evaluate(ctx context.Context, appID int64, st docker.ServiceState) {
-	h := w.state[appID]
+type transition int
+
+const (
+	transitionNone transition = iota
+	transitionDown
+	transitionRecovered
+)
+
+// evaluate advances one service's health state and reports the transition to
+// announce, if any.
+func (w *Watcher) evaluate(k watchKey, st docker.ServiceState) transition {
+	h := w.state[k]
 	if h == nil {
 		h = &appHealth{}
-		w.state[appID] = h
+		w.state[k] = h
 	}
 	healthy := st.Found && st.Desired > 0 && st.Running >= st.Desired
 	down := st.Found && st.Desired > 0 && (st.Running == 0 || (st.Failed >= 3 && st.Running < st.Desired))
@@ -130,22 +183,24 @@ func (w *Watcher) evaluate(ctx context.Context, appID int64, st docker.ServiceSt
 		h.alerted = false // intentional stop → no recovery message
 	case healthy:
 		h.everHealthy = true
-		if h.alerted {
-			w.emit.AppRecovered(ctx, appID)
-		}
+		recovered := h.alerted
 		h.downStreak = 0
 		h.alerted = false
+		if recovered {
+			return transitionRecovered
+		}
 	case down:
 		if h.everHealthy {
 			h.downStreak++
 			if h.downStreak >= w.debounce && !h.alerted {
-				w.emit.AppDown(ctx, appID, downDetail(st))
 				h.alerted = true
+				return transitionDown
 			}
 		}
 	default: // partial / in transition
 		h.downStreak = 0
 	}
+	return transitionNone
 }
 
 func downDetail(st docker.ServiceState) string {

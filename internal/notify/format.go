@@ -33,6 +33,10 @@ func format(ev Event, lang string) string {
 		head = i18n.T(ctx, "tg.app_down")
 	case AppRecovered:
 		head = i18n.T(ctx, "tg.app_recovered")
+	case DBDown:
+		head = i18n.T(ctx, "tg.db_down")
+	case DBRecovered:
+		head = i18n.T(ctx, "tg.db_recovered")
 	case MigrateFailed:
 		head = i18n.T(ctx, "tg.migrate_failed")
 	case DeploySucceeded:

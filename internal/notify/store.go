@@ -48,7 +48,7 @@ func (c Channel) wants(k EventKind) bool {
 		return c.NotifyDeploySuccess
 	case BackupFailed:
 		return c.NotifyBackup
-	case AppDown, AppRecovered:
+	case AppDown, AppRecovered, DBDown, DBRecovered:
 		return c.NotifyHealth
 	case DiskHigh, DiskRecovered, MemOvercommit, StateBackupFailed:
 		return c.NotifyInfra
@@ -138,6 +138,16 @@ type WatchedApp struct {
 	Name    string
 }
 
+// WatchedDB is one database server the health watcher tracks.
+type WatchedDB struct {
+	InstanceID int64
+	OrgID      int64
+	Name       string
+	Service    string // Swarm service name (db_instances.app_name)
+	Node       string // pinned node hostname, "" = any
+	Status     string // db_instances.status
+}
+
 // Store is the read-only persistence the notify package needs.
 type Store interface {
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]Channel, error)
@@ -147,6 +157,7 @@ type Store interface {
 	BucketBackupTarget(ctx context.Context, id int64) (Target, error)
 	DBInstanceTarget(ctx context.Context, id int64) (Target, error)
 	ListWatchedApps(ctx context.Context) ([]WatchedApp, error)
+	ListWatchedDBs(ctx context.Context) ([]WatchedDB, error)
 	EnabledHealthChannels(ctx context.Context) (int, error)
 
 	// InfraChannels lists every organization's enabled channel with node-level
@@ -382,6 +393,18 @@ func (s *DBStore) ListWatchedApps(ctx context.Context) ([]WatchedApp, error) {
 	out := make([]WatchedApp, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, WatchedApp{AppID: r.AppID, OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName})
+	}
+	return out, nil
+}
+
+func (s *DBStore) ListWatchedDBs(ctx context.Context) ([]WatchedDB, error) {
+	rows, err := s.q.ListWatchedDBInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WatchedDB, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, WatchedDB{InstanceID: r.ID, OrgID: r.OrganizationID, Name: r.Name, Service: r.AppName, Node: r.NodeHostname, Status: r.Status})
 	}
 	return out, nil
 }
