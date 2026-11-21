@@ -632,7 +632,11 @@ window.krillConfirmRun = function () {
 if (!window.__krillConfirmInit) {
   window.__krillConfirmInit = true;
   document.addEventListener("close", function (e) {
-    if (e.target && e.target.id === "k-confirm") window.__krillConfirmAction = null;
+    // The close event is queued: when a confirmed action opens the dialog
+    // again right away (an unsaved-changes prompt followed by a delete
+    // confirmation), the first close arrives after the second prompt set its
+    // action and must not clear it.
+    if (e.target && e.target.id === "k-confirm" && !e.target.open) window.__krillConfirmAction = null;
   }, true);
 }
 
