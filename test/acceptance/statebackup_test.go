@@ -50,8 +50,10 @@ type sbk struct {
 		email, password, secretKey, cookie, nodeID string
 		extraEnv                                   []string // KEY=VALUE lines install.sh does not write
 	}
-	fp  map[string]accept.Fingerprint
-	ran []ranCmd
+	fp map[string]accept.Fingerprint
+	// maxDeployment is the highest deployments.id right after the A8 restore.
+	maxDeployment int64
+	ran           []ranCmd
 }
 
 type ranCmd struct{ id, how string }
@@ -100,9 +102,33 @@ const inRestoreDir = "cd " + restoreDir
 
 func (b *sbk) fingerprint(t *testing.T, ev *Evidence, name, container, user, db string) accept.Fingerprint {
 	t.Helper()
+	return b.fingerprintWith(t, ev, name, container, user, db, accept.Options{})
+}
+
+// ruleSOptions narrow rule S to what spec §8 allows after the start: the
+// status columns, the backup's run result, the network migrator's mark, and
+// in deployments (and their releases) only the rows that existed at the
+// restore; new deployments are checked on their own.
+func ruleSOptions(maxDeployment int64) accept.Options {
+	return accept.Options{
+		Ignore: map[string][]string{
+			"applications":  {"status"},
+			"db_instances":  {"status"},
+			"backups":       {"last_error", "last_run_at", "last_status"},
+			"organizations": {"network_migrated_at"},
+		},
+		Where: map[string]string{
+			"deployments":         fmt.Sprintf("id <= %d", maxDeployment),
+			"deployment_releases": fmt.Sprintf("deployment_id <= %d", maxDeployment),
+		},
+	}
+}
+
+func (b *sbk) fingerprintWith(t *testing.T, ev *Evidence, name, container, user, db string, opts accept.Options) accept.Fingerprint {
+	t.Helper()
 	tables, err := b.host.PsqlIn(b.ctx, container, user, db, accept.TablesSQL())
 	must(t, err, "listing the tables for "+name)
-	out, err := b.host.PsqlIn(b.ctx, container, user, db, accept.FingerprintSQL(strings.Fields(tables), []string{forwardTable}))
+	out, err := b.host.PsqlIn(b.ctx, container, user, db, accept.FingerprintSQL(strings.Fields(tables), []string{forwardTable}, opts))
 	must(t, err, "fingerprint "+name)
 	fp, err := accept.ParseFingerprint(out)
 	must(t, err, "parsing fingerprint "+name)
@@ -391,10 +417,11 @@ func (b *sbk) curlApp(t *testing.T, ev *Evidence) {
 
 // marker reads accept_marker as the logical database's owner over TCP with
 // its password (what an app linked to it would do).
+// The password comes from ldbPassFile on stdin, never on a command line.
 func (b *sbk) marker(t *testing.T) (string, error) {
 	c := b.serviceContainer(t, b.instApp)
-	out, err := b.vm.Sudo(b.ctx, "docker exec -e PGPASSWORD="+shQuote(b.ldbPass)+" "+c+
-		" psql -X -At -h 127.0.0.1 -U "+shQuote(b.ldbUser)+" -d appdb -c 'select v from accept_marker'")
+	out, err := b.vm.Sudo(b.ctx, "docker exec -i "+c+" sh -c 'PGPASSWORD=\"$(cat)\" psql -X -At -h 127.0.0.1 -U "+b.ldbUser+
+		" -d appdb -c \"select v from accept_marker\"' < "+ldbPassFile)
 	return strings.TrimSpace(out), err
 }
 
@@ -415,6 +442,7 @@ func (b *sbk) readLogicalDB(t *testing.T, ev *Evidence) {
 	}
 	b.ldbUser, b.ldbPass = m[1], m[2]
 	redactValue(b.ldbPass)
+	b.stageRoot(t, ev, b.writeLocal(t, "ldb.pw", b.ldbPass), ldbPassFile, "0600")
 	ev.Note("logical database user %s (password read from the page)", b.ldbUser)
 }
 
@@ -505,6 +533,7 @@ func TestStateBackupAcceptance(t *testing.T) {
 		must(t, err, "htpasswd")
 		b.stageRoot(t, ev, b.writeLocal(t, "s3.env", b.fx.S3EnvFile()), s3EnvFile, "0600")
 		b.stageRoot(t, ev, b.writeLocal(t, "registry.pw", b.fx.RegPassword), regPassFile, "0600")
+		b.stageRoot(t, ev, b.writeLocal(t, "s3-user.secret", b.fx.S3Secret), s3UserFile, "0600")
 		b.stageRoot(t, ev, b.writeLocal(t, "htpasswd", line+"\n"), regData+"/auth/htpasswd", "0644")
 		policy := filepath.Join(b.cfg.Workdir, "state-policy.json")
 		must(t, os.WriteFile(policy, []byte(StatePolicyJSON()), 0o644), "policy")
@@ -555,6 +584,7 @@ func TestStateBackupAcceptance(t *testing.T) {
 		if !strings.Contains(out, "restore OK") {
 			t.Fatalf("the restore into the throwaway container did not print restore OK")
 		}
+		t.Cleanup(func() { b.vm.Sudo(b.ctx, "docker rm -f krill-restore-test >/dev/null 2>&1 || true") })
 		obj := b.fingerprint(t, ev, "F_obj", "krill-restore-test", "postgres", "postgres")
 		b.sudo(t, ev, strings.TrimPrefix(last, "\n"))
 		b.note("test.block", "verbatim; fingerprint taken before its last line")
@@ -640,6 +670,8 @@ func TestStateBackupAcceptance(t *testing.T) {
 		b.restoreDump(t, ev, b.base)
 		restored := b.fingerprint(t, ev, "F_restored", pgContainer, "krill", "krill")
 		b.compare(t, ev, "R", b.fp["F_obj"], restored, nil, krillDB)
+		b.maxDeployment = b.id(t, "select coalesce(max(id), 0) from deployments")
+		b.fingerprintWith(t, ev, "F_restored_S", pgContainer, "krill", "krill", ruleSOptions(b.maxDeployment))
 		// Step 5, as fixed (F2/F5): pause the schedules, remove the old workers.
 		b.runbook(t, ev, "a.pause", nil, "", "")
 		b.runbook(t, ev, "a.nodes", nil, "", "")
@@ -995,7 +1027,6 @@ func (b *sbk) noLeftovers(t *testing.T, ev *Evidence) {
 }
 
 func (b *sbk) recoverWorkloads(t *testing.T, ev *Evidence) {
-	deploysBefore := b.id(t, "select count(*) from deployments")
 	// Redeploy the database instance.
 	b.post(t, ev, fmt.Sprintf("%s/db-servers/%d/deploy", b.orgPath(), b.inst), url.Values{})
 	b.waitInstance(t, ev)
@@ -1044,12 +1075,18 @@ func (b *sbk) recoverWorkloads(t *testing.T, ev *Evidence) {
 		t.Fatalf("the new object does not verify")
 	}
 	b.keyOut(t, ev)
-	if n := b.id(t, "select count(*) from deployments") - deploysBefore; n != 1 {
-		t.Fatalf("%d new deployments, want 1 (the app's redeploy)", n)
+	if v := b.q(t, fmt.Sprintf("select count(*)||'|'||coalesce(bool_and(status = 'done'), false)::text from deployments where id > %d", b.maxDeployment)); v != "1|true" {
+		t.Fatalf("new deployments since the restore (count|all done): %s, want 1|true (the app's redeploy)", v)
 	}
-	post := b.fingerprint(t, ev, "F_post", pgContainer, "krill", "krill")
-	allow := allowTables("deployments", "deployment_releases", "applications", "db_instances", "backups", "state_backup_runs",
-		"organizations", "schema_migrations", forwardTable)
-	allow["schema"] = false // the forward table is left out of the schema hash, so nothing else may change
-	b.compare(t, ev, "S", b.fp["F_restored"], post, allow, krillDB)
+	if v := b.q(t, "select count(*)||'|'||coalesce(bool_and(trigger = 'manual' and status = 'ok'), false)::text from state_backup_runs"); v != "1|true" {
+		t.Fatalf("state backup runs since the restore: %s, want 1|true", v)
+	}
+	post := b.fingerprintWith(t, ev, "F_post_S", pgContainer, "krill", "krill", ruleSOptions(b.maxDeployment))
+	// Changes outside these fail: the new state backup run, the forward
+	// migration (its table and the schema_migrations row, whose version A9
+	// checked), the new deployment's sequence, and the sampler's tables. The
+	// forward table is left out of the schema hash, so the schema must match.
+	allow := allowTables("state_backup_runs", "schema_migrations", forwardTable)
+	allow["sequence:deployments_id_seq"] = true
+	b.compare(t, ev, "S", b.fp["F_restored_S"], post, allow, krillDB)
 }

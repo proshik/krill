@@ -28,6 +28,8 @@ const (
 	regContainer  = "accept-registry"
 	regData       = "/srv/accept-registry"
 	regPassFile   = "/root/accept-registry.pw"
+	s3UserFile    = "/root/accept-s3-user.secret"
+	ldbPassFile   = "/root/accept-ldb.pw"
 	registryImage = "registry:2.8.3"
 	registryHost  = "127.0.0.1:5000"
 	appRepo       = registryHost + "/accept/web"
@@ -89,12 +91,13 @@ func StatePolicyJSON() string {
 
 // removeFixturesScript removes both services, their data and the restore
 // directory (idempotent).
-const removeFixturesScript = "docker rm -f " + s3Container + " " + regContainer + " >/dev/null 2>&1 || true\n" +
-	"rm -rf " + s3Data + " " + regData + " " + s3EnvFile + " " + regPassFile + " " + restoreDir
+const removeFixturesScript = "docker rm -f " + s3Container + " " + regContainer + " krill-restore-test >/dev/null 2>&1 || true\n" +
+	"rm -rf " + s3Data + " " + regData + " " + s3EnvFile + " " + regPassFile + " " + s3UserFile + " " + ldbPassFile + " " + restoreDir +
+	" /root/accept-env-edit.sh"
 
 // StartScript starts MinIO and the registry from files already staged as
-// root (s3EnvFile, regPassFile, <regData>/auth/htpasswd, /tmp/krill-accept/
-// state-policy.json), creates the buckets, the policy and the restricted
+// root (s3EnvFile, regPassFile, s3UserFile, <regData>/auth/htpasswd,
+// /tmp/krill-accept/state-policy.json), creates the buckets, the policy and the restricted
 // user, and pushes the app image into the registry.
 func (f Fixtures) StartScript() string {
 	return strings.Join([]string{
@@ -107,7 +110,9 @@ func (f Fixtures) StartScript() string {
 		"docker exec " + s3Container + " mc mb --ignore-existing s3/" + stateBucket + " s3/" + appBucket,
 		"docker exec -i " + s3Container + " sh -c 'cat > /tmp/state-policy.json' < /tmp/krill-accept/state-policy.json",
 		"docker exec " + s3Container + " mc admin policy create s3 " + statePolicy + " /tmp/state-policy.json",
-		"docker exec " + s3Container + " mc admin user add s3 " + f.S3User + " " + shQuote(f.S3Secret),
+		// The secret goes in through a file, never on a command line here.
+		"docker exec -i " + s3Container + " sh -c 'cat > /tmp/user.secret' < " + s3UserFile,
+		"docker exec " + s3Container + " sh -c 'mc admin user add s3 " + f.S3User + " \"$(cat /tmp/user.secret)\"; rc=$?; rm -f /tmp/user.secret; exit $rc'",
 		"docker exec " + s3Container + " mc admin policy attach s3 " + statePolicy + " --user " + f.S3User,
 		"docker run -d --name " + regContainer + " --restart unless-stopped -p 127.0.0.1:5000:5000" +
 			" -v " + regData + "/data:/var/lib/registry -v " + regData + "/auth:/auth" +

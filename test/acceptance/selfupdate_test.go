@@ -91,7 +91,8 @@ func (s *suite) run(t *testing.T, name string, fn func(t *testing.T, ev *Evidenc
 func must(t *testing.T, err error, what string) {
 	t.Helper()
 	if err != nil {
-		t.Fatalf("%s: %v", what, err)
+		// what is often a whole command, which may carry a secret.
+		t.Fatalf("%s: %v", redact(what), err)
 	}
 }
 
