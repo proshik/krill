@@ -138,7 +138,8 @@ it builds five throwaway releases of the current `HEAD` (`v0.90.0`–`v0.90.4`, 
 migrations, a crash right after migrating, a 45-second migration and a failing one), installs
 `v0.90.0` with `install.sh` into a disposable [Lima](https://lima-vm.io) VM (Ubuntu 24.04,
 4 CPUs, 6 GiB), and drives the Updates page over a port forward to `127.0.0.1:28080`. The
-tests carry the `acceptance` build tag and do nothing unless `KRILL_ACCEPT=1`, so `make test`
+variants' migrations are numbered after the last migration in `HEAD`, so they never collide
+with ones the branch gains. The tests carry the `acceptance` build tag and do nothing unless `KRILL_ACCEPT=1`, so `make test`
 never runs them.
 
 Prerequisites: `limactl` 2.x, Go, and for the full run the `gh` CLI signed in with write access
@@ -167,6 +168,44 @@ and `report.md` with the evidence of every step). The VM is deleted at the end u
 (`limactl shell krill-accept`). Each run starts from a fresh install inside the VM, so a kept
 VM can be reused. Delete it with `limactl delete --force krill-accept`.
 
+### State-backup acceptance
+
+`TestStateBackupAcceptance` (same package, same prerequisites) runs the state-restore runbooks of
+[`docs/install.md`](install.md#restore-krills-state-from-a-backup) with their own commands, on a
+disposable Lima VM of its own (`krill-accept-sbk`, port `28081`):
+
+- it installs a throwaway `v0.91.0`, populates it through the UI (an organization, an image app
+  from a password-protected registry with a domain and environment variables, a Telegram channel,
+  a Postgres server with a logical database and its backup), configures **Settings → Krill
+  backups** against a MinIO inside the VM and presses **Back up now**;
+- it restores that object into a throwaway container ("Test a restore regularly"), wipes
+  everything Krill installed ("Uninstall", the swarm, every volume), reinstalls a newer
+  `v0.91.1` and follows runbook A to the recovered workloads;
+- it updates to a `v0.91.2` whose migration fails and follows runbook B from the pre-update
+  snapshot.
+
+Each restore is checked by a fingerprint of Krill's database (row counts and hashes per table,
+the sequences, the schema; `sessions` and `metric_samples` are left out, as the backup leaves
+out their data). The commands the test runs are listed in `test/acceptance/accept/runbook.go`,
+and a unit test in `make test` fails when `docs/install.md` and that list disagree.
+
+```sh
+make acceptance-statebackup
+```
+
+Scenario A writes nothing to GitHub; scenario B publishes `v0.91.0`–`v0.91.2` to the same test
+repository and moves its "latest" release, so **do not run it at the same time as
+`make acceptance-selfupdate`**. It needs no `age` on the Mac (the key is generated in Go; the VM
+gets the `age` package). It takes about ten minutes on a kept VM whose image cache is warm. Before
+`install.sh` it points the VM's Docker at the `mirror.gcr.io` pull-through mirror and pulls every
+image the run needs, restarting dockerd when a pull stalls for five minutes: Docker Hub's CDN has
+been seen to stall a download for over an hour. That is the test environment only; the installed
+Krill is unchanged. Its
+workdir is `.superpowers/acceptance-statebackup` (`report.md` with the evidence and a summary of
+every runbook command, `test.log`, the key and the backup object); a last step fails the run if
+any secret the harness knows of shows up in either file. `KRILL_ACCEPT_KEEP_VM=1` and the other
+settings work as above.
+
 ## Make targets
 
 | Target | What it does |
@@ -179,6 +218,7 @@ VM can be reused. Delete it with `limactl delete --force krill-accept`.
 | `make test-integration` | Tests tagged `integration`. |
 | `make acceptance-vm-smoke` | Self-update acceptance, VM part only (see above). |
 | `make acceptance-selfupdate` | Full self-update acceptance; publishes test releases. |
+| `make acceptance-statebackup` | State-restore runbooks on a VM; scenario B publishes test releases. |
 | `make css` / `make css-watch` | Rebuild CSS once / on change. |
 | `make db-up` / `make db-down` | Start / stop the development Postgres. |
 | `make tidy` | `go mod tidy`. |

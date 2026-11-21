@@ -28,6 +28,26 @@ type Client struct {
 }
 
 // NewClient returns a client for http://127.0.0.1:<hostPort>.
+// NewClientWithCookie returns a client whose jar already holds the cookie
+// name=value for the base URL (an old session, replayed).
+func NewClientWithCookie(t testing.TB, hostPort int, name, value string) *Client {
+	c := NewClient(t, hostPort)
+	u, _ := url.Parse(c.base)
+	c.http.Jar.SetCookies(u, []*http.Cookie{{Name: name, Value: value, Path: "/"}})
+	return c
+}
+
+// Cookie returns the value of the named cookie for the base URL, "" if none.
+func (c *Client) Cookie(name string) string {
+	u, _ := url.Parse(c.base)
+	for _, ck := range c.http.Jar.Cookies(u) {
+		if ck.Name == name {
+			return ck.Value
+		}
+	}
+	return ""
+}
+
 func NewClient(t testing.TB, hostPort int) *Client {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -105,7 +125,7 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, h
 // Get fetches path.
 func (c *Client) Get(ctx context.Context, path string) (Response, error) {
 	resp, err := c.do(ctx, http.MethodGet, path, nil, nil)
-	c.t.Logf("GET %s -> %d %s (err=%v)", path, resp.Status, resp.URL, err)
+	logf(c.t, "GET %s -> %d %s (err=%v)", path, resp.Status, resp.URL, err)
 	return resp, err
 }
 
@@ -119,14 +139,14 @@ func (c *Client) Post(ctx context.Context, path, referer string, form url.Values
 		hdr["Referer"] = c.base + referer
 	}
 	resp, err := c.do(ctx, http.MethodPost, path, form, hdr)
-	c.t.Logf("POST %s %v -> %d %s (err=%v)", path, redactForm(form), resp.Status, resp.URL, err)
+	logf(c.t, "POST %s %v -> %d %s (err=%v)", path, redactForm(form), resp.Status, resp.URL, err)
 	return resp, err
 }
 
 func redactForm(f url.Values) url.Values {
 	out := url.Values{}
 	for k, v := range f {
-		if k == "password" {
+		if k == "password" || k == "secret_key" || k == "bot_token" || k == "key" {
 			out[k] = []string{"***"}
 			continue
 		}
@@ -210,7 +230,7 @@ func (c *Client) WaitServing(ctx context.Context, timeout time.Duration) (sawSta
 		cancel()
 		switch {
 		case rerr == nil && status == http.StatusOK:
-			c.t.Logf("serving (last non-ready state: %s, starting page seen: %v)", last, sawStarting)
+			logf(c.t, "serving (last non-ready state: %s, starting page seen: %v)", last, sawStarting)
 			return sawStarting, nil
 		case rerr == nil && status == http.StatusServiceUnavailable:
 			sawStarting = true
@@ -244,7 +264,7 @@ func (c *Client) WaitAvailable(ctx context.Context, orgID int64, tag string, tim
 			if strings.Contains(resp.Text(), want) {
 				return resp, nil
 			}
-			c.t.Logf("waiting for %q; page says: %s", want, bounded(resp.Text(), 600))
+			logf(c.t, "waiting for %q; page says: %s", want, bounded(resp.Text(), 600))
 		}
 		if time.Now().After(deadline) {
 			if err == nil {

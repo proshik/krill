@@ -21,11 +21,15 @@ age-keygen -o krill-backup-key.txt
 
 The command prints `Public key: age1…`. Paste that value into the page. Keep
 `krill-backup-key.txt` (the private key) somewhere other than the Krill server, together with
-your `KRILL_SECRET_KEY`. Krill never stores either of them, and the backups do not contain them:
+your `KRILL_SECRET_KEY` and a copy of `/etc/krill/krill.env`. Krill never stores the first two,
+and the backups contain none of them:
 
 - Without the private key a backup cannot be read.
 - Without `KRILL_SECRET_KEY` a restore brings back everything except the encrypted secrets
   (database passwords, credentials, SSH keys, bot tokens).
+- Without the copy of `krill.env` a restore on a new host loses the settings you changed there
+  (see [runbook A](../install.md#a-lost-host-new-host)). It holds `KRILL_SECRET_KEY` and the admin
+  password, so store it like the private key.
 
 Only X25519 recipients (`age1…`) are accepted. If `KRILL_SECRET_KEY` is empty, stored secrets
 are plain text in the database and so inside every backup (still age-encrypted).

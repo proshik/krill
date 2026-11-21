@@ -1,12 +1,16 @@
 //go:build acceptance
 
-// Package acceptance is the live acceptance harness for Krill's self-update:
-// it builds throwaway release variants of the current branch, installs Krill
-// into a disposable Lima VM with install.sh and drives Settings -> Updates
-// over HTTP, asserting on the VM's real systemd, binary and schema state.
+// Package acceptance is the live acceptance harness: it builds throwaway
+// release variants of the current branch, installs Krill into a disposable
+// Lima VM with install.sh and drives the UI over HTTP, asserting on the VM's
+// real systemd, binary and schema state. TestSelfUpdateAcceptance (and its
+// TestVMSmoke) proves Settings -> Updates; TestStateBackupAcceptance proves
+// the state-restore runbooks of docs/install.md. The pure helpers live in the
+// untagged package accept, whose unit tests run in `make test`.
 //
 // Nothing here runs unless KRILL_ACCEPT=1 and the build tag `acceptance` is
-// set; see docs/development.md ("Self-update acceptance").
+// set; see docs/development.md ("Self-update acceptance", "State-backup
+// acceptance").
 package acceptance
 
 import (
@@ -41,22 +45,38 @@ type Config struct {
 	RepoRoot string
 }
 
-// LoadConfig reads the harness settings from the environment, applies the
-// defaults and creates the workdir.
-func LoadConfig() (Config, error) {
+// Defaults are a test's own values for the settings it does not share: two
+// tests never reset each other's kept VM or mix their reports.
+type Defaults struct {
+	VM, HostPort, Workdir string // Workdir relative to the repository root
+}
+
+var (
+	// SelfUpdateDefaults are TestSelfUpdateAcceptance's and TestVMSmoke's.
+	SelfUpdateDefaults = Defaults{VM: "krill-accept", HostPort: "28080", Workdir: filepath.Join(".superpowers", "acceptance")}
+	// StateBackupDefaults are TestStateBackupAcceptance's.
+	StateBackupDefaults = Defaults{VM: "krill-accept-sbk", HostPort: "28081", Workdir: filepath.Join(".superpowers", "acceptance-statebackup")}
+)
+
+// LoadConfig is LoadConfigFor(SelfUpdateDefaults).
+func LoadConfig() (Config, error) { return LoadConfigFor(SelfUpdateDefaults) }
+
+// LoadConfigFor reads the harness settings from the environment, applies d
+// for the unset ones and creates the workdir.
+func LoadConfigFor(d Defaults) (Config, error) {
 	root, err := repoRoot()
 	if err != nil {
 		return Config{}, err
 	}
 	cfg := Config{
-		VM:       envOr("KRILL_ACCEPT_VM", "krill-accept"),
+		VM:       envOr("KRILL_ACCEPT_VM", d.VM),
 		Repo:     envOr("KRILL_ACCEPT_REPO", "proshik/krill-update-e2e"),
 		KeepVM:   os.Getenv("KRILL_ACCEPT_KEEP_VM") == "1",
-		Workdir:  envOr("KRILL_ACCEPT_WORKDIR", filepath.Join(root, ".superpowers", "acceptance")),
+		Workdir:  envOr("KRILL_ACCEPT_WORKDIR", filepath.Join(root, d.Workdir)),
 		Arch:     envOr("KRILL_ACCEPT_ARCH", "arm64"),
 		RepoRoot: root,
 	}
-	port, err := strconv.Atoi(envOr("KRILL_ACCEPT_HOST_PORT", "28080"))
+	port, err := strconv.Atoi(envOr("KRILL_ACCEPT_HOST_PORT", d.HostPort))
 	if err != nil || port < 1024 || port > 65535 {
 		return Config{}, fmt.Errorf("KRILL_ACCEPT_HOST_PORT: want a port in 1024..65535, got %q", os.Getenv("KRILL_ACCEPT_HOST_PORT"))
 	}
