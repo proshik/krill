@@ -92,6 +92,13 @@ const jobTimeout = 10 * time.Minute // a build can take longer than a pull
 var (
 	convergeTimeout      = 180 * time.Second
 	convergePollInterval = 1 * time.Second
+
+	// settleTimeout is how long a deploy still starting after convergeTimeout
+	// keeps being watched in the background (a large image pull can take
+	// minutes) before it is recorded as a convergence timeout. The build
+	// worker is not held meanwhile.
+	settleTimeout      = 20 * time.Minute
+	settlePollInterval = 5 * time.Second
 )
 
 // SetConvergeTimeout overrides the deploy convergence deadline (wired from
@@ -150,6 +157,7 @@ type Deployer struct {
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
 	runCancel context.CancelFunc // cancels the in-flight job's context on Stop
+	runCtx    context.Context    // parent of background settles; canceled by Stop
 
 	defaultMemBytes int64 // instance-wide default memory limit, 0 = none
 	defaultNanoCPUs int64 // instance-wide default CPU limit, 0 = none
@@ -213,6 +221,7 @@ func (d *Deployer) Start(ctx context.Context) {
 	// of running to its full timeout during graceful shutdown.
 	runCtx, runCancel := context.WithCancel(ctx)
 	d.runCancel = runCancel
+	d.runCtx = runCtx
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
@@ -620,7 +629,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			err = d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes)
 		}
 	}
-	complete := func() {
+	complete := func(ctx context.Context) {
 		if releaseSaved {
 			var restore *RuntimeSettings
 			if expected != nil {
@@ -746,7 +755,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		break
 	}
 	if converged {
-		complete()
+		complete(ctx)
 		return
 	}
 	if rolledBack {
@@ -761,36 +770,48 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	}
 	// Not converged within the window. Tell "still starting" and "shutting down"
 	// apart from a genuine failure so a slow-but-healthy app is not recorded as
-	// an error (the live status poll reconciles it to running).
-	if ctx.Err() != nil {
+	// an error.
+	if ctx.Err() != nil && d.stopping() {
 		fmt.Fprintf(out, "⚠ deploy interrupted (server shutting down)\n")
 		if j.rollbackID != 0 {
 			d.finish(ctx, deployID, app.ID, StatusError, imageTag, "rollback interrupted before confirmation")
 		} else {
-			d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "interrupted")
+			d.finishInterrupted(deployID, app.ID, imageTag)
 		}
 		return
 	}
 	fctx, fcancel := context.WithTimeout(context.Background(), 5*time.Second)
 	st, serr := d.engine.ServiceProgress(fctx, docker.ServiceName(app.ID), baseline)
 	fcancel()
+	// The job's own deadline may be what ended the wait: confirming a release
+	// that converged at this last look needs a live context.
+	confirmCtx := ctx
+	if ctx.Err() != nil {
+		c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		confirmCtx = c
+	}
 	switch {
 	case serr == nil && st.Found && strings.HasPrefix(st.UpdateState, "rollback"):
 		fmt.Fprintf(out, "❌ rolling update failed — swarm rolled back to the previous version\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "update rolled back")
 	case serr == nil && st.Found && st.Desired > 0 && st.Running >= st.Desired && (st.UpdateState == "" || st.UpdateState == "completed"):
-		complete()
+		complete(confirmCtx)
 	case serr == nil && st.Found && st.Failed > 0 && st.Running < st.Desired:
 		fmt.Fprintf(out, "❌ service has failed tasks (crash-looping) — check the image, command and env\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
-	case serr == nil && st.Found && (st.Running > 0 || st.UpdateState == "updating"):
-		// A new task exists but is not ready yet, or the rolling update is still
-		// in flight — leave the app "deploying"; the live poll reconciles it.
-		fmt.Fprintf(out, "⚠ service still starting after %s — continuing in the background\n", timeout)
+	case serr == nil && st.Found && (st.Running > 0 || st.UpdateState == "updating" || ctx.Err() != nil):
+		// A new task exists but is not ready yet, the rolling update is still in
+		// flight, or the job's own deadline ran out while waiting. The
+		// deployment stays running and is watched in the background until Swarm
+		// actually finishes — recording it done now would claim a release that
+		// may still be pulling its image.
 		if j.rollbackID != 0 {
+			fmt.Fprintf(out, "⚠ service still starting after %s\n", timeout)
 			d.finish(ctx, deployID, app.ID, StatusError, imageTag, "rollback did not settle before deadline")
 		} else {
-			d.finish(ctx, deployID, app.ID, StatusDeploying, imageTag, "")
+			fmt.Fprintf(out, "⚠ service still starting after %s — still waiting, up to %s more\n", timeout, settleTimeout)
+			d.startSettle(deployID, app.ID, imageTag, docker.ServiceName(app.ID), baseline, timeout, out, complete)
 		}
 	default:
 		fmt.Fprintf(out, "❌ service did not become healthy in time\n")
@@ -798,17 +819,87 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	}
 }
 
+func (d *Deployer) stopping() bool {
+	select {
+	case <-d.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// startSettle keeps watching a deploy that had not converged by its deadline,
+// off the build worker, and records the real outcome: done once Swarm reports
+// the update completed with every task running, error on a rollback, a crash
+// loop or settleTimeout. The deployment stays running meanwhile, so the app
+// takes no other deploy until this one is decided.
+func (d *Deployer) startSettle(deployID, appID int64, imageTag, service string, baseline []string, waited time.Duration, out io.Writer, complete func(context.Context)) {
+	parent := d.runCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		ctx, cancel := context.WithTimeout(parent, settleTimeout)
+		defer cancel()
+		started := time.Now()
+		for {
+			st, err := d.engine.ServiceProgress(ctx, service, baseline)
+			switch {
+			case err != nil:
+				// Transient (a manager hiccup): keep polling until the deadline.
+			case st.Found && strings.HasPrefix(st.UpdateState, "rollback"):
+				fmt.Fprintf(out, "❌ rolling update failed — swarm rolled back to the previous version\n")
+				d.finish(ctx, deployID, appID, StatusError, imageTag, "update rolled back")
+				return
+			case st.Found && st.Desired > 0 && st.Running >= st.Desired && (st.UpdateState == "" || st.UpdateState == "completed"):
+				fmt.Fprintf(out, "→ service converged after %s\n", (waited + time.Since(started)).Round(time.Second))
+				complete(ctx)
+				return
+			case st.Found && st.Failed >= 3 && st.Running < st.Desired:
+				fmt.Fprintf(out, "❌ service is crash-looping (tasks keep failing) — check the image, command and env\n")
+				d.finish(ctx, deployID, appID, StatusError, imageTag, "service crash-looping")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				if d.stopping() {
+					fmt.Fprintf(out, "⚠ deploy interrupted (server shutting down)\n")
+					d.finishInterrupted(deployID, appID, imageTag)
+					return
+				}
+				total := (waited + settleTimeout).Round(time.Second)
+				fmt.Fprintf(out, "❌ service did not converge within %s — Swarm may still finish it; check the app's tasks\n", total)
+				d.finish(ctx, deployID, appID, StatusError, imageTag, "timed out waiting for the service to converge")
+				return
+			case <-time.After(settlePollInterval):
+			}
+		}
+	}()
+}
+
+// finishInterrupted records a deploy that Krill stopped waiting for because it
+// is shutting down: the deployment failed (its outcome is unknown), while the
+// app is left deploying for the live status poll to reconcile after restart.
+func (d *Deployer) finishInterrupted(deployID, appID int64, imageTag string) {
+	d.finishAs(deployID, appID, "error", StatusDeploying, imageTag, "interrupted: krill stopped before the service converged")
+}
+
 // finish closes the log hub, saves the log to deployments, and updates statuses.
-func (d *Deployer) finish(ctx context.Context, deployID, appID int64, status, imageTag, errMsg string) {
-	full := d.hub.Close(deployID)
+func (d *Deployer) finish(_ context.Context, deployID, appID int64, status, imageTag, errMsg string) {
 	depStatus := "done"
 	if status == StatusError {
 		depStatus = "error"
 	}
-	// Use the caller's status directly so a "still starting" deploy can land the
-	// app in StatusDeploying (the live /status poll reconciles it to running)
-	// instead of being forced to running or error.
-	appStatus := status
+	d.finishAs(deployID, appID, depStatus, status, imageTag, errMsg)
+}
+
+// finishAs records a deployment's outcome (depStatus: done or error) and the
+// app's status separately.
+func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTag, errMsg string) {
+	full := d.hub.Close(deployID)
+	status := appStatus
 	// Detached context: persist the final status even if the job ctx was canceled
 	// (graceful shutdown), so deployments don't get stuck as running/deploying.
 	wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -267,6 +268,7 @@ func (b *mockBuilder) Build(_ context.Context, req builder.BuildRequest, out io.
 func (b *mockBuilder) wasCalled() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.called }
 
 type fakeStore struct {
+	depErr  map[int64]string // deployment id -> recorded error message
 	mu      sync.Mutex
 	app     App
 	status  map[int64]string
@@ -355,8 +357,13 @@ func (f *fakeStore) FinishDeployment(_ context.Context, deployID int64, status, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deploys[deployID] = status
+	if f.depErr == nil {
+		f.depErr = map[int64]string{}
+	}
+	f.depErr[deployID] = errMsg
 	return nil
 }
+func (f *fakeStore) depError(id int64) string { f.mu.Lock(); defer f.mu.Unlock(); return f.depErr[id] }
 func (f *fakeStore) deploymentCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -625,14 +632,24 @@ func TestBuildSpecCommandArgs(t *testing.T) {
 	}
 }
 
-// A service that is partially up at the deadline (e.g. a slow JVM still warming
-// up) must NOT be recorded as a hard error — it should land as "deploying" so
-// the live status poll reconciles it to running.
-func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
-	oldT, oldP := convergeTimeout, convergePollInterval
-	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
-	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
+func (m *mockEngine) setPartial(v bool) { m.mu.Lock(); m.partialRunning = v; m.mu.Unlock() }
 
+func shortSettle(t *testing.T, settle time.Duration) {
+	t.Helper()
+	oldT, oldP, oldS, oldSP := convergeTimeout, convergePollInterval, settleTimeout, settlePollInterval
+	convergeTimeout, convergePollInterval = 100*time.Millisecond, 10*time.Millisecond
+	settleTimeout, settlePollInterval = settle, 10*time.Millisecond
+	t.Cleanup(func() {
+		convergeTimeout, convergePollInterval, settleTimeout, settlePollInterval = oldT, oldP, oldS, oldSP
+	})
+}
+
+// A service still starting at the deadline (a large image still pulling) is
+// not done: the deployment stays running until Swarm actually converges, and
+// only then becomes done with the app running. Before the fix it was recorded
+// done at the deadline while the old version was still serving.
+func TestDeploySlowStartStaysRunningUntilConverged(t *testing.T) {
+	shortSettle(t, 5*time.Second)
 	eng := &mockEngine{partialRunning: true}
 	st := newFakeStore(imageApp())
 	d := newDeployer(eng, &mockBuilder{}, st)
@@ -640,9 +657,70 @@ func TestDeploySlowStartMarksDeployingNotError(t *testing.T) {
 	defer d.Stop()
 
 	id := d.Enqueue(1, "manual")
-	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	time.Sleep(400 * time.Millisecond) // well past convergeTimeout
+	if got := st.depStatus(id); got == "done" || got == "error" {
+		t.Fatalf("deployment status past the deadline = %q, want still in progress (not converged yet)", got)
+	}
 	if got := st.appStatus(1); got != StatusDeploying {
-		t.Errorf("app status = %q, want %q (slow start, not error)", got, StatusDeploying)
+		t.Fatalf("app status = %q, want %q", got, StatusDeploying)
+	}
+	if again := d.Enqueue(1, "manual"); again != 0 {
+		t.Fatalf("a second deploy was accepted while the first is still converging")
+	}
+	eng.setPartial(false)
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	if got := st.appStatus(1); got != StatusRunning {
+		t.Fatalf("app status after convergence = %q, want running", got)
+	}
+}
+
+// A service that never converges, even in the background, is a failed deploy
+// that says it timed out waiting — not a success and not a silent "done".
+func TestDeploySlowStartTimesOutHonestly(t *testing.T) {
+	shortSettle(t, 300*time.Millisecond)
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	waitFor(t, func() bool { return st.depStatus(id) != "running" && st.depStatus(id) != "" })
+	if got := st.depStatus(id); got != "error" {
+		t.Fatalf("deployment status = %q, want error", got)
+	}
+	if got := st.depError(id); got != "timed out waiting for the service to converge" {
+		t.Fatalf("error message = %q", got)
+	}
+}
+
+// Stopping Krill while a deploy settles in the background must not hang Stop
+// and must not leave the deployment looking finished: it is recorded as
+// interrupted (error), the app left deploying for the status poll.
+func TestStopDuringSettleRecordsInterrupted(t *testing.T) {
+	shortSettle(t, time.Minute)
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+
+	id := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	done := make(chan struct{})
+	go func() { d.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop hung on a settling deploy")
+	}
+	if got := st.depStatus(id); got != "error" {
+		t.Fatalf("deployment status = %q, want error", got)
+	}
+	if got := st.depError(id); !strings.Contains(got, "interrupted") {
+		t.Fatalf("error message = %q, want interrupted", got)
+	}
+	if got := st.appStatus(1); got != StatusDeploying {
+		t.Fatalf("app status = %q, want deploying", got)
 	}
 }
 
@@ -731,13 +809,10 @@ func TestDeployRollbackMarksError(t *testing.T) {
 
 // During a StartFirst rolling update only the OLD task is running until the
 // new one becomes ready. The deploy must NOT be declared converged on that old
-// task (the pre-fix behavior): it should land as "deploying" via the
-// still-starting path, never as an instant success.
+// task (the pre-fix behavior): it keeps waiting via the still-starting path,
+// never an instant success.
 func TestDeployUpdateDoesNotConvergeOnOldTask(t *testing.T) {
-	oldT, oldP := convergeTimeout, convergePollInterval
-	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
-	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
-
+	shortSettle(t, time.Minute)
 	eng := &mockEngine{updateInProgress: true}
 	st := newFakeStore(imageApp())
 	d := newDeployer(eng, &mockBuilder{}, st)
@@ -745,7 +820,10 @@ func TestDeployUpdateDoesNotConvergeOnOldTask(t *testing.T) {
 	defer d.Stop()
 
 	id := d.Enqueue(1, "manual")
-	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+	time.Sleep(400 * time.Millisecond)
+	if got := st.depStatus(id); got == "done" || got == "error" {
+		t.Fatalf("deployment status = %q, want still in progress", got)
+	}
 	if got := st.appStatus(1); got != StatusDeploying {
 		t.Errorf("app status = %q, want %q (update in flight must not read as converged)", got, StatusDeploying)
 	}

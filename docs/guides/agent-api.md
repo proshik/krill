@@ -83,7 +83,11 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `POST /api/v1/apps/{app}/env` | write | `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, the rest untouched. The value must be a single line (base64-encode a PEM key or JSON). |
 
 Deploys are **asynchronous**: `deploy` and `rebuild` return a `deployment_id` at once, and the
-caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. An env
+caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. `done`
+means Swarm finished the rolling update with the new tasks running; a deploy whose image is
+still pulling stays `running` (its log says it is still waiting) for up to
+`KRILL_CONVERGE_TIMEOUT` + 20 minutes, then fails with `timed out waiting for the service to
+converge`. An env
 edit changes the app's configuration but restarts nothing; it takes effect on the next deploy.
 
 ## Notes
