@@ -318,12 +318,13 @@ a password file readable only by you instead, and run the same `psql` command wi
 `/etc/krill/krill.env` (the path is its database; `<db>` and `<owner>` below mean those values,
 not necessarily `krill`) and use them in every command, including the checks:
 
-```sh
+```bash
 export PGHOST=db.example.com PGPORT=5432 PGUSER=<owner> PGSSLMODE=verify-full
 export PGPASSFILE="$HOME/.krill-pgpass"
-# Type the password at the silent prompt; it never appears on a command line or in shell history.
-# In a password file, write \ for a backslash and \: for a colon in the password.
+# Type the password at the silent prompt (in bash); it never appears on a command line or in shell history.
+# libpq's password file needs \\ for a backslash and \: for a colon, so escape them first.
 ( umask 077; read -rs -p 'Database password: ' PW && echo \
+  && PW=$(printf '%s' "$PW" | sed 's/[\\:]/\\&/g') \
   && printf '%s:%s:*:%s:%s\n' "$PGHOST" "$PGPORT" "$PGUSER" "$PW" > "$PGPASSFILE" ); unset PW
 ```
 
