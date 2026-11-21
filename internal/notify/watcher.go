@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 // emitter receives health transitions (implemented by *Service).
@@ -45,6 +46,10 @@ type Watcher struct {
 	debounce int
 	log      *slog.Logger
 	state    map[watchKey]*appHealth
+	// primed is set after the first full pass. Database servers recorded as
+	// running are taken as healthy before it, so an outage already in
+	// progress when Krill (re)starts is still reported.
+	primed bool
 }
 
 func NewWatcher(engine stateEngine, store Store, emit emitter, interval time.Duration) *Watcher {
@@ -93,7 +98,8 @@ func (w *Watcher) tick(ctx context.Context) {
 		return
 	}
 	if len(apps) == 0 && len(dbs) == 0 {
-		return // nothing to poll — avoid a pointless full ServiceList round-trip
+		w.primed = true // anything created from now on is not primed
+		return          // nothing to poll — avoid a pointless full ServiceList round-trip
 	}
 	names := make([]string, 0, len(apps)+len(dbs))
 	for _, a := range apps {
@@ -109,6 +115,8 @@ func (w *Watcher) tick(ctx context.Context) {
 		w.log.Warn("notify watcher: service states failed", "err", err)
 		return
 	}
+	// The first pass that actually evaluates ends the startup window.
+	defer func() { w.primed = true }()
 	live := make(map[watchKey]struct{}, len(apps)+len(dbs))
 	for _, a := range apps {
 		k := watchKey{id: a.AppID}
@@ -125,10 +133,14 @@ func (w *Watcher) tick(ctx context.Context) {
 		k := watchKey{db: true, id: d.InstanceID}
 		live[k] = struct{}{}
 		st := states[d.Service]
-		if d.Status == "migrating" {
-			// A node move stops the server on purpose and redeploys it on the
-			// target node; that is not an outage (a failed move alerts itself).
+		if d.Status == "migrating" || oplock.Held(oplock.DBInstance(d.Service)) {
+			// A node move, a deploy or another operation holding the server
+			// stops or restarts it on purpose; that is not an outage (a failed
+			// move or deploy alerts itself).
 			st = docker.ServiceState{}
+		}
+		if _, seen := w.state[k]; !seen && !w.primed && d.Status == "running" {
+			w.state[k] = &appHealth{everHealthy: true}
 		}
 		switch w.evaluate(k, st) {
 		case transitionDown:

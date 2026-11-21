@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 type fakeEmitter struct {
@@ -227,5 +228,79 @@ func TestWatcherDatabaseServerIntentionalStopsAreSilent(t *testing.T) {
 	w.tick(ctx)
 	if len(em.dbDown) != 0 || len(em.dbRecovered) != 0 {
 		t.Fatalf("intentional stop alerted: down=%v recovered=%v", em.dbDown, em.dbRecovered)
+	}
+}
+
+// Krill restarting (an update, a crash) while a database server is already
+// down must still report it: the server was recorded running, so it is taken
+// as healthy before the outage even though this process never saw it so.
+func TestWatcherReportsDatabaseOutageInProgressAtStartup(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: downState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{
+		{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Status: "running"},
+		{InstanceID: 2, OrgID: 7, Name: "never", Service: "krill-postgres-never-x", Status: "idle"},
+	}}
+	eng.states["krill-postgres-never-x"] = downState()
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || em.dbDown[0] != 1 {
+		t.Fatalf("outage in progress at startup: dbDown = %v, want [1]", em.dbDown)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 1 {
+		t.Fatalf("recovery not reported: %v", em.dbRecovered)
+	}
+}
+
+// A server created after startup is not primed: until it has run once, a slow
+// first start is not an outage.
+func TestWatcherDoesNotPrimeServersCreatedLater(t *testing.T) {
+	eng := &scriptEngine{states: map[string]docker.ServiceState{}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx) // nothing to watch yet
+	st.watchedDBs = []WatchedDB{{InstanceID: 3, OrgID: 7, Name: "new", Service: "krill-postgres-new-y", Status: "running"}}
+	eng.states["krill-postgres-new-y"] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 0 {
+		t.Fatalf("a server that never ran was reported down: %v", em.dbDown)
+	}
+}
+
+// A planned node move can leave the server without a running task for longer
+// than two polls after its status already reads running again; while the move
+// holds the server's lock, that is not an outage.
+func TestWatcherSkipsDatabaseServerHeldByAnOperation(t *testing.T) {
+	const svc = "krill-postgres-moving-z"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 4, OrgID: 7, Name: "moving", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	if !oplock.TryAcquire(oplock.DBInstance(svc)) {
+		t.Fatal("lock unexpectedly held")
+	}
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	oplock.Release(oplock.DBInstance(svc))
+	if len(em.dbDown) != 0 {
+		t.Fatalf("a held server was reported down: %v", em.dbDown)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 0 {
+		t.Fatalf("recovery reported without an alert: %v", em.dbRecovered)
 	}
 }
