@@ -106,16 +106,34 @@ esac`,
 echo "$@" > "$STATE/sched"; touch "$STATE/armed"; echo "Running timer as unit: krill-fw-revert.timer" >&2`,
 		"nft": `[ "$1" = list ] && [ -e "$STATE/table" ] && exec cat "$STATE/table"; [ "$1" = -f ] && { echo "$2" > "$STATE/restored"; exit 0; }; exit 1`,
 	}
-	for name, body := range stubs {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeStubs(t, bin, stubs)
 	t.Setenv("STATE", dir)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	save := filepath.Join(dir, "prev.nft")
 	return dir, func() (string, error) {
 		return LocalRunner{Timeout: 10 * time.Second}.Run(context.Background(), "", armScript(save))
+	}
+}
+
+// writeStubs writes each stub as an executable shell script in bin, then runs
+// it once before the test times anything. macOS checks a newly created
+// executable on its first exec: ~0.15s of waiting when idle, and seconds per
+// file while other processes keep launching freshly built binaries (a
+// parallel `cargo test`). Paid inside a LocalRunner timeout, that check alone
+// once exceeded it; a file that already ran starts in milliseconds. The
+// warm-up run gets a throwaway STATE, so a stub's side effects stay out of
+// the test's own state.
+func writeStubs(t *testing.T, bin string, stubs map[string]string) {
+	t.Helper()
+	scratch := t.TempDir()
+	for name, body := range stubs {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		warm := exec.Command(path)
+		warm.Env = append(os.Environ(), "STATE="+scratch)
+		_ = warm.Run() // only the exec matters: without arguments a stub may exit non-zero
 	}
 }
 

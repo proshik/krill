@@ -152,11 +152,7 @@ func persistNode(t *testing.T) (dir string, run func() string) {
 		"nft":       `[ "$1" = list ] && [ -e "$STATE/table" ] && exec cat "$STATE/table"; exit 1`,
 		"systemctl": `echo "$@" >> "$STATE/calls"`,
 	}
-	for name, body := range stubs {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeStubs(t, bin, stubs)
 	t.Setenv("STATE", dir)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	file := filepath.Join(dir, "etc", "firewall.nft")
@@ -237,9 +233,7 @@ esac`,
 esac`,
 		"wg": `printf 'wg0\t51820\n'`,
 	}
-	for name, body := range stubs {
-		os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755)
-	}
+	writeStubs(t, bin, stubs)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := LocalRunner{Timeout: 10 * time.Second}.Run(context.Background(), "", probeScript("10.8.0.2", file))
 	if err != nil {
