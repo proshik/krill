@@ -344,8 +344,12 @@ psql -d <db> -c '\dn'
 age -d -i krill-backup-key.txt <object> | gunzip | grep '^CREATE SCHEMA'
 ```
 
-Drop every non-system schema that appears in either list with `DROP SCHEMA "<name>" CASCADE`,
-then `CREATE SCHEMA public` if it is gone (or use the provider's own reset). The dump has no
+Drop only schemas that Krill's role owns and that also appear in the dump's `CREATE SCHEMA`
+list, plus `public` if Krill owns it, each with `DROP SCHEMA "<name>" CASCADE`; never drop a
+schema owned by another role (a provider or an extension may keep its own). See the owners with
+`psql -d <db> -c '\dn+'` (the Owner column), or list Krill's with
+`SELECT nspname FROM pg_namespace WHERE nspowner = '<owner>'::regrole`. Then
+`CREATE SCHEMA public` if it is gone (or use the provider's own reset). The dump has no
 `CREATE DATABASE` and does not carry database-level settings, so a `search_path` set with
 `ALTER DATABASE` or `ALTER ROLE` is not restored: if your installation had one, set it again
 (`ALTER DATABASE "<db>" SET search_path = ...`) before step 3. For the check in step 4, connect
