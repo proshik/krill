@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/proshik/krill/test/acceptance/accept"
 )
 
 // VM wraps limactl for the one Lima instance named by Config.VM. It never
@@ -107,7 +109,7 @@ func (v *VM) Ensure(ctx context.Context) error {
 		if err := os.WriteFile(path, []byte(v.limaYAML()), 0o644); err != nil {
 			return fmt.Errorf("writing the Lima template: %w", err)
 		}
-		v.t.Logf("lima template %s:\n%s", path, v.limaYAML())
+		logf(v.t, "lima template %s:\n%s", path, v.limaYAML())
 		if _, err := v.limactl(ctx, 10*time.Minute, "create", "--tty=false", "--name", v.cfg.VM, path); err != nil {
 			return err
 		}
@@ -143,6 +145,13 @@ func (v *VM) shell(ctx context.Context, root bool, cmd string) (string, error) {
 	return v.limactl(ctx, 0, args...)
 }
 
+// CopyOut copies a guest file the default Lima user can read to a host path
+// (stage root-owned files under /tmp with Sudo first).
+func (v *VM) CopyOut(ctx context.Context, remote, local string) error {
+	_, err := v.limactl(ctx, 10*time.Minute, "copy", "--backend=scp", v.cfg.VM+":"+remote, local)
+	return err
+}
+
 // CopyIn copies a host file to a guest path the default Lima user can write
 // (use /tmp and move it with Sudo when root has to own it).
 func (v *VM) CopyIn(ctx context.Context, local, remote string) error {
@@ -171,7 +180,7 @@ func (v *VM) limactl(ctx context.Context, timeout time.Duration, args ...string)
 		defer cancel()
 	}
 	v.t.Helper()
-	v.t.Logf("$ limactl %s", redact(strings.Join(quoteArgs(args), " ")))
+	logf(v.t, "$ limactl %s", redact(strings.Join(quoteArgs(args), " ")))
 	c := exec.CommandContext(ctx, "limactl", args...)
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
@@ -179,7 +188,7 @@ func (v *VM) limactl(ctx context.Context, timeout time.Duration, args ...string)
 	start := time.Now()
 	err := c.Run()
 	out := stdout.String()
-	v.t.Logf("  (%s, err=%v)\n%s", time.Since(start).Round(time.Millisecond), err, indent(bounded(redact(out+stderr.String()), 6000)))
+	logf(v.t, "  (%s, err=%v)\n%s", time.Since(start).Round(time.Millisecond), err, indent(bounded(redact(out+stderr.String()), 6000)))
 	if err != nil {
 		return out, fmt.Errorf("limactl %s: %w: %s", args[0], err, bounded(redact(strings.TrimSpace(out+stderr.String())), 2000))
 	}
@@ -190,6 +199,9 @@ func (v *VM) limactl(ctx context.Context, timeout time.Duration, args ...string)
 // one-time password line, secrets from krill.env, and a bare password read
 // back by AdminPassword (see redactValue).
 var secretRe = regexp.MustCompile(`(Password: +|KRILL_ADMIN_PASSWORD=|KRILL_SECRET_KEY=|KRILL_DATABASE_URL=postgres://krill:)[^\s@']+`)
+
+// ageIdentityRe masks an age private key wherever it shows up.
+var ageIdentityRe = accept.AgeIdentityRe
 
 // redacted holds exact secret values learned at runtime (the admin password).
 var (
@@ -207,9 +219,18 @@ func redactValue(v string) {
 	redactedMu.Unlock()
 }
 
+// RedactedValues returns every value registered with redactValue, for the
+// final scan of the report and the log.
+func RedactedValues() []string {
+	redactedMu.Lock()
+	defer redactedMu.Unlock()
+	return append([]string(nil), redacted...)
+}
+
 // redact masks secrets in s.
 func redact(s string) string {
 	s = secretRe.ReplaceAllString(s, "${1}***")
+	s = ageIdentityRe.ReplaceAllString(s, "AGE-SECRET-KEY-***")
 	redactedMu.Lock()
 	defer redactedMu.Unlock()
 	for _, v := range redacted {

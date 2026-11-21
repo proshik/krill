@@ -20,7 +20,7 @@ const stageDir = "/tmp/krill-accept"
 
 func TestMain(m *testing.M) {
 	if os.Getenv("KRILL_ACCEPT") != "1" {
-		fmt.Println("skipping the self-update acceptance tests: set KRILL_ACCEPT=1 (see docs/development.md)")
+		fmt.Println("skipping the live acceptance tests (self-update, state backup): set KRILL_ACCEPT=1 (see docs/development.md)")
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -51,9 +51,16 @@ func (a appRef) path(orgID int64) string {
 	return fmt.Sprintf("/orgs/%d/projects/%d/environments/%d/apps/%d", orgID, a.projID, a.envID, a.appID)
 }
 
-func newSuite(t *testing.T) *suite {
-	cfg, err := LoadConfig()
+func newSuite(t *testing.T) *suite { return newSuiteFor(t, SelfUpdateDefaults) }
+
+// newSuiteFor loads the configuration with a test's own defaults and starts
+// the log sink in its workdir.
+func newSuiteFor(t *testing.T, d Defaults) *suite {
+	cfg, err := LoadConfigFor(d)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := openLogSink(filepath.Join(cfg.Workdir, "test.log")); err != nil {
 		t.Fatal(err)
 	}
 	vm := NewVM(t, cfg)

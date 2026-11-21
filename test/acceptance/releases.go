@@ -71,6 +71,27 @@ var Variants = []Variant{
 	{Tag: "v0.90.4", Migrations: []Migration{migA, migB, migSlow, migFail}},
 }
 
+// The state-backup acceptance's releases: v0.91.0 is the snapshot's release,
+// v0.91.1 the newer one scenario A reinstalls (its harmless migration brings
+// the restored snapshot forward), v0.91.2 the update that fails in B.
+var (
+	migSBKForward = Migration{
+		Stem: "acceptance_sbk_forward",
+		Up:   "CREATE TABLE acceptance_sbk_forward (id BIGSERIAL PRIMARY KEY);\n",
+		Down: "DROP TABLE IF EXISTS acceptance_sbk_forward;\n",
+	}
+	migSBKFail = Migration{
+		Stem: "acceptance_sbk_fail",
+		Up:   "ALTER TABLE acceptance_does_not_exist ADD COLUMN x TEXT;\n",
+		Down: "ALTER TABLE IF EXISTS acceptance_does_not_exist DROP COLUMN IF EXISTS x;\n",
+	}
+	StateBackupVariants = []Variant{
+		{Tag: "v0.91.0"},
+		{Tag: "v0.91.1", Migrations: []Migration{migSBKForward}},
+		{Tag: "v0.91.2", Migrations: []Migration{migSBKForward, migSBKFail}},
+	}
+)
+
 // VariantByTag returns the variant with tag.
 func VariantByTag(tag string) (Variant, bool) {
 	for _, v := range Variants {
@@ -149,13 +170,13 @@ func BuildRelease(ctx context.Context, t testing.TB, cfg Config, v Variant) (Rel
 				return rel, err
 			}
 		}
-		t.Logf("%s: added migration %s", v.Tag, accept.MigrationFile(n, m.Stem, ""))
+		logf(t, "%s: added migration %s", v.Tag, accept.MigrationFile(n, m.Stem, ""))
 	}
 	if v.CrashAfterMigrations {
 		if err := patchCrash(filepath.Join(rel.Source, "cmd", "krill", "main.go")); err != nil {
 			return rel, fmt.Errorf("%s: %w", v.Tag, err)
 		}
-		t.Logf("%s: inserted the simulated crash after the migrations call", v.Tag)
+		logf(t, "%s: inserted the simulated crash after the migrations call", v.Tag)
 	}
 
 	ldflags := "-s -w -X github.com/proshik/krill/internal/buildinfo.Version=" + v.Tag
@@ -228,7 +249,7 @@ func fileSHA256(path string) (string, error) {
 // runHost runs a command on the Mac, logging it and its output.
 func runHost(ctx context.Context, t testing.TB, dir string, env []string, name string, args ...string) (string, error) {
 	t.Helper()
-	t.Logf("$ %s %s", name, strings.Join(quoteArgs(args), " "))
+	logf(t, "$ %s %s", name, strings.Join(quoteArgs(args), " "))
 	c := exec.CommandContext(ctx, name, args...)
 	c.Dir = dir
 	if env != nil {
@@ -240,7 +261,7 @@ func runHost(ctx context.Context, t testing.TB, dir string, env []string, name s
 	start := time.Now()
 	err := c.Run()
 	out := buf.String()
-	t.Logf("  (%s, err=%v)\n%s", time.Since(start).Round(time.Millisecond), err, indent(bounded(out, 4000)))
+	logf(t, "  (%s, err=%v)\n%s", time.Since(start).Round(time.Millisecond), err, indent(bounded(redact(out), 4000)))
 	if err != nil {
 		return out, fmt.Errorf("%s: %w: %s", name, err, bounded(strings.TrimSpace(out), 2000))
 	}
@@ -263,7 +284,7 @@ func PublishRelease(ctx context.Context, t testing.TB, cfg Config, rel Release) 
 		return fmt.Errorf("test repository %s is not reachable; create it first (public, with a README commit): %w", cfg.Repo, err)
 	}
 	if _, err := runHost(ctx, t, "", nil, "gh", "release", "view", rel.Tag, "--repo", cfg.Repo, "--json", "tagName"); err == nil {
-		t.Logf("release %s already exists in %s; re-uploading its assets", rel.Tag, cfg.Repo)
+		logf(t, "release %s already exists in %s; re-uploading its assets", rel.Tag, cfg.Repo)
 		_, err := runHost(ctx, t, "", nil, "gh", "release", "upload", rel.Tag, "--repo", cfg.Repo, "--clobber",
 			rel.Binary, rel.Checksums)
 		return err

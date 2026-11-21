@@ -33,7 +33,16 @@ func NewHost(vm *VM) *Host { return &Host{vm: vm} }
 // Psql runs one SQL statement against Krill's own database and returns the
 // unaligned, tuples-only output.
 func (h *Host) Psql(ctx context.Context, sql string) (string, error) {
-	out, err := h.vm.Sudo(ctx, "docker exec "+pgContainer+" psql -U krill -d krill -Atc "+shQuote(sql))
+	return h.PsqlIn(ctx, pgContainer, "krill", "krill", sql)
+}
+
+// PsqlIn runs SQL (one or more statements) with psql inside container as
+// user on db and returns the unaligned, tuples-only output. The SQL goes in
+// on stdin, so a script of several statements (the fingerprint) runs as one session.
+func (h *Host) PsqlIn(ctx context.Context, container, user, db, sql string) (string, error) {
+	cmd := "printf '%s\\n' " + shQuote(sql) + " | docker exec -i " + shQuote(container) +
+		" psql -X -At -v ON_ERROR_STOP=1 -U " + shQuote(user) + " -d " + shQuote(db)
+	out, err := h.vm.Sudo(ctx, cmd)
 	return strings.TrimSpace(out), err
 }
 
