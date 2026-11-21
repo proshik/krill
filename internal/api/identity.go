@@ -15,7 +15,16 @@ type Level string
 const (
 	LevelRead  Level = "read"
 	LevelWrite Level = "write"
+	// LevelProvision can do everything LevelWrite can, and also create
+	// logical databases, image apps, domains and database links. It is a level
+	// of its own so tokens issued for CI deploys never gain creation rights.
+	LevelProvision Level = "provision"
 )
+
+// Valid reports whether l is a level a token can be issued at.
+func (l Level) Valid() bool {
+	return l == LevelRead || l == LevelWrite || l == LevelProvision
+}
 
 var (
 	ErrInvalidToken = errors.New("invalid api token")
@@ -37,7 +46,13 @@ type Identity struct {
 // org. Demoting or removing the member disables their write tokens immediately,
 // with no separate revocation step.
 func (i Identity) CanWrite() bool {
-	return i.Level == LevelWrite && i.Role.AtLeast(auth.RoleAdmin)
+	return (i.Level == LevelWrite || i.Level == LevelProvision) && i.Role.AtLeast(auth.RoleAdmin)
+}
+
+// CanProvision reports whether this caller may create resources: a token
+// issued at provision level whose owner is still an admin of the organization.
+func (i Identity) CanProvision() bool {
+	return i.Level == LevelProvision && i.Role.AtLeast(auth.RoleAdmin)
 }
 
 // TokenStore is the subset of the generated queries the authenticator needs.

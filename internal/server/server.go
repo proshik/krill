@@ -273,6 +273,7 @@ func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
 	s.apiSvc = svc
 	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
 	if svc != nil {
+		svc.SetProvisioner(apiProvisioner{s: s})
 		s.mcpHandler = mcpsrv.New(svc, s.cfg.MCPSessionTimeout).Handler()
 	}
 }
@@ -366,6 +367,9 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.RequireAPIToken)
 			r.Get("/whoami", s.apiWhoami)
 			r.Get("/deployments/{deployID}", s.apiDeploymentStatus)
+			// Provisioning (provision-level tokens only): create, never delete.
+			r.Post("/environments/{project}/{env}/databases", s.apiCreateDatabase)
+			r.Post("/environments/{project}/{env}/apps", s.apiCreateApp)
 			r.Route("/apps", func(r chi.Router) {
 				r.Get("/", s.apiListApps)
 				// Everything below takes an app reference that may itself

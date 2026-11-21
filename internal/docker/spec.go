@@ -90,6 +90,9 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 		Networks:      attachments,
 		RestartPolicy: rp,
 	}
+	if s.LogDriver != nil {
+		task.LogDriver = &swarm.Driver{Name: s.LogDriver.Name, Options: s.LogDriver.Options}
+	}
 	if s.MemoryLimitBytes > 0 || s.NanoCPUs > 0 {
 		task.Resources = &swarm.ResourceRequirements{
 			Limits: &swarm.Limit{MemoryBytes: s.MemoryLimitBytes, NanoCPUs: s.NanoCPUs},

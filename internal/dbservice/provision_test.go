@@ -1,6 +1,13 @@
 package dbservice
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"io"
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestValidIdent(t *testing.T) {
 	ok := []string{"shop", "_x", "a1_b2", "a"}
@@ -41,5 +48,59 @@ func TestDropDBSQL(t *testing.T) {
 	want := "DROP DATABASE IF EXISTS \"shop\" WITH (FORCE);\nDROP USER IF EXISTS \"shop_u\";\n"
 	if got != want {
 		t.Fatalf("dropDBSQL:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// scriptedEngine answers each psql exec by the statement it receives on
+// stdin and records what ran.
+type scriptedEngine struct {
+	*mockEngine
+	ran    []string
+	exists bool
+}
+
+func (e *scriptedEngine) Exec(_ context.Context, _ string, cmd []string, _ []string, stdin io.Reader, out io.Writer) error {
+	b, _ := io.ReadAll(stdin)
+	sql := string(b)
+	e.ran = append(e.ran, sql)
+	if strings.Contains(sql, "krill: objects exist") && e.exists {
+		// Like docker.Engine.Exec: psql's stderr arrives in the error text.
+		return errors.New("exec [psql] exited 3: ERROR:  krill: objects exist")
+	}
+	if strings.HasPrefix(sql, "CREATE USER") {
+		return errors.New("exited 3")
+	}
+	if !slices.Contains(cmd, "-X") {
+		return errors.New("psql run without -X")
+	}
+	return nil
+}
+
+// A database or role that already exists on the server must be refused and
+// left alone: the compensating drop used to run after the failed CREATE and
+// delete a database Krill never created (e.g. one restored from a dump).
+func TestProvisionNeverDropsAnExistingDatabase(t *testing.T) {
+	eng := &scriptedEngine{mockEngine: newMockEngine(), exists: true}
+	svc := New(eng, nil, nil, "")
+	err := svc.ProvisionLogicalDB(t.Context(), Instance{AppName: "pg"}, LogicalDB{DBName: "app", Username: "app", Password: "pw"})
+	if !errors.Is(err, ErrObjectsExist) {
+		t.Fatalf("err = %v, want ErrObjectsExist", err)
+	}
+	for _, sql := range eng.ran {
+		if strings.Contains(sql, "DROP") || strings.Contains(sql, "CREATE USER") {
+			t.Fatalf("ran %q against an existing database", sql)
+		}
+	}
+}
+
+// A failure after the check (nothing existed) still compensates.
+func TestProvisionCompensatesItsOwnFailure(t *testing.T) {
+	eng := &scriptedEngine{mockEngine: newMockEngine()}
+	svc := New(eng, nil, nil, "")
+	if err := svc.ProvisionLogicalDB(t.Context(), Instance{AppName: "pg"}, LogicalDB{DBName: "app", Username: "app", Password: "pw"}); err == nil {
+		t.Fatal("want the create failure")
+	}
+	if len(eng.ran) != 3 || !strings.Contains(eng.ran[2], "DROP DATABASE") {
+		t.Fatalf("ran = %q, want check, create, compensating drop", eng.ran)
 	}
 }

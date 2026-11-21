@@ -52,6 +52,93 @@ type PanelProvider struct {
 	Token    string
 }
 
+// AccessLog selects which requests the gateway writes to its access log
+// (Traefik's stdout, JSON lines: `docker service logs krill-traefik`, and the
+// observability agent's Loki when that is on).
+type AccessLog string
+
+const (
+	// AccessLogOff writes no access log (the default).
+	AccessLogOff AccessLog = "off"
+	// AccessLogFiltered logs only requests worth looking at: an error status
+	// (400-599), a retried request, or one that took at least
+	// accessLogMinDuration — a long download, stream or WebSocket, logged when
+	// it ends with its duration and the HTTP response bytes handed on (a
+	// WebSocket's frames bypass those counters).
+	AccessLogFiltered AccessLog = "filtered"
+	// AccessLogAll logs every request.
+	AccessLogAll AccessLog = "all"
+)
+
+const accessLogMinDuration = "10s"
+
+// ParseAccessLog validates a KRILL_GATEWAY_ACCESS_LOG value; "" means off.
+func ParseAccessLog(s string) (AccessLog, error) {
+	switch m := AccessLog(strings.ToLower(strings.TrimSpace(s))); m {
+	case "", AccessLogOff:
+		return AccessLogOff, nil
+	case AccessLogFiltered, AccessLogAll:
+		return m, nil
+	}
+	return "", fmt.Errorf("access log %q: want off, filtered or all", s)
+}
+
+// accessLog is the mode TraefikSpec renders, set once at startup.
+var accessLog = AccessLogOff
+
+// SetAccessLog sets the gateway's access log mode (wired from config at
+// startup, before the first Reconcile).
+func SetAccessLog(m AccessLog) { accessLog = m }
+
+// Timeouts the gateway applies, set explicitly rather than inherited from
+// Traefik's defaults so an image upgrade cannot change them silently. These
+// are Traefik v3.6's own defaults, measured on the pinned image:
+//
+//   - readTimeout bounds reading a whole REQUEST, body included: an upload
+//     slower than this fails. It does not limit the response — a reply that
+//     streams, or stays silent, longer than this is delivered.
+//   - writeTimeout 0: nothing limits how long a response may take, so long
+//     downloads, server-sent events and streams are never cut by the gateway.
+//   - idleTimeout closes a keep-alive connection idle BETWEEN requests; it does
+//     not apply while a response is in flight, nor to an upgraded WebSocket.
+//
+// Towards the app: connecting gives up after dialTimeout, an idle pooled
+// connection is dropped after idleConnTimeout, and responseHeaderTimeout 0
+// means an app may take as long as it likes before its first byte.
+var gatewayTimeoutArgs = []string{
+	"--entrypoints.web.transport.respondingTimeouts.readTimeout=60s",
+	"--entrypoints.web.transport.respondingTimeouts.writeTimeout=0s",
+	"--entrypoints.web.transport.respondingTimeouts.idleTimeout=180s",
+	"--entrypoints.websecure.transport.respondingTimeouts.readTimeout=60s",
+	"--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=0s",
+	"--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=180s",
+	"--serversTransport.forwardingTimeouts.dialTimeout=30s",
+	"--serversTransport.forwardingTimeouts.responseHeaderTimeout=0s",
+	"--serversTransport.forwardingTimeouts.idleConnTimeout=90s",
+}
+
+// accessLogArgs renders the access log mode. Request headers are dropped
+// (Authorization, cookies); the request path, query string included, and the
+// client address are logged.
+func accessLogArgs(m AccessLog) []string {
+	if m != AccessLogFiltered && m != AccessLogAll {
+		return nil
+	}
+	args := []string{
+		"--accesslog=true",
+		"--accesslog.format=json",
+		"--accesslog.fields.headers.defaultmode=drop",
+	}
+	if m == AccessLogFiltered {
+		args = append(args,
+			"--accesslog.filters.statuscodes=400-599",
+			"--accesslog.filters.retryattempts=true",
+			"--accesslog.filters.minduration="+accessLogMinDuration,
+		)
+	}
+	return args
+}
+
 // TraefikSpec builds the spec for the Traefik Swarm service.
 // Configured via CLI arguments; only the docker socket is mounted (no traefik.yml).
 //
@@ -82,6 +169,8 @@ func TraefikSpec(networks []string, acme AcmeConfig, panel PanelProvider) docker
 	if acme.Staging {
 		args = append(args, "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory")
 	}
+	args = append(args, gatewayTimeoutArgs...)
+	args = append(args, accessLogArgs(accessLog)...)
 	if panel.Endpoint != "" {
 		args = append(args,
 			"--providers.http.endpoint="+panel.Endpoint,
@@ -105,6 +194,11 @@ func TraefikSpec(networks []string, acme AcmeConfig, panel PanelProvider) docker
 			{Type: "volume", Source: "krill-traefik-acme", Target: "/letsencrypt"},
 		},
 		Constraints: []string{"node.role==manager"},
+		// The access log goes to stdout; bound what Docker keeps of it so
+		// a busy gateway cannot fill the manager's disk whatever the
+		// daemon's default (often json-file without rotation). json-file
+		// keeps `docker service logs` working.
+		LogDriver: &docker.LogDriverSpec{Name: "json-file", Options: map[string]string{"max-size": "20m", "max-file": "5"}},
 	}
 	spec.Labels = map[string]string{specHashLabel: specFingerprint(spec)}
 	return spec

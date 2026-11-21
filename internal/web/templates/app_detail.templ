@@ -518,7 +518,7 @@ func primaryURL(domains []db.Domain) string {
 templ domainsTab(c AppCtx) {
 	<div class="k-card">
 		for _, d := range c.Domains {
-			<div class="mb-4 pb-4" style="border-bottom:1px solid var(--color-border)">
+			<div class="mb-4 pb-4" style="border-bottom:1px solid var(--color-border)" data-unsaved-scope data-unsaved-msg={ i18n.Tf(ctx, "domains.unsaved", d.Host) } data-unsaved-label={ i18n.T(ctx, "domains.unsaved_continue") }>
 				<div class="flex items-center gap-2 flex-wrap mb-2">
 					<span class="k-mono">{ d.Host }</span>
 					if d.IsPrimary {

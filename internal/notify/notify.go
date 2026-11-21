@@ -26,6 +26,8 @@ const (
 	DiskRecovered
 	MemOvercommit
 	StateBackupFailed
+	DBDown
+	DBRecovered
 )
 
 // Event is a resolved, human-targetable description of something that happened.
@@ -325,6 +327,27 @@ func (s *Service) AppDown(_ context.Context, appID int64, detail string) {
 // AppRecovered is emitted by the health watcher when an app becomes reachable again.
 func (s *Service) AppRecovered(_ context.Context, appID int64) {
 	s.async(func(ctx context.Context) (Event, bool) { return s.appEvent(ctx, AppRecovered, appID, "") })
+}
+
+// DBDown is emitted by the health watcher when a database server that was
+// running has no running task any more.
+func (s *Service) DBDown(_ context.Context, instanceID int64, detail string) {
+	s.async(func(ctx context.Context) (Event, bool) { return s.dbEvent(ctx, DBDown, instanceID, detail) })
+}
+
+// DBRecovered is emitted by the health watcher when a database server it
+// reported down is running again.
+func (s *Service) DBRecovered(_ context.Context, instanceID int64) {
+	s.async(func(ctx context.Context) (Event, bool) { return s.dbEvent(ctx, DBRecovered, instanceID, "") })
+}
+
+func (s *Service) dbEvent(ctx context.Context, kind EventKind, instanceID int64, detail string) (Event, bool) {
+	tgt, err := s.store.DBInstanceTarget(ctx, instanceID)
+	if err != nil {
+		s.log.Warn("notify: db instance target lookup failed", "instance", instanceID, "err", err)
+		return Event{}, false
+	}
+	return Event{Kind: kind, OrgID: tgt.OrgID, Target: tgt.Name, Detail: detail, Time: s.now()}, true
 }
 
 // MigrateFailed implements dbservice.Notifier (volume-migration failures ride

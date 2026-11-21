@@ -3,6 +3,7 @@ package dbservice
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -51,6 +52,18 @@ func createDBSQL(dbName, username, password string) string {
 		username, password, dbName, username, dbName)
 }
 
+// ErrObjectsExist means the server already has a database or a role with the
+// name a new logical database would take, outside Krill's catalog (created by
+// hand, restored from a dump, left over). Krill refuses rather than adopting
+// or replacing it — and, above all, never drops it.
+var ErrObjectsExist = errors.New("a database or role with this name already exists on the server")
+
+// existsSQL fails (ON_ERROR_STOP) when either object already exists. The
+// identifiers are validated by identRe, so embedding them in literals is safe.
+func existsSQL(dbName, username string) string {
+	return fmt.Sprintf("DO $krill$ BEGIN IF EXISTS (SELECT 1 FROM pg_database WHERE datname = '%s') OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') THEN RAISE EXCEPTION 'krill: objects exist'; END IF; END $krill$;\n", dbName, username)
+}
+
 func dropDBSQL(dbName, username string) string {
 	return fmt.Sprintf("DROP DATABASE IF EXISTS %q WITH (FORCE);\nDROP USER IF EXISTS %q;\n", dbName, username)
 }
@@ -62,8 +75,10 @@ const provisionCompensateTimeout = 30 * time.Second
 
 // psqlExec runs statements as the instance superuser inside its container.
 func (s *Service) psqlExec(ctx context.Context, inst Instance, sqlText string, out io.Writer) error {
+	// -X: no psqlrc, so an image whose startup file turns on ECHO cannot put
+	// the statements (and the passwords in them) into captured output.
 	return s.engine.Exec(ctx, inst.AppName,
-		[]string{"psql", "-v", "ON_ERROR_STOP=1", "-U", inst.Superuser, "-d", "postgres"},
+		[]string{"psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", inst.Superuser, "-d", "postgres"},
 		[]string{"PGPASSWORD=" + inst.SuperuserPassword},
 		strings.NewReader(sqlText), out)
 }
@@ -81,8 +96,10 @@ func (s *Service) InstanceRunning(ctx context.Context, inst Instance) bool {
 
 // ProvisionLogicalDB creates the database + its owner user inside a running
 // postgres instance. REVOKE CONNECT FROM PUBLIC isolates it from the instance's
-// other users. On mid-way failure a full drop (database then user, both IF
-// EXISTS) compensates whichever objects got created, so a retry is safe.
+// other users. A database or role that already exists on the server is
+// refused first (ErrObjectsExist) and never touched. Only after that check,
+// on a mid-way failure, a full drop (database then user, both IF EXISTS)
+// compensates whichever objects this call created, so a retry is safe.
 // Engine-gated (nil engine → no-op, tests only).
 func (s *Service) ProvisionLogicalDB(ctx context.Context, inst Instance, ldb LogicalDB) error {
 	if s.engine == nil {
@@ -95,6 +112,16 @@ func (s *Service) ProvisionLogicalDB(ctx context.Context, inst Instance, ldb Log
 		return fmt.Errorf("generated password contains forbidden characters")
 	}
 	var buf bytes.Buffer
+	// A collision must be found BEFORE anything is created: the compensating
+	// drop below would otherwise delete a database that was never ours.
+	if err := s.psqlExec(ctx, inst, existsSQL(ldb.DBName, ldb.Username), &buf); err != nil {
+		// The real engine reports psql's stderr in the error, not in out.
+		if strings.Contains(err.Error(), "krill: objects exist") || strings.Contains(buf.String(), "krill: objects exist") {
+			return ErrObjectsExist
+		}
+		return fmt.Errorf("check database %s: %w: %s", ldb.DBName, err, strings.TrimSpace(buf.String()))
+	}
+	buf.Reset()
 	if err := s.psqlExec(ctx, inst, createDBSQL(ldb.DBName, ldb.Username, ldb.Password), &buf); err != nil {
 		// Compensation must cover all three DDL statements, not just CREATE USER:
 		// a failure at REVOKE leaves both the user AND the database created, with

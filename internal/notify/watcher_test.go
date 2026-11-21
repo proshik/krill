@@ -3,13 +3,27 @@ package notify
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 type fakeEmitter struct {
 	down      []int64
 	recovered []int64
+
+	dbDown      []int64
+	dbDetail    []string
+	dbRecovered []int64
+}
+
+func (f *fakeEmitter) DBDown(_ context.Context, id int64, detail string) {
+	f.dbDown = append(f.dbDown, id)
+	f.dbDetail = append(f.dbDetail, detail)
+}
+func (f *fakeEmitter) DBRecovered(_ context.Context, id int64) {
+	f.dbRecovered = append(f.dbRecovered, id)
 }
 
 func (f *fakeEmitter) AppDown(_ context.Context, appID int64, _ string) {
@@ -118,7 +132,7 @@ func TestWatcherPrunesDeletedApps(t *testing.T) {
 	if len(w.state) != 1 {
 		t.Fatalf("want 1 state entry after prune, got %d", len(w.state))
 	}
-	if _, ok := w.state[6]; ok {
+	if _, ok := w.state[watchKey{id: 6}]; ok {
 		t.Fatal("deleted app 6 should be pruned from state")
 	}
 }
@@ -136,5 +150,223 @@ func TestWatcherInactiveNotAlerted(t *testing.T) {
 	w.tick(ctx)
 	if len(em.down) != 0 {
 		t.Fatalf("intentionally stopped app must not alert: %v", em.down)
+	}
+}
+
+// A database server whose node is powered off: Swarm keeps desired=1 and
+// queues a replacement task that cannot be placed (the service is pinned), so
+// nothing runs. That must alert once and recover once — before this, only
+// apps were watched and a four-hour database outage went unreported.
+func TestWatcherDatabaseServerDownAndRecovered(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Node: "node-1", Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+
+	w.tick(ctx)
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	if len(em.dbDown) != 0 {
+		t.Fatalf("alerted after one failed poll: %v", em.dbDown)
+	}
+	w.tick(ctx)
+	if len(em.dbDown) != 1 {
+		t.Fatalf("no alert after two failed polls: %v", em.dbDown)
+	}
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || em.dbDown[0] != 1 {
+		t.Fatalf("expected one DBDown for instance 1, got %v", em.dbDown)
+	}
+	if em.dbDetail[0] != "0/1 tasks running · node-1" {
+		t.Fatalf("detail = %q", em.dbDetail[0])
+	}
+	if len(em.down) != 0 {
+		t.Fatalf("a database server must not be reported as an app: %v", em.down)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 1 || em.dbRecovered[0] != 1 {
+		t.Fatalf("expected one DBRecovered, got %v", em.dbRecovered)
+	}
+}
+
+// App 1 and database server 1 are different services: their health states
+// must not share an entry.
+func TestWatcherAppAndDatabaseWithSameIDAreIndependent(t *testing.T) {
+	const svc = "krill-redis-cache-def456"
+	app := docker.ServiceName(1)
+	eng := &scriptEngine{states: map[string]docker.ServiceState{app: healthyState(), svc: healthyState()}}
+	st := &fakeStore{health: 1,
+		watched:    []WatchedApp{{AppID: 1, OrgID: 7, Name: "web"}},
+		watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "cache", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || len(em.down) != 0 {
+		t.Fatalf("dbDown=%v appDown=%v", em.dbDown, em.down)
+	}
+}
+
+// Stopping a server (desired 0) and moving it to another node are intentional:
+// neither alerts.
+func TestWatcherDatabaseServerIntentionalStopsAreSilent(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+
+	eng.states[svc] = docker.ServiceState{Found: true, Desired: 0}
+	w.tick(ctx)
+	w.tick(ctx)
+
+	eng.states[svc] = downState()
+	st.watchedDBs[0].Status = "migrating"
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 0 || len(em.dbRecovered) != 0 {
+		t.Fatalf("intentional stop alerted: down=%v recovered=%v", em.dbDown, em.dbRecovered)
+	}
+}
+
+// Krill restarting (an update, a crash) while a database server is already
+// down must still report it: the server was recorded running, so it is taken
+// as healthy before the outage even though this process never saw it so.
+func TestWatcherReportsDatabaseOutageInProgressAtStartup(t *testing.T) {
+	const svc = "krill-postgres-main-abc123"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: downState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{
+		{InstanceID: 1, OrgID: 7, Name: "main", Service: svc, Status: "running"},
+		{InstanceID: 2, OrgID: 7, Name: "never", Service: "krill-postgres-never-x", Status: "idle"},
+	}}
+	eng.states["krill-postgres-never-x"] = downState()
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 || em.dbDown[0] != 1 {
+		t.Fatalf("outage in progress at startup: dbDown = %v, want [1]", em.dbDown)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 1 {
+		t.Fatalf("recovery not reported: %v", em.dbRecovered)
+	}
+}
+
+// A server created after startup is not primed: until it has run once, a slow
+// first start is not an outage.
+func TestWatcherDoesNotPrimeServersCreatedLater(t *testing.T) {
+	eng := &scriptEngine{states: map[string]docker.ServiceState{}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx) // nothing to watch yet
+	st.watchedDBs = []WatchedDB{{InstanceID: 3, OrgID: 7, Name: "new", Service: "krill-postgres-new-y", Status: "running", UpdatedAt: time.Now()}}
+	eng.states["krill-postgres-new-y"] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 0 {
+		t.Fatalf("a server that never ran was reported down: %v", em.dbDown)
+	}
+}
+
+// A planned node move can leave the server without a running task for longer
+// than two polls after its status already reads running again; while the move
+// holds the server's lock, that is not an outage.
+func TestWatcherSkipsDatabaseServerHeldByAnOperation(t *testing.T) {
+	const svc = "krill-postgres-moving-z"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 4, OrgID: 7, Name: "moving", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	if !oplock.TryAcquire(oplock.DBInstance(svc)) {
+		t.Fatal("lock unexpectedly held")
+	}
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	w.tick(ctx)
+	oplock.Release(oplock.DBInstance(svc))
+	if len(em.dbDown) != 0 {
+		t.Fatalf("a held server was reported down: %v", em.dbDown)
+	}
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 0 {
+		t.Fatalf("recovery reported without an alert: %v", em.dbRecovered)
+	}
+}
+
+// An operation that takes the server's lock after its outage was reported
+// (a redeploy to fix it) neither clears the alert nor repeats it: recovery is
+// still reported once the server runs again.
+func TestWatcherKeepsAnOutstandingAlertThroughAnOperation(t *testing.T) {
+	const svc = "krill-postgres-fixing-q"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{svc: healthyState()}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{{InstanceID: 5, OrgID: 7, Name: "fixing", Service: svc, Status: "running"}}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	ctx := context.Background()
+	w.tick(ctx)
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 {
+		t.Fatalf("dbDown = %v", em.dbDown)
+	}
+	if !oplock.TryAcquire(oplock.DBInstance(svc)) {
+		t.Fatal("lock unexpectedly held")
+	}
+	eng.states[svc] = docker.ServiceState{Found: true, Desired: 0} // the redeploy stops it first
+	w.tick(ctx)
+	w.tick(ctx)
+	oplock.Release(oplock.DBInstance(svc))
+	eng.states[svc] = healthyState()
+	w.tick(ctx)
+	if len(em.dbRecovered) != 1 || len(em.dbDown) != 1 {
+		t.Fatalf("after the operation: down=%v recovered=%v, want one each", em.dbDown, em.dbRecovered)
+	}
+}
+
+// A server deployed after startup that comes up and loses its node between
+// two polls was never seen running; once it has been recorded running for the
+// grace period, its outage is still reported.
+func TestWatcherReportsServerThatFailedBetweenPolls(t *testing.T) {
+	const svc = "krill-postgres-late-r"
+	eng := &scriptEngine{states: map[string]docker.ServiceState{}}
+	st := &fakeStore{health: 1, watchedDBs: []WatchedDB{}}
+	em := &fakeEmitter{}
+	w := newTestWatcher(eng, st, em)
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	ctx := context.Background()
+	w.tick(ctx) // startup pass: nothing yet
+	st.watchedDBs = []WatchedDB{{InstanceID: 6, OrgID: 7, Name: "late", Service: svc, Status: "running", UpdatedAt: now}}
+	eng.states[svc] = downState()
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 0 {
+		t.Fatalf("alerted within the grace period: %v", em.dbDown)
+	}
+	now = now.Add(dbRunningGrace)
+	w.tick(ctx)
+	w.tick(ctx)
+	if len(em.dbDown) != 1 {
+		t.Fatalf("outage of a server running past the grace period not reported: %v", em.dbDown)
 	}
 }

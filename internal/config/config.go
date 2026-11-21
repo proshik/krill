@@ -51,6 +51,9 @@ type Config struct {
 	// ConvergeTimeout caps how long a deploy waits for the service to become
 	// healthy before giving up (auto-extended by a healthcheck's start_period).
 	ConvergeTimeout time.Duration `env:"KRILL_CONVERGE_TIMEOUT" envDefault:"180s"`
+	// GatewayAccessLog turns on the gateway's (Traefik's) access log: off,
+	// filtered (errors, retries and requests of 10s or more) or all.
+	GatewayAccessLog string `env:"KRILL_GATEWAY_ACCESS_LOG" envDefault:"off"`
 	// MigrateTimeout bounds a DB-instance volume migration (stop → copy →
 	// redeploy). Large volumes or slow links may need more.
 	MigrateTimeout time.Duration `env:"KRILL_MIGRATE_TIMEOUT" envDefault:"30m"`
@@ -135,6 +138,11 @@ func Load() (Config, error) {
 	}
 	if c.OverlayMTU != 0 && (c.OverlayMTU < MinOverlayMTU || c.OverlayMTU > MaxOverlayMTU) {
 		return Config{}, fmt.Errorf("KRILL_OVERLAY_MTU %d: want 0 (Docker default) or %d..%d", c.OverlayMTU, MinOverlayMTU, MaxOverlayMTU)
+	}
+	switch strings.ToLower(strings.TrimSpace(c.GatewayAccessLog)) {
+	case "", "off", "filtered", "all":
+	default:
+		return Config{}, fmt.Errorf("KRILL_GATEWAY_ACCESS_LOG %q: want off, filtered or all", c.GatewayAccessLog)
 	}
 	if !updateRepoPattern.MatchString(c.UpdateRepo) {
 		return Config{}, fmt.Errorf("KRILL_UPDATE_REPO %q: want owner/name", c.UpdateRepo)

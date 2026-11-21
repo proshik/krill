@@ -632,7 +632,66 @@ window.krillConfirmRun = function () {
 if (!window.__krillConfirmInit) {
   window.__krillConfirmInit = true;
   document.addEventListener("close", function (e) {
-    if (e.target && e.target.id === "k-confirm") window.__krillConfirmAction = null;
+    // The close event is queued: when a confirmed action opens the dialog
+    // again right away (an unsaved-changes prompt followed by a delete
+    // confirmation), the first close arrives after the second prompt set its
+    // action and must not clear it.
+    if (e.target && e.target.id === "k-confirm" && !e.target.open) window.__krillConfirmAction = null;
+  }, true);
+}
+
+// ── Unsaved changes in a sibling form ───────────────────────────────────────
+// A card such as a domain holds several small forms side by side (exposure
+// and paths with their own Save, a TLS toggle, primary, delete). Submitting
+// one reloads the page and silently drops what was changed but not saved in
+// another — a ticked "Open to the internet" was lost this way by pressing
+// "Toggle HTTPS". Within a [data-unsaved-scope], submitting one form while
+// another has unsaved changes asks first.
+function krillFormDirty(form) {
+  for (const el of form.elements) {
+    if (!el.name || el.disabled) continue;
+    const t = (el.type || "").toLowerCase();
+    if (t === "hidden" || t === "submit" || t === "button" || t === "reset" || t === "file") continue;
+    if (t === "checkbox" || t === "radio") {
+      if (el.checked !== el.defaultChecked) return true;
+    } else if (el.tagName === "SELECT") {
+      for (const o of el.options) if (o.selected !== o.defaultSelected) return true;
+    } else if (el.value !== el.defaultValue) {
+      return true;
+    }
+  }
+  return false;
+}
+if (!window.__krillUnsavedInit) {
+  window.__krillUnsavedInit = true;
+  // Capture phase: runs before htmx and before a form's own onsubmit.
+  document.addEventListener("submit", function (e) {
+    const form = e.target;
+    if (!(form instanceof HTMLFormElement) || form.__krillUnsavedOK) {
+      if (form) form.__krillUnsavedOK = false;
+      return;
+    }
+    const scope = form.closest("[data-unsaved-scope]");
+    if (!scope) return;
+    const dirty = Array.from(scope.querySelectorAll("form")).some(function (f) { return f !== form && krillFormDirty(f); });
+    if (!dirty) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const submitter = e.submitter || null;
+    const msg = scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?";
+    // Re-dispatch through the normal path (htmx, the form's own confirm),
+    // skipping this check once.
+    const resubmit = function () {
+      form.__krillUnsavedOK = true;
+      form.requestSubmit(submitter);
+    };
+    const dlg = document.getElementById("k-confirm");
+    if (!dlg || typeof dlg.showModal !== "function") {
+      if (confirm(msg)) resubmit();
+      return;
+    }
+    krillConfirm(form, msg, scope.dataset.unsavedLabel || "Continue", "primary");
+    window.__krillConfirmAction = resubmit;
   }, true);
 }
 

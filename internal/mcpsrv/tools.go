@@ -39,6 +39,12 @@ const (
 	toolReload           = "krill_reload"
 	toolStop             = "krill_stop"
 	toolSetEnv           = "krill_set_env"
+
+	// Provisioning: create, never delete; provision-level tokens only.
+	toolCreateDatabase = "krill_create_database"
+	toolCreateApp      = "krill_create_app"
+	toolAddDomain      = "krill_add_domain"
+	toolLinkDatabase   = "krill_link_database"
 )
 
 // --- Argument shapes -------------------------------------------------------
@@ -81,6 +87,29 @@ type setEnvArgs struct {
 
 type emptyArgs struct{}
 
+// The provisioning arguments embed the REST request bodies (api.*Input), so
+// both adapters accept exactly the same fields.
+
+type createDatabaseArgs struct {
+	Environment string `json:"environment" jsonschema:"project/environment path"`
+	api.CreateDatabaseInput
+}
+
+type createAppArgs struct {
+	Environment string `json:"environment" jsonschema:"project/environment path"`
+	api.CreateAppInput
+}
+
+type addDomainArgs struct {
+	App string `json:"app" jsonschema:"application reference: numeric id or project/environment/app path"`
+	api.DomainInput
+}
+
+type linkDatabaseArgs struct {
+	App string `json:"app" jsonschema:"application reference: numeric id or project/environment/app path"`
+	api.LinkDatabaseInput
+}
+
 // --- Registry ----------------------------------------------------------
 
 // toolRegistration binds one tool's name to the closure that registers it on
@@ -108,6 +137,10 @@ var toolRegistrations = []toolRegistration{
 	{toolReload, registerReload},
 	{toolStop, registerStop},
 	{toolSetEnv, registerSetEnv},
+	{toolCreateDatabase, registerCreateDatabase},
+	{toolCreateApp, registerCreateApp},
+	{toolAddDomain, registerAddDomain},
+	{toolLinkDatabase, registerLinkDatabase},
 }
 
 // ToolNames returns the exact set of tool names this adapter registers.
@@ -428,5 +461,80 @@ func registerSetEnv(srv *mcp.Server, svc *api.Service) {
 		// REST adapter's apiSetEnv already follows.
 		slog.InfoContext(ctx, "mcp set env requested", "app_ref", in.App, "key", in.Key, "remove", in.Remove, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, okResult), nil, nil
+	})
+}
+
+// provisionNote ends every provisioning tool's description.
+const provisionNote = " Needs a provision-level token. Idempotent: repeating a request that already took effect returns the existing resource with created=false; one naming an existing resource with different settings is a conflict — changes and deletions are made in the web UI."
+
+func registerCreateDatabase(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolCreateDatabase,
+		Description: "Create a logical Postgres database (and its owner user) in an environment, inside an existing database server of the organization. The password is never returned; link the database to an app with krill_link_database." + provisionNote,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in createDatabaseArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.CreateDatabase(ctx, id, in.Environment, in.CreateDatabaseInput)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		slog.InfoContext(ctx, "mcp create database", "env", in.Environment, "ldb_id", res.ID, "created", res.Created, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerCreateApp(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolCreateApp,
+		Description: "Create an app that runs a container image, in an environment. It is NOT deployed: set its variables with krill_set_env and link databases first, then krill_deploy. Its primary domain defaults to <name>.<base domain>, internal (not exposed) and without HTTPS; pass domain to choose." + provisionNote,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in createAppArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.CreateApp(ctx, id, in.Environment, in.CreateAppInput)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		slog.InfoContext(ctx, "mcp create app", "env", in.Environment, "app_id", res.ID, "created", res.Created, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerAddDomain(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolAddDomain,
+		Description: "Add a domain to an app: exposed makes it reachable from the internet, tls turns on a Let's Encrypt certificate, paths limits it to those path prefixes. A host other apps already use has one HTTPS setting for all: omit tls to take it. The host's DNS must point at the cluster for HTTPS to be issued. Takes effect on the gateway at once for a deployed app." + provisionNote,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in addDomainArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.AddDomain(ctx, id, in.App, in.DomainInput)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		slog.InfoContext(ctx, "mcp add domain", "app_ref", in.App, "domain_id", res.ID, "host", res.Host, "created", res.Created, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerLinkDatabase(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolLinkDatabase,
+		Description: "Inject a database's connection value into one of an app's environment variables on every deploy: database names a logical database of the app's environment, server a non-Postgres server (Redis, Valkey, S3). field selects the value: default url for Postgres and Redis-compatible servers; an S3 server needs endpoint, access_key, secret_key or region. The value is never shown; deploy the app for it to take effect." + provisionNote,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in linkDatabaseArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.LinkDatabase(ctx, id, in.App, in.LinkDatabaseInput)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		slog.InfoContext(ctx, "mcp link database", "app_ref", in.App, "link_id", res.ID, "var", res.Var, "created", res.Created, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
 	})
 }

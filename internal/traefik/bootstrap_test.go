@@ -3,6 +3,8 @@ package traefik
 import (
 	"strings"
 	"testing"
+
+	"github.com/proshik/krill/internal/docker"
 )
 
 func hasArg(args []string, want string) bool {
@@ -80,5 +82,81 @@ func TestTraefikSpecPanelProvider(t *testing.T) {
 	}
 	if again := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, p); again.Labels[specHashLabel] != s.Labels[specHashLabel] {
 		t.Error("the same provider must fingerprint identically, or every start would redeploy the gateway")
+	}
+}
+
+func hasPrefixArg(args []string, prefix string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// The gateway's timeouts are spelled out, so a Traefik upgrade cannot change
+// what a long response or an upload is allowed to do.
+func TestTraefikSpecSetsTimeoutsExplicitly(t *testing.T) {
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, PanelProvider{})
+	for _, ep := range []string{"web", "websecure"} {
+		for _, want := range []string{
+			"--entrypoints." + ep + ".transport.respondingTimeouts.readTimeout=60s",
+			"--entrypoints." + ep + ".transport.respondingTimeouts.writeTimeout=0s",
+			"--entrypoints." + ep + ".transport.respondingTimeouts.idleTimeout=180s",
+		} {
+			if !hasArg(s.Args, want) {
+				t.Errorf("missing %s", want)
+			}
+		}
+	}
+	if !hasArg(s.Args, "--serversTransport.forwardingTimeouts.responseHeaderTimeout=0s") {
+		t.Error("missing responseHeaderTimeout")
+	}
+}
+
+func TestTraefikSpecAccessLogModes(t *testing.T) {
+	t.Cleanup(func() { SetAccessLog(AccessLogOff) })
+	spec := func(m AccessLog) docker.ServiceSpec {
+		SetAccessLog(m)
+		return TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, PanelProvider{})
+	}
+	off := spec(AccessLogOff)
+	if hasPrefixArg(off.Args, "--accesslog") {
+		t.Fatalf("off renders access log args: %v", off.Args)
+	}
+	all := spec(AccessLogAll)
+	if !hasArg(all.Args, "--accesslog=true") || !hasArg(all.Args, "--accesslog.fields.headers.defaultmode=drop") || hasPrefixArg(all.Args, "--accesslog.filters") {
+		t.Fatalf("all: %v", all.Args)
+	}
+	filtered := spec(AccessLogFiltered)
+	for _, want := range []string{"--accesslog=true", "--accesslog.filters.statuscodes=400-599", "--accesslog.filters.minduration=10s", "--accesslog.filters.retryattempts=true"} {
+		if !hasArg(filtered.Args, want) {
+			t.Errorf("filtered: missing %s", want)
+		}
+	}
+	// Changing the mode must redeploy the gateway: the fingerprint differs.
+	if off.Labels[specHashLabel] == filtered.Labels[specHashLabel] {
+		t.Fatal("access log mode does not change the spec fingerprint")
+	}
+}
+
+func TestParseAccessLog(t *testing.T) {
+	for in, want := range map[string]AccessLog{"": AccessLogOff, "off": AccessLogOff, "Filtered": AccessLogFiltered, " all ": AccessLogAll} {
+		got, err := ParseAccessLog(in)
+		if err != nil || got != want {
+			t.Errorf("ParseAccessLog(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := ParseAccessLog("errors"); err == nil {
+		t.Error("an unknown mode was accepted")
+	}
+}
+
+// The gateway's own logs, the access log included, are bounded regardless of
+// the daemon's default driver.
+func TestTraefikSpecBoundsItsLogs(t *testing.T) {
+	s := TraefikSpec([]string{"krill-net"}, AcmeConfig{Email: "a@b.c"}, PanelProvider{})
+	if s.LogDriver == nil || s.LogDriver.Name != "json-file" || s.LogDriver.Options["max-size"] == "" || s.LogDriver.Options["max-file"] == "" {
+		t.Fatalf("gateway log driver = %+v, want bounded json-file", s.LogDriver)
 	}
 }

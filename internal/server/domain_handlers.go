@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"regexp"
@@ -352,33 +354,45 @@ func (s *Server) makeDomainPrimary(w http.ResponseWriter, r *http.Request) {
 
 // syncAppLabels re-applies the application's Traefik labels (no container restart).
 func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) bool {
+	return s.syncAppLabelsCtx(r.Context(), logFrom(r), appID, port)
+}
+
+// syncAppLabelsCtx is syncAppLabels for callers without a request (the agent
+// API's provisioning).
+func (s *Server) syncAppLabelsCtx(ctx context.Context, log *slog.Logger, appID int64, port int32) bool {
 	if s.engine == nil {
 		return true
 	}
 	key := oplock.AppRouting(appID)
-	if err := oplock.Acquire(r.Context(), key); err != nil {
-		logFrom(r).Error("syncAppLabels: wait for routing lock", "err", err, "app_id", appID)
+	if err := oplock.Acquire(ctx, key); err != nil {
+		log.Error("syncAppLabels: wait for routing lock", "err", err, "app_id", appID)
 		return false
 	}
 	defer oplock.Release(key)
-	doms, err := s.q.ListDomainsByApplication(r.Context(), appID)
+	doms, err := s.q.ListDomainsByApplication(ctx, appID)
 	if err != nil {
-		logFrom(r).Error("syncAppLabels: list domains failed", "err", err, "app_id", appID)
+		log.Error("syncAppLabels: list domains failed", "err", err, "app_id", appID)
 		return false
 	}
 	ds := deploy.TraefikDomains(doms)
-	net, ok := s.appNetwork(r, appID)
+	net, ok := s.appNetworkCtx(ctx, log, appID)
 	if !ok {
 		return false // the network is unknown; a wrong label is worse than a stale one
 	}
-	hidden, err := s.appHiddenMetricsPaths(r.Context(), appID, port)
+	hidden, err := s.appHiddenMetricsPaths(ctx, appID, port)
 	if err != nil {
-		logFrom(r).Error("syncAppLabels: read metrics paths failed", "err", err, "app_id", appID)
+		log.Error("syncAppLabels: read metrics paths failed", "err", err, "app_id", appID)
 		return false
 	}
 	labels := traefik.AppLabels(docker.ServiceName(appID), ds, port, net, hidden)
-	if err := s.engine.ServiceUpdateLabels(r.Context(), docker.ServiceName(appID), labels); err != nil {
-		logFrom(r).Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
+	// Labels already in place need no write. A ServiceUpdate with an unchanged
+	// spec is not free: Swarm resets the service's UpdateStatus, which a
+	// deploy still converging would read as a finished rollout.
+	if cur, found, err := s.engine.ServiceLabels(ctx, docker.ServiceName(appID)); err == nil && found && maps.Equal(cur, labels) {
+		return true
+	}
+	if err := s.engine.ServiceUpdateLabels(ctx, docker.ServiceName(appID), labels); err != nil {
+		log.Error("syncAppLabels: update labels failed", "err", err, "app_id", appID)
 		return false
 	}
 	return true
@@ -396,9 +410,13 @@ func (s *Server) syncAppLabels(r *http.Request, appID int64, port int32) bool {
 // label on a transient database blip. Label sync is optional — it re-runs on
 // the next domain edit and on the next deploy — so ok=false aborts it instead.
 func (s *Server) appNetwork(r *http.Request, appID int64) (string, bool) {
-	net, err := s.q.GetOrganizationNetworkByApp(r.Context(), appID)
+	return s.appNetworkCtx(r.Context(), logFrom(r), appID)
+}
+
+func (s *Server) appNetworkCtx(ctx context.Context, log *slog.Logger, appID int64) (string, bool) {
+	net, err := s.q.GetOrganizationNetworkByApp(ctx, appID)
 	if err != nil {
-		logFrom(r).Error("appNetwork: could not resolve the organization network", "err", err, "app_id", appID)
+		log.Error("appNetwork: could not resolve the organization network", "err", err, "app_id", appID)
 		return "", false
 	}
 	if net == "" {

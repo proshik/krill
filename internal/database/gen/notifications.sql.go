@@ -590,6 +590,52 @@ func (q *Queries) ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, er
 	return items, nil
 }
 
+const listWatchedDBInstances = `-- name: ListWatchedDBInstances :many
+SELECT id, organization_id, name, app_name, node_hostname, status, updated_at
+FROM db_instances
+`
+
+type ListWatchedDBInstancesRow struct {
+	ID             int64     `json:"id"`
+	OrganizationID int64     `json:"organization_id"`
+	Name           string    `json:"name"`
+	AppName        string    `json:"app_name"`
+	NodeHostname   string    `json:"node_hostname"`
+	Status         string    `json:"status"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// Returns ALL database servers across ALL orgs; used only by the internal health
+// watcher. Never expose these rows in a user/org-scoped handler without
+// re-filtering (IDOR).
+func (q *Queries) ListWatchedDBInstances(ctx context.Context) ([]ListWatchedDBInstancesRow, error) {
+	rows, err := q.db.Query(ctx, listWatchedDBInstances)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWatchedDBInstancesRow
+	for rows.Next() {
+		var i ListWatchedDBInstancesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.AppName,
+			&i.NodeHostname,
+			&i.Status,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneBackupRuns = `-- name: PruneBackupRuns :exec
 DELETE FROM backup_runs WHERE finished_at < $1
 `

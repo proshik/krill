@@ -139,6 +139,12 @@ interrupted. The container image never self-updates — pull a new tag instead (
 If the new binary does not come up within 10 minutes, it is rolled back automatically — see
 [Rollback](#rollback) below.
 
+When a release changes the gateway's (Traefik's) own configuration, the first start after the
+update redeploys the gateway once. Traefik holds ports 80 and 443 on the host, so the old task
+stops before the new one starts: apps are unreachable for a few seconds and open connections —
+WebSockets, long downloads — are dropped. The release that made the gateway's timeouts explicit
+and added `KRILL_GATEWAY_ACCESS_LOG` is such a release, even with the access log left off.
+
 ### With the installer
 
 ```sh

@@ -29,6 +29,12 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | `KRILL_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `KRILL_LOG_FORMAT` | `text` | `text` or `json`. |
 
+## Gateway
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `KRILL_GATEWAY_ACCESS_LOG` | `off` | The gateway's (Traefik's) access log: `off`, `filtered` (error statuses, retried requests and requests that took 10 s or more) or `all`. See [Timeouts and the access log](guides/domains.md#timeouts-long-responses-and-the-access-log). Changing it restarts the gateway, which blips ingress for a few seconds. |
+
 ## TLS
 
 | Variable | Default | Purpose |
@@ -54,7 +60,7 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 | `KRILL_MAX_BUILDS_PER_ORG` | `2` | How many deploys one organization may have in flight at once, so one tenant can't hold the shared build queue. `0` disables the cap. |
 | `KRILL_BUILD_CACHE_LIMIT` | `5gb` | BuildKit cache size kept by the periodic `docker builder prune`. Empty disables pruning. |
 | `KRILL_BUILD_PRUNE_INTERVAL` | `24h` | How often the build cache is pruned. `0` disables pruning. |
-| `KRILL_CONVERGE_TIMEOUT` | `180s` | How long a deploy waits for new tasks to run, extended by a healthcheck's start period. |
+| `KRILL_CONVERGE_TIMEOUT` | `180s` | How long a deploy holds the build queue waiting for new tasks to run, extended by a healthcheck's start period. A deploy still starting after it stays *running* and is watched in the background for up to 20 more minutes before it fails as a convergence timeout. |
 | `KRILL_MIGRATE_TIMEOUT` | `30m` | Cap on moving a database instance's volume to another node. |
 
 ## Operations

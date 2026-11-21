@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -284,5 +286,30 @@ func TestBuildSwarmSpecUpdateStopFirst(t *testing.T) {
 	}
 	if o := buildSwarmSpec(ServiceSpec{Name: "x", Network: "n", UpdateStopFirst: true}).UpdateConfig.Order; o != swarm.UpdateOrderStopFirst {
 		t.Errorf("UpdateStopFirst order = %q, want stop-first", o)
+	}
+}
+
+func TestBuildSwarmSpecLogDriver(t *testing.T) {
+	plain := buildSwarmSpec(ServiceSpec{Name: "a", Image: "x", Replicas: 1, Network: "n"})
+	if plain.TaskTemplate.LogDriver != nil {
+		t.Fatalf("no LogDriver requested, got %+v", plain.TaskTemplate.LogDriver)
+	}
+	s := buildSwarmSpec(ServiceSpec{Name: "a", Image: "x", Replicas: 1, Network: "n",
+		LogDriver: &LogDriverSpec{Name: "json-file", Options: map[string]string{"max-size": "20m"}}})
+	if d := s.TaskTemplate.LogDriver; d == nil || d.Name != "json-file" || d.Options["max-size"] != "20m" {
+		t.Fatalf("LogDriver = %+v", d)
+	}
+}
+
+// Callers hash the whole ServiceSpec to decide whether to redeploy (the
+// observability agents, the gateway): a spec without a log driver must
+// serialize exactly as it did before the field existed.
+func TestServiceSpecWithoutLogDriverSerializesUnchanged(t *testing.T) {
+	b, err := json.Marshal(ServiceSpec{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "LogDriver") {
+		t.Fatalf("an unset LogDriver changes the serialized spec: %s", b)
 	}
 }

@@ -66,8 +66,12 @@ whose `X-Forwarded-*` headers Traefik set itself) from one sent straight to the 
    labels. Updates start the new task before stopping the old one and roll back on failure —
    except for a service that publishes a host-mode port, or a database instance, which stop
    the old task first (see [Nodes](#nodes) for why a database needs that).
-4. The deploy is marked done only when the **new** tasks are running — tasks that existed
-   before the deploy don't count — or failed after `KRILL_CONVERGE_TIMEOUT`.
+4. The deploy is marked done only when the **new** tasks are running and Swarm reports the
+   update completed — tasks that existed before the deploy don't count. A rollback or a
+   crash loop fails it. A service still starting after `KRILL_CONVERGE_TIMEOUT` (a large
+   image still pulling) frees the build queue but keeps the deployment *running*, watched in
+   the background for up to 20 more minutes; it then becomes done, or fails with "timed out
+   waiting for the service to converge". Until then the app takes no other deploy.
 
 Build and deploy logs stream to the browser over WebSocket as they happen. A finished
 deployment keeps its log for an hour and its record — status, trigger, image, timing — for

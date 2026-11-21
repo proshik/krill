@@ -7,6 +7,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +22,14 @@ type releaseEngine struct {
 	owners      []int
 	validateErr error
 	afterDeploy func()
+	stateMu     sync.Mutex
 	updateState string
+}
+
+func (e *releaseEngine) setUpdateState(v string) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	e.updateState = v
 }
 
 func (e *releaseEngine) ValidateRelease(context.Context, docker.ServiceSpec, []string) error {
@@ -35,6 +43,8 @@ func (e *releaseEngine) ServiceDeploy(ctx context.Context, s docker.ServiceSpec)
 	return err
 }
 func (e *releaseEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
 	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: e.updateState, TaskIDs: []string{"new"}}, nil
 }
 
@@ -71,6 +81,9 @@ func releaseFixture(t *testing.T) (*db.Queries, *DBStore, *Deployer, *releaseEng
 	st := NewDBStore(q, pool)
 	eng := &releaseEngine{predeployEngine: &predeployEngine{digestMockEngine: &digestMockEngine{digest: "nginx@sha256:" + strings.Repeat("1", 64)}}}
 	d := newDeployer(eng, &mockBuilder{}, st)
+	// Registered after the database's cleanup, so it runs first: a deploy
+	// still watched in the background stops before the pool closes.
+	t.Cleanup(d.Stop)
 	d.SetResourceDefaults(64<<20, 100000000)
 	return q, st, d, eng, a.ID
 }
@@ -212,7 +225,7 @@ func TestReleaseEligibilityAndEncryption(t *testing.T) {
 	convergeTimeout = 5 * time.Millisecond
 	convergePollInterval = time.Millisecond
 	t.Cleanup(func() { convergeTimeout = oldTimeout; convergePollInterval = oldPoll })
-	e.updateState = "updating"
+	e.setUpdateState("updating")
 	pending := d.Enqueue(id, TriggerManual)
 	runReleaseJob(t, d, pending)
 	if _, err := st.LoadRelease(t.Context(), id, pending); err == nil {
@@ -445,4 +458,61 @@ func (e *releaseEngine) RunPredeploy(_ context.Context, s docker.PredeploySpec, 
 	e.calls = append(e.calls, s)
 	_, err := io.WriteString(out, "migration executed\n")
 	return errors.Join(err, e.err)
+}
+
+// A rollback whose historical image takes longer than the deadline to come up
+// is watched in the background too, and on convergence restores the release's
+// editor settings exactly like a fast rollback.
+func TestReleaseSlowRollbackRestoresSettingsAfterBackgroundConvergence(t *testing.T) {
+	q, st, d, e, appID := releaseFixture(t)
+	oldT, oldP, oldS, oldSP := convergeTimeout, convergePollInterval, settleTimeout, settlePollInterval
+	convergeTimeout, convergePollInterval, settleTimeout, settlePollInterval = 50*time.Millisecond, 5*time.Millisecond, time.Minute, 10*time.Millisecond
+	t.Cleanup(func() {
+		convergeTimeout, convergePollInterval, settleTimeout, settlePollInterval = oldT, oldP, oldS, oldSP
+	})
+
+	v1 := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, v1)
+	requireDeployment(t, q, v1, "done")
+	snap, err := st.LoadRelease(t.Context(), appID, v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = q.UpdateApplicationEnvClassified(t.Context(), db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "TOKEN=new-value\nPUBLIC=two", EnvPublicKeys: []string{"TOKEN", "PUBLIC"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.digest = strings.ReplaceAll(e.digest, "1", "2")
+	v2 := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, v2)
+	requireDeployment(t, q, v2, "done")
+
+	e.setUpdateState("updating")
+	rollback, err := d.EnqueueRollback(t.Context(), appID, v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runReleaseJob(t, d, rollback)
+	requireDeployment(t, q, rollback, "running")
+	e.setUpdateState("completed")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r, err := q.GetDeployment(t.Context(), rollback)
+		if err == nil && r.Status != "running" {
+			if r.Status != "done" {
+				t.Fatalf("slow rollback ended %q", r.Status)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("slow rollback never finished")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	restored, err := q.GetApplication(t.Context(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(runtimeSettings(restored), snap.Runtime) {
+		t.Fatalf("runtime settings not restored after background convergence: %+v", runtimeSettings(restored))
+	}
 }

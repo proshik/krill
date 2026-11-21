@@ -1,20 +1,23 @@
 # Agent and CI API (REST + MCP)
 
-Krill exposes twelve operations for AI agents and CI pipelines over two surfaces backed by the
+Krill exposes sixteen operations for AI agents and CI pipelines over two surfaces backed by the
 same code: **REST/JSON at `/api/v1`** for scripts, and an **MCP server (streamable HTTP) at
 `/mcp`** for agents. Both use the same organization-scoped bearer tokens and the same tenancy
 checks.
 
-They **operate apps that already exist** — status, logs, deploy / rebuild / reload / stop, and
-single-variable env edits. There are no destructive operations: nothing creates or deletes an
-organization, project, environment, app, database, domain or volume, and there is no shell
-into a container. The blast radius is bounded by the surface itself — a list of twelve
-operations can be checked by eye.
+Twelve **operate apps that already exist** — status, logs, deploy / rebuild / reload / stop, and
+single-variable env edits. Four more **create** what moving an app onto Krill needs — a logical
+database, an image app, a domain, a database link — and only for a token issued at the
+**provision** level. There are no destructive operations: nothing deletes or changes an existing
+organization, project, environment, app, database, domain or volume, and there is no shell into
+a container. The blast radius is bounded by the surface itself — a list of sixteen operations
+can be checked by eye.
 
 ## 1. Issue a token
 
-Open **Settings → API tokens** and create one: a name, a level (**read** or **write**) and an
-expiry (never, 30 or 90 days). Creating tokens is admin-only; any member can list and revoke
+Open **Settings → API tokens** and create one: a name, a level (**read**, **write** or
+**provision**) and an expiry (never, 30 or 90 days). Write includes read; provision includes
+write. Give CI pipelines write tokens: only provision tokens can create resources. Creating tokens is admin-only; any member can list and revoke
 their own.
 
 - The token (`krill_pat_…`) is shown **once**. Krill stores only its SHA-256 hash; a lost token
@@ -36,6 +39,7 @@ claude mcp add --transport http krill https://krill.example.com/mcp \
 |-------|-------|
 | read | `krill_whoami`, `krill_list_apps`, `krill_app_status`, `krill_app_logs`, `krill_deployments`, `krill_deployment_status`, `krill_list_env` |
 | write | `krill_deploy`, `krill_rebuild`, `krill_reload`, `krill_stop`, `krill_set_env` |
+| provision | `krill_create_database`, `krill_create_app`, `krill_add_domain`, `krill_link_database` |
 
 Apps are addressed by a `project/environment/app` path or a numeric id; `krill_list_apps`
 returns both.
@@ -81,9 +85,32 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull (`{"action":"restart","status":"ok"}`). A stopped app is deployed instead: `{"action":"deploy","status":"running","deployment_id":…}`. |
 | `POST /api/v1/apps/{app}/stop` | write | Scale to zero; a deploy brings it back. |
 | `POST /api/v1/apps/{app}/env` | write | `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, the rest untouched. The value must be a single line (base64-encode a PEM key or JSON). |
+| `POST /api/v1/environments/{project}/{env}/databases` | provision | `{"name":"app","server":"main"}` (+ optional `db_name`, `username`) — a logical database and its owner user inside an existing Postgres server, which must be running. The password is never returned. |
+| `POST /api/v1/environments/{project}/{env}/apps` | provision | `{"name":"bot","image":"ghcr.io/acme/bot","tag":"v1","port":8080}` (+ optional `registry`, `domain`) — an image app, **not deployed**. `domain` is `{"host","tls","exposed","paths"}`; without it the app gets `<name>.<base domain>`, internal and without HTTPS. |
+| `POST /api/v1/apps/{app}/domains` | provision | `{"host":"bot.example.com","tls":true,"exposed":true,"paths":["/webhook"]}` — another domain of the app; routing applies at once to a deployed app. A host other apps already use has one HTTPS setting for all of them: omit `tls` to take it, or pass the same value. |
+| `POST /api/v1/apps/{app}/db-links` | provision | `{"var":"DATABASE_URL","database":"app"}` (a logical database of the app's environment) or `{"var":"REDIS_URL","server":"cache"}` (a Redis-compatible server); optional `field` — default `url`; an S3 server needs one of `endpoint`, `access_key`, `secret_key`, `region` (`{"var":"S3_ENDPOINT","server":"files","field":"endpoint"}`) — and, for Postgres, `scheme` (`postgres` or `postgresql`). Applied on the next deploy. |
+
+A database server or registry is named by its name or id; a reference that is one's name and
+another's id is refused as ambiguous, and so is an environment path when two projects share a
+name. A new database is refused (`409`) when the server already has a database or role of that
+name that Krill does not manage — it is never touched.
+
+The four creating routes are **idempotent** on a natural key — the name in the environment, the
+host on the app, the variable on the app. Repeating a request that already took effect returns
+the existing resource with `"created": false`; one that names an existing resource with other
+settings answers `409 conflict` and changes nothing. Changing or deleting a resource is done in
+the web UI.
 
 Deploys are **asynchronous**: `deploy` and `rebuild` return a `deployment_id` at once, and the
-caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. An env
+caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. `done`
+means Swarm finished the rolling update with the new tasks running. A deployment is `running`
+while it waits in the queue and builds, then for the convergence wait —
+`KRILL_CONVERGE_TIMEOUT`, or a healthcheck's start period plus a minute when that is longer —
+and, if the service is still starting then (an image still pulling), for up to 20 more
+minutes before it becomes `done` or `error`; keep polling. While it runs, `log_tail` is empty — the build log is saved
+when the deployment ends, and the live log is on the app's Deploys tab. A deploy that never
+converges ends `error` with `⚠ service still starting` and `❌ service did not converge` in its
+log. An env
 edit changes the app's configuration but restarts nothing; it takes effect on the next deploy.
 
 ## Notes
@@ -106,7 +133,8 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
   the API is on and the public URL isn't `https://` — put Krill behind TLS.
 - Every write is logged with the token id and user id — never the token or an env value.
 - An app named like one of the route verbs (`logs`, `env`, `deployments`, `deploy`, `rebuild`,
-  `reload`, `stop`) can only be addressed over REST by its numeric id.
+  `reload`, `stop`) can only be addressed over REST by its numeric id; one named `domains` or
+  `db-links` only for the provisioning POSTs.
 
 ## Webhooks
 

@@ -30,14 +30,15 @@ const noIdleTimeout = 0
 // TestToolListMatchesRegistry pins the exact set of MCP tools this adapter
 // exposes. The tool list IS the adapter's entire security surface — an MCP
 // client can call exactly what is registered here and nothing else — so a
-// stray thirteenth registration (or a typo'd name that silently duplicates
-// one of the twelve) must fail a test, not slip into production unnoticed.
+// stray extra registration (or a typo'd name that silently duplicates
+// a listed one) must fail a test, not slip into production unnoticed.
 // The list only ever changes together with this test, deliberately.
 func TestToolListMatchesRegistry(t *testing.T) {
 	want := []string{
-		"krill_app_logs", "krill_app_status", "krill_deploy", "krill_deployment_status",
-		"krill_deployments", "krill_list_apps", "krill_list_env", "krill_rebuild",
-		"krill_reload", "krill_set_env", "krill_stop", "krill_whoami",
+		"krill_add_domain", "krill_app_logs", "krill_app_status", "krill_create_app",
+		"krill_create_database", "krill_deploy", "krill_deployment_status",
+		"krill_deployments", "krill_link_database", "krill_list_apps", "krill_list_env",
+		"krill_rebuild", "krill_reload", "krill_set_env", "krill_stop", "krill_whoami",
 	}
 	got := mcpsrv.ToolNames()
 	sort.Strings(got)
@@ -619,4 +620,59 @@ func TestProxiedRequestWithDomainHostIsAccepted(t *testing.T) {
 	if resp.Header.Get("Mcp-Session-Id") == "" {
 		t.Fatal("initialize: no Mcp-Session-Id returned")
 	}
+}
+
+// The provisioning tools embed the REST request bodies; their input schemas
+// must list those fields flat, exactly as REST accepts them — a nested
+// "CreateAppInput" property would make every call fail validation.
+func TestProvisionToolSchemasAreFlat(t *testing.T) {
+	ts := httptest.NewServer(mcpsrv.New(api.NewService(nil, nil, nil), noIdleTimeout).Handler())
+	defer ts.Close()
+	_, sid := postJSONRPC(t, ts.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"schema","version":"v0"}}}`, "", "")
+	listEnv, _ := postJSONRPC(t, ts.URL, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`, "", sid)
+	if listEnv.Error != nil {
+		t.Fatalf("tools/list: %s", listEnv.Error.Message)
+	}
+	var res struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			InputSchema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			} `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(listEnv.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{
+		"krill_create_database": {"environment", "name", "server", "db_name", "username"},
+		"krill_create_app":      {"environment", "name", "image", "tag", "port", "registry", "domain"},
+		"krill_add_domain":      {"app", "host", "tls", "exposed", "paths"},
+		"krill_link_database":   {"app", "var", "database", "server", "field", "scheme"},
+	}
+	seen := 0
+	for _, tl := range res.Tools {
+		fields, ok := want[tl.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		for _, f := range fields {
+			if _, ok := tl.InputSchema.Properties[f]; !ok {
+				t.Errorf("%s: input schema lacks %q (has %v)", tl.Name, f, keys(tl.InputSchema.Properties))
+			}
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("found %d of %d provisioning tools", seen, len(want))
+	}
+}
+
+func keys(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
