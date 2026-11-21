@@ -12,6 +12,7 @@ import (
 )
 
 type mockEngine struct {
+	afterFirstExec func() // runs once, after the first recorded Exec
 	mu             sync.Mutex
 	pulled         []string
 	deployed       []docker.ServiceSpec
@@ -134,7 +135,12 @@ func (m *mockEngine) Exec(ctx context.Context, _ string, _ []string, _ []string,
 	m.execCalls++
 	first := m.execCalls == 1
 	fail := m.execFail
+	after := m.afterFirstExec
+	m.afterFirstExec = nil
 	m.mu.Unlock()
+	if after != nil {
+		after()
+	}
 	if fail && first {
 		return errors.New("provisioning step failed")
 	}
@@ -465,7 +471,9 @@ func TestProvisionCompensationRunsOnDeadContext(t *testing.T) {
 	svc := New(eng, store, nil, "krill-net")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // the request the provisioning rode on is gone
+	// The request the provisioning rode on goes away right after the
+	// existence check, i.e. while CREATE runs.
+	eng.afterFirstExec = cancel
 
 	err := svc.ProvisionLogicalDB(ctx, Instance{AppName: "krill-postgres-prov", Superuser: "postgres", SuperuserPassword: "pw"},
 		LogicalDB{DBName: "appdb", Username: "appuser", Password: "pw"})
@@ -474,7 +482,7 @@ func TestProvisionCompensationRunsOnDeadContext(t *testing.T) {
 	}
 	// The CREATE died with the request; the compensating DROP must still reach
 	// the daemon, on a context of its own.
-	if n := eng.execCount(); n < 1 {
+	if n := eng.execCount(); n < 2 {
 		t.Errorf("%d statements reached the daemon: the compensating drop died with the request, leaving a half-created database behind", n)
 	}
 }
