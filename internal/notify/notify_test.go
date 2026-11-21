@@ -21,6 +21,7 @@ type fakeStore struct {
 
 	mu          sync.Mutex
 	infra       []Channel
+	infraErr    error // returned alongside infra, like a skipped broken row
 	digest      []Channel
 	alerts      map[string]AlertState // "<channel>|<key>"
 	runs        []BackupRun
@@ -31,7 +32,7 @@ type fakeStore struct {
 	released    int
 }
 
-func (f *fakeStore) InfraChannels(context.Context) ([]Channel, error)  { return f.infra, nil }
+func (f *fakeStore) InfraChannels(context.Context) ([]Channel, error)  { return f.infra, f.infraErr }
 func (f *fakeStore) DigestChannels(context.Context) ([]Channel, error) { return f.digest, nil }
 func (f *fakeStore) ClaimDigest(_ context.Context, id int64, at, scheduled time.Time) (bool, error) {
 	f.mu.Lock()

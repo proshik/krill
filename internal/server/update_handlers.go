@@ -135,12 +135,17 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	v.Supported = supported
 	if !supported {
 		v.UnsupportedKey = "update.unsupported." + reason
-	} else if busy := i.Busy(ctx); busy != "" {
-		// Busy reads the database; an instance that cannot update anyway
-		// (a dev machine) never asks.
-		v.BusyKey = "update.busy." + busy
 	}
 	job := i.Status()
+	if supported {
+		// Busy reads the database; an instance that cannot update anyway
+		// (a dev machine) never asks. While the update job backs up Krill's
+		// state, that snapshot is its own and not a reason to wait; in any
+		// other phase a running state backup is someone else's.
+		if busy := i.Busy(ctx); busy != "" && !(busy == "state_backup" && job.Phase == selfupdate.PhaseBackingUp) {
+			v.BusyKey = "update.busy." + busy
+		}
+	}
 	v.Phase = string(job.Phase)
 	if v.Phase == "" {
 		v.Phase = string(selfupdate.PhaseIdle)
@@ -150,12 +155,22 @@ func (s *Server) updatesView(ctx context.Context) templates.UpdatesView {
 	if job.Err != nil {
 		// A job gives up with a BusyError when work started while it
 		// downloaded; say what, in the words the refusal at the button uses.
+		// A failed state snapshot says the update did not start and how to
+		// update anyway; its text is the run's error, already free of secrets.
 		var busy *selfupdate.BusyError
-		if errors.As(job.Err, &busy) {
-			v.JobErr = i18n.T(ctx, "update.busy."+busy.Reason)
-		} else {
-			v.JobErr = job.Err.Error()
+		var snap *selfupdate.SnapshotError
+		switch {
+		case errors.As(job.Err, &busy):
+			v.JobErr = i18n.Tf(ctx, "update.job_failed", i18n.T(ctx, "update.busy."+busy.Reason))
+		case errors.As(job.Err, &snap):
+			v.JobErr = i18n.Tf(ctx, "update.err.snapshot", snap.Err.Error())
+		default:
+			v.JobErr = i18n.Tf(ctx, "update.job_failed", job.Err.Error())
 		}
+	}
+	if v.IsRelease && v.Available {
+		// Shown above the Install button only.
+		v.StateLine = "update.state." + s.stateBackupMode(ctx)
 	}
 	if prev, ok := i.Previous(ctx); ok {
 		v.Previous = prev

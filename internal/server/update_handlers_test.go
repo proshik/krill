@@ -328,6 +328,35 @@ func TestUpdatesPage(t *testing.T) {
 		}
 	})
 
+	// The update's own pre-update snapshot is not a reason to wait; the same
+	// snapshot started by someone else is.
+	t.Run("own state snapshot is not busy", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		i.busy = "state_backup"
+		i.status = selfupdate.Status{Phase: selfupdate.PhaseBackingUp, Tag: updLatest}
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if strings.Contains(body, "state is running") {
+			t.Errorf("the update's own snapshot is shown as a reason to wait")
+		}
+		c, i = newUpdateFakes()
+		i.busy = "state_backup"
+		body = getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if !strings.Contains(body, "state is running") {
+			t.Errorf("a foreign state backup is not shown as busy")
+		}
+		// Only the backing-up phase is the update's own snapshot: in any
+		// other active phase a running state backup is someone else's.
+		for _, ph := range []selfupdate.Phase{selfupdate.PhaseDownloading, selfupdate.PhaseVerifying, selfupdate.PhaseInstalling, selfupdate.PhaseRestarting} {
+			c, i = newUpdateFakes()
+			i.busy = "state_backup"
+			i.status = selfupdate.Status{Phase: ph, Tag: updLatest}
+			body = getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+			if !strings.Contains(body, "state is running") {
+				t.Errorf("phase %s: a foreign state backup is not shown as busy", ph)
+			}
+		}
+	})
+
 	t.Run("up to date with a previous version", func(t *testing.T) {
 		c, i := newUpdateFakes()
 		c.newer = false
@@ -392,6 +421,37 @@ func TestUpdatesPage(t *testing.T) {
 		}
 		if strings.Contains(body, "selfupdate: busy") {
 			t.Errorf("page shows the raw busy error")
+		}
+	})
+
+	// A failed pre-update snapshot says the update did not start and how to
+	// update anyway, never the raw wrapper text.
+	t.Run("job given up for a failed state snapshot", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		i.status = selfupdate.Status{Phase: selfupdate.PhaseFailed, Tag: updLatest, Err: &selfupdate.SnapshotError{Err: errors.New("s3 down")}}
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		for _, want := range []string{"so the update did not start: s3 down.", "To update anyway, pause Krill backups first."} {
+			if !strings.Contains(body, want) {
+				t.Errorf("page does not contain %q", want)
+			}
+		}
+		for _, bad := range []string{"selfupdate: state snapshot failed", "The update failed: The backup"} {
+			if strings.Contains(body, bad) {
+				t.Errorf("page contains %q", bad)
+			}
+		}
+	})
+
+	// Until Task 9 wires the state backup, the line above Install says it is
+	// not set up and links to its page.
+	t.Run("state backup line", func(t *testing.T) {
+		c, i := newUpdateFakes()
+		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
+		if !strings.Contains(body, "is not backed up before updates") {
+			t.Errorf("page does not say the state is not backed up before updates")
+		}
+		if !strings.Contains(body, `href="`+base+`/krill-backups"`) {
+			t.Errorf("page does not link to the Krill backups page")
 		}
 	})
 

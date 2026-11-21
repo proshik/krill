@@ -205,7 +205,10 @@ let a running migration finish, as long as it does within systemd's stop timeout
 by default; a `kill -9` or a crash does not.) Recovery is manual and careful:
 
 1. Back up Krill's database first — for the bundled Postgres,
-   `docker exec krill-postgres pg_dump -U krill krill > krill-backup.sql`.
+   `docker exec krill-postgres pg_dump -U krill krill > krill-backup.sql`. If
+   [Krill backups](guides/krill-backups.md) are on, the newest snapshot under `pre-update/`
+   was taken just before the update and is the safer starting point (see
+   [Restore Krill's state from a backup](#restore-krills-state-from-a-backup), runbook B).
 2. Read in `journalctl -u krill` which migration failed and why; its SQL is
    `internal/database/migrations/<N>_*.up.sql` in that release's source.
 3. Fix the data or the schema by hand until it matches version N either fully applied or not
@@ -243,6 +246,241 @@ one:
   points at a private address (a Git server on your LAN or on the host itself) now stops
   building on that forced rebuild. Set `KRILL_ALLOW_PRIVATE_EGRESS=true` before upgrading if
   you build from one.
+
+## Restore Krill's state from a backup
+
+This applies when [Krill backups](guides/krill-backups.md) were set up. The backup restores
+Krill's **configuration**, not your workloads. After a restore:
+
+- Swarm services must be redeployed.
+- App volumes, app databases and buckets come back only from their own backups.
+- Worker nodes belonged to the old swarm and must be removed and re-added **before** you redeploy.
+
+You need the age private key (`krill-backup-key.txt`) and, to read the encrypted secrets, the old
+`KRILL_SECRET_KEY`. Add a lifecycle rule that aborts incomplete multipart uploads after one day
+to the backup bucket; a Krill killed mid-backup would otherwise leave billed, invisible leftovers.
+
+### Restoring the dump
+
+Both runbooks use this procedure. Use `bash` (the `pipefail` option below is not in every `sh`).
+Without it a wrong key or a damaged object can look like a successful restore: `psql` sees an
+empty input, or only the beginning of the dump, and commits that.
+
+1. **Verify the object first**, before touching any database. This decrypts and decompresses the
+   whole object and throws the result away; every stage must succeed:
+   ```sh
+   set -o pipefail
+   age -d -i krill-backup-key.txt <object> | gunzip > /dev/null && echo "object OK"
+   ```
+   Stop here if it does not print `object OK`.
+2. Recreate the target database empty. For the bundled Postgres:
+   ```sh
+   docker exec krill-postgres psql -U krill -d postgres -c 'DROP DATABASE krill' -c 'CREATE DATABASE krill OWNER krill'
+   ```
+3. Restore from the same object, still with `pipefail` set:
+   ```sh
+   age -d -i krill-backup-key.txt <object> | gunzip | docker exec -i krill-postgres psql -v ON_ERROR_STOP=1 --single-transaction -U krill -d krill \
+     && echo "restore OK"
+   ```
+   If this does not print `restore OK`, do not start Krill and do not retry on top of it: `psql`
+   may already have committed part of the dump. Repeat step 2, then step 3.
+4. **Check the result before starting Krill.** The schema must be clean and the data present:
+   ```sh
+   docker exec krill-postgres psql -U krill -d krill -c 'SELECT version, dirty FROM schema_migrations' -c 'SELECT count(*) FROM applications'
+   ```
+   `dirty` must be `f`, and the counts must look like your installation.
+
+**Match the client to the dump.** Recent `pg_dump` releases write `\restrict` / `\unrestrict`
+lines, and a `psql` that is too old for them rejects the dump. Check for the line and read the
+header (the "Dumped by pg_dump version" line sits a few lines down, after `\restrict`):
+
+```sh
+age -d -i krill-backup-key.txt <object> | gunzip | grep -m1 '^\\restrict'
+age -d -i krill-backup-key.txt <object> | gunzip | sed -n '1,12p'
+psql --version
+```
+
+If the dump contains `\restrict`, use a `psql` of at least 13.22, 14.19, 15.14, 16.10 or 17.6
+within its own major, or any 18 or newer: a `psql` of a different major below its own threshold
+(for example 17.5) rejects the dump even when its version number is larger. The simplest safe
+choice is the `postgres:<dump major>-alpine` image (the same image Krill dumps with).
+
+Check this before you reset anything: a restore that stops on the first line of the dump has
+already lost the old data. If your `psql` is older, prefix every `psql` below with
+`docker run --rm -i --network host -e PGHOST -e PGPORT -e PGUSER -e PGSSLMODE -e PGPASSFILE -v "$PGPASSFILE:$PGPASSFILE:ro" postgres:<major>-alpine`
+(drop `--network host` and the SSL variables you do not need; a `verify-full` connection also
+needs the CA file mounted and `PGSSLROOTCERT` set).
+
+For an **external database**, do not put the connection string on the command line: it would be
+visible to every process listing and audit log on the host. Use libpq's environment variables and
+a password file readable only by you instead, and run the same `psql` command without
+`docker exec`. First read the real database name, user and host from `KRILL_DATABASE_URL` in
+`/etc/krill/krill.env` (the path is its database; `<db>` and `<owner>` below mean those values,
+not necessarily `krill`) and use them in every command, including the checks:
+
+```bash
+export PGHOST=db.example.com PGPORT=5432 PGUSER=<owner> PGSSLMODE=verify-full
+export PGPASSFILE="$HOME/.krill-pgpass"
+# Type the password at the silent prompt (in bash); it never appears on a command line or in shell history.
+# libpq's password file needs \\ for a backslash and \: for a colon, so escape them first.
+( umask 077; read -rs -p 'Database password: ' PW && echo \
+  && PW=$(printf '%s' "$PW" | sed 's/[\\:]/\\&/g') \
+  && printf '%s:%s:*:%s:%s\n' "$PGHOST" "$PGPORT" "$PGUSER" "$PW" > "$PGPASSFILE" ); unset PW
+```
+
+(Or create the file with an editor under `umask 077`. Do not use a literal password in a command.)
+Then run steps 2 to 4 with `<db>` in place of `krill` and without `docker exec`; step 2 becomes:
+
+```sh
+psql -d postgres -c 'DROP DATABASE "<db>"' -c 'CREATE DATABASE "<db>" OWNER "<owner>"'
+```
+
+A managed service may not let you drop the database, or your role may only own objects inside
+it. Then reset the schemas instead, and do not assume they are only `public`. List what exists
+and what the dump creates:
+
+```sh
+psql -d <db> -c '\dn'
+age -d -i krill-backup-key.txt <object> | gunzip | grep '^CREATE SCHEMA'
+```
+
+Drop only schemas that Krill's role owns and that also appear in the dump's `CREATE SCHEMA`
+list, plus `public` if Krill owns it, each with `DROP SCHEMA "<name>" CASCADE`; never drop a
+schema owned by another role (a provider or an extension may keep its own). See the owners with
+`psql -d <db> -c '\dn+'` (the Owner column), or list Krill's with
+`SELECT nspname FROM pg_namespace WHERE nspowner = '<owner>'::regrole`. Then
+`CREATE SCHEMA public` if it is gone (or use the provider's own reset). The dump has no
+`CREATE DATABASE` and does not carry database-level settings, so a `search_path` set with
+`ALTER DATABASE` or `ALTER ROLE` is not restored: if your installation had one, set it again
+(`ALTER DATABASE "<db>" SET search_path = ...`) before step 3. For the check in step 4, connect
+exactly as Krill does (same `KRILL_DATABASE_URL`, so its options apply) and read
+`SHOW search_path` together with `SELECT version, dirty FROM schema_migrations`: it must find the
+restored table without schema qualification. Finally `rm -f "$PGPASSFILE"`. To keep the private
+key off the host, decrypt on your workstation and pipe the result over `ssh`.
+
+### A. Lost host, new host
+
+1. Run `install.sh` (for an external database, with the new `KRILL_DATABASE_URL`). Use a release
+   equal to or newer than the snapshot's; `install.sh` installs the latest. Never use an older
+   one.
+2. `systemctl stop krill`. The first start already migrated and seeded an empty database.
+3. In `/etc/krill/krill.env`, set the **original** `KRILL_ADMIN_EMAIL` and `KRILL_SECRET_KEY`.
+   Setting `KRILL_ADMIN_EMAIL` when running `install.sh` does not carry over: the installer
+   always writes `admin@krill.local` (or `admin@<KRILL_DOMAIN>`). Krill promotes the account named
+   there to instance operator on every start and demotes every other one, so with a different
+   address your restored operator loses access to Nodes, Firewall and the other pages the rest of
+   this runbook needs. Without the old `KRILL_SECRET_KEY` the encrypted secrets are unreadable and
+   the operations that need them fail visibly.
+4. Fetch the backup object with your storage's own tool, onto your workstation or the host.
+5. Restore the dump as described in [Restoring the dump](#restoring-the-dump), including the
+   checks, **before** the next step.
+6. `systemctl start krill`. The admin password is the old one (the seeding step never overwrites
+   an existing user). Migrations bring an older snapshot forward.
+7. **Bring the cluster back before redeploying anything**, because the restored state refers to
+   the old swarm:
+   - The restored `cluster_nodes` rows describe workers of the old swarm. The Nodes page lists
+     only nodes the **live** swarm reports, so a restored worker that has not joined the new
+     swarm has no row there and no Remove button, yet its name still blocks adding a worker
+     with the same name. Clean them up by hand, with Krill stopped (`systemctl stop krill`),
+     before you rejoin the workers:
+     ```sh
+     docker exec -i krill-postgres psql -U krill -d krill -c 'SELECT id, name, swarm_node_id FROM cluster_nodes'
+     docker exec -i krill-postgres psql -U krill -d krill -c "DELETE FROM node_labels WHERE swarm_node_id IN (SELECT swarm_node_id FROM cluster_nodes WHERE swarm_node_id <> '')" \
+       -c "DELETE FROM firewall_checks WHERE node LIKE 'node-%'" -c 'DELETE FROM cluster_nodes'
+     ```
+     (With an external database, use your `psql` setup and the real database name instead of
+     `docker exec`.) Nothing has a foreign key to `cluster_nodes`; `node_labels` and
+     `firewall_checks` only hold display names and last-check times for the old IDs. Start
+     Krill again, and on the Nodes page add each worker again by SSH (a worker still in another
+     swarm must leave it first: `docker swarm leave --force`). Every worker comes back with a
+     **new** Swarm node ID. A worker whose firewall Krill had locked down keeps its persisted
+     ruleset, which allows only the OLD cluster's addresses and can block the new swarm.
+     Before re-adding such a worker, run on it, as root, what Krill's own node removal does:
+     ```sh
+     systemctl stop krill-fw-revert.timer 2>/dev/null; nft delete table inet krill 2>/dev/null; rm -f /etc/krill/firewall.nft; systemctl disable krill-firewall.service
+     ```
+     Re-apply a lockdown afterwards from the Firewall page if you want one.
+   - Apps pinned to nodes (placement `pin` or `global`) store the old node IDs, and a deploy
+     rejects an ID that no longer exists. Open each such app's Advanced tab, choose its nodes
+     again from the list and save (or switch it to "Any node").
+   - A database instance stores the **hostname** of the node it was pinned to. If that node is
+     back under the same name, nothing to do. If it is gone, the instance cannot start and the
+     usual "change node" action cannot help, because it tries to copy the volume from the old node.
+     The data on a lost node is not recoverable from this backup anyway, so point the instance at
+     a node that exists (empty means the control-plane node), and it will start empty:
+     `UPDATE db_instances SET node_hostname = '<hostname>' WHERE id = <id>;` in Krill's database
+     (`docker exec -i krill-postgres psql -U krill -d krill`).
+8. Recover the workloads:
+   - Do not leave the restored backup schedules on: against an empty database, volume or bucket
+     a scheduled run uploads an empty backup and, through its retention count, deletes the last
+     populated one you need. Pause them **in step 5, right after the restore checks and before
+     `systemctl start krill`** (the scheduler reads these flags at start), in the same `psql`
+     session as the restore:
+     ```sql
+     UPDATE backups SET enabled = false;
+     UPDATE volume_backups SET enabled = false;
+     UPDATE bucket_backups SET enabled = false;
+     ```
+     Resume them from the Backups pages only after every restore below has finished and been
+     checked. Alternatively copy the objects you will restore from to a prefix no schedule
+     writes to.
+   - Point DNS at the new IP address.
+   - Redeploy the database instances.
+   - For each logical database, recreate its user and database by hand: a redeployed instance
+     starts empty and Krill does not re-create them. Take the name, user and password from the
+     database's page and run this in the instance's container as its superuser
+     (`docker exec -i <instance container> psql -U <superuser>`):
+     ```sql
+     CREATE USER "<user>" PASSWORD '<password>';
+     CREATE DATABASE "<db>" OWNER "<user>";
+     REVOKE CONNECT ON DATABASE "<db>" FROM PUBLIC;
+     ```
+   - Restore the app database backups, then the volume and bucket backups. A bucket is restored
+     into a **new** bucket, and each restore must finish first (see
+     [Buckets](guides/buckets.md#back-up-and-restore-a-bucket)). Then relink each app to the
+     restored bucket, and change any bucket name, endpoint or key written literally in the app's
+     environment, before you redeploy: an app redeployed with its old bucket links points at a
+     bucket that is gone or empty.
+   - Redeploy the apps.
+   - Resume the backup schedules you paused (the Pause/Resume toggle on each backup).
+   - Re-check Settings → Panel domain and the Firewall page.
+
+### B. Failed upgrade on the same host
+
+Use this for a dirty migration or broken data after an update.
+
+1. **Cancel the update's rollback machinery first.** For ten minutes after an update, a timer
+   restarts Krill (and may swap the binary) if the new one has not confirmed its start; a
+   restart in the middle of a restore could hold a connection that blocks the drop, or run
+   migrations on the empty database before the import finishes:
+   ```sh
+   systemctl stop krill-update-revert.timer krill-update-restart.timer 2>/dev/null
+   systemctl stop krill-update-revert.service krill-update-restart.service 2>/dev/null
+   rm -f /run/krill-update-pending
+   systemctl list-timers 'krill-update-*'    # must list nothing
+   ```
+2. `systemctl stop krill`.
+3. Put the old binary back (`mv /usr/local/bin/krill.prev /usr/local/bin/krill`, or download the
+   release you updated from).
+4. Restore the **pre-update** snapshot whose name ends in `_<from>_to_<to>.sql.gz.age`, as in
+   [Restoring the dump](#restoring-the-dump), including the checks.
+5. `systemctl start krill`. `KRILL_SECRET_KEY` has not changed.
+
+The workloads kept running, so nothing needs redeploying except what the failed release touched.
+
+### Test a restore regularly
+
+Restore into a throwaway container, check it, and remove it. Use the image of your server's own
+Postgres major version (`postgres:<major>-alpine`; the bundled install runs 17):
+
+```sh
+docker run -d --rm --name krill-restore-test -e POSTGRES_PASSWORD=x postgres:<major>-alpine
+# verify and pipe the snapshot into it as in "Restoring the dump", with `docker exec -i krill-restore-test psql -U postgres`
+docker exec krill-restore-test psql -U postgres -c 'SELECT version, dirty FROM schema_migrations' -c 'SELECT count(*) FROM applications'
+docker rm -f krill-restore-test
+```
+
+This proves both the object and the private key.
 
 ## Uninstall
 

@@ -30,13 +30,14 @@ const (
 	PhaseInstalling  Phase = "installing"
 	PhaseRestarting  Phase = "restarting"
 	PhaseFailed      Phase = "failed"
+	PhaseBackingUp   Phase = "backing_up"
 )
 
 // Active reports whether a job is in progress in this phase. Restarting
 // counts: the job succeeded and the process is about to be replaced.
 func (p Phase) Active() bool {
 	switch p {
-	case PhaseDownloading, PhaseVerifying, PhaseInstalling, PhaseRestarting:
+	case PhaseDownloading, PhaseVerifying, PhaseBackingUp, PhaseInstalling, PhaseRestarting:
 		return true
 	}
 	return false
@@ -77,6 +78,24 @@ func (e *BusyError) Error() string {
 	return "selfupdate: busy: " + e.Reason
 }
 
+// SnapshotFunc backs up Krill's own state right before an update installs
+// the release to (from is the running version). It reports whether a
+// snapshot was taken: false with a nil error means the state backup is not
+// configured or is paused, and the update goes ahead without one. A
+// *BusyError (its slot is taken by another run) is passed through as is; any
+// other error blocks the update.
+type SnapshotFunc func(ctx context.Context, from, to string) (bool, error)
+
+// SnapshotError fails an update whose pre-update state snapshot failed.
+// Nothing on the host has changed when it is returned.
+type SnapshotError struct{ Err error }
+
+func (e *SnapshotError) Error() string {
+	return "selfupdate: state snapshot failed: " + e.Err.Error()
+}
+
+func (e *SnapshotError) Unwrap() error { return e.Err }
+
 // Updater installs a newer Krill release over the running binary, guarded by
 // a dead-man timer that puts the previous binary back unless the new process
 // confirms its own startup (ConfirmStartup).
@@ -85,6 +104,10 @@ type Updater struct {
 	checker *Checker
 	repo    string
 	busy    func(context.Context) string
+
+	// snapshot, when set, backs up Krill's state before an install (see
+	// SetSnapshot).
+	snapshot SnapshotFunc
 
 	// Everything below is overridden directly by tests in this package;
 	// there are deliberately no exported setters.
@@ -110,6 +133,9 @@ type Updater struct {
 	getppid     func() int
 	geteuid     func() int
 	now         func() time.Time
+
+	// snapshotTimeout bounds the pre-update snapshot inside the job.
+	snapshotTimeout time.Duration
 
 	mu        sync.Mutex
 	status    Status
@@ -162,7 +188,7 @@ func NewUpdater(runner firewall.Runner, checker *Checker, repo string, allowPriv
 		revertUnit:  "krill-update-revert",
 		restartUnit: "krill-update-restart",
 		revertDelay: 10 * time.Minute,
-		jobTimeout:  15 * time.Minute,
+		jobTimeout:  25 * time.Minute, // a slow download plus a full pre-update snapshot
 		stopBackoff: time.Second,
 		confirmWait: time.Minute,
 		confirmPoll: 50 * time.Millisecond,
@@ -175,7 +201,18 @@ func NewUpdater(runner firewall.Runner, checker *Checker, repo string, allowPriv
 		geteuid:     os.Geteuid,
 		now:         time.Now,
 		status:      Status{Phase: PhaseIdle},
+
+		snapshotTimeout: 10 * time.Minute,
 	}
+}
+
+// SetSnapshot installs the pre-update state snapshot. Call it once, before
+// the server starts serving; nil (the default) installs without a snapshot.
+// A rollback never takes one: it runs no migrations.
+func (u *Updater) SetSnapshot(fn SnapshotFunc) {
+	u.mu.Lock()
+	u.snapshot = fn
+	u.mu.Unlock()
 }
 
 // Status returns a snapshot of the current or last job.

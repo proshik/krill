@@ -74,6 +74,7 @@ type Digest struct {
 	store   Store
 	metrics MetricsReader
 	swarm   SwarmReader // nil: crashes and stopped apps are not told apart
+	state   StateReader // nil: no "Krill state" block
 	log     *slog.Logger
 	now     func() time.Time
 }
@@ -134,12 +135,23 @@ func (d *Digest) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			if n%60 == 0 {
-				if err := d.store.PruneBackupRuns(ctx, d.now().Add(-backupRunsKeep)); err != nil {
-					d.log.Warn("notify digest: prune backup runs failed", "err", err)
-				}
+				d.prune(ctx)
 			}
 			n++
 			d.tick(ctx)
+		}
+	}
+}
+
+// prune drops journal rows older than backupRunsKeep.
+func (d *Digest) prune(ctx context.Context) {
+	before := d.now().Add(-backupRunsKeep)
+	if err := d.store.PruneBackupRuns(ctx, before); err != nil {
+		d.log.Warn("notify digest: prune backup runs failed", "err", err)
+	}
+	if d.state != nil {
+		if err := d.state.PruneStateRuns(ctx, before); err != nil {
+			d.log.Warn("notify digest: prune state backup runs failed", "err", err)
 		}
 	}
 }
@@ -222,6 +234,8 @@ type digestData struct {
 	idleApps
 	Infra bool
 	Nodes []nodeRow
+	// State is the "Krill state" block (infra channels only); nil = none.
+	State *stateBlock
 	// Thresholds for the attention line.
 	DiskThreshold, MemThreshold int
 	RestartsKnown               bool
@@ -329,6 +343,7 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 			return data, fmt.Errorf("node disks: %w", err)
 		}
 		data.Nodes = nodeRows(caps, disks, samples, now)
+		data.State = d.stateBlock(ctx, eventsSince, now)
 	}
 	return data, nil
 }
@@ -830,6 +845,19 @@ func renderDigest(d digestData) []string {
 		}
 		if len(d.Nodes) == 0 {
 			add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
+		}
+	}
+
+	// Krill's own state backups (infrastructure channels only).
+	if d.Infra && d.State != nil {
+		add("")
+		add("<b>%s</b>", esc(i18n.T(ctx, "tg.dg.state")))
+		for _, l := range stateLines(ctx, d) {
+			if l.lvl == nil {
+				add("%s", esc(l.text))
+			} else {
+				add("%s %s", l.lvl.mark(), esc(l.text))
+			}
 		}
 	}
 

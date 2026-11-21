@@ -2,6 +2,7 @@ package backup
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/robfig/cron/v3"
 )
@@ -22,6 +23,11 @@ func CronForPreset(preset, custom string) (string, error) {
 	case "monthly":
 		return "0 3 1 * *", nil
 	case "custom":
+		// robfig/cron slices a TZ=/CRON_TZ= prefix up to the first space and
+		// panics when there is none, i.e. a timezone with no expression.
+		if (strings.HasPrefix(custom, "TZ=") || strings.HasPrefix(custom, "CRON_TZ=")) && !strings.Contains(custom, " ") {
+			return "", fmt.Errorf("invalid cron %q: a timezone needs a cron expression after it", custom)
+		}
 		if _, err := cron.ParseStandard(custom); err != nil {
 			return "", fmt.Errorf("invalid cron %q: %w", custom, err)
 		}

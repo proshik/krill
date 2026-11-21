@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sort"
 	"time"
@@ -80,6 +81,22 @@ func Upload(ctx context.Context, d Destination, key string, r io.Reader, allowPr
 	return err
 }
 
+// Head returns the stored size (ContentLength) of the object at key.
+func Head(ctx context.Context, d Destination, key string, allowPrivate bool) (int64, error) {
+	cl, err := clientFor(ctx, d, allowPrivate)
+	if err != nil {
+		return 0, err
+	}
+	o, err := cl.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &d.Bucket, Key: &key})
+	if err != nil {
+		return 0, err
+	}
+	if o.ContentLength == nil {
+		return 0, errors.New("the storage reported no size for the object")
+	}
+	return *o.ContentLength, nil
+}
+
 func List(ctx context.Context, d Destination, prefix string, allowPrivate bool) ([]Object, error) {
 	cl, err := clientFor(ctx, d, allowPrivate)
 	if err != nil {
@@ -93,6 +110,11 @@ func List(ctx context.Context, d Destination, prefix string, allowPrivate bool) 
 			return nil, err
 		}
 		for _, o := range page.Contents {
+			// A listing entry without a key cannot be matched, kept or
+			// deleted; dereferencing it would panic the caller's goroutine.
+			if o.Key == nil {
+				return nil, errors.New("the storage listed an object without a key")
+			}
 			obj := Object{Key: *o.Key}
 			if o.Size != nil {
 				obj.Size = *o.Size

@@ -24,11 +24,14 @@ type RunFunc func(ctx context.Context, backupID int64)
 
 // Scheduler runs enabled backups on their cron schedules.
 type Scheduler struct {
-	store   SchedStore
-	run     RunFunc
-	mu      sync.Mutex
-	cron    *cron.Cron
-	stopped bool // set by Stop: a later Reload must not resurrect the scheduler
+	store SchedStore
+	run   RunFunc
+	// reloadMu serializes whole Reloads, the read included: a Reload that
+	// read older settings must not swap after one that read newer ones.
+	reloadMu sync.Mutex
+	mu       sync.Mutex
+	cron     *cron.Cron
+	stopped  bool // set by Stop: a later Reload must not resurrect the scheduler
 }
 
 func NewScheduler(store SchedStore, run RunFunc) *Scheduler {
@@ -37,6 +40,8 @@ func NewScheduler(store SchedStore, run RunFunc) *Scheduler {
 
 // Reload rebuilds the schedule from enabled backups; empty (on-demand) schedules and invalid cron exprs are skipped.
 func (s *Scheduler) Reload() error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
 	bs, err := s.store.ListEnabledBackups(context.Background())
 	if err != nil {
 		return err

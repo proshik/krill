@@ -43,6 +43,8 @@ func format(ev Event, lang string) string {
 		head = i18n.T(ctx, "tg.disk_ok")
 	case MemOvercommit:
 		head = i18n.T(ctx, "tg.mem_over")
+	case StateBackupFailed:
+		head = i18n.T(ctx, "tg.state_backup_failed")
 	default:
 		head = i18n.T(ctx, "tg.notification")
 	}
@@ -73,6 +75,10 @@ func format(ev Event, lang string) string {
 		d := ev.Disk
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(i18n.Tf(ctx, "tg.disk_line",
 			d.Node, d.Mount, d.Pct, bytesPair(ctx, "tg.pair", d.Used, d.Total), humanBytes(d.Avail), d.Threshold)))
+	case ev.State != nil:
+		if line := stateTriggerLine(ctx, ev.State.Trigger, ev.State.From, ev.State.To); line != "" {
+			fmt.Fprintf(&b, "\n%s", html.EscapeString(line))
+		}
 	case ev.Mem != nil:
 		m := ev.Mem
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(i18n.Tf(ctx, "tg.mem_line",

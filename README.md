@@ -38,6 +38,8 @@ and Traefik for routing, and stores its state in Postgres.
   every deploy.
 - **Backups to S3.** Scheduled Postgres and volume backups with retention, restored from the
   UI. → [Backups](docs/guides/backups.md)
+- **Backups of Krill itself.** Encrypted backups of Krill's own configuration database, scheduled and
+  before every update. → [Krill backups](docs/guides/krill-backups.md)
 - **Domains and HTTPS.** Custom domains with per-domain Let's Encrypt certificates. Apps are
   internal until you expose them, and a domain can publish only some paths or sit behind basic
   auth and an IP allowlist. The Krill UI itself gets a domain and HTTPS from its settings
@@ -108,6 +110,7 @@ else's production:
 | [Environment cloning](docs/guides/environments.md) | Isolated staging configuration, secret handling and cleanup. |
 | [Deployments](docs/guides/deployments.md) | Pre-deploy commands, failure behavior and limits. |
 | [Backups](docs/guides/backups.md) | S3 storage, schedules, retention, restore. |
+| [Krill's own backups](docs/guides/krill-backups.md) | Encrypted state backups, the age key, pre-update snapshots, restore runbook. |
 | [Systems](docs/guides/systems.md) | Group an environment's apps by product and see the resources each system uses. |
 | [Buckets](docs/guides/buckets.md) | Per-environment buckets on a managed S3 server, restricted keys, rotation. |
 | [Private images and repositories](docs/guides/registries.md) | Registries, private Git, build arguments and secrets. |

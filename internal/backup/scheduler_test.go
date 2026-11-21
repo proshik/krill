@@ -125,3 +125,57 @@ func TestSchedulerSkipsEmptySchedule(t *testing.T) {
 		t.Fatalf("want 1 cron entry (empty schedule skipped), got %d", n)
 	}
 }
+
+// stagedSchedStore answers its first call with nothing (the older settings)
+// only once released, and every later call with one backup at once.
+type stagedSchedStore struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *stagedSchedStore) ListEnabledBackups(context.Context) ([]SchedBackup, error) {
+	f.mu.Lock()
+	f.calls++
+	first := f.calls == 1
+	f.mu.Unlock()
+	if first {
+		close(f.entered)
+		<-f.release
+		return nil, nil
+	}
+	return []SchedBackup{{ID: 1, Schedule: "@every 1h"}}, nil
+}
+
+// A Reload that read the settings first must not swap its schedule in after
+// a later Reload's (e.g. a Resume racing the startup reload).
+func TestReloadsAreSerializedWithTheirRead(t *testing.T) {
+	st := &stagedSchedStore{entered: make(chan struct{}), release: make(chan struct{})}
+	s := NewScheduler(st, func(context.Context, int64) {})
+	defer s.Stop()
+
+	stale := make(chan error, 1)
+	go func() { stale <- s.Reload() }()
+	<-st.entered
+	fresh := make(chan error, 1)
+	go func() { fresh <- s.Reload() }()
+	select {
+	case err := <-fresh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(st.release)
+	if err := <-stale; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for s.entryCount() != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := s.entryCount(); n != 1 {
+		t.Fatalf("entries = %d, want the later read's 1", n)
+	}
+}

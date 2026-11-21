@@ -192,6 +192,7 @@ type Querier interface {
 	GetRegistry(ctx context.Context, id int64) (Registry, error)
 	GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error)
 	GetSession(ctx context.Context, token string) (Session, error)
+	GetStateBackupSettings(ctx context.Context) (StateBackupSetting, error)
 	GetSystem(ctx context.Context, id int64) (System, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id int64) (User, error)
@@ -207,6 +208,8 @@ type Querier interface {
 	InsertBackupRun(ctx context.Context, arg InsertBackupRunParams) error
 	InsertEnvironmentClone(ctx context.Context, arg InsertEnvironmentCloneParams) error
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
+	InsertStateBackupRun(ctx context.Context, arg InsertStateBackupRunParams) error
+	LastSuccessfulStateBackupRun(ctx context.Context) (StateBackupRun, error)
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
@@ -277,6 +280,8 @@ type Querier interface {
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListS3BucketsByEnvironment(ctx context.Context, environmentID int64) ([]ListS3BucketsByEnvironmentRow, error)
 	ListS3BucketsByInstance(ctx context.Context, instanceID int64) ([]S3Bucket, error)
+	ListStateBackupRuns(ctx context.Context, limit int32) ([]StateBackupRun, error)
+	ListStateBackupRunsSince(ctx context.Context, finishedAt time.Time) ([]StateBackupRun, error)
 	ListSystemMembersByEnvironment(ctx context.Context, environmentID int64) ([]SystemMember, error)
 	ListSystemsByEnvironment(ctx context.Context, environmentID int64) ([]System, error)
 	ListVolumeBackupsByVolume(ctx context.Context, appVolumeID int64) ([]VolumeBackup, error)
@@ -300,6 +305,10 @@ type Querier interface {
 	PruneNodeDisks(ctx context.Context, sampledAt time.Time) error
 	// Drops disks of nodes no longer in the cluster.
 	PruneNodeDisksExcept(ctx context.Context, dollar_1 []string) error
+	// The newest successful run is kept however old it is: the settings page and
+	// the digest read the last success from it, and a monthly schedule's last run
+	// would otherwise drop out of the journal before the next one is due.
+	PruneStateBackupRuns(ctx context.Context, finishedAt time.Time) error
 	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
 	RecordFirewallCheck(ctx context.Context, node string) error
@@ -359,6 +368,7 @@ type Querier interface {
 	SetPanelHSTS(ctx context.Context, hstsMaxAge int32) (int64, error)
 	// Exactly one primary per application: every row of the app is rewritten.
 	SetPrimaryDomainRow(ctx context.Context, arg SetPrimaryDomainRowParams) error
+	SetStateBackupEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserMustChangePassword(ctx context.Context, arg SetUserMustChangePasswordParams) error
 	SetUserPassword(ctx context.Context, arg SetUserPasswordParams) error
@@ -385,6 +395,10 @@ type Querier interface {
 	UpsertNodeDisk(ctx context.Context, arg UpsertNodeDiskParams) error
 	UpsertNodeLabel(ctx context.Context, arg UpsertNodeLabelParams) error
 	UpsertNotificationChannel(ctx context.Context, arg UpsertNotificationChannelParams) (NotificationChannel, error)
+	// enabled is left out on purpose: a new row starts paused (the column's
+	// default) and only SetStateBackupEnabled changes it, so a save that read
+	// the flag before a concurrent pause or resume cannot undo it.
+	UpsertStateBackupSettings(ctx context.Context, arg UpsertStateBackupSettingsParams) error
 	VolumeBackupNotifyTarget(ctx context.Context, id int64) (VolumeBackupNotifyTargetRow, error)
 }
 

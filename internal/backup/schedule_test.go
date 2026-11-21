@@ -29,3 +29,15 @@ func TestSchedulePreset(t *testing.T) {
 		}
 	}
 }
+
+// robfig/cron panics on a timezone prefix with no expression after it.
+func TestCronForPresetTimezoneOnly(t *testing.T) {
+	for _, c := range []string{"CRON_TZ=UTC", "TZ=UTC", "TZ=Europe/Moscow\t0", "CRON_TZ="} {
+		if _, err := CronForPreset("custom", c); err == nil {
+			t.Errorf("%q: want an invalid-cron error", c)
+		}
+	}
+	if got, err := CronForPreset("custom", "CRON_TZ=UTC 0 3 * * *"); err != nil || got != "CRON_TZ=UTC 0 3 * * *" {
+		t.Errorf("a timezone with an expression: %q, %v", got, err)
+	}
+}

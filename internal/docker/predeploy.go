@@ -154,7 +154,7 @@ func (e *dockerEngine) RunPredeploy(ctx context.Context, s PredeploySpec, out io
 	}
 	// ContainerAttach's HTTP upgrade does raw socket IO after dialing. Give it
 	// a scoped transport whose owned connection is closed even during handshake.
-	attachClient, err := predeployAttachClient(ctx, cli)
+	attachClient, err := cancelableAttachClient(ctx, cli)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,20 @@ func (c *cancelConn) Close() error {
 	c.once.Do(func() { c.stop() })
 	return c.Conn.Close()
 }
-func predeployAttachClient(ctx context.Context, cli *client.Client) (*client.Client, error) {
+
+// CloseWrite half-closes the raw connection, so a hijacked stream can end the
+// container's stdin (HijackedResponse.CloseWrite needs the dialed conn to have
+// it; without this method it would silently do nothing).
+func (c *cancelConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
+// cancelableAttachClient is a client on cli's transport whose connections
+// are closed when ctx ends (see cancelConn); use it for hijacked calls.
+func cancelableAttachClient(ctx context.Context, cli *client.Client) (*client.Client, error) {
 	dial := cli.Dialer()
 	return client.NewClientWithOpts(client.WithHost(cli.DaemonHost()), client.WithVersion(cli.ClientVersion()),
 		client.WithDialContext(func(_ context.Context, _, _ string) (net.Conn, error) {
