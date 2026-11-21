@@ -108,8 +108,10 @@ type mockEngine struct {
 	neverConverge    bool
 	partialRunning   bool
 	crashLooping     bool
-	rollingBack      bool // swarm rolled the update back (FailureAction=Rollback)
-	updateInProgress bool // StartFirst update: only the OLD task is running
+	rollingBack      bool            // swarm rolled the update back (FailureAction=Rollback)
+	updateInProgress bool            // StartFirst update: only the OLD task is running
+	stopped          bool            // the service was scaled to zero
+	slow             map[string]bool // services still starting (partial), by name
 
 	baselineSnapshotFails bool // first ServiceProgress (the pre-deploy snapshot) errors
 	baselineAsked         bool
@@ -153,9 +155,15 @@ func (m *mockEngine) ServiceState(context.Context, string) (docker.ServiceState,
 // counts only NEW (non-baseline) tasks. updateInProgress models the situation
 // the convergence fix targets — the old StartFirst task still running while
 // the new one starts (ServiceState would report Running=1 here).
-func (m *mockEngine) ServiceProgress(_ context.Context, _ string, baseline []string) (docker.ServiceProgress, error) {
+func (m *mockEngine) ServiceProgress(_ context.Context, name string, baseline []string) (docker.ServiceProgress, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stopped {
+		return docker.ServiceProgress{Found: true, Desired: 0, TaskIDs: []string{"t-new"}}, nil
+	}
+	if m.slow[name] {
+		return docker.ServiceProgress{Found: true, Desired: 2, Running: 1, TaskIDs: []string{"t-new"}}, nil
+	}
 	// baselineSnapshotFails models a transient failure of the pre-deploy task
 	// snapshot, then answers baseline-relative like the real engine: the old
 	// task "t-old" counts as new only when the baseline is missing — which is
@@ -269,6 +277,7 @@ func (b *mockBuilder) wasCalled() bool { b.mu.Lock(); defer b.mu.Unlock(); retur
 
 type fakeStore struct {
 	depErr  map[int64]string // deployment id -> recorded error message
+	apps    map[int64]App    // extra apps by id; the rest resolve to app
 	mu      sync.Mutex
 	app     App
 	status  map[int64]string
@@ -291,6 +300,9 @@ func (f *fakeStore) GetDeploymentApp(_ context.Context, deployID int64, ref Imag
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	a := f.app
+	if extra, ok := f.apps[f.depApp[deployID]]; ok {
+		a = extra
+	}
 	if ref.Tag != "" && a.SourceType != "dockerfile" {
 		a.Image, a.Tag = ref.Image, ref.Tag
 	}
@@ -568,11 +580,11 @@ func TestStopCancelsInFlightBuild(t *testing.T) {
 	}
 }
 
+// A service with no task running and no failure (a first deploy still pulling
+// its image: Swarm reports no update status for a new service) fails only
+// after the background wait, as a convergence timeout.
 func TestDeployConvergeTimeoutMarksError(t *testing.T) {
-	oldT, oldP := convergeTimeout, convergePollInterval
-	convergeTimeout, convergePollInterval = 200*time.Millisecond, 20*time.Millisecond
-	defer func() { convergeTimeout, convergePollInterval = oldT, oldP }()
-
+	shortSettle(t, 300*time.Millisecond)
 	eng := &mockEngine{neverConverge: true}
 	st := newFakeStore(imageApp())
 	d := newDeployer(eng, &mockBuilder{}, st)
@@ -583,6 +595,113 @@ func TestDeployConvergeTimeoutMarksError(t *testing.T) {
 	waitFor(t, func() bool { return st.depStatus(id) == "error" })
 	if st.appStatus(1) != StatusError {
 		t.Errorf("app status = %q, want error", st.appStatus(1))
+	}
+	if got := st.depError(id); got != "timed out waiting for the service to converge" {
+		t.Errorf("error = %q", got)
+	}
+}
+
+// The case seen in production: a first deploy whose image takes longer to
+// pull than KRILL_CONVERGE_TIMEOUT. It used to be recorded as failed while the
+// app came up moments later; now it is done once its task runs.
+func TestFirstDeploySlowPullBecomesDone(t *testing.T) {
+	shortSettle(t, 5*time.Second)
+	eng := &mockEngine{neverConverge: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	if got := st.depStatus(id); got == "done" || got == "error" {
+		t.Fatalf("status past the deadline = %q, want still in progress", got)
+	}
+	eng.mu.Lock()
+	eng.neverConverge = false
+	eng.mu.Unlock()
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+}
+
+// Stopping the app while its deploy is still converging ends the watch at
+// once: the deployment is closed as stopped, the app's status is left to the
+// stop, the slot is free for the next deploy and no failure is alerted.
+func TestStopWhileSettlingFreesTheApp(t *testing.T) {
+	shortSettle(t, time.Minute)
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	n := &fakeNotifier{}
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.SetNotifier(n)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	st.SetStatus(context.Background(), 1, StatusIdle) // what the Stop handler records
+	eng.mu.Lock()
+	eng.stopped = true
+	eng.mu.Unlock()
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	if got := st.depError(id); got != "stopped before the service converged" {
+		t.Fatalf("error = %q", got)
+	}
+	if got := st.appStatus(1); got != StatusIdle {
+		t.Fatalf("app status = %q, want the stop's %q", got, StatusIdle)
+	}
+	if n.was() {
+		t.Fatal("a stop during the wait was alerted as a failed deploy")
+	}
+}
+
+// A system deploy (the organization network migration) can start for an app
+// whose earlier deploy is still converging; the earlier watch is superseded
+// rather than confirming whatever the service converges to.
+func TestSystemDeploySupersedesSettlingWatch(t *testing.T) {
+	shortSettle(t, time.Minute)
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	n := &fakeNotifier{}
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.SetNotifier(n)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	first := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	second := d.EnqueueSystem(context.Background(), 1)
+	waitFor(t, func() bool { return st.depStatus(first) == "error" })
+	if got := st.depError(first); got != errSuperseded.Error() {
+		t.Fatalf("first deploy error = %q", got)
+	}
+	eng.setPartial(false)
+	waitFor(t, func() bool { return st.depStatus(second) == "done" })
+	for _, s := range n.successes() {
+		if s == first {
+			t.Fatal("the superseded deploy was reported successful")
+		}
+	}
+}
+
+// While one app's deploy settles in the background, the build worker is free:
+// another app deploys and finishes meanwhile.
+func TestSettlingDoesNotHoldTheWorker(t *testing.T) {
+	shortSettle(t, time.Minute)
+	eng := &mockEngine{slow: map[string]bool{docker.ServiceName(1): true}}
+	st := newFakeStore(imageApp())
+	other := imageApp()
+	other.ID, other.Name = 2, "other"
+	st.apps = map[int64]App{2: other}
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	slow := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	fast := d.Enqueue(2, "manual")
+	waitFor(t, func() bool { return st.depStatus(fast) == "done" })
+	if got := st.depStatus(slow); got == "done" || got == "error" {
+		t.Fatalf("the settling deploy finished as %q; the test no longer overlaps them", got)
 	}
 }
 
