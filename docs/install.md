@@ -256,9 +256,12 @@ Krill's **configuration**, not your workloads. After a restore:
 - App volumes, app databases and buckets come back only from their own backups.
 - Worker nodes belonged to the old swarm and must be removed and re-added **before** you redeploy.
 
-You need the age private key (`krill-backup-key.txt`) and, to read the encrypted secrets, the old
-`KRILL_SECRET_KEY`. Add a lifecycle rule that aborts incomplete multipart uploads after one day
-to the backup bucket; a Krill killed mid-backup would otherwise leave billed, invisible leftovers.
+You need the age private key (`krill-backup-key.txt`), the old `KRILL_SECRET_KEY` to read the
+encrypted secrets, and, for a new host, a copy of `/etc/krill/krill.env` saved beforehand with the
+other settings runbook A carries over. Keep all three somewhere other than the host; the copy of
+`krill.env` holds `KRILL_SECRET_KEY` and the admin password, so store it like the key. Add a
+lifecycle rule that aborts incomplete multipart uploads after one day to the backup bucket; a
+Krill killed mid-backup would otherwise leave billed, invisible leftovers.
 
 ### Restoring the dump
 
@@ -364,19 +367,21 @@ key off the host, decrypt on your workstation and pipe the result over `ssh`.
    equal to or newer than the snapshot's; `install.sh` installs the latest. Never use an older
    one.
 2. `systemctl stop krill`. The first start already migrated and seeded an empty database.
-3. In `/etc/krill/krill.env`, set the **original** `KRILL_ADMIN_EMAIL` and `KRILL_SECRET_KEY`.
+3. In `/etc/krill/krill.env`, set the **original** `KRILL_ADMIN_EMAIL` and `KRILL_SECRET_KEY`
+   (from your saved copy of the old `krill.env`).
    Setting `KRILL_ADMIN_EMAIL` when running `install.sh` does not carry over: the installer
    always writes `admin@krill.local` (or `admin@<KRILL_DOMAIN>`). Krill promotes the account named
    there to instance operator on every start and demotes every other one, so with a different
    address your restored operator loses access to Nodes, Firewall and the other pages the rest of
    this runbook needs. Without the old `KRILL_SECRET_KEY` the encrypted secrets are unreadable and
-   the operations that need them fail visibly. Copy over every other line you had added or
-   changed in the old `krill.env` as well (for example `KRILL_ALLOW_PRIVATE_EGRESS`,
-   `KRILL_PUBLIC_URL`, `KRILL_TELEGRAM_PROXY`): `install.sh` writes only its own lines, and backup
-   storage on a private address needs `KRILL_ALLOW_PRIVATE_EGRESS=true` again.
+   the operations that need them fail visibly. Copy over from that copy every other line you had
+   added or changed as well (for example `KRILL_ALLOW_PRIVATE_EGRESS`, `KRILL_PUBLIC_URL`,
+   `KRILL_TELEGRAM_PROXY`): `install.sh` writes only its own lines, and backup storage on a
+   private address needs `KRILL_ALLOW_PRIVATE_EGRESS=true` again.
 4. Fetch the backup object with your storage's own tool, onto your workstation or the host.
 5. Restore the dump as described in [Restoring the dump](#restoring-the-dump), including the
-   checks. Then, with Krill still stopped:
+   checks. Then, with Krill still stopped (with an external database, use your `psql` setup and
+   the real database name instead of `docker exec krill-postgres`, here and in step 7):
    - **Pause the restored backup schedules.** Against an empty database, volume or bucket a
      scheduled run uploads an empty backup and, through its retention count, deletes the last
      populated one you need. The scheduler reads these flags at start:
@@ -396,9 +401,8 @@ key off the host, decrypt on your workstation and pipe the result over `ssh`.
      docker exec -i krill-postgres psql -U krill -d krill -c "DELETE FROM node_labels WHERE swarm_node_id IN (SELECT swarm_node_id FROM cluster_nodes WHERE swarm_node_id <> '')" \
        -c "DELETE FROM firewall_checks WHERE node LIKE 'node-%'" -c 'DELETE FROM cluster_nodes'
      ```
-     (With an external database, use your `psql` setup and the real database name instead of
-     `docker exec`, here and below.) Nothing has a foreign key to `cluster_nodes`; `node_labels`
-     and `firewall_checks` only hold display names and last-check times for the old IDs.
+     Nothing has a foreign key to `cluster_nodes`; `node_labels` and `firewall_checks` only hold
+     display names and last-check times for the old IDs.
 6. `systemctl start krill`. The admin password is the old one (the seeding step never overwrites
    an existing user). Migrations bring an older snapshot forward.
 7. **Bring the cluster back before redeploying anything**, because the restored state refers to
