@@ -182,3 +182,47 @@ func TestRowsSQLOmitsSecretColumns(t *testing.T) {
 		}
 	}
 }
+
+// fingerprintOpts is fingerprintOf with per-comparison options.
+func fingerprintOpts(t *testing.T, pool *pgxpool.Pool, opts Options) Fingerprint {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, FingerprintSettings); err != nil {
+		t.Fatal(err)
+	}
+	lines := queryLines(t, conn, FingerprintQueryOpts(queryLines(t, conn, TablesSQL()), nil, opts))
+	fp, err := ParseFingerprint(strings.Join(lines, "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fp
+}
+
+func TestFingerprintOptionsIgnoreAndWhere(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	exec(t, pool, "CREATE TABLE t_opts (id int PRIMARY KEY, a text, b text); INSERT INTO t_opts VALUES (1, 'x', 'y')")
+	opts := Options{Ignore: map[string][]string{"t_opts": {"b"}}, Where: map[string]string{"t_opts": "id <= 1"}}
+	before := fingerprintOpts(t, pool, opts)
+	exec(t, pool, "UPDATE t_opts SET b = 'changed'; INSERT INTO t_opts VALUES (2, 'new', 'row')")
+	if d := Diff(before, fingerprintOpts(t, pool, opts)); len(d) != 0 {
+		t.Fatalf("an ignored column and a row outside Where changed the fingerprint: %v", d)
+	}
+	exec(t, pool, "UPDATE t_opts SET a = 'changed' WHERE id = 1")
+	if d := Diff(before, fingerprintOpts(t, pool, opts)); len(d) != 1 || d[0].Name != "t_opts" {
+		t.Fatalf("a compared column change gave %v", d)
+	}
+}
+
+func TestDeploymentLogIgnored(t *testing.T) {
+	for _, c := range IgnoredColumns["deployments"] {
+		if c == "log" {
+			return
+		}
+	}
+	t.Fatal("deployments.log is emptied by Krill's log cleanup an hour after a deploy; it must be ignored")
+}

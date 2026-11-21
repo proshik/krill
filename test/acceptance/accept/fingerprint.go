@@ -12,12 +12,22 @@ import (
 // sequences they own.
 var ExcludedTables = []string{"metric_samples", "sessions"}
 
-// IgnoredColumns are rewritten by the metrics sampler on every tick, so they
-// differ between any two moments; they are the only columns left out of a
-// table's hash.
+// IgnoredColumns are rewritten by Krill on its own while it runs, so they
+// differ between any two moments: the metrics sampler's columns on every
+// tick, and a deployment's log, which the log cleanup empties an hour after
+// the deploy finished. They are left out of every table hash.
 var IgnoredColumns = map[string][]string{
+	"deployments":   {"log"},
 	"node_capacity": {"sampled_at"},
 	"node_disks":    {"avail_bytes", "sampled_at", "used_bytes"},
+}
+
+// Options narrow one comparison: Ignore leaves more columns of a table out
+// of its hash, Where keeps only the rows matching a SQL condition (for
+// "existing rows unchanged, new rows checked separately").
+type Options struct {
+	Ignore map[string][]string
+	Where  map[string]string
 }
 
 // FingerprintSettings makes timestamps and floats render the same in every
@@ -30,9 +40,10 @@ func TablesSQL() string {
 		textArray(ExcludedTables) + ") ORDER BY 1"
 }
 
-// FingerprintSQL is FingerprintSettings followed by FingerprintQuery, for psql.
-func FingerprintSQL(tables, schemaSkip []string) string {
-	return FingerprintSettings + "\n" + FingerprintQuery(tables, schemaSkip) + ";"
+// FingerprintSQL is FingerprintSettings followed by FingerprintQueryOpts,
+// for psql.
+func FingerprintSQL(tables, schemaSkip []string, opts Options) string {
+	return FingerprintSettings + "\n" + FingerprintQueryOpts(tables, schemaSkip, opts) + ";"
 }
 
 // FingerprintQuery returns one text column, "line", one row per fingerprint
@@ -46,12 +57,22 @@ func FingerprintSQL(tables, schemaSkip []string) string {
 // physical column order nor the row order changes a hash. schemaSkip tables
 // are left out of the schema hash (a table a later migration adds).
 func FingerprintQuery(tables, schemaSkip []string) string {
+	return FingerprintQueryOpts(tables, schemaSkip, Options{})
+}
+
+// FingerprintQueryOpts is FingerprintQuery narrowed by opts.
+func FingerprintQueryOpts(tables, schemaSkip []string, opts Options) string {
 	var parts []string
 	for _, t := range tables {
+		ignore := append(append([]string(nil), IgnoredColumns[t]...), opts.Ignore[t]...)
+		where := ""
+		if w := opts.Where[t]; w != "" {
+			where = " WHERE " + w
+		}
 		parts = append(parts, fmt.Sprintf(
 			"SELECT 'T' || E'\\t' || %s || E'\\t' || count(*) || E'\\t' || md5(coalesce(string_agg(r, E'\\n' ORDER BY r), '')) AS line "+
-				"FROM (SELECT (to_jsonb(x) - %s)::text AS r FROM public.%s x) s",
-			quoteLiteral(t), textArray(IgnoredColumns[t]), quoteIdent(t)))
+				"FROM (SELECT (to_jsonb(x) - %s)::text AS r FROM public.%s x%s) s",
+			quoteLiteral(t), textArray(ignore), quoteIdent(t), where))
 	}
 	parts = append(parts, "SELECT 'S' || E'\\t' || s.sequencename || E'\\t' || coalesce(s.last_value::text, '') AS line "+
 		"FROM pg_sequences s WHERE s.schemaname = 'public' AND NOT EXISTS ("+
