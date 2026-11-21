@@ -111,6 +111,7 @@ type mockEngine struct {
 	rollingBack      bool            // swarm rolled the update back (FailureAction=Rollback)
 	updateInProgress bool            // StartFirst update: only the OLD task is running
 	stopped          bool            // the service was scaled to zero
+	globalPending    bool            // a global service with no new task yet (no eligible node)
 	slow             map[string]bool // services still starting (partial), by name
 
 	baselineSnapshotFails bool // first ServiceProgress (the pre-deploy snapshot) errors
@@ -160,6 +161,9 @@ func (m *mockEngine) ServiceProgress(_ context.Context, name string, baseline []
 	defer m.mu.Unlock()
 	if m.stopped {
 		return docker.ServiceProgress{Found: true, Desired: 0, TaskIDs: []string{"t-new"}}, nil
+	}
+	if m.globalPending {
+		return docker.ServiceProgress{Found: true, Desired: 0, Global: true}, nil
 	}
 	if m.slow[name] {
 		return docker.ServiceProgress{Found: true, Desired: 2, Running: 1, TaskIDs: []string{"t-new"}}, nil
@@ -278,6 +282,7 @@ func (b *mockBuilder) wasCalled() bool { b.mu.Lock(); defer b.mu.Unlock(); retur
 type fakeStore struct {
 	depErr  map[int64]string // deployment id -> recorded error message
 	apps    map[int64]App    // extra apps by id; the rest resolve to app
+	failGet bool             // GetDeploymentApp fails (a deploy failing while preparing)
 	mu      sync.Mutex
 	app     App
 	status  map[int64]string
@@ -299,6 +304,9 @@ func (f *fakeStore) GetApplication(_ context.Context, id int64) (App, error) { r
 func (f *fakeStore) GetDeploymentApp(_ context.Context, deployID int64, ref ImageRef) (App, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failGet {
+		return App{}, errors.New("prepare failed")
+	}
 	a := f.app
 	if extra, ok := f.apps[f.depApp[deployID]]; ok {
 		a = extra
@@ -1293,4 +1301,49 @@ func TestEnqueueConcurrentRequestsQueueOneDeploy(t *testing.T) {
 	if queued != 1 {
 		t.Fatalf("overlapping deploys of one app queued %d, want 1", queued)
 	}
+}
+
+// A global service whose new tasks cannot be placed yet (its only eligible
+// node is down) reports zero desired tasks; that is waiting, not a stop.
+func TestGlobalServiceWithoutEligibleNodeKeepsWaiting(t *testing.T) {
+	shortSettle(t, 5*time.Second)
+	eng := &mockEngine{globalPending: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, "manual")
+	time.Sleep(400 * time.Millisecond)
+	if got := st.depStatus(id); got == "done" || got == "error" {
+		t.Fatalf("global service without a node yet ended as %q (%s)", got, st.depError(id))
+	}
+	eng.mu.Lock()
+	eng.globalPending = false
+	eng.mu.Unlock()
+	waitFor(t, func() bool { return st.depStatus(id) == "done" })
+}
+
+// A system deploy that fails before it replaces the service leaves the
+// earlier rollout's watch alone: that rollout still finishes as its own.
+func TestFailedSystemDeployDoesNotSupersedeTheWatch(t *testing.T) {
+	shortSettle(t, time.Minute)
+	eng := &mockEngine{partialRunning: true}
+	st := newFakeStore(imageApp())
+	d := newDeployer(eng, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	first := d.Enqueue(1, "manual")
+	time.Sleep(300 * time.Millisecond)
+	st.mu.Lock()
+	st.failGet = true
+	st.mu.Unlock()
+	second := d.EnqueueSystem(context.Background(), 1)
+	waitFor(t, func() bool { return st.depStatus(second) == "error" })
+	if got := st.depStatus(first); got == "done" || got == "error" {
+		t.Fatalf("the earlier rollout's watch ended as %q (%s)", got, st.depError(first))
+	}
+	eng.setPartial(false)
+	waitFor(t, func() bool { return st.depStatus(first) == "done" })
 }

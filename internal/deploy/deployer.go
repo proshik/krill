@@ -208,14 +208,19 @@ func (d *Deployer) withResourceDefaults(a App) App {
 }
 
 func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub, network string) *Deployer {
+	// Background watches need a context Stop cancels even when run is driven
+	// without Start (tests); Start replaces it with one derived from its ctx.
+	runCtx, runCancel := context.WithCancel(context.Background())
 	return &Deployer{
-		engine:  engine,
-		builder: b,
-		store:   store,
-		hub:     hub,
-		network: network,
-		queue:   make(chan job, 64),
-		done:    make(chan struct{}),
+		engine:    engine,
+		builder:   b,
+		store:     store,
+		hub:       hub,
+		network:   network,
+		queue:     make(chan job, 64),
+		done:      make(chan struct{}),
+		runCtx:    runCtx,
+		runCancel: runCancel,
 	}
 }
 
@@ -225,6 +230,9 @@ func (d *Deployer) SetNotifier(n Notifier) { d.notifier = n }
 func (d *Deployer) Start(ctx context.Context) {
 	// runCtx is canceled by Stop so the in-flight job's context unblocks instead
 	// of running to its full timeout during graceful shutdown.
+	if d.runCancel != nil {
+		d.runCancel()
+	}
 	runCtx, runCancel := context.WithCancel(ctx)
 	d.runCancel = runCancel
 	d.runCtx = runCtx
@@ -500,10 +508,6 @@ func (d *Deployer) Stop() {
 
 func (d *Deployer) run(ctx context.Context, j job) {
 	deployID, noCache := j.deployID, j.noCache
-	// A deploy still being watched in the background for this app (only a
-	// system deploy can get here meanwhile) is superseded before this one
-	// touches the service.
-	d.supersedeSettle(j.appID, deployID)
 	var app App
 	var err error
 	var imageTag string
@@ -705,6 +709,11 @@ func (d *Deployer) run(ctx context.Context, j job) {
 					return err
 				}
 			}
+			// A deploy of this app still watched in the background (only a
+			// system deploy can get here meanwhile) is superseded now, just
+			// before its service is replaced — not earlier, so a deploy that
+			// fails while preparing leaves that rollout's watch alone.
+			d.supersedeSettle(app.ID, deployID)
 			return d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 		}()
 	}
@@ -810,7 +819,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	case serr == nil && st.Found && st.Failed > 0 && st.Running < st.Desired:
 		fmt.Fprintf(out, "❌ service has failed tasks (crash-looping) — check the image, command and env\n")
 		d.finish(ctx, deployID, app.ID, StatusError, imageTag, "service crash-looping")
-	case serr == nil && st.Found && st.Desired > 0:
+	case serr == nil && st.Found && (st.Desired > 0 || st.Global):
 		// Not ready yet and no failure seen: a new task still pulling its image
 		// (on a first deploy Swarm reports no update status at all), a rolling
 		// update still in flight, or the job's own deadline ran out while
@@ -902,9 +911,10 @@ func (d *Deployer) startSettle(deployID, appID int64, rollback bool, imageTag, s
 			switch {
 			case err != nil:
 				// Transient (a manager hiccup): keep polling until the deadline.
-			case !st.Found || st.Desired == 0:
+			case !st.Found || (st.Desired == 0 && !st.Global):
 				// Stopped (scaled to zero, or a global service removed) or deleted
-				// while starting. The app's status is the stop's to set.
+				// while starting. The app's status is the stop's to set. A global
+				// service with no new task yet is waiting for an eligible node.
 				fmt.Fprintf(out, "⚠ the service was stopped before it converged\n")
 				d.finishAs(deployID, appID, "error", "", imageTag, "stopped before the service converged")
 				return

@@ -83,7 +83,9 @@ type ServiceSpec struct {
 	Healthcheck        *HealthcheckSpec
 	// LogDriver overrides the daemon's logging driver for the service's
 	// containers; nil keeps the daemon default.
-	LogDriver *LogDriverSpec
+	// omitempty keeps a spec without one serialized as before: callers hash
+	// the whole spec to decide whether to redeploy.
+	LogDriver *LogDriverSpec `json:",omitempty"`
 }
 
 // LogDriverSpec is a container logging driver and its options.
@@ -149,6 +151,10 @@ type ServiceProgress struct {
 	Failed      int      // non-excluded tasks failed/rejected
 	UpdateState string   // swarm UpdateStatus.State; "" when never updated
 	TaskIDs     []string // IDs of the desired-state=running tasks seen (the baseline for the next deploy)
+	// Global is set for a global service, whose Desired is the number of new
+	// tasks Swarm created so far: 0 while no eligible node is up yet, which is
+	// not a stop.
+	Global bool
 }
 
 // UpdateSettled reports whether a service's last rolling update has come to
