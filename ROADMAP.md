@@ -207,6 +207,16 @@ Verified in code and tests, but not yet exercised on a real environment:
 - A per-owner cap on organizations: each new organization changes the gateway's networks and
   restarts the Traefik task (at most once a minute).
 - **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
+- **Move the Docker client off `github.com/docker/docker` v28** onto the split
+  `github.com/moby/moby/client` + `github.com/moby/moby/api` modules (the client negotiates
+  down to API 1.40). All five advisories govulncheck reports against v28.5.2 are in daemon
+  code, which the client and api modules do not contain, so none of them apply there; on
+  the old path they have no fix — two of them,
+  [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) and
+  [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883), have no symbol list, so the client
+  import counts as calling them. Real exposure is the host's Docker Engine (fixed in 29.3.1
+  and 29.5.1). Scope: 25 files (9 non-test), mostly `internal/docker` (Swarm, exec, logs,
+  stats, one-off containers, SSH remote clients), plus `cmd/krill` and integration tests.
 
 ## Later
 
