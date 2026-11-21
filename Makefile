@@ -1,4 +1,4 @@
-.PHONY: generate build build-cli run test test-integration acceptance-selfupdate acceptance-vm-smoke lint-migrations tidy db-up db-down css css-watch
+.PHONY: generate build build-cli run test test-integration acceptance-selfupdate acceptance-vm-smoke acceptance-statebackup lint-migrations tidy db-up db-down css css-watch
 
 TAILWIND = ./tools/tailwindcss
 SQUAWK = ./tools/squawk
@@ -50,6 +50,12 @@ acceptance-selfupdate:
 
 acceptance-vm-smoke:
 	KRILL_ACCEPT=1 go test -tags=acceptance -timeout 40m -v -run TestVMSmoke ./test/acceptance/
+
+# State-restore runbooks of docs/install.md on a disposable Lima VM (see
+# docs/development.md). Scenario B publishes throwaway releases to
+# KRILL_ACCEPT_REPO; do not run it at the same time as acceptance-selfupdate.
+acceptance-statebackup:
+	KRILL_ACCEPT=1 go test -tags=acceptance -timeout 120m -v -run TestStateBackupAcceptance ./test/acceptance/
 
 # Migrations numbered at or below this predate the compatibility policy (a migration must keep
 # the previous release bootable, so self-update can roll back); only later ones are linted.
