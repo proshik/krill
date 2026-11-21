@@ -1005,6 +1005,8 @@ var en = map[string]string{
 	"api_tokens.level":                     "Level",
 	"api_tokens.level_read":                "Read",
 	"api_tokens.level_write":               "Write",
+	"api_tokens.level_provision":           "Provision",
+	"api_tokens.level_hint":                "Read: status and logs. Write: also deploy, stop and edit variables. Provision: also create databases, apps, domains and database links (never delete).",
 	"api_tokens.expires":                   "Expires",
 	"api_tokens.expires_30d":               "30 days",
 	"api_tokens.expires_90d":               "90 days",

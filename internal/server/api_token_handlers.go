@@ -104,7 +104,7 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	level := api.Level(r.FormValue("level"))
-	if level != api.LevelRead && level != api.LevelWrite {
+	if !level.Valid() {
 		s.flashErrT(w, r, "flash.err.api_token_invalid_level")
 		return
 	}

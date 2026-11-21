@@ -22,6 +22,8 @@ func TestCanWriteRequiresBothLevelAndRole(t *testing.T) {
 		{"write token, demoted to member", LevelWrite, auth.RoleMember, false},
 		{"read token, owner", LevelRead, auth.RoleOwner, false},
 		{"read token, member", LevelRead, auth.RoleMember, false},
+		{"provision token, admin", LevelProvision, auth.RoleAdmin, true},
+		{"provision token, demoted to member", LevelProvision, auth.RoleMember, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -30,6 +32,30 @@ func TestCanWriteRequiresBothLevelAndRole(t *testing.T) {
 				t.Fatalf("CanWrite() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Only a provision-level token of an admin may create; write tokens (the CI
+// tokens issued before this level existed) may not.
+func TestCanProvisionRequiresProvisionLevelAndAdmin(t *testing.T) {
+	cases := []struct {
+		level Level
+		role  auth.Role
+		want  bool
+	}{
+		{LevelProvision, auth.RoleOwner, true},
+		{LevelProvision, auth.RoleAdmin, true},
+		{LevelProvision, auth.RoleMember, false},
+		{LevelWrite, auth.RoleOwner, false},
+		{LevelRead, auth.RoleOwner, false},
+	}
+	for _, tc := range cases {
+		if got := (Identity{Level: tc.level, Role: tc.role}).CanProvision(); got != tc.want {
+			t.Errorf("CanProvision(%s, %v) = %v, want %v", tc.level, tc.role, got, tc.want)
+		}
+	}
+	if !LevelProvision.Valid() || Level("admin").Valid() {
+		t.Error("Level.Valid misclassifies")
 	}
 }
 

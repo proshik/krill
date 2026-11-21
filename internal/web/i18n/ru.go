@@ -1005,6 +1005,8 @@ var ru = map[string]string{
 	"api_tokens.level":                     "Уровень",
 	"api_tokens.level_read":                "Чтение",
 	"api_tokens.level_write":               "Запись",
+	"api_tokens.level_provision":           "Создание",
+	"api_tokens.level_hint":                "Чтение: статус и логи. Запись: ещё деплой, остановка и правка переменных. Создание: ещё создание баз, приложений, доменов и привязок баз (удаления нет).",
 	"api_tokens.expires":                   "Срок действия",
 	"api_tokens.expires_30d":               "30 дней",
 	"api_tokens.expires_90d":               "90 дней",
