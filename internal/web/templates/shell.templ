@@ -11,7 +11,7 @@ import (
 
 // themeScript picks the theme before the first paint: the stored choice, or
 // the system's while there is none (and keeps following the system then).
-const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode')}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');if(!m&&q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
+const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode')}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(!m&&q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
 
 // docHead is the shared <head>: metadata, the theme script, styles and scripts.
 templ docHead(title string) {
@@ -135,7 +135,12 @@ templ bar(s Shell) {
 				<span>{ i18n.T(ctx, "palette.search") }</span>
 				<kbd>⌘K</kbd>
 			</button>
-			<button type="button" class="pill pill--mode" id="mode" data-light={ i18n.T(ctx, "mode.light") } data-dark={ i18n.T(ctx, "mode.dark") } aria-label={ i18n.T(ctx, "mode.toggle") }>{ i18n.T(ctx, "mode.light") }</button>
+			<button type="button" class="pill pill--mode" id="mode">
+				<span class="visually-hidden">{ i18n.T(ctx, "mode.theme") }</span>
+				<span data-choice="system">{ i18n.T(ctx, "mode.system") }</span>
+				<span data-choice="light">{ i18n.T(ctx, "mode.light") }</span>
+				<span data-choice="dark">{ i18n.T(ctx, "mode.dark") }</span>
+			</button>
 			if isAdmin(s.Role) {
 				if s.Env != nil {
 					<a class="btn btn--primary" href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "?new=app") } aria-label={ i18n.T(ctx, "project.new_app") }>

@@ -770,12 +770,26 @@ if (!window.__krillShellInit) {
 
   document.addEventListener("click", function (e) {
     const t = e.target;
-    // Theme: remember the explicit choice.
+    // Theme: system -> the opposite of what the system shows -> the other
+    // one -> system again, so the first click always changes the page and
+    // the last one hands it back to the system (the stored value is removed
+    // and the head script's listener follows prefers-color-scheme again).
     const mode = t.closest && t.closest("#mode");
     if (mode) {
-      root.dataset.mode = root.dataset.mode === "dark" ? "light" : "dark";
-      try { localStorage.setItem("krill-mode", root.dataset.mode); } catch (_) { /* private mode */ }
-      krillModeLabel();
+      const choice = root.dataset.choice || "system";
+      const sys = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const other = function (m) { return m === "dark" ? "light" : "dark"; };
+      let next;
+      if (choice === "system") next = other(sys);
+      else if (choice === other(sys)) next = sys;
+      else next = "system";
+      try {
+        if (next === "system") localStorage.removeItem("krill-mode");
+        else localStorage.setItem("krill-mode", next);
+      } catch (_) { /* private mode: the choice lasts for this page only */ }
+      root.dataset.choice = next;
+      root.dataset.mode = next === "system" ? sys : next;
+      krillModeName();
       return;
     }
     // The bar's menu on narrow screens.
@@ -828,10 +842,15 @@ if (!window.__krillShellInit) {
   });
 }
 
-function krillModeLabel() {
+// krillModeName names the theme button by its current choice ("theme
+// system"); CSS shows the matching word, so only the name needs script.
+function krillModeName() {
   const b = document.getElementById("mode");
   if (!b) return;
-  b.textContent = document.documentElement.dataset.mode === "dark" ? b.dataset.light : b.dataset.dark;
+  const choice = document.documentElement.dataset.choice || "system";
+  const word = b.querySelector('[data-choice="' + choice + '"]');
+  const lead = b.querySelector(".visually-hidden");
+  if (word && lead) b.setAttribute("aria-label", lead.textContent + " " + word.textContent);
 }
 
 function krillSyncWhen(form) {
@@ -887,9 +906,9 @@ document.addEventListener("htmx:afterSwap", function (e) {
   }
 });
 
-// Per page: the theme button's label, server toasts' timers, conditional fields.
+// Per page: the theme button's name, server toasts' timers, conditional fields.
 function krillShellEnhance() {
-  krillModeLabel();
+  krillModeName();
   document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
     el.removeAttribute("data-toast-auto");
     krillToastLater(el);
