@@ -186,7 +186,7 @@ func TestStateBackupPageNeverRendersSecret(t *testing.T) {
 	if strings.Contains(tag, "value=") {
 		t.Errorf("secret input has a value: %s", tag)
 	}
-	if !strings.Contains(body, "Stored") {
+	if !strings.Contains(body, "stored") {
 		t.Error("no stored hint")
 	}
 }
@@ -194,7 +194,7 @@ func TestStateBackupPageNeverRendersSecret(t *testing.T) {
 func TestStateBackupPageStates(t *testing.T) {
 	t.Run("not configured", func(t *testing.T) {
 		env := newSbkEnv(t, true, true)
-		if b := env.page(t); !strings.Contains(b, "Not set up") || !strings.Contains(b, "never") {
+		if b := env.page(t); !strings.Contains(b, "not set up") || !strings.Contains(b, "never") {
 			t.Errorf("unexpected page")
 		}
 	})
@@ -203,7 +203,7 @@ func TestStateBackupPageStates(t *testing.T) {
 		env.ctl.view = readySettings()
 		next, _ := statebackup.NextRun("0 3 * * *", time.Now())
 		b := env.page(t)
-		if !strings.Contains(b, "Active") || !strings.Contains(b, next.Format("2006-01-02 15:04")) {
+		if !strings.Contains(b, "active") || !strings.Contains(b, next.Format("2006-01-02 15:04")) {
 			t.Errorf("active/next run missing (want %s)", next.Format("2006-01-02 15:04"))
 		}
 	})
@@ -211,7 +211,7 @@ func TestStateBackupPageStates(t *testing.T) {
 		env := newSbkEnv(t, true, true)
 		env.ctl.view = readySettings()
 		env.ctl.view.Schedule = ""
-		if b := env.page(t); !strings.Contains(b, "On demand only") {
+		if b := env.page(t); !strings.Contains(b, "on demand only") {
 			t.Error("on demand text missing")
 		}
 	})
@@ -221,11 +221,11 @@ func TestStateBackupPageStates(t *testing.T) {
 		env.ctl.view.Enabled = false
 		b := env.page(t)
 		// Paused: the switch is off and turning it on posts enabled=1.
-		if form := formHTML(b, env.base+"/enabled"); !strings.Contains(b, "Paused") || !strings.Contains(form, `aria-checked="false"`) || !strings.Contains(form, `name="enabled" value="1"`) {
+		if form := formHTML(b, env.base+"/enabled"); !strings.Contains(b, "paused") || !strings.Contains(form, `aria-checked="false"`) || !strings.Contains(form, `name="enabled" value="1"`) {
 			t.Error("paused/resume missing")
 		}
 		if strings.Contains(formHTML(b, env.base+"/run"), "disabled") {
-			t.Error("Back up now is disabled while paused")
+			t.Error("back up now is disabled while paused")
 		}
 	})
 	t.Run("running", func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestStateBackupPageStates(t *testing.T) {
 		env.ctl.view = readySettings()
 		env.ctl.inFlight = 1
 		b := env.page(t)
-		if !strings.Contains(b, "Running") || !strings.Contains(formHTML(b, env.base+"/run"), "disabled") {
+		if !strings.Contains(b, "running") || !strings.Contains(formHTML(b, env.base+"/run"), "disabled") {
 			t.Error("running indicator or disabled button missing")
 		}
 	})
@@ -279,7 +279,7 @@ func TestSaveStateBackupErrors(t *testing.T) {
 		{statebackup.ErrInvalidRecipient, "public key"},
 		{statebackup.ErrSecretKeyRequired, "secret key again"},
 		{&statebackup.StorageError{Msg: "boom: NoSuchBucket"}, "boom: NoSuchBucket"},
-		{statebackup.ErrRetention, "Keep"},
+		{statebackup.ErrRetention, "keep"},
 		{statebackup.ErrInvalidSchedule, "schedule"},
 		{statebackup.ErrBucketRequired, "bucket"},
 	}

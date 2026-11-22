@@ -275,7 +275,7 @@ func TestUpdatesPage(t *testing.T) {
 			t.Fatalf("GET /updates: want 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		for _, want := range []string{updCurrent, updLatest, "Release notes", "Last checked 2026-09-15 08:30 UTC"} {
+		for _, want := range []string{updCurrent, updLatest, "release notes", "last checked 2026-09-15 08:30 UTC"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("page does not contain %q", want)
 			}
@@ -323,7 +323,7 @@ func TestUpdatesPage(t *testing.T) {
 		if form := formHTML(body, install); !strings.Contains(form, "disabled") {
 			t.Errorf("install button is not disabled: %q", form)
 		}
-		if !strings.Contains(body, "Wait until this finishes: a deploy is running") {
+		if !strings.Contains(body, "wait until this finishes: a deploy is running") {
 			t.Errorf("page does not explain what is running")
 		}
 	})
@@ -365,14 +365,14 @@ func TestUpdatesPage(t *testing.T) {
 		if formHTML(body, install) != "" {
 			t.Errorf("install form rendered although nothing newer is available")
 		}
-		if !strings.Contains(body, "You are running the latest release.") {
+		if !strings.Contains(body, "you are running the latest release.") {
 			t.Errorf("page does not say it is up to date")
 		}
 		form := formHTML(body, rollback)
 		if form == "" {
 			t.Fatalf("no rollback form in the page")
 		}
-		if !strings.Contains(form, "Roll back to v0.0.9") || !strings.Contains(form, `hx-boost="false"`) || strings.Contains(form, "disabled") {
+		if !strings.Contains(form, "roll back to v0.0.9") || !strings.Contains(form, `hx-boost="false"`) || strings.Contains(form, "disabled") {
 			t.Errorf("unexpected rollback form: %s", form)
 		}
 	})
@@ -397,7 +397,7 @@ func TestUpdatesPage(t *testing.T) {
 		c, i := newUpdateFakes()
 		i.status = selfupdate.Status{Phase: selfupdate.PhaseFailed, Tag: updLatest, Err: errors.New("checksum mismatch")}
 		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
-		for _, want := range []string{`id="k-update-status"`, "Failed", "The update failed: checksum mismatch"} {
+		for _, want := range []string{`id="k-update-status"`, "failed", "the update failed: checksum mismatch"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("page does not contain %q", want)
 			}
@@ -416,7 +416,7 @@ func TestUpdatesPage(t *testing.T) {
 		c, i := newUpdateFakes()
 		i.status = selfupdate.Status{Phase: selfupdate.PhaseFailed, Tag: updLatest, Err: &selfupdate.BusyError{Reason: "deploy"}}
 		body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
-		if !strings.Contains(body, "The update failed: a deploy is running") {
+		if !strings.Contains(body, "the update failed: a deploy is running") {
 			t.Errorf("page does not explain the busy failure")
 		}
 		if strings.Contains(body, "selfupdate: busy") {
@@ -435,7 +435,7 @@ func TestUpdatesPage(t *testing.T) {
 				t.Errorf("page does not contain %q", want)
 			}
 		}
-		for _, bad := range []string{"selfupdate: state snapshot failed", "The update failed: The backup"} {
+		for _, bad := range []string{"selfupdate: state snapshot failed", "the update failed: the backup"} {
 			if strings.Contains(body, bad) {
 				t.Errorf("page contains %q", bad)
 			}
@@ -463,13 +463,13 @@ func TestUpdatesPage(t *testing.T) {
 			c.current, c.newer = "dev+abc", newer
 			i.previous = "v0.0.9"
 			body := getPage(t, f.handler(c, i), base+"/updates", cookie, nil).Body.String()
-			if !strings.Contains(body, "This is a development build (dev+abc).") {
+			if !strings.Contains(body, "this is a development build (dev+abc).") {
 				t.Errorf("newer=%v: page does not say this is a development build", newer)
 			}
 			if strings.Contains(body, `name="tag"`) || formHTML(body, install) != "" {
 				t.Errorf("newer=%v: a development build renders the install form", newer)
 			}
-			if strings.Contains(body, "You are running the latest release.") {
+			if strings.Contains(body, "you are running the latest release.") {
 				t.Errorf("newer=%v: a development build claims to run the latest release", newer)
 			}
 			if formHTML(body, rollback) == "" {
@@ -483,10 +483,10 @@ func TestUpdatesPage(t *testing.T) {
 			last selfupdate.Result
 			want string
 		}{
-			{selfupdate.Result{From: "v0.1.0", To: "v0.2.0", OK: true}, "Updated from v0.1.0 to v0.2.0."},
-			{selfupdate.Result{From: "v0.2.0", To: "v0.1.0", OK: true, Reason: "rollback"}, "Rolled back from v0.2.0 to v0.1.0."},
-			{selfupdate.Result{To: "v0.2.0", Reason: "reverted"}, "The update to v0.2.0 did not start and was rolled back."},
-			{selfupdate.Result{To: "v0.2.0", Reason: "interrupted"}, "The update to v0.2.0 was interrupted before it was installed."},
+			{selfupdate.Result{From: "v0.1.0", To: "v0.2.0", OK: true}, "updated from v0.1.0 to v0.2.0."},
+			{selfupdate.Result{From: "v0.2.0", To: "v0.1.0", OK: true, Reason: "rollback"}, "rolled back from v0.2.0 to v0.1.0."},
+			{selfupdate.Result{To: "v0.2.0", Reason: "reverted"}, "the update to v0.2.0 did not start and was rolled back."},
+			{selfupdate.Result{To: "v0.2.0", Reason: "interrupted"}, "the update to v0.2.0 was interrupted before it was installed."},
 		}
 		for _, tc := range cases {
 			c, i := newUpdateFakes()
@@ -515,12 +515,12 @@ func TestUpdatesPage(t *testing.T) {
 	t.Run("not wired", func(t *testing.T) {
 		h := f.handler(nil, nil)
 		rec := getPage(t, h, base+"/updates", cookie, nil)
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Self-update is not enabled on this instance.") {
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "self-update is not enabled on this instance.") {
 			t.Errorf("unwired page: want 200 explaining the feature is off, got %d", rec.Code)
 		}
 		for _, target := range []string{install, rollback, base + "/updates/check"} {
 			rec := postForm(t, h, target, cookie, url.Values{"tag": {updLatest}})
-			if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) || flashText(rec) != "Self-update is not enabled on this instance." {
+			if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) || flashText(rec) != "self-update is not enabled on this instance." {
 				t.Errorf("POST %s unwired: want 303 + unwired error flash, got %d %q", target, rec.Code, flashCookieValue(rec))
 			}
 		}
@@ -533,7 +533,7 @@ func TestUpdatesPage(t *testing.T) {
 		half := f.newServer()
 		half.SetSelfUpdate(nil, i)
 		rec = getPage(t, half.Router(), base+"/updates", cookie, nil)
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Self-update is not enabled on this instance.") {
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "self-update is not enabled on this instance.") {
 			t.Errorf("half-wired page: want 200 explaining the feature is off, got %d", rec.Code)
 		}
 		if n := i.callCount(); n != 0 {
@@ -554,14 +554,14 @@ func TestUpdateActions(t *testing.T) {
 			err  error
 			want string
 		}{
-			{"unsupported", fmt.Errorf("%w: systemd", selfupdate.ErrUnsupported), "This instance can't update itself; see the page for why."},
-			{"job running", selfupdate.ErrJobRunning, "An update is already in progress."},
-			{"invalid tag", selfupdate.ErrInvalidTag, "The latest release changed. Check again, then update."},
-			{"not latest", selfupdate.ErrNotLatest, "The latest release changed. Check again, then update."},
-			{"not newer", selfupdate.ErrNotNewer, "That release is not newer than the running version."},
-			{"pending", selfupdate.ErrPending, "The previous update is still waiting to confirm. Try again in a few minutes."},
-			{"busy", &selfupdate.BusyError{Reason: "backup"}, "Not now: a database backup or restore is running."},
-			{"unexpected", errors.New("disk on fire"), "Could not start the update."},
+			{"unsupported", fmt.Errorf("%w: systemd", selfupdate.ErrUnsupported), "this instance can't update itself; see the page for why."},
+			{"job running", selfupdate.ErrJobRunning, "an update is already in progress."},
+			{"invalid tag", selfupdate.ErrInvalidTag, "the latest release changed. Check again, then update."},
+			{"not latest", selfupdate.ErrNotLatest, "the latest release changed. Check again, then update."},
+			{"not newer", selfupdate.ErrNotNewer, "that release is not newer than the running version."},
+			{"pending", selfupdate.ErrPending, "the previous update is still waiting to confirm. Try again in a few minutes."},
+			{"busy", &selfupdate.BusyError{Reason: "backup"}, "not now: a database backup or restore is running."},
+			{"unexpected", errors.New("disk on fire"), "could not start the update."},
 		}
 		for _, tc := range cases {
 			i.startErr = tc.err
@@ -583,7 +583,7 @@ func TestUpdateActions(t *testing.T) {
 		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != base+"/updates" {
 			t.Fatalf("install: want 303 to %s/updates, got %d %q", base, rec.Code, rec.Header().Get("Location"))
 		}
-		if flashText(rec) != "The update has started." || hasErrFlash(rec) {
+		if flashText(rec) != "the update has started." || hasErrFlash(rec) {
 			t.Errorf("install: flash = %q", flashCookieValue(rec))
 		}
 		if i.startCalls != before+1 || i.startTag != updLatest {
@@ -594,13 +594,13 @@ func TestUpdateActions(t *testing.T) {
 	t.Run("rollback", func(t *testing.T) {
 		i.rollbackErr = selfupdate.ErrNoPrevious
 		rec := postForm(t, h, base+"/updates/rollback", cookie, nil)
-		if rec.Code != http.StatusSeeOther || flashText(rec) != "There is no previous version to roll back to." {
+		if rec.Code != http.StatusSeeOther || flashText(rec) != "there is no previous version to roll back to." {
 			t.Errorf("rollback without a previous: want 303 + no-previous flash, got %d %q", rec.Code, flashCookieValue(rec))
 		}
 		i.rollbackErr = nil
 		i.status = selfupdate.Status{Phase: selfupdate.PhaseInstalling, Tag: "v0.0.9"}
 		rec = postForm(t, h, base+"/updates/rollback", cookie, nil)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != base+"/updates" || flashText(rec) != "The rollback has started." {
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != base+"/updates" || flashText(rec) != "the rollback has started." {
 			t.Errorf("rollback: want 303 + ok flash, got %d %q %q", rec.Code, rec.Header().Get("Location"), flashCookieValue(rec))
 		}
 		if i.rollbackCalls != 2 {
@@ -619,18 +619,18 @@ func TestUpdateActions(t *testing.T) {
 		}
 
 		c.checkErr = selfupdate.ErrNoRelease
-		if rec := postForm(t, h, base+"/updates/check", cookie, nil); flashText(rec) != "The repository has no published release." {
+		if rec := postForm(t, h, base+"/updates/check", cookie, nil); flashText(rec) != "the repository has no published release." {
 			t.Errorf("no release: flash = %q", flashCookieValue(rec))
 		}
 
 		c.checkErr = errors.New("unexpected status 500 from releases/latest")
-		if rec := postForm(t, h, base+"/updates/check", cookie, nil); flashText(rec) != "Could not check for updates: unexpected status 500 from releases/latest" {
+		if rec := postForm(t, h, base+"/updates/check", cookie, nil); flashText(rec) != "could not check for updates: unexpected status 500 from releases/latest" {
 			t.Errorf("failed check: flash = %q", flashCookieValue(rec))
 		}
 
 		c.checkErr = nil
 		rec = postForm(t, h, base+"/updates/check", cookie, nil)
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != base+"/updates" || flashText(rec) != "Checked for updates." {
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != base+"/updates" || flashText(rec) != "checked for updates." {
 			t.Errorf("check: want 303 + ok flash, got %d %q %q", rec.Code, rec.Header().Get("Location"), flashCookieValue(rec))
 		}
 		if c.checkCalls != 4 {
@@ -663,7 +663,7 @@ func TestUpdateStatus(t *testing.T) {
 			t.Fatalf("want 200 without HX-Refresh, got %d %q", rec.Code, rec.Header().Get("HX-Refresh"))
 		}
 		for _, want := range []string{`id="k-update-status"`, `hx-trigger="every 2s"`, `hx-swap="outerHTML"`,
-			`hx-get="` + base + `/updates/status?from=dev%2Babc"`, "Downloading", "Version " + updLatest} {
+			`hx-get="` + base + `/updates/status?from=dev%2Babc"`, "downloading", "version " + updLatest} {
 			if !strings.Contains(body, want) {
 				t.Errorf("fragment does not contain %q: %s", want, body)
 			}

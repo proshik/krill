@@ -442,7 +442,7 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 	if v.Sheet != "" {
 		body = "page has-sheet"
 	}
-	shell := s.envShell(ctx, o, role, p, e, envs, i18n.T(ctx, "env.tab_databases")+", "+p.Name+" "+e.Name, "databases", body)
+	shell := s.envShell(ctx, o, role, p, e, envs, i18n.Sentence(i18n.T(ctx, "env.tab_databases"))+", "+p.Name+" "+e.Name, "databases", body)
 	d := s.loadEnvData(ctx, o.ID, p.ID, e)
 	running, _, _ := s.placement(ctx)
 	base := envURL(o.ID, p.ID, e.ID)
@@ -556,7 +556,7 @@ func (s *Server) envSettingsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	shell := s.envShell(ctx, o, role, p, e, envs, i18n.T(ctx, "envset.title")+", "+p.Name+" "+e.Name, "settings", "page")
+	shell := s.envShell(ctx, o, role, p, e, envs, i18n.Sentence(i18n.T(ctx, "envset.title"))+", "+p.Name+" "+e.Name, "settings", "page")
 	d := s.loadEnvData(ctx, o.ID, p.ID, e)
 	v := templates.EnvSettingsView{View: d.view, Envs: envs}
 	if s.cloner != nil {

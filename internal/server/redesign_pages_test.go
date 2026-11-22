@@ -79,13 +79,13 @@ func TestMembersShowTemporaryPassword(t *testing.T) {
 	}
 	cookie := loginAs(t, q, "temp-owner@k.local")
 	path := "/orgs/" + i64(o.ID) + "/members"
-	if body := getWithCookie(t, h, path, cookie).Body.String(); strings.Contains(body, "Temporary password not changed yet") {
+	if body := getWithCookie(t, h, path, cookie).Body.String(); strings.Contains(body, "temporary password not changed yet") {
 		t.Fatal("a member who changed nothing was shown as owing a password change")
 	}
 	if err := q.SetUserMustChangePassword(ctx, db.SetUserMustChangePasswordParams{ID: fresh, MustChangePassword: true}); err != nil {
 		t.Fatal(err)
 	}
-	if body := getWithCookie(t, h, path, cookie).Body.String(); !strings.Contains(body, "Temporary password not changed yet") {
+	if body := getWithCookie(t, h, path, cookie).Body.String(); !strings.Contains(body, "temporary password not changed yet") {
 		t.Fatal("the member who still owes a password change is not marked")
 	}
 }

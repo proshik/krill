@@ -277,7 +277,7 @@ func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("notifications saved", "org_id", o.ID, "infra", infra, "infra_reset", infraReset)
 	msg := i18n.T(r.Context(), "notif.saved")
 	if infraReset {
-		msg += ". " + i18n.T(r.Context(), "notif.infra_reset")
+		msg += ". " + i18n.Sentence(i18n.T(r.Context(), "notif.infra_reset"))
 	}
 	s.setFlash(w, r, "ok", msg)
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/notifications", http.StatusSeeOther)

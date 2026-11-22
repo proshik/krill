@@ -9,7 +9,7 @@ import (
 // SettingsPage is the frame of every settings page: the heading and the
 // sub-navigation grouped into organization, you and this Krill.
 templ SettingsPage(org db.Organization, role, current, title string) {
-	@Page(Shell{Title: title, Org: org, Role: role, Tab: "settings"}) {
+	@Page(Shell{Title: i18n.Sentence(title), Org: org, Role: role, Tab: "settings"}) {
 		<main class="wrap wrap--wide">
 			<div class="page-head"><h1>{ title }</h1></div>
 			<div class="setpage">

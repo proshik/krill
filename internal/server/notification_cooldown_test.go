@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// A double click on "Send test message" sends one message, not two.
+// A double click on "send test message" sends one message, not two.
 func TestClaimTestNotificationCooldown(t *testing.T) {
 	s := &Server{}
 	now := time.Now()

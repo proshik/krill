@@ -842,7 +842,7 @@ func Nodes(org db.Organization, role string, lanes []NodeLane, newNode bool) tem
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Page(Shell{Title: i18n.T(ctx, "nodes.title"), Org: org, Role: role, Tab: "nodes", Body: dashBody(newNode)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "nodes.title")), Org: org, Role: role, Tab: "nodes", Body: dashBody(newNode)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -1308,7 +1308,7 @@ func NodeRemoveConfirm(org db.Organization, role string, node docker.SwarmNode, 
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Page(Shell{Title: i18n.T(ctx, "nodes.remove_confirm_title"), Org: org, Role: role, Tab: "nodes"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var63), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "nodes.remove_confirm_title")), Org: org, Role: role, Tab: "nodes"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var63), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

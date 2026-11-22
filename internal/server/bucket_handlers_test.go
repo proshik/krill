@@ -128,7 +128,7 @@ func TestBucketCreateImportAndLink(t *testing.T) {
 	}
 
 	// A linked bucket cannot be removed, and its server cannot be deleted.
-	if rec := postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/delete", f.cookie, url.Values{}); !flashSays(rec, "Apps still use this bucket") {
+	if rec := postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/delete", f.cookie, url.Values{}); !flashSays(rec, "apps still use this bucket") {
 		t.Fatalf("deleting a linked bucket must be refused as linked, got %q", flashCookieValue(rec))
 	}
 	if rec := postForm(t, f.h, "/orgs/"+i64(f.org.ID)+"/db-servers/"+i64(f.inst.ID)+"/delete", f.cookie, url.Values{"delete_databases": {"on"}}); !flashSays(rec, "still holds buckets") {
@@ -148,7 +148,7 @@ func TestBucketCreateImportAndLink(t *testing.T) {
 	if rotated.PrevAccessKey != b.AccessKey || rotated.AccessKey == b.AccessKey || rotated.PrevSecretKey != b.SecretKey {
 		t.Fatalf("rotation: %+v", rotated)
 	}
-	if rec := postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/rotate", f.cookie, url.Values{}); !flashSays(rec, "Revoke the previous key") {
+	if rec := postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/rotate", f.cookie, url.Values{}); !flashSays(rec, "revoke the previous key") {
 		t.Fatal("a second rotation before revoking must be refused")
 	}
 	postForm(t, f.h, f.envBase+"/buckets/"+i64(b.ID)+"/revoke-previous", f.cookie, url.Values{})

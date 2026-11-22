@@ -65,7 +65,7 @@ func serverGlyph(engine string) string {
 }
 
 templ DBServers(org db.Organization, role string, v DBServersView) {
-	@Page(Shell{Title: i18n.T(ctx, "dbi.title"), Org: org, Role: role, Tab: "db-servers", Body: dashBody(v.New || v.Sheet != nil)}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "dbi.title")), Org: org, Role: role, Tab: "db-servers", Body: dashBody(v.New || v.Sheet != nil)}) {
 		<main class="wrap">
 			<div class="page-head">
 				<h1>{ i18n.T(ctx, "dbi.title") }</h1>

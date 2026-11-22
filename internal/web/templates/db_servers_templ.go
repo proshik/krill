@@ -394,7 +394,7 @@ func DBServers(org db.Organization, role string, v DBServersView) templ.Componen
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Page(Shell{Title: i18n.T(ctx, "dbi.title"), Org: org, Role: role, Tab: "db-servers", Body: dashBody(v.New || v.Sheet != nil)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "dbi.title")), Org: org, Role: role, Tab: "db-servers", Body: dashBody(v.New || v.Sheet != nil)}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -31,7 +31,7 @@ type ClusterNode struct {
 }
 
 templ OrgDashboard(org db.Organization, role string, projects []ProjectCard, cluster []ClusterNode, newProject bool) {
-	@Page(Shell{Title: i18n.T(ctx, "projects.page_title"), Org: org, Role: role, Tab: "projects", Body: dashBody(newProject)}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "projects.page_title")), Org: org, Role: role, Tab: "projects", Body: dashBody(newProject)}) {
 		<main class="wrap">
 			<div class="page-head"><h1>{ i18n.T(ctx, "projects.title") }</h1></div>
 			if len(projects) == 0 {

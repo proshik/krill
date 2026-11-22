@@ -52,7 +52,7 @@ templ AuthPage(title string) {
 	<!DOCTYPE html>
 	<html lang={ i18n.Current(ctx) } translate="no">
 		<head>
-			@docHead(title)
+			@docHead(i18n.Sentence(title))
 		</head>
 		<body class="auth-page" hx-boost="true">
 			@ui.Sprite()

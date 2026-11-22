@@ -38,7 +38,7 @@ type LaneItem struct {
 func laneWarn(l NodeLane) bool { return l.Mem >= 85 || l.Node.State != "ready" }
 
 templ Nodes(org db.Organization, role string, lanes []NodeLane, newNode bool) {
-	@Page(Shell{Title: i18n.T(ctx, "nodes.title"), Org: org, Role: role, Tab: "nodes", Body: dashBody(newNode)}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "nodes.title")), Org: org, Role: role, Tab: "nodes", Body: dashBody(newNode)}) {
 		<main class="wrap wrap--wide">
 			<div class="page-head">
 				<h1>{ i18n.T(ctx, "nodes.title") }</h1>
@@ -193,7 +193,7 @@ templ laneItemBody(it LaneItem) {
 // NodeRemoveConfirm warns that a node still has pinned servers or apps that
 // would be orphaned, and asks for an explicit "remove anyway" (force=1).
 templ NodeRemoveConfirm(org db.Organization, role string, node docker.SwarmNode, insts []db.ListDBInstancesByNodeHostnameRow, apps []db.ListPinnedApplicationsRow) {
-	@Page(Shell{Title: i18n.T(ctx, "nodes.remove_confirm_title"), Org: org, Role: role, Tab: "nodes"}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "nodes.remove_confirm_title")), Org: org, Role: role, Tab: "nodes"}) {
 		<main class="wrap wrap--narrow">
 			<div class="page-head"><h1>{ i18n.T(ctx, "nodes.remove_confirm_title") }</h1></div>
 			<div class="callout callout--warn"><div class="callout-body"><p>{ i18n.Tf(ctx, "nodes.remove_confirm_warn", node.Hostname) }</p></div></div>

@@ -327,7 +327,7 @@ func Monitoring(org db.Organization, role string) templ.Component {
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Page(Shell{Title: i18n.T(ctx, "mon.title"), Org: org, Role: role, Tab: "monitoring"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "mon.title")), Org: org, Role: role, Tab: "monitoring"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

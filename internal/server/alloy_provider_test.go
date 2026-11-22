@@ -97,7 +97,7 @@ func TestAlloyAppsProviderAndStatus(t *testing.T) {
 			t.Fatalf("status want %q: %d %s", want, rec.Code, rec.Body.String())
 		}
 	}
-	status("Collection is off")
+	status("collection is off")
 	rec := postForm(t, h, base+"/metrics/enable", cookie, nil)
 	if hasErrFlash(rec) {
 		t.Fatal("enable failed")
@@ -132,12 +132,12 @@ func TestAlloyAppsProviderAndStatus(t *testing.T) {
 	}
 	status("not deployed yet")
 	engine.found = true
-	status("Redeploy the app")
+	status("redeploy the app")
 	m, _ := q.GetApplicationMetrics(ctx, appID)
 	// newServer uses plaintext secret configuration in this test.
 	engine.containerLabels = map[string]string{appmetrics.ContainerLabelTokenHash: appmetrics.TokenHash(m.MetricsTokenEnv, *m.MetricsToken)}
 	engine.state = &docker.ServiceState{Found: true}
-	status("The app is stopped")
+	status("the app is stopped")
 	engine.state = nil
 	status("test exec unavailable")
 	engine.addrErr = errors.New("task listing failed")

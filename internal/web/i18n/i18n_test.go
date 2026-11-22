@@ -16,3 +16,11 @@ func TestCatalogsInSync(t *testing.T) {
 		}
 	}
 }
+
+func TestSentence(t *testing.T) {
+	for in, want := range map[string]string{"": "", "logs: none": "Logs: none", "узлы": "Узлы", "S3 server": "S3 server", "%s saved": "%s saved"} {
+		if got := Sentence(in); got != want {
+			t.Errorf("Sentence(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

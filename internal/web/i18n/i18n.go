@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type ctxKey int
@@ -38,8 +40,8 @@ type Locale struct{ Code, Name string }
 
 // Locales lists the available languages (order = display order).
 var Locales = []Locale{
-	{Code: "en", Name: "English"},
-	{Code: "ru", Name: "Русский"},
+	{Code: "en", Name: "english"},
+	{Code: "ru", Name: "русский"},
 }
 
 // Supported reports whether loc has a catalog.
@@ -109,4 +111,15 @@ func T(ctx context.Context, key string) string {
 // (e.g. a name) so the whole string stays in the catalog: T value uses %s.
 func Tf(ctx context.Context, key string, args ...any) string {
 	return fmt.Sprintf(T(ctx, key), args...)
+}
+
+// Sentence starts s with a capital letter. Catalog values are lowercase, as
+// the UI shows them; a value that becomes a new sentence after a period (a
+// flash joined from two messages, a browser tab title) goes through this.
+func Sentence(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 || r == utf8.RuneError {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[n:]
 }

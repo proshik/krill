@@ -48,7 +48,7 @@ type TopoHold struct {
 }
 
 templ Topology(org db.Organization, role string, v TopoView) {
-	@Page(Shell{Title: i18n.T(ctx, "topo.title"), Org: org, Role: role, Tab: "topology"}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "topo.title")), Org: org, Role: role, Tab: "topology"}) {
 		<main class="wrap wrap--wide">
 			<div class="page-head">
 				<h1>{ i18n.T(ctx, "topo.title") }</h1>

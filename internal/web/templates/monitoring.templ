@@ -8,7 +8,7 @@ import (
 // Monitoring is the cluster's CPU and memory: charts by node and a column per
 // node with its containers. The data comes from /monitoring/data.
 templ Monitoring(org db.Organization, role string) {
-	@Page(Shell{Title: i18n.T(ctx, "mon.title"), Org: org, Role: role, Tab: "monitoring"}) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "mon.title")), Org: org, Role: role, Tab: "monitoring"}) {
 		<main class="wrap wrap--wide">
 			<div
 				class="mon"

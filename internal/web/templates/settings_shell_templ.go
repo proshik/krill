@@ -84,7 +84,7 @@ func SettingsPage(org db.Organization, role, current, title string) templ.Compon
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = Page(Shell{Title: title, Org: org, Role: role, Tab: "settings"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = Page(Shell{Title: i18n.Sentence(title), Org: org, Role: role, Tab: "settings"}).Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
