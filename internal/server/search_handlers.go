@@ -1,0 +1,225 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates"
+)
+
+// paletteMax caps each group of the palette's results.
+const paletteMax = 8
+
+// orgSearch answers the command palette: the organization's projects,
+// environments, apps, databases, buckets, servers and the pages the viewer
+// may open, filtered by ?q=. With ?env= (an environment of this
+// organization) that environment's actions come first. Everything is read
+// through the organization's own index, so nothing of another tenant can
+// appear; instance-wide pages are offered to instance operators only.
+func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
+	o, role, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	match := func(parts ...string) bool {
+		if q == "" {
+			return true
+		}
+		for _, p := range parts {
+			if strings.Contains(strings.ToLower(p), q) {
+				return true
+			}
+		}
+		return false
+	}
+	ix, err := s.loadOrgIndex(ctx, o.ID)
+	if err != nil {
+		logFrom(r).Error("orgSearch: org index", "err", err, "org_id", o.ID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.deriveCardStatuses(ctx, ix.apps, nil)
+	base := "/orgs/" + strconv.FormatInt(o.ID, 10)
+	admin := isAdminRole(role)
+	var groups []templates.PaletteGroup
+	add := func(g templates.PaletteGroup) {
+		if len(g.Items) > paletteMax {
+			g.Items = g.Items[:paletteMax]
+		}
+		if len(g.Items) > 0 {
+			groups = append(groups, g)
+		}
+	}
+	appItem := func(appID int64) templates.PaletteItem {
+		a := ix.appByID[appID]
+		it := templates.PaletteItem{Label: i18n.Tf(ctx, "palette.open", a.Name), Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
+		if kind, text := templates.AppState(ctx, a.Status); kind == "err" || kind == "warn" {
+			it.StateKind, it.StateText = kind, text
+		}
+		return it
+	}
+
+	// The environment the palette was opened in.
+	if envID, err := strconv.ParseInt(r.URL.Query().Get("env"), 10, 64); err == nil {
+		if e, ok := ix.envs[envID]; ok {
+			g := templates.PaletteGroup{Title: ix.envLabel(envID)}
+			envBase := ix.envURL(envID)
+			if admin {
+				for _, it := range []templates.PaletteItem{
+					{Label: i18n.T(ctx, "project.new_app"), Href: envBase + "?new=app", Glyph: "i-plus"},
+					{Label: i18n.T(ctx, "db.new"), Href: envBase + "/databases?new=database", Glyph: "i-plus"},
+					{Label: i18n.T(ctx, "bucket.new"), Href: envBase + "/databases?new=bucket", Glyph: "i-plus"},
+				} {
+					if match(it.Label) {
+						g.Items = append(g.Items, it)
+					}
+				}
+			}
+			var envApps []int64
+			for _, a := range ix.apps {
+				if a.EnvironmentID == e.ID && match(a.Name) {
+					envApps = append(envApps, a.ID)
+				}
+			}
+			sort.Slice(envApps, func(i, j int) bool { return ix.appByID[envApps[i]].Name < ix.appByID[envApps[j]].Name })
+			for _, id := range envApps {
+				g.Items = append(g.Items, appItem(id))
+			}
+			add(g)
+		}
+	}
+
+	// Apps of the whole organization.
+	if q != "" {
+		g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.apps")}
+		for _, a := range ix.apps {
+			if match(a.Name, ix.envLabel(a.EnvironmentID)) {
+				g.Items = append(g.Items, appItem(a.ID))
+			}
+		}
+		sort.SliceStable(g.Items, func(i, j int) bool { return g.Items[i].Label < g.Items[j].Label })
+		add(g)
+	}
+
+	// Databases and buckets.
+	if q != "" {
+		g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.databases")}
+		envIDs := make([]int64, 0, len(ix.envs))
+		for id := range ix.envs {
+			envIDs = append(envIDs, id)
+		}
+		sort.Slice(envIDs, func(i, j int) bool { return envIDs[i] < envIDs[j] })
+		for _, id := range envIDs {
+			if ldbs, err := s.q.ListLogicalDatabasesByEnvironment(ctx, id); err == nil {
+				for _, l := range ldbs {
+					if match(l.Name, l.DbName) {
+						g.Items = append(g.Items, templates.PaletteItem{Label: l.Name, Sub: ix.envLabel(id), Href: ix.envURL(id) + "/databases/" + strconv.FormatInt(l.ID, 10), Glyph: "i-pg"})
+					}
+				}
+			}
+			if bs, err := s.q.ListS3BucketsByEnvironment(ctx, id); err == nil {
+				for _, b := range bs {
+					if match(b.Name) {
+						g.Items = append(g.Items, templates.PaletteItem{Label: b.Name, Sub: ix.envLabel(id), Href: ix.envURL(id) + "/buckets/" + strconv.FormatInt(b.ID, 10), Glyph: "i-bucket"})
+					}
+				}
+			}
+		}
+		if insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID); err == nil {
+			for _, in := range insts {
+				if match(in.Name, in.Engine) {
+					g.Items = append(g.Items, templates.PaletteItem{Label: in.Name, Sub: i18n.Tf(ctx, "canvas.server", engineLabel(in.Engine)), Href: base + "/db-servers/" + strconv.FormatInt(in.ID, 10), Glyph: engineGlyph(in.Engine)})
+				}
+			}
+		}
+		add(g)
+	}
+
+	// Projects and environments.
+	{
+		g := templates.PaletteGroup{Title: i18n.T(ctx, "nav.projects")}
+		envs := make([]int64, 0, len(ix.envs))
+		for id := range ix.envs {
+			envs = append(envs, id)
+		}
+		sort.Slice(envs, func(i, j int) bool { return ix.envLabel(envs[i]) < ix.envLabel(envs[j]) })
+		for _, id := range envs {
+			if match(ix.envLabel(id)) {
+				g.Items = append(g.Items, templates.PaletteItem{Label: ix.envLabel(id), Href: ix.envURL(id)})
+			}
+		}
+		add(g)
+	}
+
+	// Pages.
+	g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.go_to")}
+	for _, t := range paletteTabs(ctx, base, role) {
+		if match(t.Label) {
+			g.Items = append(g.Items, templates.PaletteItem{Label: t.Label, Href: t.Href})
+		}
+	}
+	for _, sg := range paletteSettings(ctx, base, role) {
+		if match(sg.Label, i18n.T(ctx, "nav.settings")) {
+			g.Items = append(g.Items, templates.PaletteItem{Label: sg.Label, Sub: i18n.T(ctx, "nav.settings"), Href: sg.Href})
+		}
+	}
+	if match(i18n.T(ctx, "nav.logout")) {
+		g.Items = append(g.Items, templates.PaletteItem{Label: i18n.T(ctx, "nav.logout"), Logout: true})
+	}
+	if len(g.Items) > 0 {
+		groups = append(groups, g) // not capped: the pages are the palette's map
+	}
+	render(w, r, http.StatusOK, templates.PaletteResults(groups))
+}
+
+type paletteLink struct{ Label, Href string }
+
+// paletteTabs are the organization's tabs, with the bar's gates.
+func paletteTabs(ctx context.Context, base, role string) []paletteLink {
+	out := []paletteLink{
+		{i18n.T(ctx, "nav.projects"), base},
+		{i18n.T(ctx, "nav.dbservers"), base + "/db-servers"},
+	}
+	if auth.IsInstanceAdmin(ctx) {
+		out = append(out, paletteLink{i18n.T(ctx, "nav.nodes"), base + "/nodes"})
+	}
+	if isAdminRole(role) {
+		out = append(out, paletteLink{i18n.T(ctx, "nav.topology"), base + "/topology"})
+	}
+	if auth.IsInstanceAdmin(ctx) {
+		out = append(out, paletteLink{i18n.T(ctx, "nav.monitoring"), base + "/monitoring"})
+	}
+	return append(out, paletteLink{i18n.T(ctx, "nav.settings"), base + "/settings"})
+}
+
+// paletteSettings are the settings pages, with the sub-navigation's gates.
+func paletteSettings(ctx context.Context, base, role string) []paletteLink {
+	out := []paletteLink{
+		{i18n.T(ctx, "nav.members"), base + "/members"},
+		{i18n.T(ctx, "reg.link"), base + "/registries"},
+		{i18n.T(ctx, "gitcred.link"), base + "/git-credentials"},
+		{i18n.T(ctx, "dest.link"), base + "/destinations"},
+		{i18n.T(ctx, "api_tokens.link"), base + "/api-tokens"},
+		{i18n.T(ctx, "settings.password"), base + "/account/password"},
+	}
+	if isAdminRole(role) {
+		out = append(out, paletteLink{i18n.T(ctx, "notif.link"), base + "/notifications"})
+	}
+	if auth.IsInstanceAdmin(ctx) {
+		out = append(out,
+			paletteLink{i18n.T(ctx, "panel.link"), base + "/panel-domain"},
+			paletteLink{i18n.T(ctx, "firewall.link"), base + "/firewall"},
+			paletteLink{i18n.T(ctx, "obs.link"), base + "/observability"},
+			paletteLink{i18n.T(ctx, "sbk.link"), base + "/krill-backups"},
+			paletteLink{i18n.T(ctx, "update.link"), base + "/updates"},
+		)
+	}
+	return out
+}

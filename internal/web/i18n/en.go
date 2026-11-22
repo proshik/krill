@@ -1766,4 +1766,9 @@ var en = map[string]string{
 	"update.available_short":           "%s available",
 	"update.up_to_date_short":          "Latest",
 	"update.versions":                  "Versions",
+	"palette.nothing":                  "Nothing found",
+	"palette.open":                     "Open %s",
+	"palette.apps":                     "Apps",
+	"palette.databases":                "Databases and servers",
+	"palette.go_to":                    "Go to",
 }

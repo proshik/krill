@@ -998,7 +998,7 @@ window.krillPalette = function (open) {
 document.addEventListener("keydown", function (e) {
   const pal = document.getElementById("palette");
   if (!pal || pal.hidden || (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter")) return;
-  const items = Array.from(pal.querySelectorAll(".palette-groups a"));
+  const items = Array.from(pal.querySelectorAll(".palette-groups a, .palette-groups .palette-item"));
   if (!items.length) return;
   let i = items.findIndex(function (a) { return a.getAttribute("aria-selected") === "true"; });
   if (e.key === "Enter") {
@@ -1015,7 +1015,7 @@ document.addEventListener("keydown", function (e) {
 });
 document.addEventListener("htmx:afterSwap", function (e) {
   if (e.target && e.target.id === "palette-results") {
-    const first = e.target.querySelector("a");
+    const first = e.target.querySelector("a, .palette-item");
     if (first) first.setAttribute("aria-selected", "true");
   }
 });

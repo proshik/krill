@@ -1766,4 +1766,9 @@ var ru = map[string]string{
 	"update.available_short":           "Доступна %s",
 	"update.up_to_date_short":          "Последняя",
 	"update.versions":                  "Версии",
+	"palette.nothing":                  "Ничего не найдено",
+	"palette.open":                     "Открыть %s",
+	"palette.apps":                     "Приложения",
+	"palette.databases":                "Базы и серверы",
+	"palette.go_to":                    "Перейти",
 }

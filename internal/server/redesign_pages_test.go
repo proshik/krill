@@ -89,3 +89,55 @@ func TestMembersShowTemporaryPassword(t *testing.T) {
 		t.Fatal("the member who still owes a password change is not marked")
 	}
 }
+
+// The palette's search only ever returns the organization's own things: an
+// app of another organization never appears, not even through the env
+// parameter, and instance-wide pages are offered to instance operators only.
+func TestOrgSearchTenancy(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	userA := mkUser(t, q, "search-a@k.local")
+	orgA, _ := orgSvc.CreateOrg(ctx, userA, "SearchA")
+	pA, _ := orgSvc.CreateProject(ctx, orgA.ID, "alpha", "")
+	eA, _ := orgSvc.CreateEnvironment(ctx, pA.ID, "production")
+	mkApp(t, q, eA.ID, "secret-billing", "search-a.example.com")
+
+	userB := mkUser(t, q, "search-b@k.local")
+	orgB, _ := orgSvc.CreateOrg(ctx, userB, "SearchB")
+	pB, _ := orgSvc.CreateProject(ctx, orgB.ID, "beta", "")
+	eB, _ := orgSvc.CreateEnvironment(ctx, pB.ID, "production")
+	mkApp(t, q, eB.ID, "billing-web", "search-b.example.com")
+	member := mkUser(t, q, "search-member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: orgB.ID, UserID: member, Role: "member"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cookieB := loginAs(t, q, "search-b@k.local")
+	baseB := "/orgs/" + i64(orgB.ID) + "/search"
+	rec := getWithCookie(t, h, baseB+"?q=billing&env="+i64(eA.ID), cookieB)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "billing-web") {
+		t.Fatalf("own app missing from the results (code %d)", rec.Code)
+	}
+	if strings.Contains(body, "secret-billing") || strings.Contains(body, "alpha") {
+		t.Fatal("SECURITY: another organization's app or project in the results")
+	}
+	// The organization's owner who is not an instance operator gets no
+	// instance-wide pages.
+	if body := getWithCookie(t, h, baseB+"?q=", cookieB).Body.String(); strings.Contains(body, "/nodes\"") || strings.Contains(body, "/monitoring\"") || strings.Contains(body, "/firewall\"") {
+		t.Fatal("instance-wide pages offered to a non-operator")
+	}
+	// The environment's actions: an admin may create, a member may not.
+	if body := getWithCookie(t, h, baseB+"?env="+i64(eB.ID), cookieB).Body.String(); !strings.Contains(body, "?new=app") {
+		t.Fatal("the admin is not offered a new app in the environment")
+	}
+	memberCookie := loginAs(t, q, "search-member@k.local")
+	if body := getWithCookie(t, h, baseB+"?env="+i64(eB.ID), memberCookie).Body.String(); strings.Contains(body, "?new=app") || !strings.Contains(body, "billing-web") {
+		t.Fatal("a member must see the environment's apps and no create actions")
+	}
+	// A stranger is refused the search of an organization they do not belong to.
+	cookieA := loginAs(t, q, "search-a@k.local")
+	if rec := getWithCookie(t, h, baseB+"?q=billing", cookieA); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant search answered %d", rec.Code)
+	}
+}
