@@ -253,7 +253,7 @@ func (s *Server) bucketDetail(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Error("bucketDetail: list environments", "err", err, "project_id", c.Project.ID)
 	}
 	v.Shell = s.envShell(ctx, c.Org, c.Role, c.Project, c.Env, envs, c.Bucket.Name+", "+c.Project.Name+" "+c.Env.Name, "databases", "page")
-	running, _, _ := s.placement(ctx)
+	running, _, _, _ := s.placement(ctx)
 	if n := running[inst.AppName]; len(n) > 0 {
 		v.Node = strings.Join(n, ", ")
 	} else {

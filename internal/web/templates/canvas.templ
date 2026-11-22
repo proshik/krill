@@ -32,7 +32,7 @@ templ canvasView(v CanvasView) {
 			<div class="float float--nodes" role="group" aria-label={ i18n.T(ctx, "canvas.nodes") }>
 				<span class="float-label">{ i18n.T(ctx, "canvas.nodes") }</span>
 				for _, n := range v.Nodes {
-					<button type="button" class="chip" data-node={ n.Name } aria-pressed="false">
+					<button type="button" class="chip" data-node={ n.ID } aria-pressed="false">
 						{ n.Name }
 						<span class="chip-count">{ nodeCountLabel(n) }</span>
 						if n.Warn != "" {
@@ -131,7 +131,7 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			style={ templ.SafeCSS(canvasStyle(x, y)) }
 			data-to={ joinSpace(c.To) }
 			data-detected={ joinSpace(c.Detected) }
-			data-nodes={ joinSpace(c.Nodes) }
+			data-nodes={ joinSpace(c.NodeIDs) }
 			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">

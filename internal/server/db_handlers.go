@@ -190,7 +190,7 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 		logFrom(r).Error("logicalDatabaseDetail: list environments", "err", err, "project_id", p.ID)
 	}
 	c.Shell = s.envShell(ctx, o, role, p, e, envs, ld.Name+", "+p.Name+" "+e.Name, "databases", "page")
-	running, _, _ := s.placement(ctx)
+	running, _, _, _ := s.placement(ctx)
 	if n := running[inst.AppName]; len(n) > 0 {
 		c.Node = strings.Join(n, ", ")
 	} else {

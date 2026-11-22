@@ -15,6 +15,7 @@ type TopoView struct {
 
 // TopoLane is a lane of the topology.
 type TopoLane struct {
+	ID        string // the graph node ID (a Swarm node ID, or ingress/unplaced)
 	Name      string
 	Href      string // the node on the nodes page ("" for ingress)
 	Ingress   bool

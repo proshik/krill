@@ -101,7 +101,7 @@ func (s *Server) dbServersView(w http.ResponseWriter, r *http.Request, o db.Orga
 			}
 			statuses[in.ID] = displayInstanceStatus(up, in.NodeHostname, nodes, nodesOK, in.Status)
 		}
-		running, _, _ = s.placement(ctx)
+		running, _, _, _ = s.placement(ctx)
 	}
 	ix, err := s.loadOrgIndex(ctx, o.ID)
 	if err != nil {

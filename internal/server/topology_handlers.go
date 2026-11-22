@@ -81,9 +81,12 @@ func (s *Server) topologyGraph(w http.ResponseWriter, r *http.Request, orgID int
 	return graph, true
 }
 
-// topoView turns the graph into lanes of cards. Links become the cards'
-// data-to (modeled) and data-detected (found in env values); a logical
-// database's link points at the server holding it.
+// topoView turns the graph into lanes of cards. Every link becomes a target
+// in the card's data-to, which is what the map draws; the ones found only in
+// env values are also listed in data-detected, which styles them. A logical
+// database's link points at the server holding it, so several links can
+// resolve to one target: each target is listed once, and it counts as
+// detected only when no modeled link reaches it.
 func topoView(ctx context.Context, orgID int64, g topology.Graph, project string) templates.TopoView {
 	elem := func(serviceID string) string { return "t-" + serviceID }
 	dbOwner := map[string]string{}
@@ -94,6 +97,9 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 	}
 	to := map[string][]string{}
 	detected := map[string][]string{}
+	modeled := map[[2]string]bool{}  // from, target: reached by a modeled link
+	listed := map[[2]string]bool{}   // from, target: already in data-to
+	found := map[[2]string]bool{}    // from, target: reached by a detected link
 	ingress := map[string][]string{} // app service -> domains
 	servedProjects := map[string]map[string]bool{}
 	projectOf := map[string]string{}
@@ -112,16 +118,21 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		if target == "" {
 			continue
 		}
+		pair := [2]string{l.From, target}
+		if !listed[pair] {
+			listed[pair] = true
+			to[l.From] = append(to[l.From], elem(target))
+		}
 		switch {
 		case l.Kind == "ingress":
-			to[l.From] = append(to[l.From], elem(target))
+			modeled[pair] = true
 			if l.Label != "" {
 				ingress[target] = append(ingress[target], l.Label)
 			}
 		case l.Detected:
-			detected[l.From] = append(detected[l.From], elem(target))
+			found[pair] = true
 		default:
-			to[l.From] = append(to[l.From], elem(target))
+			modeled[pair] = true
 		}
 		if p := projectOf[l.From]; p != "" {
 			if servedProjects[target] == nil {
@@ -129,6 +140,14 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 			}
 			servedProjects[target][p] = true
 		}
+	}
+	for pair := range found {
+		if !modeled[pair] {
+			detected[pair[0]] = append(detected[pair[0]], elem(pair[1]))
+		}
+	}
+	for from := range detected {
+		sort.Strings(detected[from])
 	}
 	visible := func(sv topology.GService) bool {
 		if project == "" {
@@ -151,9 +170,10 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		}
 	}
 	sort.Strings(v.Projects)
+	// Lanes are matched to services by node ID: display names can repeat.
 	byNode := map[string]*templates.TopoLane{}
 	for _, n := range g.Nodes {
-		lane := templates.TopoLane{Name: n.Name}
+		lane := templates.TopoLane{ID: n.ID, Name: n.Name}
 		if n.ID == "ingress" {
 			lane.Ingress = true
 		} else if n.ID != "unplaced" {
@@ -169,11 +189,7 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 	// The ingress lane goes first.
 	sort.SliceStable(v.Lanes, func(i, j int) bool { return v.Lanes[i].Ingress && !v.Lanes[j].Ingress })
 	for i := range v.Lanes {
-		for _, n := range g.Nodes {
-			if n.Name == v.Lanes[i].Name {
-				byNode[n.ID] = &v.Lanes[i]
-			}
-		}
+		byNode[v.Lanes[i].ID] = &v.Lanes[i]
 	}
 	base := "/orgs/" + strconv.FormatInt(orgID, 10)
 	for _, sv := range g.Services {

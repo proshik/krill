@@ -149,16 +149,21 @@ func (s *Server) loadEnvData(ctx context.Context, orgID, projID int64, env db.En
 
 // placement returns each Swarm service's running node names and the cluster
 // node names in display order (control plane first).
-func (s *Server) placement(ctx context.Context) (map[string][]string, []docker.SwarmNode, map[string]string) {
-	running := map[string][]string{}
+//
+// running maps a service to the display names of the nodes its tasks run on;
+// runningIDs to their Swarm node IDs, in the same order. Display names can
+// repeat (two workers may share a label), so anything that matches a card to
+// a node uses the IDs.
+func (s *Server) placement(ctx context.Context) (running, runningIDs map[string][]string, nodes []docker.SwarmNode, labels map[string]string) {
+	running, runningIDs = map[string][]string{}, map[string][]string{}
 	if s.engine == nil {
-		return running, nil, nil
+		return running, runningIDs, nil, nil
 	}
 	nodes, err := s.engine.Nodes(ctx)
 	if err != nil {
 		slog.Warn("placement: list nodes", "err", err)
 	}
-	labels := s.nodeLabelMap(ctx)
+	labels = s.nodeLabelMap(ctx)
 	name := map[string]string{}
 	for _, n := range nodes {
 		name[n.ID] = nodeDisplayName(n, labels)
@@ -172,12 +177,17 @@ func (s *Server) placement(ctx context.Context) (map[string][]string, []docker.S
 		ref = append(ref, topology.Task{Service: t.ServiceName, Node: t.NodeID, Running: t.State == "running"})
 	}
 	for svc, ids := range topology.ResolveNodes(ref) {
+		var known []string
 		for _, id := range ids {
-			if n := name[id]; n != "" {
-				running[svc] = append(running[svc], n)
+			if name[id] != "" {
+				known = append(known, id)
 			}
 		}
-		sort.Strings(running[svc])
+		sort.SliceStable(known, func(i, j int) bool { return name[known[i]] < name[known[j]] })
+		for _, id := range known {
+			running[svc] = append(running[svc], name[id])
+		}
+		runningIDs[svc] = known
 	}
 	sort.SliceStable(nodes, func(i, j int) bool {
 		li, lj := nodes[i].Leader || nodes[i].Role == "manager", nodes[j].Leader || nodes[j].Role == "manager"
@@ -186,14 +196,14 @@ func (s *Server) placement(ctx context.Context) (map[string][]string, []docker.S
 		}
 		return name[nodes[i].ID] < name[nodes[j].ID]
 	})
-	return running, nodes, labels
+	return running, runningIDs, nodes, labels
 }
 
 // canvasFor builds the environment canvas. current is the key of the card
 // whose sheet is open.
 func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, p db.Project, env db.Environment, d envData, current string, ghost bool) templates.CanvasView {
 	base := envURL(o.ID, p.ID, env.ID)
-	running, nodes, labels := s.placement(ctx)
+	running, runningIDs, nodes, labels := s.placement(ctx)
 	v := templates.CanvasView{
 		Title:     p.Name + ", " + env.Name,
 		Cards:     map[string]templates.CanvasCard{},
@@ -243,8 +253,8 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 			Key: key, ElemID: elem(key), Glyph: "i-app", Name: a.Name,
 			Sub:     i18n.T(ctx, "canvas.internal"),
 			StateID: "cs-app-" + strconv.FormatInt(a.ID, 10), StateKind: kind, StateText: text,
-			Nodes: running[dockerName(a.ID)],
-			Href:  base + "/apps/" + strconv.FormatInt(a.ID, 10),
+			Nodes: running[dockerName(a.ID)], NodeIDs: runningIDs[dockerName(a.ID)],
+			Href: base + "/apps/" + strconv.FormatInt(a.ID, 10),
 		}
 		if dm, ok := primary[a.ID]; ok && dm.Exposed {
 			c.Sub, c.SubLink = dm.Host+firstCSV(dm.Paths), true
@@ -271,7 +281,7 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 		in := d.insts[r.InstanceID]
 		kind, text := templates.ServerState(ctx, in.Status)
 		c := templates.CanvasCard{Key: r.Key, ElemID: elem(r.Key), Glyph: engineGlyph(r.Engine), Href: r.Href,
-			StateKind: kind, StateText: text, Nodes: running[in.AppName]}
+			StateKind: kind, StateText: text, Nodes: running[in.AppName], NodeIDs: runningIDs[in.AppName]}
 		id, _ := strconv.ParseInt(r.Key[strings.IndexByte(r.Key, ':')+1:], 10, 64)
 		switch r.Kind {
 		case "ldb":
@@ -290,15 +300,18 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 		v.Cards[r.Key] = c
 	}
 
-	// The node filter.
+	// The node filter: chips and cards match by Swarm node ID, chips show the
+	// display name. Someone who may not see the cluster gets only the nodes
+	// this environment's cards run on.
 	count := map[string]int{}
 	for _, c := range v.Cards {
-		for _, n := range c.Nodes {
-			count[n]++
+		for _, id := range c.NodeIDs {
+			count[id]++
 		}
 	}
+	operator := auth.IsInstanceAdmin(ctx)
 	pressure := map[string]string{}
-	if auth.IsInstanceAdmin(ctx) {
+	if operator {
 		for _, n := range s.nodeSummaries(ctx) {
 			if n.MemTotal > 0 && !n.Stale {
 				if pct := int(n.MemUsed * 100 / n.MemTotal); pct >= 85 {
@@ -308,8 +321,11 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 		}
 	}
 	for _, n := range nodes {
+		if !operator && count[n.ID] == 0 {
+			continue
+		}
 		name := nodeDisplayName(n, labels)
-		v.Nodes = append(v.Nodes, templates.CanvasNode{Name: name, Count: count[name], Warn: pressure[name]})
+		v.Nodes = append(v.Nodes, templates.CanvasNode{ID: n.ID, Name: name, Count: count[n.ID], Warn: pressure[name]})
 	}
 
 	if s.cloner != nil {
@@ -444,7 +460,7 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 	}
 	shell := s.envShell(ctx, o, role, p, e, envs, i18n.Sentence(i18n.T(ctx, "env.tab_databases"))+", "+p.Name+" "+e.Name, "databases", body)
 	d := s.loadEnvData(ctx, o.ID, p.ID, e)
-	running, _, _ := s.placement(ctx)
+	running, _, _, _ := s.placement(ctx)
 	base := envURL(o.ID, p.ID, e.ID)
 	orgBase := "/orgs/" + strconv.FormatInt(o.ID, 10)
 

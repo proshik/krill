@@ -24,7 +24,8 @@ type CanvasCard struct {
 	StateID   string
 	StateKind string
 	StateText string
-	Nodes     []string
+	Nodes     []string // display names of the nodes it runs on
+	NodeIDs   []string // their Swarm node IDs, for the node filter
 	Href      string
 	To        []string // ElemIDs of the resources the app uses
 	Detected  []string // the subset of To only found in env values
@@ -32,6 +33,7 @@ type CanvasCard struct {
 
 // CanvasNode is one cluster node in the canvas node filter.
 type CanvasNode struct {
+	ID    string // Swarm node ID: what chips and cards match on
 	Name  string
 	Count int
 	Warn  string // pressure label for instance operators, "" when fine
