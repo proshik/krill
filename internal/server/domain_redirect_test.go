@@ -91,7 +91,7 @@ func TestDomainRedirectLabelsFollowThePrimary(t *testing.T) {
 	}
 
 	page := getWithCookie(t, h, base+"?tab=domains", cookie).Body.String()
-	if !strings.Contains(page, "redirects to http://"+other.Host) || !strings.Contains(page, "Exposure, paths and access protection do not apply") {
+	if !strings.Contains(page, "Redirects to "+other.Host) || !strings.Contains(page, "Exposure, paths and access protection do not apply") {
 		t.Fatal("domains tab does not show the redirect")
 	}
 }

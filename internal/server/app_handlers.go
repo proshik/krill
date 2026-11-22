@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -368,31 +370,110 @@ func (s *Server) savePlacement(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c)+"?tab=advanced", http.StatusSeeOther)
 }
 
+// appTab maps a requested tab onto the sheet's tabs. The names of the
+// previous layout (general, env, advanced, volumes) still lead somewhere: they
+// are in redirects and links people kept.
+func appTab(tab string, admin bool) string {
+	switch tab {
+	case "env":
+		tab = "variables"
+	case "advanced", "volumes":
+		tab = "settings"
+	case "general", "":
+		tab = "deployments"
+	}
+	switch tab {
+	case "deployments", "logs", "domains", "metrics", "settings":
+		return tab
+	case "variables", "terminal":
+		// Env values are secrets and the terminal runs commands: members, who
+		// are read-only viewers, get the deployments tab instead.
+		if admin {
+			return tab
+		}
+	}
+	return "deployments"
+}
+
 func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
 		return
 	}
-	tab := r.URL.Query().Get("tab")
-	if tab != "env" && tab != "logs" && tab != "deployments" && tab != "domains" && tab != "advanced" && tab != "volumes" && tab != "terminal" && tab != "metrics" {
-		tab = "general"
+	tab := appTab(r.URL.Query().Get("tab"), isAdminRole(c.Role))
+	if !s.fillAppSheet(w, r, &c, tab) {
+		return
 	}
-	// Env values are secrets. Members are read-only viewers and must never see
-	// them (mirrors the admin-only DB connection-string display), so the env tab
-	// silently falls back to General for non-admins.
-	if (tab == "env" || tab == "volumes") && c.Role != "owner" && c.Role != "admin" {
-		tab = "general"
+	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
+}
+
+// fillAppSheet loads what the app's sheet shows on the given tab, plus the
+// environment canvas under it. It answers the request itself on failure.
+func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templates.AppCtx, tab string) bool {
+	ctx := r.Context()
+	admin := isAdminRole(c.Role)
+	envs, err := s.q.ListEnvironments(ctx, c.Project.ID)
+	if err != nil {
+		logFrom(r).Error("appDetail: list environments", "err", err, "project_id", c.Project.ID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
 	}
-	if tab == "metrics" {
+	c.Shell = s.envShell(ctx, c.Org, c.Role, c.Project, c.Env, envs, c.App.Name+", "+c.Project.Name+" "+c.Env.Name, "canvas", "is-canvas has-sheet")
+	d := s.loadEnvData(ctx, c.Org.ID, c.Project.ID, c.Env)
+	c.Canvas = s.canvasFor(ctx, c.Org, c.Role, c.Project, c.Env, d, topology.AppKey(c.App.ID), false)
+	for _, a := range d.apps {
+		if a.ID == c.App.ID {
+			c.App.Status = a.Status // live, as on the canvas
+		}
+	}
+	if doms, err := s.q.ListDomainsByApplication(ctx, c.App.ID); err != nil {
+		logFrom(r).Error("appDetail: failed to list domains", "err", err, "app_id", c.App.ID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	} else {
+		c.Domains = doms
+	}
+	if n, err := s.q.CountExposedDomainsByApplication(ctx, c.App.ID); err != nil {
+		logFrom(r).Error("appDetail: count exposed domains", "err", err, "app_id", c.App.ID)
+	} else {
+		c.Exposed = n > 0
+	}
+	if s.engine != nil {
+		c.NodeLabels = s.nodeLabelMap(ctx)
+		c.NodeNames = map[string]string{}
+		if nodes, err := s.engine.Nodes(ctx); err == nil {
+			for _, n := range nodes {
+				c.NodeNames[n.ID] = nodeDisplayName(n, c.NodeLabels)
+			}
+		}
+	}
+
+	switch tab {
+	case "deployments":
+		if s.engine != nil {
+			tasks, err := s.engine.ServiceTasks(ctx, docker.ServiceName(c.App.ID))
+			if err != nil {
+				logFrom(r).Warn("appDetail: service tasks", "err", err, "app_id", c.App.ID)
+			}
+			c.Tasks = tasks
+		}
+		deps, err := s.q.ListDeploymentSummariesByApplication(ctx, c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return false
+		}
+		c.Deps = deps
+	case "metrics":
 		c.MetricsEnabled, c.MetricsTokenEnv = c.App.MetricsEnabled, c.App.MetricsTokenEnv
-		eps, err := s.q.ListMetricsEndpointsByApplication(r.Context(), c.App.ID)
+		eps, err := s.q.ListMetricsEndpointsByApplication(ctx, c.App.ID)
 		if err != nil {
 			logFrom(r).Error("appDetail: read metrics endpoints failed", "err", err)
-			http.Error(w, "internal error", 500)
-			return
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return false
 		}
 		c.MetricsEndpoints = eps
-		if (c.Role == "admin" || c.Role == "owner") && c.App.MetricsToken != nil {
+		if admin && c.App.MetricsToken != nil {
 			token, err := secret.Dec(*c.App.MetricsToken)
 			if err != nil {
 				logFrom(r).Warn("appDetail: metrics token unreadable", "app_id", c.App.ID)
@@ -401,26 +482,102 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 				c.MetricsToken = token
 			}
 		}
+	case "domains":
+		shares, err := s.q.ListHostSharesByApplication(ctx, c.App.ID)
+		if err != nil {
+			logFrom(r).Error("appDetail: failed to list host shares", "err", err, "app_id", c.App.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return false
+		}
+		c.HostShares = map[int64][]db.ListHostSharesByApplicationRow{}
+		for _, sh := range shares {
+			c.HostShares[sh.DomainID] = append(c.HostShares[sh.DomainID], sh)
+		}
+	case "variables":
+		s.fillAppLinks(r, c, d)
+	case "settings":
+		if !s.fillAppSettings(w, r, c) {
+			return false
+		}
 	}
-	if regs, err := s.q.ListRegistriesByOrg(r.Context(), c.Org.ID); err != nil {
+	return true
+}
+
+// fillAppLinks loads the variables tab: the app's database and bucket links
+// and what it could link to.
+func (s *Server) fillAppLinks(r *http.Request, c *templates.AppCtx, d envData) {
+	ctx := r.Context()
+	links, lerr := s.q.ListDBLinksByApplication(ctx, c.App.ID)
+	if lerr != nil {
+		logFrom(r).Error("appDetail: list db links", "err", lerr, "app_id", c.App.ID)
+	}
+	c.Ldbs = d.ldbs
+	var linkInsts []db.DbInstance
+	for _, in := range d.insts {
+		if in.Engine != "postgres" {
+			linkInsts = append(linkInsts, in)
+		}
+	}
+	sort.Slice(linkInsts, func(i, j int) bool { return linkInsts[i].Name < linkInsts[j].Name })
+	c.LinkInstances = linkInsts
+	ldbName := map[int64]string{}
+	for _, ldb := range d.ldbs {
+		ldbName[ldb.ID] = ldb.Name + " (" + ldb.DbName + ", " + ldb.InstanceName + ")"
+	}
+	envKeys, _ := parseEnv(c.App.EnvText)
+	for _, l := range links {
+		var engine, name string
+		switch {
+		case l.LogicalDatabaseID != nil:
+			engine, name = "postgres", ldbName[*l.LogicalDatabaseID]
+		case l.InstanceID != nil:
+			in := d.insts[*l.InstanceID]
+			engine, name = in.Engine, in.Name
+		}
+		_, collides := envKeys[l.VarName]
+		c.DBLinks = append(c.DBLinks, templates.DBLinkView{
+			ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Field: l.Field, Collides: collides,
+		})
+	}
+	c.EnvBuckets = d.buckets
+	bucketName := map[int64]string{}
+	for _, b := range d.buckets {
+		bucketName[b.ID] = b.Name
+	}
+	bLinks, blerr := s.q.ListBucketLinksByApplication(ctx, c.App.ID)
+	if blerr != nil {
+		logFrom(r).Error("appDetail: list bucket links", "err", blerr, "app_id", c.App.ID)
+	}
+	for _, l := range bLinks {
+		_, collides := envKeys[l.VarName]
+		c.BucketLinks = append(c.BucketLinks, templates.BucketLinkView{ID: l.ID, Bucket: bucketName[l.BucketID], VarName: l.VarName, Field: l.Field, Collides: collides})
+	}
+}
+
+// fillAppSettings loads the settings tab: source, credentials, build
+// secrets, auto-deploy, runtime, placement, ports and volumes with their
+// backups. Secrets are decrypted for admins only.
+func (s *Server) fillAppSettings(w http.ResponseWriter, r *http.Request, c *templates.AppCtx) bool {
+	ctx := r.Context()
+	admin := isAdminRole(c.Role)
+	if regs, err := s.q.ListRegistriesByOrg(ctx, c.Org.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list registries", "err", err, "org_id", c.Org.ID)
 	} else {
 		c.Registries = regs
 	}
-	if creds, err := s.q.ListGitCredentialsByOrg(r.Context(), c.Org.ID); err != nil {
+	if creds, err := s.q.ListGitCredentialsByOrg(ctx, c.Org.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list git credentials", "err", err, "org_id", c.Org.ID)
 	} else {
 		c.GitCredentials = creds
 	}
-	if s.engine != nil {
-		c.Tasks, _ = s.engine.ServiceTasks(r.Context(), docker.ServiceName(c.App.ID))
-		c.NodeLabels = s.nodeLabelMap(r.Context())
-		if c.Role == "owner" || c.Role == "admin" {
-			c.Nodes, _ = s.engine.Nodes(r.Context())
+	if s.engine != nil && admin {
+		nodes, err := s.engine.Nodes(ctx)
+		if err != nil {
+			logFrom(r).Warn("appDetail: list nodes", "err", err)
 		}
+		c.Nodes = nodes
 	}
-	// Build secrets are secrets: only decrypt for the editor when the viewer is an admin.
-	if c.Role == "owner" || c.Role == "admin" {
+	if admin {
 		// Never render an empty editor for secrets we simply cannot read: the
 		// admin would save the blank field and wipe the stored values.
 		if plain, derr := secret.Dec(c.App.BuildSecrets); derr != nil {
@@ -429,142 +586,74 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request) {
 		} else {
 			c.BuildSecretsPlain = plain
 		}
-	}
-	c.AutoDeploy = c.App.AutoDeploy
-	endpoint := "/webhooks/github/"
-	if c.App.SourceType == "image" {
-		endpoint = "/webhooks/deploy/"
-	}
-	c.WebhookURL = s.baseURL(r.Context()) + endpoint + strconv.FormatInt(c.App.ID, 10)
-	if c.Role == "owner" || c.Role == "admin" {
 		if ws, derr := secret.Dec(c.App.WebhookSecret); derr != nil {
 			logFrom(r).Error("appDetail: webhook secret undecryptable", "err", derr, "app_id", c.App.ID)
 		} else {
 			c.WebhookSecret = ws
 		}
 	}
-	if n, err := s.q.CountExposedDomainsByApplication(r.Context(), c.App.ID); err != nil {
-		logFrom(r).Error("appDetail: count exposed domains", "err", err, "app_id", c.App.ID)
-	} else {
-		c.Exposed = n > 0
+	c.AutoDeploy = c.App.AutoDeploy
+	endpoint := "/webhooks/github/"
+	if c.App.SourceType == "image" {
+		endpoint = "/webhooks/deploy/"
 	}
-	if ports, err := s.q.ListAppPorts(r.Context(), c.App.ID); err != nil {
+	c.WebhookURL = s.baseURL(ctx) + endpoint + strconv.FormatInt(c.App.ID, 10)
+	if ports, err := s.q.ListAppPorts(ctx, c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: list app ports", "err", err, "app_id", c.App.ID)
 	} else {
 		c.Ports = ports
 	}
-	if tab == "advanced" {
-		c.Runtime = s.runtimeView(r, c.App)
+	c.Runtime = s.runtimeView(r, c.App)
+	if !admin {
+		return true
 	}
-	if tab == "deployments" {
-		deps, err := s.q.ListDeploymentSummariesByApplication(r.Context(), c.App.ID)
-		if err != nil {
-			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		c.Deps = deps
+	vols, err := s.q.ListVolumesByApplication(ctx, c.App.ID)
+	if err != nil {
+		logFrom(r).Error("appDetail: failed to list volumes", "err", err, "app_id", c.App.ID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
 	}
-	if tab == "domains" {
-		doms, err := s.q.ListDomainsByApplication(r.Context(), c.App.ID)
-		if err != nil {
-			logFrom(r).Error("appDetail: failed to list domains", "err", err, "app_id", c.App.ID)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		c.Domains = doms
-		shares, err := s.q.ListHostSharesByApplication(r.Context(), c.App.ID)
-		if err != nil {
-			logFrom(r).Error("appDetail: failed to list host shares", "err", err, "app_id", c.App.ID)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		c.HostShares = map[int64][]db.ListHostSharesByApplicationRow{}
-		for _, sh := range shares {
-			c.HostShares[sh.DomainID] = append(c.HostShares[sh.DomainID], sh)
-		}
+	c.Volumes = vols
+	if dests, derr := s.q.ListDestinationsByOrg(ctx, c.Org.ID); derr != nil {
+		logFrom(r).Error("appDetail: failed to list destinations", "err", derr, "org_id", c.Org.ID)
+	} else {
+		c.Destinations = dests
 	}
-	if tab == "env" {
-		links, lerr := s.q.ListDBLinksByApplication(r.Context(), c.App.ID)
-		if lerr != nil {
-			logFrom(r).Error("appDetail: list db links", "err", lerr, "app_id", c.App.ID)
+	base := appURL(*c)
+	c.VolumeBlocks = map[int64]templates.BackupBlock{}
+	for _, v := range vols {
+		b := templates.BackupBlock{
+			ID: "vbk-" + strconv.FormatInt(v.ID, 10), Title: i18n.Tf(ctx, "volumes.backups_of", v.Name),
+			Hint: i18n.T(ctx, "volumes.backup.hot_caveat"), Destinations: c.Destinations,
+			AddURL: base + "/volumes/" + strconv.FormatInt(v.ID, 10) + "/backups", OrgID: c.Org.ID,
+			ReturnURL: base + "?tab=settings#s-vol", Admin: true,
 		}
-		ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(r.Context(), c.Env.ID)
-		var linkInsts []db.DbInstance
-		if insts, err := s.q.ListDBInstancesByOrg(r.Context(), c.Org.ID); err == nil {
-			for _, in := range insts {
-				if in.Engine != "postgres" {
-					linkInsts = append(linkInsts, in)
-				}
-			}
+		bks, berr := s.q.ListVolumeBackupsByVolume(ctx, v.ID)
+		if berr != nil {
+			logFrom(r).Error("appDetail: failed to list volume backups", "err", berr, "volume_id", v.ID)
 		}
-		c.Ldbs = ldbs
-		c.LinkInstances = linkInsts
-		ldbName := map[int64]string{}
-		for _, ldb := range ldbs {
-			ldbName[ldb.ID] = ldb.Name + " (" + ldb.DbName + " @ " + ldb.InstanceName + ")"
-		}
-		instName := map[int64]string{}
-		instEngine := map[int64]string{}
-		for _, inst := range linkInsts {
-			instName[inst.ID] = inst.Name
-			instEngine[inst.ID] = inst.Engine
-		}
-		envKeys, _ := parseEnv(c.App.EnvText)
-		for _, l := range links {
-			var engine, name string
-			switch {
-			case l.LogicalDatabaseID != nil:
-				engine, name = "postgres", ldbName[*l.LogicalDatabaseID]
-			case l.InstanceID != nil:
-				engine, name = instEngine[*l.InstanceID], instName[*l.InstanceID]
-			}
-			_, collides := envKeys[l.VarName]
-			c.DBLinks = append(c.DBLinks, templates.DBLinkView{
-				ID: l.ID, Engine: engine, DBName: name, VarName: l.VarName, Scheme: l.Scheme, Field: l.Field, Collides: collides,
+		for _, bk := range bks {
+			id := strconv.FormatInt(bk.ID, 10)
+			b.Configs = append(b.Configs, templates.BackupConfig{
+				ID: bk.ID, Storage: destNameOf(c.Destinations, bk.DestinationID), Schedule: bk.Schedule, Retention: bk.Retention,
+				Enabled: bk.Enabled, LastRun: bk.LastRunAt.Time, Ran: bk.LastRunAt.Valid, LastStatus: bk.LastStatus, LastError: bk.LastError,
+				RunURL: base + "/volumes/backups/" + id + "/run", ToggleURL: base + "/volumes/backups/" + id + "/toggle",
+				DeleteURL: base + "/volumes/backups/" + id + "/delete", ObjectsURL: base + "/volumes/backups/" + id + "/objects",
 			})
 		}
-		buckets, berr := s.q.ListS3BucketsByEnvironment(r.Context(), c.Env.ID)
-		if berr != nil {
-			logFrom(r).Error("appDetail: list buckets", "err", berr, "app_id", c.App.ID)
-		}
-		c.EnvBuckets = buckets
-		bucketName := map[int64]string{}
-		for _, b := range buckets {
-			bucketName[b.ID] = b.Name
-		}
-		bLinks, blerr := s.q.ListBucketLinksByApplication(r.Context(), c.App.ID)
-		if blerr != nil {
-			logFrom(r).Error("appDetail: list bucket links", "err", blerr, "app_id", c.App.ID)
-		}
-		for _, l := range bLinks {
-			_, collides := envKeys[l.VarName]
-			c.BucketLinks = append(c.BucketLinks, templates.BucketLinkView{ID: l.ID, Bucket: bucketName[l.BucketID], VarName: l.VarName, Field: l.Field, Collides: collides})
+		c.VolumeBlocks[v.ID] = b
+	}
+	return true
+}
+
+// destNameOf is a backup storage's name for display.
+func destNameOf(dests []db.Destination, id int64) string {
+	for _, d := range dests {
+		if d.ID == id {
+			return d.Name
 		}
 	}
-	if tab == "volumes" {
-		vols, err := s.q.ListVolumesByApplication(r.Context(), c.App.ID)
-		if err != nil {
-			logFrom(r).Error("appDetail: failed to list volumes", "err", err, "app_id", c.App.ID)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		c.Volumes = vols
-		if dests, derr := s.q.ListDestinationsByOrg(r.Context(), c.Org.ID); derr != nil {
-			logFrom(r).Error("appDetail: failed to list destinations", "err", derr, "org_id", c.Org.ID)
-		} else {
-			c.Destinations = dests
-		}
-		c.VolumeBackups = map[int64][]db.VolumeBackup{}
-		for _, v := range vols {
-			if bks, berr := s.q.ListVolumeBackupsByVolume(r.Context(), v.ID); berr != nil {
-				logFrom(r).Error("appDetail: failed to list volume backups", "err", berr, "volume_id", v.ID)
-			} else {
-				c.VolumeBackups[v.ID] = bks
-			}
-		}
-	}
-	render(w, r, http.StatusOK, templates.AppDetail(c, tab))
+	return "#" + strconv.FormatInt(id, 10)
 }
 
 func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
@@ -582,7 +671,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		live, nerr := s.engine.Nodes(r.Context())
 		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
 	}
-	render(w, r, http.StatusOK, templates.StatusBadge(status))
+	render(w, r, http.StatusOK, templates.AppStateBadge(status, appURL(c)+"/status"))
 }
 
 func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {

@@ -135,7 +135,6 @@ func envHealthOf(b *EnvBar, id int64) string {
 	return "idle"
 }
 
-
 // paletteVals passes the environment the palette was opened in, so the search
 // can offer that environment's actions first.
 func paletteVals(s Shell) string {

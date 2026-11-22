@@ -36,7 +36,11 @@ func (s *Server) deploymentLogPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	render(w, r, http.StatusOK, templates.DeploymentLog(c, dep))
+	c.Deployment = &dep
+	if !s.fillAppSheet(w, r, &c, "deployments") {
+		return
+	}
+	render(w, r, http.StatusOK, templates.AppDetail(c, "deployments"))
 }
 
 // deploymentLogWS — WS stream of the deployment log (live for running / saved for finished).

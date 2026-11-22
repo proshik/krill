@@ -1,0 +1,247 @@
+package templates
+
+import (
+	"net/url"
+	"time"
+
+	"github.com/proshik/krill/internal/backup"
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// BackupBlock is the one backup section shared by databases, buckets and
+// volumes: the schedules already set up, each with its stored backups, and
+// the form for another one.
+type BackupBlock struct {
+	ID           string // anchor id
+	Title        string
+	Hint         string
+	Configs      []BackupConfig
+	Destinations []db.Destination
+	AddURL       string // POST a new schedule
+	OrgID        int64
+	ReturnURL    string // where the inline storage form comes back to
+	Admin        bool
+	Big          bool // the section is a page section (h2) rather than a sheet one (h3)
+}
+
+// BackupConfig is one schedule of a BackupBlock.
+type BackupConfig struct {
+	ID         int64
+	Storage    string
+	Schedule   string // the stored cron
+	Retention  int32
+	Enabled    bool
+	LastRun    time.Time
+	Ran        bool
+	LastStatus string
+	LastError  string
+	RunURL     string
+	ToggleURL  string
+	DeleteURL  string
+	ObjectsURL string // fragment with the stored backups ("" when listing is not offered)
+}
+
+func backupConfigState(c BackupConfig) string {
+	switch {
+	case !c.Enabled:
+		return "idle"
+	case c.LastStatus == "error":
+		return "err"
+	case c.Ran:
+		return "ok"
+	}
+	return "idle"
+}
+
+templ backupBlock(b BackupBlock) {
+	<section class="sec" id={ b.ID } aria-labelledby={ b.ID + "-h" }>
+		<div class="sec-head">
+			if b.Big {
+				<h2 id={ b.ID + "-h" }>{ b.Title }</h2>
+			} else {
+				<h3 id={ b.ID + "-h" }>{ b.Title }</h3>
+			}
+		</div>
+		if b.Hint != "" {
+			<p class="hint">{ b.Hint }</p>
+		}
+		if len(b.Configs) == 0 {
+			<p class="empty">{ i18n.T(ctx, "backup.none_configured") }</p>
+		}
+		for _, c := range b.Configs {
+			<div class="bk">
+				<div class="bk-top">
+					<span class="bk-what">
+						<span class="bk-sched">{ scheduleLabel(ctx, c.Schedule) }</span>
+						<span class="run-meta">{ i18n.Tf(ctx, "backup.to_keep", c.Storage, c.Retention) }</span>
+					</span>
+					@ui.State(backupConfigState(c), backupConfigText(ctx, c))
+					if b.Admin {
+						<span class="bk-keys">
+							<form method="post" action={ templ.SafeURL(c.ToggleURL) }>
+								<input type="hidden" name="enabled" value={ onOff(!c.Enabled) }/>
+								@SwitchButton(c.Enabled, i18n.T(ctx, "backup.on"), i18n.T(ctx, "backup.paused"))
+							</form>
+							<form method="post" action={ templ.SafeURL(c.RunURL) }>
+								<button type="submit" class="pill pill--small">{ i18n.T(ctx, "backup.run_now") }</button>
+							</form>
+							<form method="post" hx-boost="false" action={ templ.SafeURL(c.DeleteURL) } data-confirm={ i18n.Tf(ctx, "confirm.delete_backup", c.Storage) } data-more={ i18n.T(ctx, "backup.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+								<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.T(ctx, "backup.delete") } title={ i18n.T(ctx, "backup.delete") }>
+									@ui.Icon("i-trash")
+								</button>
+							</form>
+						</span>
+					}
+				</div>
+				if c.LastError != "" {
+					<p class="deploy-msg deploy-msg--err">{ c.LastError }</p>
+				}
+				if c.ObjectsURL != "" {
+					<h4 class="list-head">{ i18n.T(ctx, "backup.stored") }</h4>
+					<div hx-get={ c.ObjectsURL } hx-trigger="load" hx-swap="innerHTML">
+						<p class="empty"><span class="spin" aria-hidden="true"></span> { i18n.T(ctx, "common.loading") }</p>
+					</div>
+				}
+			</div>
+		}
+		if b.Admin {
+			if len(b.Destinations) == 0 {
+				<div class="empty-card">
+					<p class="empty-title">{ i18n.T(ctx, "backup.no_storage_title") }</p>
+					<p class="hint">{ i18n.T(ctx, "backup.no_storage_hint") }</p>
+					@inlineDestinationForm(b.OrgID, b.ReturnURL)
+				</div>
+			} else {
+				<form class="bk-form stack" method="post" action={ templ.SafeURL(b.AddURL) }>
+					<h4 class="list-head">{ addScheduleTitle(ctx, len(b.Configs)) }</h4>
+					@schedulePresets(b.ID)
+					<div class="row row--even">
+						<div class="field">
+							<label for={ b.ID + "-keep" }>{ i18n.T(ctx, "backup.keep_last") }</label>
+							<input class="input input--mono" id={ b.ID + "-keep" } name="retention" type="number" min="1" value="7"/>
+						</div>
+						<div class="field">
+							<label for={ b.ID + "-st" }>{ i18n.T(ctx, "backup.storage") }</label>
+							<select class="input" id={ b.ID + "-st" } name="destination_id">
+								for _, d := range b.Destinations {
+									<option value={ itoa(d.ID) }>{ d.Name }</option>
+								}
+							</select>
+						</div>
+					</div>
+					<details class="adv">
+						<summary>{ i18n.T(ctx, "backup.advanced") }</summary>
+						<div class="field">
+							<label for={ b.ID + "-pre" }>{ i18n.T(ctx, "backup.prefix") }</label>
+							<input class="input input--mono" id={ b.ID + "-pre" } name="prefix" placeholder={ i18n.T(ctx, "backup.prefix_auto") } aria-describedby={ b.ID + "-pre-hint" }/>
+							<p class="field-hint" id={ b.ID + "-pre-hint" }>{ i18n.T(ctx, "backup.prefix_hint") }</p>
+						</div>
+					</details>
+					<div class="sec-add"><button type="submit" class="pill">{ i18n.T(ctx, "backup.add") }</button></div>
+				</form>
+			}
+		}
+	</section>
+}
+
+// schedulePresets is the preset picker every backup form shares; "custom"
+// reveals the cron field.
+templ schedulePresets(id string) {
+	<fieldset class="presets">
+		<legend>{ i18n.T(ctx, "backup.schedule") }</legend>
+		for _, p := range []string{"off", "hourly", "daily", "weekly", "monthly", "custom"} {
+			<label class="preset"><input type="radio" name="schedule_preset" value={ p } checked?={ p == "daily" }/><span>{ i18n.T(ctx, "backup.sched."+p) }</span></label>
+		}
+	</fieldset>
+	<div class="group" data-when="schedule_preset=custom" hidden>
+		<div class="field">
+			<label for={ id + "-cron" }>{ i18n.T(ctx, "backup.cron") }</label>
+			<input class="input input--mono" id={ id + "-cron" } name="schedule_custom" placeholder="0 3 * * *" aria-describedby={ id + "-cron-hint" }/>
+			<p class="field-hint" id={ id + "-cron-hint" }>{ i18n.T(ctx, "backup.sched.custom_hint") }</p>
+		</div>
+	</div>
+}
+
+// SwitchButton is a submit button drawn as a switch: the form carries the
+// state it asks for, so a double submit cannot flip it back.
+templ SwitchButton(on bool, onLabel, offLabel string) {
+	<button type="submit" class="switch switch--button" role="switch" aria-checked={ boolStr(on) }>
+		<span class="switch-track" aria-hidden="true"></span>
+		if on {
+			{ onLabel }
+		} else {
+			{ offLabel }
+		}
+	</button>
+}
+
+// backupObjectList is the stored backups of one schedule. download is the
+// download URL without the key ("" when downloads are not offered), restore
+// the POST URL taking the key.
+templ backupObjectList(objs []backup.Object, download, restore, restoreWarn string) {
+	if len(objs) == 0 {
+		<p class="empty">{ i18n.T(ctx, "backup.no_stored") }</p>
+	} else {
+		<ul class="snaps">
+			for _, o := range objs {
+				<li class="snap">
+					<span class="snap-when">{ o.LastModified.Local().Format("2006-01-02 15:04") }</span>
+					<span class="run-meta">{ humanSize(o.Size) }</span>
+					@ui.State("ok", i18n.T(ctx, "backup.complete"))
+					<span class="snap-keys">
+						if download != "" {
+							<a class="pill pill--small" href={ templ.SafeURL(download + "?key=" + url.QueryEscape(o.Key)) } hx-boost="false">{ i18n.T(ctx, "backup.download") }</a>
+						}
+						<form method="post" hx-boost="false" action={ templ.SafeURL(restore) } data-confirm={ i18n.Tf(ctx, "backup.restore_q", o.LastModified.Local().Format("2006-01-02 15:04")) } data-more={ restoreWarn } data-ok={ i18n.T(ctx, "backup.restore") } onsubmit="return krillConfirm(this)">
+							<input type="hidden" name="key" value={ o.Key }/>
+							<button type="submit" class="pill pill--small pill--danger">{ i18n.T(ctx, "backup.restore") }</button>
+						</form>
+					</span>
+				</li>
+			}
+		</ul>
+	}
+}
+
+// inlineDestinationForm is the S3 storage form, inline with a return URL back
+// to the current page, or on the storage page (returnURL "").
+templ inlineDestinationForm(orgID int64, returnURL string) {
+	<form class="stack" method="post" action={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") }>
+		if returnURL != "" {
+			<input type="hidden" name="return" value={ returnURL }/>
+		}
+		<div class="row row--even">
+			<div class="field"><label for="dst-name">{ i18n.T(ctx, "dest.name") }</label><input class="input" id="dst-name" name="name" required placeholder="offsite" autocomplete="off"/></div>
+			<div class="field"><label for="dst-bucket">{ i18n.T(ctx, "dest.bucket") }</label><input class="input input--mono" id="dst-bucket" name="bucket" required autocomplete="off" spellcheck="false"/></div>
+		</div>
+		<div class="field">
+			<label for="dst-ep">{ i18n.T(ctx, "dest.endpoint") }</label>
+			<input class="input input--mono" id="dst-ep" name="endpoint" placeholder="https://s3.example.com" autocomplete="off" spellcheck="false" aria-describedby="dst-ep-hint"/>
+			<p class="field-hint" id="dst-ep-hint">{ i18n.T(ctx, "dest.endpoint_hint") }</p>
+		</div>
+		<div class="row row--even">
+			<div class="field"><label for="dst-region">{ i18n.T(ctx, "dest.region") }</label><input class="input input--mono" id="dst-region" name="region" placeholder="us-east-1" autocomplete="off"/></div>
+			<div class="field"><label for="dst-ak">{ i18n.T(ctx, "dest.access_key") }</label><input class="input input--mono" id="dst-ak" name="access_key" autocomplete="off" spellcheck="false"/></div>
+		</div>
+		<div class="field"><label for="dst-sk">{ i18n.T(ctx, "dest.secret_key") }</label><input class="input input--mono" id="dst-sk" name="secret_key" type="password" autocomplete="new-password"/></div>
+		<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "dest.add") }</button></div>
+	</form>
+}
+
+// scheduleSelect and backupAdvanced keep the pages not yet moved to the
+// backup block building; removed with them.
+templ scheduleSelect() {
+	@schedulePresets("bk")
+}
+
+templ backupAdvanced() {
+	<details class="adv">
+		<summary>{ i18n.T(ctx, "backup.advanced") }</summary>
+		<div class="field">
+			<label for="bk-pre">{ i18n.T(ctx, "backup.prefix") }</label>
+			<input class="input input--mono" id="bk-pre" name="prefix"/>
+		</div>
+	</details>
+}

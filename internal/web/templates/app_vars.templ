@@ -1,0 +1,232 @@
+package templates
+
+import (
+	"strings"
+
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// variablesTab holds the linked databases and buckets and the env editor
+// (admins only: values are secrets).
+templ variablesTab(c AppCtx) {
+	<section class="sec" aria-labelledby="links-h">
+		<div class="sec-head">
+			<h3 id="links-h">{ i18n.T(ctx, "dblink.section") }</h3>
+			if len(c.Ldbs) > 0 || len(c.LinkInstances) > 0 {
+				<button type="button" class="pill" aria-expanded="false" aria-controls="link-form" data-toggle="link-form">
+					@ui.Icon("i-plus")
+					{ i18n.T(ctx, "dblink.link") }
+				</button>
+			}
+		</div>
+		if len(c.DBLinks) == 0 {
+			<p class="empty">{ i18n.T(ctx, "dblink.none") }</p>
+		} else {
+			<ul class="links">
+				for _, l := range c.DBLinks {
+					<li>
+						<code class="link-var">{ l.VarName }</code>
+						<span class="link-src">
+							{ engineLabel(l.Engine) + ", " + l.DBName }
+							if l.Collides {
+								<span class="state state--warn">{ i18n.Tf(ctx, "dblink.collision", l.VarName) }</span>
+							}
+						</span>
+						<span class="tag">{ l.Field }</span>
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/db-links/" + itoa(l.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_dblink", l.VarName) } data-more={ i18n.T(ctx, "dblink.unlink_more") } data-ok={ i18n.T(ctx, "dblink.unlink") } onsubmit="return krillConfirm(this)">
+							<button type="submit" class="pill pill--icon" aria-label={ i18n.Tf(ctx, "dblink.unlink_named", l.VarName) } title={ i18n.T(ctx, "dblink.unlink") }>
+								@ui.Icon("i-close")
+							</button>
+						</form>
+					</li>
+				}
+			</ul>
+		}
+		if len(c.Ldbs) == 0 && len(c.LinkInstances) == 0 {
+			<p class="hint">{ i18n.T(ctx, "dblink.no_databases") }</p>
+		} else {
+			<form class="link-form" id="link-form" method="post" action={ templ.SafeURL(c.base() + "/db-links") } hidden>
+				<div class="field">
+					<label for="dblink-var">{ i18n.T(ctx, "dblink.var_name") }</label>
+					<input class="input input--mono" id="dblink-var" name="var_name" placeholder="DATABASE_URL" required autocomplete="off" spellcheck="false"/>
+				</div>
+				<div class="field">
+					<label for="dblink-db">{ i18n.T(ctx, "dblink.database") }</label>
+					<select id="dblink-db" class="input" name="db_ref">
+						for _, ldb := range c.Ldbs {
+							<option value={ "pg:" + itoa(ldb.ID) } data-engine="pg">{ ldb.Name + " (" + ldb.DbName + ", " + ldb.InstanceName + ")" }</option>
+						}
+						for _, inst := range c.LinkInstances {
+							if inst.Engine == "minio" {
+								<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ inst.Name + ", " + i18n.T(ctx, "dblink.root_credentials") }</option>
+							} else {
+								<option value={ "inst:" + itoa(inst.ID) } data-engine={ inst.Engine }>{ inst.Name + " (" + engineLabel(inst.Engine) + ")" }</option>
+							}
+						}
+					</select>
+				</div>
+				<div class="field">
+					<label for="dblink-field">{ i18n.T(ctx, "dblink.field") }</label>
+					<select id="dblink-field" class="input" name="field">
+						<option value="url" data-engines="pg redis dragonfly valkey">url</option>
+						<option value="password" data-engines="pg redis dragonfly valkey">password</option>
+						<option value="host" data-engines="pg redis dragonfly valkey">host</option>
+						<option value="port" data-engines="pg redis dragonfly valkey">port</option>
+						<option value="user" data-engines="pg">user</option>
+						<option value="dbname" data-engines="pg">dbname</option>
+						<option value="hostport" data-engines="pg redis dragonfly valkey">host:port</option>
+						<option value="endpoint" data-engines="minio">endpoint</option>
+						<option value="access_key" data-engines="minio">access_key</option>
+						<option value="secret_key" data-engines="minio">secret_key</option>
+						<option value="region" data-engines="minio">region</option>
+					</select>
+				</div>
+				<div class="field" id="dblink-scheme-wrap">
+					<label for="dblink-scheme">{ i18n.T(ctx, "dblink.scheme") }</label>
+					<select id="dblink-scheme" class="input" name="scheme">
+						<option value="postgresql" data-engine="pg">postgresql://</option>
+						<option value="postgres" data-engine="pg">postgres://</option>
+						<option value="redis" data-engine="redis">redis://</option>
+					</select>
+				</div>
+				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "dblink.add") }</button>
+				<p class="field-hint link-form-hint">{ i18n.T(ctx, "dblink.field_hint") }</p>
+				<p id="dblink-scheme-hint" class="field-hint link-form-hint" style="display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
+			</form>
+		}
+		<p class="hint">{ i18n.T(ctx, "dblink.note") }</p>
+	</section>
+	@bucketLinksSection(c)
+	<form
+		class="sec"
+		id="env-form"
+		method="post"
+		action={ templ.SafeURL(c.base() + "/env") }
+		aria-labelledby="vars-h"
+		data-show={ i18n.T(ctx, "env.show_values") }
+		data-hide={ i18n.T(ctx, "env.hide_values") }
+		data-to-secret={ i18n.T(ctx, "env.to_secret") }
+		data-to-variable={ i18n.T(ctx, "env.to_variable") }
+		data-remove={ i18n.T(ctx, "env.remove") }
+		data-key={ i18n.T(ctx, "env.key") }
+		data-value={ i18n.T(ctx, "env.value") }
+	>
+		<div class="sec-head">
+			<h3 id="vars-h">{ i18n.T(ctx, "env.variables") }</h3>
+			<div class="sec-keys">
+				<div class="seg seg--tight seg--small" id="env-seg" role="group" aria-label={ i18n.T(ctx, "env.editor") }>
+					<button type="button" data-env-mode="kv" aria-pressed="true" onclick="krillEnvMode('kv')">{ i18n.T(ctx, "env.mode_kv") }</button>
+					<button type="button" data-env-mode="raw" aria-pressed="false" onclick="krillEnvMode('raw')">{ i18n.T(ctx, "env.mode_raw") }</button>
+				</div>
+				<button type="button" class="pill" id="env-raw-reveal" aria-pressed="false" aria-controls="env-secrets-raw" onclick="krillEnvRevealToggle(this)">
+					@ui.Icon("i-eye")
+					<span>{ i18n.T(ctx, "env.show_values") }</span>
+				</button>
+			</div>
+		</div>
+		<textarea id="env-textarea" name="env" hidden>{ c.App.EnvText }</textarea>
+		<input id="env-public-keys" type="hidden" name="env_public_keys" value={ strings.Join(c.App.EnvPublicKeys, "\n") }/>
+		<p class="hint">{ i18n.T(ctx, "env.classification_hint") }</p>
+		<div class="kv-view" id="env-kv" style="display:none">
+			<ul class="kvs" id="env-variable-rows"></ul>
+			<h3 class="sub-h">
+				@ui.Icon("i-lock")
+				{ i18n.T(ctx, "env.secrets") }
+			</h3>
+			<ul class="kvs" id="env-secret-rows"></ul>
+			<div class="sec-add">
+				<button type="button" class="pill" onclick="krillEnvAddRow(true)">
+					@ui.Icon("i-plus")
+					{ i18n.T(ctx, "env.add_var") }
+				</button>
+				<button type="button" class="pill" onclick="krillEnvAddRow(false)">
+					@ui.Icon("i-plus")
+					{ i18n.T(ctx, "env.add_secret") }
+				</button>
+			</div>
+		</div>
+		<div class="raw-view stack" id="env-raw" style="display:none">
+			<div class="field">
+				<label for="env-variables-raw">{ i18n.T(ctx, "env.variables") }</label>
+				<textarea id="env-variables-raw" class="input input--mono textarea" rows="6" spellcheck="false" autocomplete="off" oninput="krillEnvRawInput(true)"></textarea>
+			</div>
+			<div class="field">
+				<label for="env-secrets-raw">{ i18n.T(ctx, "env.secrets") }</label>
+				<p id="env-secrets-hidden" class="empty">{ i18n.T(ctx, "env.secrets_hidden") }</p>
+				<textarea id="env-secrets-raw" class="input input--mono textarea" rows="4" spellcheck="false" autocomplete="off" hidden oninput="krillEnvRawInput(false)"></textarea>
+			</div>
+		</div>
+		<div class="form-keys">
+			<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "common.save") }</button>
+			<span class="hint">{ i18n.T(ctx, "env.applies_next_deploy") }</span>
+		</div>
+	</form>
+}
+
+templ bucketLinksSection(c AppCtx) {
+	<section class="sec" aria-labelledby="blinks-h">
+		<div class="sec-head">
+			<h3 id="blinks-h">{ i18n.T(ctx, "bucketlink.section") }</h3>
+			if len(c.EnvBuckets) > 0 {
+				<button type="button" class="pill" aria-expanded="false" aria-controls="blink-form" data-toggle="blink-form">
+					@ui.Icon("i-plus")
+					{ i18n.T(ctx, "dblink.link") }
+				</button>
+			}
+		</div>
+		if len(c.BucketLinks) == 0 {
+			<p class="empty">{ i18n.T(ctx, "bucketlink.no_links") }</p>
+		} else {
+			<ul class="links">
+				for _, l := range c.BucketLinks {
+					<li>
+						<code class="link-var">{ l.VarName }</code>
+						<span class="link-src">
+							{ l.Bucket }
+							if l.Collides {
+								<span class="state state--warn">{ i18n.Tf(ctx, "dblink.collision", l.VarName) }</span>
+							}
+						</span>
+						<span class="tag">{ l.Field }</span>
+						<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/bucket-links/" + itoa(l.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_dblink", l.VarName) } data-more={ i18n.T(ctx, "dblink.unlink_more") } data-ok={ i18n.T(ctx, "dblink.unlink") } onsubmit="return krillConfirm(this)">
+							<button type="submit" class="pill pill--icon" aria-label={ i18n.Tf(ctx, "dblink.unlink_named", l.VarName) } title={ i18n.T(ctx, "dblink.unlink") }>
+								@ui.Icon("i-close")
+							</button>
+						</form>
+					</li>
+				}
+			</ul>
+		}
+		if len(c.EnvBuckets) == 0 {
+			<p class="hint">{ i18n.T(ctx, "bucketlink.none") }</p>
+		} else {
+			<form class="link-form" id="blink-form" method="post" action={ templ.SafeURL(c.base() + "/bucket-links") } hidden>
+				<div class="field">
+					<label for="bucketlink-var">{ i18n.T(ctx, "dblink.var_name") }</label>
+					<input id="bucketlink-var" class="input input--mono" name="var_name" placeholder="AWS_S3_BUCKET" required autocomplete="off" spellcheck="false"/>
+				</div>
+				<div class="field">
+					<label for="bucketlink-bucket">{ i18n.T(ctx, "bucket.name") }</label>
+					<select id="bucketlink-bucket" class="input" name="bucket_id">
+						for _, b := range c.EnvBuckets {
+							<option value={ itoa(b.ID) }>{ b.Name + ", " + b.InstanceName }</option>
+						}
+					</select>
+				</div>
+				<div class="field">
+					<label for="bucketlink-field">{ i18n.T(ctx, "dblink.field") }</label>
+					<select id="bucketlink-field" class="input" name="field">
+						<option value="endpoint">endpoint</option>
+						<option value="bucket">bucket</option>
+						<option value="access_key">access_key</option>
+						<option value="secret_key">secret_key</option>
+						<option value="region">region</option>
+					</select>
+				</div>
+				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "dblink.add") }</button>
+			</form>
+		}
+		<p class="hint">{ i18n.T(ctx, "bucketlink.note") }</p>
+	</section>
+}

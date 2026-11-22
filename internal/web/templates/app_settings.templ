@@ -1,0 +1,395 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// settingsTab is everything about how the app is built and run. Members see
+// it read-only.
+templ settingsTab(c AppCtx) {
+	<nav class="jump" aria-label={ i18n.T(ctx, "app.settings_sections") }>
+		<a href="#s-source">{ i18n.T(ctx, "app.section_source") }</a>
+		if c.admin() {
+			<a href="#s-auto">{ i18n.T(ctx, "autodeploy.title") }</a>
+		}
+		<a href="#s-res">{ i18n.T(ctx, "app.section_resources") }</a>
+		<a href="#s-place">{ i18n.T(ctx, "placement.title") }</a>
+		<a href="#s-ports">{ i18n.T(ctx, "ports.title") }</a>
+		if c.admin() {
+			<a href="#s-vol">{ i18n.T(ctx, "volumes.tab") }</a>
+		}
+		<a href="#s-runtime">{ i18n.T(ctx, "runtime.tasks") }</a>
+		if c.admin() {
+			<a href="#s-del">{ i18n.T(ctx, "common.delete") }</a>
+		}
+	</nav>
+	@sourceSection(c)
+	if c.admin() {
+		@autoDeploySection(c)
+	}
+	<form class="sec" id="s-res" method="post" action={ templ.SafeURL(c.base() + "/advanced") } aria-labelledby="res-h">
+		<fieldset class="bare" disabled?={ !c.admin() }>
+			<h3 id="res-h">{ i18n.T(ctx, "app.section_resources") }</h3>
+			<div class="row row--four">
+				<div class="field">
+					<label for="s-mem">{ i18n.T(ctx, "app.memory_limit") }</label>
+					<input class="input input--mono" id="s-mem" name="memory_limit" placeholder={ limitPlaceholder(ctx, "512m", c.Runtime.MemDefault) } value={ strv(c.App.MemoryLimit) } autocomplete="off"/>
+				</div>
+				<div class="field">
+					<label for="s-cpu">{ i18n.T(ctx, "app.cpu_limit") }</label>
+					<input class="input input--mono" id="s-cpu" name="cpu_limit" placeholder={ limitPlaceholder(ctx, "1.0", c.Runtime.CPUDefault) } value={ strv(c.App.CpuLimit) } autocomplete="off"/>
+				</div>
+				<div class="field">
+					<label for="s-rep">{ i18n.T(ctx, "app.replicas") }</label>
+					<input class="input input--mono" id="s-rep" name="replicas" type="number" min="1" value={ itoa(int64(c.App.Replicas)) }/>
+				</div>
+				<div class="field">
+					<label for="s-rst">{ i18n.T(ctx, "app.restart_condition") }</label>
+					<select class="input" id="s-rst" name="restart_condition">
+						<option value="any" selected?={ c.App.RestartCondition == "any" }>any</option>
+						<option value="on-failure" selected?={ c.App.RestartCondition == "on-failure" }>on-failure</option>
+						<option value="none" selected?={ c.App.RestartCondition == "none" }>none</option>
+					</select>
+				</div>
+			</div>
+			<p class="hint">{ i18n.Tf(ctx, "runtime.effective", limitText(ctx, c.Runtime.MemLimit, c.Runtime.MemSource), limitText(ctx, c.Runtime.CPULimit, c.Runtime.CPUSource)) }</p>
+			<div class="row row--even">
+				<div class="field">
+					<label for="s-rma">{ i18n.T(ctx, "app.restart_max_attempts") }</label>
+					<input class="input input--mono" id="s-rma" name="restart_max_attempts" type="number" min="0" value={ itoa(int64(c.App.RestartMaxAttempts)) }/>
+				</div>
+				<div class="field">
+					<label for="s-cmd">{ i18n.T(ctx, "app.command") }</label>
+					<input class="input input--mono" id="s-cmd" name="command" placeholder={ i18n.T(ctx, "app.command_default") } value={ strv(c.App.Command) } autocomplete="off" spellcheck="false" aria-describedby="s-cmd-hint"/>
+					<p class="field-hint" id="s-cmd-hint">{ i18n.T(ctx, "app.command_hint") }</p>
+				</div>
+			</div>
+			<div class="field">
+				<label for="predeploy-command">{ i18n.T(ctx, "app.predeploy_command") }</label>
+				<textarea id="predeploy-command" class="input input--mono textarea" name="predeploy_command" rows="2" spellcheck="false" aria-describedby="predeploy-hint">{ c.App.PredeployCommand }</textarea>
+				<p class="field-hint" id="predeploy-hint">{ i18n.T(ctx, "app.predeploy_hint") }</p>
+			</div>
+			<h3 class="sub-h" id="s-health">{ i18n.T(ctx, "adv.healthcheck") }</h3>
+			<div class="field">
+				<label for="hcc">{ i18n.T(ctx, "app.healthcheck_cmd") }</label>
+				<input class="input input--mono" id="hcc" name="healthcheck_cmd" placeholder={ i18n.T(ctx, "app.healthcheck_none") } value={ strv(c.App.HealthcheckCmd) } autocomplete="off" spellcheck="false"/>
+			</div>
+			<div class="row row--four">
+				<div class="field"><label for="hci">{ i18n.T(ctx, "app.healthcheck_interval") }</label><input class="input input--mono" id="hci" name="healthcheck_interval" placeholder="30s" value={ strv(c.App.HealthcheckInterval) }/></div>
+				<div class="field"><label for="hct">{ i18n.T(ctx, "app.healthcheck_timeout") }</label><input class="input input--mono" id="hct" name="healthcheck_timeout" placeholder="5s" value={ strv(c.App.HealthcheckTimeout) }/></div>
+				<div class="field"><label for="hcr">{ i18n.T(ctx, "app.healthcheck_retries") }</label><input class="input input--mono" id="hcr" name="healthcheck_retries" type="number" min="0" placeholder="3" value={ i32v(c.App.HealthcheckRetries) }/></div>
+				<div class="field"><label for="hcs">{ i18n.T(ctx, "app.healthcheck_start_period") }</label><input class="input input--mono" id="hcs" name="healthcheck_start_period" placeholder="0s" value={ strv(c.App.HealthcheckStartPeriod) }/></div>
+			</div>
+			if c.admin() {
+				<div class="sec-add"><button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button><span class="hint">{ i18n.T(ctx, "adv.apply_hint") }</span></div>
+			}
+		</fieldset>
+	</form>
+	<form class="sec" id="s-place" method="post" action={ templ.SafeURL(c.base() + "/placement") } aria-labelledby="place-h">
+		<fieldset class="bare" disabled?={ !c.admin() }>
+			<h3 id="place-h">{ i18n.T(ctx, "placement.title") }</h3>
+			<fieldset class="choice choice--three">
+				<legend class="visually-hidden">{ i18n.T(ctx, "placement.mode") }</legend>
+				<label class="choice-card"><input type="radio" name="placement_mode" value="any" checked?={ c.App.PlacementMode == "" || c.App.PlacementMode == "any" }/><span class="choice-name">{ i18n.T(ctx, "placement.mode_any") }</span><span class="choice-sub">{ i18n.T(ctx, "placement.mode_any_sub") }</span></label>
+				<label class="choice-card"><input type="radio" name="placement_mode" value="pin" checked?={ c.App.PlacementMode == "pin" }/><span class="choice-name">{ i18n.T(ctx, "placement.mode_pin") }</span><span class="choice-sub">{ i18n.T(ctx, "placement.mode_pin_sub") }</span></label>
+				<label class="choice-card"><input type="radio" name="placement_mode" value="global" checked?={ c.App.PlacementMode == "global" }/><span class="choice-name">{ i18n.T(ctx, "placement.mode_global") }</span><span class="choice-sub">{ i18n.T(ctx, "placement.mode_global_sub") }</span></label>
+			</fieldset>
+			if len(c.Nodes) > 0 {
+				<fieldset class="nodepick">
+					<legend>{ i18n.T(ctx, "placement.nodes") }</legend>
+					for _, n := range c.Nodes {
+						<label class="nodebox"><input type="checkbox" name="placement_nodes" value={ n.ID } checked?={ placementHas(c.App.PlacementNodes, n.ID) }/><span>{ nodeDisplay(c.NodeLabels, n.ID, n.Hostname) }</span></label>
+					}
+					for _, id := range orphanedPlacementNodes(c.App.PlacementNodes, c.Nodes) {
+						<label class="nodebox"><input type="checkbox" checked disabled/><span>{ id + " (" + i18n.T(ctx, "placement.node_removed") + ")" }</span></label>
+					}
+				</fieldset>
+			} else if c.admin() {
+				<p class="empty">{ i18n.T(ctx, "placement.no_nodes") }</p>
+			}
+			<p class="hint">{ i18n.T(ctx, "placement.hint") }</p>
+			if c.admin() {
+				<div><button type="submit" class="pill">{ i18n.T(ctx, "placement.save") }</button></div>
+			}
+		</fieldset>
+	</form>
+	@appPortsSection(c)
+	if c.admin() {
+		@volumesSection(c)
+	}
+	@runtimeTasks(c)
+	if c.admin() {
+		<form class="sec sec--danger" id="s-del" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_app", c.App.Name) } data-more={ i18n.T(ctx, "app.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="del-h">
+			<h3 id="del-h">{ i18n.T(ctx, "app.delete") }</h3>
+			<label class="check"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "app.delete.destroy_data") }</label>
+			<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", c.App.Name) }</button></div>
+		</form>
+	}
+}
+
+templ sourceSection(c AppCtx) {
+	<section class="sec" id="s-source" aria-labelledby="src-h">
+		<h3 id="src-h">{ i18n.T(ctx, "app.section_source") }</h3>
+		<form class="stack" id="deploy-form" method="post" action={ templ.SafeURL(c.base() + "/deploy") }>
+			<fieldset class="bare stack" disabled?={ !c.admin() }>
+				if c.App.SourceType == "dockerfile" {
+					<p class="hint">{ i18n.T(ctx, "app.source_is_dockerfile") }</p>
+					<div class="field">
+						<label for="s-git">{ i18n.T(ctx, "app.git_url") }</label>
+						<input class="input input--mono" id="s-git" name="git_url" value={ c.App.GitUrl } autocomplete="off" spellcheck="false"/>
+					</div>
+					<div class="row row--even">
+						<div class="field">
+							<label for="s-br">{ i18n.T(ctx, "app.git_branch") }</label>
+							<input class="input input--mono" id="s-br" name="git_branch" value={ c.App.GitBranch } autocomplete="off" spellcheck="false"/>
+						</div>
+						<div class="field">
+							<label for="s-df">{ i18n.T(ctx, "app.dockerfile_path") }</label>
+							<input class="input input--mono" id="s-df" name="dockerfile_path" value={ c.App.DockerfilePath } autocomplete="off" spellcheck="false"/>
+						</div>
+					</div>
+				} else {
+					<div class="row">
+						<div class="field">
+							<label for="s-img">{ i18n.T(ctx, "app.image") }</label>
+							<input class="input input--mono" id="s-img" name="image" value={ c.App.Image } placeholder="ghcr.io/owner/name" autocomplete="off" spellcheck="false"/>
+						</div>
+						<div class="field">
+							<label for="s-tag">{ i18n.T(ctx, "app.tag") }</label>
+							<div id="tag-field">
+								<input class="input input--mono" id="s-tag" name="tag" value={ c.App.Tag } autocomplete="off" spellcheck="false"/>
+							</div>
+						</div>
+					</div>
+				}
+				if c.admin() {
+					<div class="sec-add">
+						<button type="submit" class="pill">{ i18n.T(ctx, "app.save_and_deploy") }</button>
+						if c.App.SourceType != "dockerfile" && c.App.RegistryID != nil {
+							<button type="button" class="pill" hx-get={ c.base() + "/tags" } hx-target="#tag-field" hx-swap="innerHTML" hx-disabled-elt="this">{ i18n.T(ctx, "app.load_tags") }</button>
+						}
+						<span class="hint">{ i18n.T(ctx, "app.source_deploy_hint") }</span>
+					</div>
+				}
+			</fieldset>
+		</form>
+		if c.App.SourceType == "dockerfile" {
+			<form class="add-row" method="post" action={ templ.SafeURL(c.base() + "/git-credential") }>
+				<div class="field">
+					<label for="s-cred">{ i18n.T(ctx, "app.git_credential") }</label>
+					<select class="input" id="s-cred" name="git_credential_id" disabled?={ !c.admin() }>
+						<option value="">{ i18n.T(ctx, "app.git_credential_none") }</option>
+						for _, gc := range c.GitCredentials {
+							<option value={ itoa(gc.ID) } selected?={ c.App.GitCredentialID != nil && *c.App.GitCredentialID == gc.ID }>{ gc.Name + ", " + gc.Host }</option>
+						}
+					</select>
+				</div>
+				if c.admin() {
+					<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
+				}
+			</form>
+			<p class="hint">
+				{ i18n.T(ctx, "app.manage_git") + " " }
+				<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/git-credentials") }>{ i18n.T(ctx, "gitcred.link") }</a>
+			</p>
+			if c.admin() {
+				@buildSection(c)
+			}
+		} else {
+			<form class="add-row" method="post" action={ templ.SafeURL(c.base() + "/registry") }>
+				<div class="field">
+					<label for="s-reg">{ i18n.T(ctx, "app.registry") }</label>
+					<select class="input" id="s-reg" name="registry_id" disabled?={ !c.admin() }>
+						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
+						for _, reg := range c.Registries {
+							<option value={ itoa(reg.ID) } selected?={ c.App.RegistryID != nil && *c.App.RegistryID == reg.ID }>{ reg.Name + ", " + reg.RegistryUrl }</option>
+						}
+					</select>
+				</div>
+				if c.admin() {
+					<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
+				}
+			</form>
+			<p class="hint">
+				{ i18n.T(ctx, "app.manage_registries") + " " }
+				<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
+			</p>
+		}
+	</section>
+}
+
+templ buildSection(c AppCtx) {
+	<form class="stack build-form" method="post" action={ templ.SafeURL(c.base() + "/build") } aria-labelledby="build-h">
+		<h4 class="list-head" id="build-h">{ i18n.T(ctx, "build.title") }</h4>
+		<div class="field">
+			<label for="build-args">{ i18n.T(ctx, "build.args") }</label>
+			<textarea class="input input--mono textarea" id="build-args" name="build_args" rows="3" spellcheck="false" placeholder="VERSION=1.2" aria-describedby="build-args-hint">{ c.App.BuildArgs }</textarea>
+			<p class="field-hint" id="build-args-hint">{ i18n.T(ctx, "build.args_hint") }</p>
+		</div>
+		<div class="field">
+			<label for="build-secrets-ta">{ i18n.T(ctx, "build.secrets") }</label>
+			if c.BuildSecretsUnreadable {
+				<p class="field-err">{ i18n.T(ctx, "build.secrets_unreadable") }</p>
+			} else {
+				<div class="input-group">
+					<textarea id="build-secrets-ta" class="input input--mono textarea masked" name="build_secrets" rows="3" spellcheck="false" autocomplete="off" aria-describedby="build-secrets-hint">{ c.BuildSecretsPlain }</textarea>
+					<button type="button" class="pill pill--icon" data-unmask="build-secrets-ta" aria-pressed="false" aria-label={ i18n.T(ctx, "common.reveal") } title={ i18n.T(ctx, "common.reveal") }>
+						@ui.Icon("i-eye")
+					</button>
+				</div>
+				<p class="field-hint" id="build-secrets-hint">{ i18n.T(ctx, "build.secrets_hint") }</p>
+			}
+		</div>
+		<div><button type="submit" class="pill">{ i18n.T(ctx, "build.save") }</button></div>
+	</form>
+}
+
+templ autoDeploySection(c AppCtx) {
+	<section class="sec" id="s-auto" aria-labelledby="auto-h">
+		<div class="sec-head">
+			<h3 id="auto-h">{ i18n.T(ctx, "autodeploy.title") }</h3>
+			if c.AutoDeploy {
+				<form method="post" action={ templ.SafeURL(c.base() + "/autodeploy/disable") }>
+					@SwitchButton(true, i18n.T(ctx, "common.on"), i18n.T(ctx, "common.off"))
+				</form>
+			} else {
+				<form method="post" action={ templ.SafeURL(c.base() + "/autodeploy/enable") }>
+					@SwitchButton(false, i18n.T(ctx, "common.on"), i18n.T(ctx, "common.off"))
+				</form>
+			}
+		</div>
+		if c.AutoDeploy {
+			@ui.CopyField("hook", i18n.T(ctx, "autodeploy.url"), c.WebhookURL, false, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
+			@ui.CopyField("hsec", i18n.T(ctx, "autodeploy.secret"), c.WebhookSecret, true, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
+			if c.App.SourceType == "image" {
+				<p class="hint">{ i18n.T(ctx, "autodeploy.hint_image") }</p>
+			} else {
+				<p class="hint">{ i18n.T(ctx, "autodeploy.hint_dockerfile") }</p>
+			}
+			<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/autodeploy/regenerate") } data-confirm={ i18n.T(ctx, "autodeploy.regenerate_q") } data-more={ i18n.T(ctx, "autodeploy.regenerate_warn") } data-ok={ i18n.T(ctx, "autodeploy.regenerate") } onsubmit="return krillConfirm(this)">
+				<button type="submit" class="pill">{ i18n.T(ctx, "autodeploy.regenerate") }</button>
+			</form>
+		} else {
+			<p class="hint">{ i18n.T(ctx, "autodeploy.desc") }</p>
+		}
+	</section>
+}
+
+// appPortsSection is the raw host-port publications, past the gateway.
+templ appPortsSection(c AppCtx) {
+	<section class="sec" id="s-ports" aria-labelledby="ports-h">
+		<h3 id="ports-h">{ i18n.T(ctx, "ports.title") }</h3>
+		<p class="hint">{ i18n.T(ctx, "ports.desc") }</p>
+		if len(c.Ports) == 0 {
+			<p class="empty">{ i18n.T(ctx, "ports.empty") }</p>
+		} else {
+			<ul class="links">
+				for _, p := range c.Ports {
+					<li class="ep">
+						<code class="link-var">{ itoa(int64(p.HostPort)) + " → " + itoa(int64(p.ContainerPort)) }</code>
+						<span class="link-src">{ i18n.T(ctx, "ports.host_to_container") }</span>
+						<span class="tag">{ p.Protocol }</span>
+						if c.admin() {
+							<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/ports/" + itoa(p.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_port", itoa(int64(p.HostPort))) } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
+								<button type="submit" class="pill pill--icon" aria-label={ i18n.Tf(ctx, "common.remove_named", itoa(int64(p.HostPort))) } title={ i18n.T(ctx, "common.remove") }>
+									@ui.Icon("i-trash")
+								</button>
+							</form>
+						}
+					</li>
+				}
+			</ul>
+		}
+		if c.admin() {
+			<form class="link-form link-form--ep" method="post" action={ templ.SafeURL(c.base() + "/ports") }>
+				<div class="field"><label for="php">{ i18n.T(ctx, "ports.host") }</label><input class="input input--mono" id="php" name="host_port" type="number" min="1" max="65535" placeholder="2222" required/></div>
+				<div class="field"><label for="pcp">{ i18n.T(ctx, "ports.container") }</label><input class="input input--mono" id="pcp" name="container_port" type="number" min="1" max="65535" placeholder="22" required/></div>
+				<div class="field">
+					<label for="ppr">{ i18n.T(ctx, "ports.protocol") }</label>
+					<select class="input" id="ppr" name="protocol"><option value="tcp">tcp</option><option value="udp">udp</option></select>
+				</div>
+				<button type="submit" class="pill">{ i18n.T(ctx, "ports.add") }</button>
+				<p class="field-hint">{ i18n.T(ctx, "ports.applied_on_deploy") }</p>
+			</form>
+		}
+	</section>
+}
+
+templ volumesSection(c AppCtx) {
+	<section class="sec" id="s-vol" aria-labelledby="vol-h">
+		<h3 id="vol-h">{ i18n.T(ctx, "volumes.tab") }</h3>
+		<p class="hint">{ i18n.T(ctx, "volumes.settings_desc") }</p>
+		if len(c.Volumes) == 0 {
+			<p class="empty">{ i18n.T(ctx, "volumes.empty") }</p>
+		} else {
+			<ul class="vols">
+				for _, v := range c.Volumes {
+					<li class="vol-card">
+						<div class="vol-top">
+							<code class="link-var">{ v.Name }</code>
+							<code class="link-src">{ v.MountPath }</code>
+							<span class="run-meta">{ docker.VolumeName(c.App.ID, v.Name) }</span>
+							<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/volumes/" + itoa(v.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_volume", v.Name) } data-more={ i18n.T(ctx, "volumes.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+								<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "common.delete_named", v.Name) } title={ i18n.T(ctx, "common.delete") }>
+									@ui.Icon("i-trash")
+								</button>
+							</form>
+						</div>
+						<form class="add-row" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/volumes/" + itoa(v.ID) + "/owner") }>
+							<div class="field">
+								<label for={ "vown-" + itoa(v.ID) }>{ i18n.T(ctx, "volumes.owner") }</label>
+								<input class="input input--mono" id={ "vown-" + itoa(v.ID) } name="owner" value={ ownerValue(v) } placeholder={ i18n.T(ctx, "volumes.owner_placeholder") } autocomplete="off"/>
+							</div>
+							<button type="submit" class="pill">{ i18n.T(ctx, "volumes.owner_save") }</button>
+						</form>
+						if b, ok := c.VolumeBlocks[v.ID]; ok {
+							@backupBlock(b)
+						}
+					</li>
+				}
+			</ul>
+		}
+		<form class="link-form link-form--ep" method="post" action={ templ.SafeURL(c.base() + "/volumes") }>
+			<div class="field"><label for="vn">{ i18n.T(ctx, "volumes.name") }</label><input class="input input--mono" id="vn" name="name" placeholder="data" required autocomplete="off" spellcheck="false"/></div>
+			<div class="field"><label for="vm">{ i18n.T(ctx, "volumes.mount_path") }</label><input class="input input--mono" id="vm" name="mount_path" placeholder="/data" required autocomplete="off" spellcheck="false"/></div>
+			<div class="field"><label for="vo">{ i18n.T(ctx, "volumes.owner") }</label><input class="input input--mono" id="vo" name="owner" placeholder={ i18n.T(ctx, "volumes.owner_placeholder") } autocomplete="off" spellcheck="false" aria-describedby="vo-hint"/></div>
+			<button type="submit" class="pill">
+				@ui.Icon("i-plus")
+				{ i18n.T(ctx, "volumes.add") }
+			</button>
+			<p class="field-hint" id="vo-hint">{ i18n.T(ctx, "volumes.owner_hint") }</p>
+		</form>
+	</section>
+}
+
+templ runtimeTasks(c AppCtx) {
+	<section class="sec" id="s-runtime" aria-labelledby="rt-h">
+		<h3 id="rt-h">{ i18n.T(ctx, "runtime.tasks") }</h3>
+		<p class="hint">{ i18n.T(ctx, "runtime.tasks_desc") }</p>
+		if c.Runtime.TasksUnavailable {
+			<p class="empty">{ i18n.T(ctx, "runtime.tasks_unavailable") }</p>
+		} else if len(c.Runtime.Tasks) == 0 {
+			<p class="empty">{ i18n.T(ctx, "runtime.no_tasks") }</p>
+		} else {
+			<ol class="history">
+				for _, t := range c.Runtime.Tasks {
+					<li class="deploy">
+						<div class="deploy-top">
+							@ui.State(taskKind(t.State), t.State)
+							<code>{ t.NodeName }</code>
+							<span class="when">{ t.Updated.Local().Format("2006-01-02 15:04:05") }</span>
+						</div>
+						if d := taskDetail(t); d != "" {
+							<p class="deploy-msg">{ d }</p>
+						}
+						if hint := taskHint(ctx, t); hint != "" {
+							<p class="deploy-msg deploy-msg--err">{ hint }</p>
+						}
+					</li>
+				}
+			</ol>
+		}
+	</section>
+}

@@ -204,3 +204,29 @@ type EnvSettingsView struct {
 	Cloned     bool
 	Pending    bool
 }
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
+func backupConfigText(ctx context.Context, c BackupConfig) string {
+	switch {
+	case !c.Enabled:
+		return i18n.T(ctx, "envdb.backups_paused")
+	case c.LastStatus == "error":
+		return i18n.T(ctx, "envdb.backup_failed")
+	case c.Ran:
+		return i18n.Tf(ctx, "backup.last_run_at", c.LastRun.Local().Format("2006-01-02 15:04"))
+	}
+	return i18n.T(ctx, "envdb.backups_no_runs")
+}
+
+func addScheduleTitle(ctx context.Context, n int) string {
+	if n == 0 {
+		return i18n.T(ctx, "backup.set_up")
+	}
+	return i18n.T(ctx, "backup.add_another")
+}

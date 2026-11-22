@@ -2,6 +2,7 @@
 // over WebSocket. Mounting is driven by krillEnhance (DOMContentLoaded +
 // htmx:afterSettle), so any log view added by a page swap mounts automatically;
 // the data-mounted guard makes it idempotent and the singleton id is gone.
+const KRILL_TERM_THEME = { background: "#1c1d20", foreground: "#d6d7da", cursor: "#a9a6d8", selectionBackground: "#3a3950" };
 function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
   const wsPath = el.dataset.ws;
@@ -15,7 +16,7 @@ function mountTerminalEl(el) {
   }
   el.dataset.mounted = "1";
 
-  const term = new Terminal({ convertEol: true, fontSize: 12, theme: { background: "#0f1115" } });
+  const term = new Terminal({ convertEol: true, fontSize: 12, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -47,7 +48,7 @@ function mountExecTerminal(el) {
     return;
   }
   el.dataset.mounted = "1";
-  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: { background: "#0f1115" } });
+  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -89,27 +90,25 @@ function mountLogViewer(el) {
   const MAX_ROWS = 2000;
   const body = el.querySelector(".k-logs-body");
   const searchEl = el.querySelector(".k-logs-search");
-  const FILTERABLE = ["debug", "info", "warn", "error"];
-  const enabled = { debug: true, info: true, warn: true, error: true };
+  let level = "all";
   let query = "";
 
   function rowVisible(row) {
-    const lvl = row.dataset.level;
-    const lvlOK = FILTERABLE.indexOf(lvl) === -1 || enabled[lvl];
+    const lvlOK = level === "all" || row.dataset.level === level;
     const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
     return lvlOK && txtOK;
   }
   function applyFilter() {
-    body.querySelectorAll(".k-log-row").forEach((r) => { r.style.display = rowVisible(r) ? "" : "none"; });
+    body.querySelectorAll("li").forEach((r) => { r.hidden = !rowVisible(r); });
   }
   if (searchEl) {
     searchEl.addEventListener("input", () => { query = searchEl.value.toLowerCase(); applyFilter(); });
   }
-  el.querySelectorAll(".k-logs-lvlchip").forEach((chip) => {
+  const chips = el.querySelectorAll(".k-logs-lvlchip");
+  chips.forEach((chip) => {
     chip.addEventListener("click", () => {
-      const lvl = chip.dataset.level;
-      enabled[lvl] = !enabled[lvl];
-      chip.classList.toggle("k-logs-lvlchip-off", !enabled[lvl]);
+      level = chip.dataset.level;
+      chips.forEach((c) => c.setAttribute("aria-pressed", String(c === chip)));
       applyFilter();
     });
   });
@@ -119,24 +118,25 @@ function mountLogViewer(el) {
     const d = new Date(t);
     if (isNaN(d.getTime())) return "";
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const today = new Date();
+    const clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    return d.toDateString() === today.toDateString() ? clock : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${clock}`;
   }
   function addRow(line) {
-    const row = document.createElement("div");
-    row.className = "k-log-row";
-    row.dataset.level = line.lvl || "";
+    const row = document.createElement("li");
+    const lv = (line.lvl || "").toLowerCase();
+    row.dataset.level = lv;
     row.dataset.text = (line.msg || "").toLowerCase();
-    const t = document.createElement("span");
-    t.className = "k-log-time";
+    const t = document.createElement("time");
     t.textContent = fmtTime(line.t);
+    if (line.t) t.dateTime = line.t;
     const lvl = document.createElement("span");
-    lvl.className = "k-log-lvl";
-    if (line.lvl) lvl.textContent = line.lvl.toUpperCase();
-    const msg = document.createElement("span");
-    msg.className = "k-log-msg";
+    lvl.className = "lvl" + (lv ? " lvl--" + lv : "");
+    lvl.textContent = lv;
+    const msg = document.createElement("code");
     msg.textContent = line.msg || "";
-    row.appendChild(t); row.appendChild(lvl); row.appendChild(msg);
-    if (!rowVisible(row)) row.style.display = "none";
+    row.append(t, lvl, msg);
+    row.hidden = !rowVisible(row);
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
     body.appendChild(row);
     while (body.childElementCount > MAX_ROWS) body.removeChild(body.firstElementChild);
@@ -147,8 +147,12 @@ function mountLogViewer(el) {
   const ws = new WebSocket(`${proto}://${location.host}${el.dataset.ws}`);
   let got = false;
   ws.onmessage = (e) => { got = true; try { addRow(JSON.parse(e.data)); } catch (_) { /* ignore */ } };
-  ws.onclose = () => { if (!got) addRow({ msg: "no logs yet — start or redeploy the service to stream logs" }); };
-  ws.onerror = () => addRow({ lvl: "error", msg: "log stream error" });
+  ws.onclose = () => { if (!got) addRow({ msg: el.dataset.empty || "no logs yet" }); };
+  ws.onerror = () => addRow({ lvl: "error", msg: el.dataset.error || "log stream error" });
+  // A boosted navigation away replaces the body: close the stream with it.
+  const stop = () => { try { ws.close(); } catch (_) { /* closed */ } document.removeEventListener("htmx:beforeSwap", onSwap); };
+  const onSwap = (e) => { if (e.detail && e.detail.target === document.body) stop(); };
+  document.addEventListener("htmx:beforeSwap", onSwap);
 }
 
 // krillExecConnect (re)connects the terminal using the current command field.
@@ -866,26 +870,22 @@ window.krillApplyEnvReveal = function () {
   // the live value and the hidden classification input's reflected attribute.
   const source = document.getElementById("env-textarea");
   source.defaultValue = source.value;
-  form.querySelectorAll("#env-secret-rows .env-val").forEach(i => { i.type = "password"; });
-  form.querySelectorAll(".env-eye").forEach(function (b) {
-    b.textContent = "👁";
-    b.setAttribute("aria-label", form.dataset.show);
-    b.setAttribute("aria-pressed", "false");
-  });
-  document.getElementById("env-secrets-raw").hidden = true;
-  document.getElementById("env-secrets-hidden").hidden = false;
-  const button = document.getElementById("env-raw-reveal");
-  button.textContent = form.dataset.show;
-  button.setAttribute("aria-expanded", "false");
+  krillEnvReveal(form, false);
 };
-window.krillEnvRevealToggle = function (btn) {
+// krillEnvReveal shows or hides every secret value, in both editors.
+function krillEnvReveal(form, on) {
+  form.dataset.revealed = on ? "1" : "";
+  form.querySelectorAll("#env-secret-rows .env-val").forEach(i => { i.type = on ? "text" : "password"; });
+  document.getElementById("env-secrets-raw").hidden = !on;
+  document.getElementById("env-secrets-hidden").hidden = on;
+  const button = document.getElementById("env-raw-reveal");
+  button.setAttribute("aria-pressed", String(on));
+  button.querySelector("span").textContent = on ? form.dataset.hide : form.dataset.show;
+}
+window.krillEnvRevealToggle = function () {
   const form = envEditor();
   if (!form) return;
-  const ta = document.getElementById("env-secrets-raw");
-  ta.hidden = !ta.hidden;
-  document.getElementById("env-secrets-hidden").hidden = !ta.hidden;
-  btn.textContent = ta.hidden ? form.dataset.show : form.dataset.hide;
-  btn.setAttribute("aria-expanded", String(!ta.hidden));
+  krillEnvReveal(form, form.dataset.revealed !== "1");
 };
 window.krillEnvAddRow = function (ordinary) {
   const form = envEditor();
@@ -895,35 +895,28 @@ window.krillEnvAddRow = function (ordinary) {
   const row = envRenderRow(form, line);
   row.querySelector(".env-key").focus();
 };
+function envIcon(id) {
+  return '<svg class="ico" aria-hidden="true"><use href="#' + id + '"></use></svg>';
+}
 function envRenderRow(form, line) {
-  const row = document.createElement("div");
-  row.className = "env-row k-env-row mb-2";
+  const row = document.createElement("li");
+  row.className = "kv env-row";
   const k = document.createElement("input");
-  k.className = "k-input env-key"; k.placeholder = form.dataset.key;
+  k.className = "input input--mono env-key"; k.placeholder = form.dataset.key;
   k.setAttribute("aria-label", form.dataset.key);
   k.value = envLineKey(line.text);
   const v = document.createElement("input");
-  v.className = "k-input env-val"; v.placeholder = form.dataset.value;
+  v.className = "input input--mono env-val"; v.placeholder = form.dataset.value;
   v.setAttribute("aria-label", form.dataset.value);
   v.value = line.text.includes("=") ? line.text.slice(line.text.indexOf("=") + 1) : "";
-  v.type = line.ordinary ? "text" : "password";
+  v.type = line.ordinary || form.dataset.revealed === "1" ? "text" : "password";
   k.autocomplete = "off"; v.autocomplete = "off";
   k.spellcheck = false; v.spellcheck = false;
-  const eye = document.createElement("button");
-  eye.type = "button"; eye.className = "k-copy env-eye"; eye.textContent = "👁";
-  eye.hidden = line.ordinary;
-  eye.setAttribute("aria-label", form.dataset.show);
-  eye.setAttribute("aria-pressed", "false");
-  eye.addEventListener("click", function () {
-    const reveal = v.type === "password";
-    v.type = reveal ? "text" : "password";
-    eye.textContent = reveal ? "🙈" : "👁";
-    eye.setAttribute("aria-label", reveal ? form.dataset.hide : form.dataset.show);
-    eye.setAttribute("aria-pressed", String(reveal));
-  });
   const move = document.createElement("button");
-  move.type = "button"; move.className = "k-btn k-btn-secondary env-move";
-  move.textContent = line.ordinary ? form.dataset.toSecret : form.dataset.toVariable;
+  move.type = "button"; move.className = "pill pill--icon env-move";
+  move.innerHTML = envIcon(line.ordinary ? "i-lock" : "i-unlock");
+  const moveLabel = line.ordinary ? form.dataset.toSecret : form.dataset.toVariable;
+  move.setAttribute("aria-label", moveLabel); move.title = moveLabel;
   move.addEventListener("click", function () {
     line.ordinary = !line.ordinary;
     row.remove();
@@ -932,8 +925,8 @@ function envRenderRow(form, line) {
     replacement.querySelector(".env-move").focus();
   });
   const del = document.createElement("button");
-  del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
-  del.setAttribute("aria-label", form.dataset.remove);
+  del.type = "button"; del.className = "pill pill--icon"; del.innerHTML = envIcon("i-trash");
+  del.setAttribute("aria-label", form.dataset.remove); del.title = form.dataset.remove;
   del.addEventListener("click", function () {
     form.envLines.splice(form.envLines.indexOf(line), 1);
     row.remove();
@@ -949,10 +942,7 @@ function envRenderRow(form, line) {
     krillEnvSyncToTextarea();
   }
   k.addEventListener("input", edit); v.addEventListener("input", edit);
-  const actions = document.createElement("div");
-  actions.className = "k-env-actions";
-  actions.append(eye, move, del);
-  row.append(k, v, actions);
+  row.append(k, v, move, del);
   document.getElementById(line.ordinary ? "env-variable-rows" : "env-secret-rows").appendChild(row);
   return row;
 }
@@ -993,7 +983,7 @@ window.krillEnvMode = function (mode) {
   form.dataset.mode = mode;
   try { localStorage.setItem("krillEnvMode", mode); } catch (_) { /* private mode */ }
   document.querySelectorAll("#env-seg [data-env-mode]").forEach(function (b) {
-    b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
+    b.setAttribute("aria-pressed", String(b.dataset.envMode === mode));
   });
   krillApplyEnvReveal();
 };
@@ -1371,3 +1361,36 @@ document.addEventListener("input", function (e) {
   const g = document.querySelector("[data-ghost-name]");
   if (g) g.textContent = e.target.value.trim() || g.dataset.empty || g.textContent;
 });
+
+// A button with data-toggle shows or hides the element it names (link forms).
+document.addEventListener("click", function (e) {
+  const b = e.target.closest && e.target.closest("[data-toggle]");
+  if (b) {
+    const el = document.getElementById(b.dataset.toggle);
+    if (!el) return;
+    el.hidden = !el.hidden;
+    b.setAttribute("aria-expanded", String(!el.hidden));
+    if (!el.hidden) { const f = el.querySelector("input, select, textarea"); if (f) f.focus(); }
+    return;
+  }
+  const u = e.target.closest && e.target.closest("[data-unmask]");
+  if (u) {
+    const t = document.getElementById(u.dataset.unmask);
+    if (!t) return;
+    t.classList.toggle("masked");
+    u.setAttribute("aria-pressed", String(!t.classList.contains("masked")));
+  }
+});
+// Placement: the node picker only matters when the app is pinned or global.
+function krillSyncPlacement() {
+  document.querySelectorAll(".nodepick").forEach(function (pick) {
+    const form = pick.closest("form");
+    const on = form && form.querySelector('input[name="placement_mode"]:checked');
+    const ro = pick.closest("fieldset.bare[disabled]");
+    if (on && !ro) pick.disabled = on.value === "any";
+  });
+}
+document.addEventListener("change", function (e) { if (e.target.name === "placement_mode") krillSyncPlacement(); });
+document.addEventListener("htmx:afterSettle", krillSyncPlacement);
+document.addEventListener("DOMContentLoaded", krillSyncPlacement);
+krillSyncPlacement();
