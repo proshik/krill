@@ -34,7 +34,7 @@ created for.
 
 ## Build arguments and secrets
 
-On a Dockerfile app's **Advanced** tab:
+In a Dockerfile app's **Settings** tab, **Source** → **Build settings**:
 
 - **Build arguments** are passed as `--build-arg` and may appear in the image history. Use them
   for non-secret values.

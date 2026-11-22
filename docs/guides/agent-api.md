@@ -138,7 +138,7 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
 
 ## Webhooks
 
-Separately from the API, each app can opt into **auto-deploy** on its **General** tab:
+Separately from the API, each app can opt into **auto-deploy** in its **Settings** tab, **Auto-deploy**:
 
 - **Dockerfile apps:** add the shown URL and secret as a GitHub webhook for `push` events. A push
   to the configured branch builds and deploys; the signature (`X-Hub-Signature-256`) is

@@ -22,7 +22,7 @@ by the installer. Storage on a private address (a MinIO on your LAN) needs
 
 ## 2. Create a backup
 
-On a database's page — or an app's **Volumes** tab — open **Backups** and add one:
+On a database's or bucket's page open **Backups**; for a volume, open the app's **Settings** tab, **Volumes**, and the volume's **Backups**. Add one there:
 
 - **Storage** — where the files go.
 - **Schedule** — On-demand, Hourly, Daily, Weekly, Monthly, or Custom. A custom cron

@@ -246,8 +246,9 @@ one:
   it is the first time `KRILL_DEFAULT_MEMORY_LIMIT` / `KRILL_DEFAULT_CPU_LIMIT` (`512m` /
   `1.0`) reach apps and database instances that have no limit of their own. Anything running
   above those values can be OOM-killed or throttled by this background pass. **Before
-  upgrading**, set an explicit limit on anything that needs more (the app's settings tab, Resources, or
-  the database instance's settings), or raise or empty the defaults.
+  upgrading**, set an explicit limit on anything that needs more (in the UI you are upgrading
+  from: the app's **Advanced** tab; in the redesigned UI: the app's **Settings** tab,
+  **Resources**; or the database instance's settings), or raise or empty the defaults.
 - **Private Git hosts are blocked by the egress guard.** A Dockerfile app whose `git_url`
   points at a private address (a Git server on your LAN or on the host itself) now stops
   building on that forced rebuild. Set `KRILL_ALLOW_PRIVATE_EGRESS=true` before upgrading if
@@ -423,8 +424,9 @@ key off the host, decrypt on your workstation and pipe the result over `ssh`.
      ```
      Re-apply a lockdown afterwards from the Firewall page if you want one.
    - Apps pinned to nodes (placement `pin` or `global`) store the old node IDs, and a deploy
-     rejects an ID that no longer exists. Open each such app's settings tab, Placement, choose its nodes
-     again from the list and save (or switch it to "Any node").
+     rejects an ID that no longer exists. Open each such app's **Settings** tab, **Placement**
+     (the **Advanced** tab in releases before the redesigned UI), choose its nodes again from
+     the list and save (or switch it to "Any node").
    - A database instance stores the **hostname** of the node it was pinned to. If that node is
      back under the same name, nothing to do. If it is gone, the instance cannot start and the
      usual "change node" action cannot help, because it tries to copy the volume from the old node.

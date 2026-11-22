@@ -257,5 +257,5 @@ the URL will have them in the log.
 ## Raw TCP and UDP ports
 
 For services that don't speak HTTP — an SSH port for Gitea, mail, DNS, a game server — publish
-a host port straight into the container on the app's **Advanced** tab. These ports bypass
+a host port straight into the container in the app's **Settings** tab, **Published ports**. These ports bypass
 Traefik and the organization network isolation, and they apply on the next deploy.
