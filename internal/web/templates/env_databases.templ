@@ -1,0 +1,182 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// EnvDatabases lists the environment's databases, buckets and the servers its
+// apps link to, with what uses each and its backups.
+templ EnvDatabases(s Shell, v EnvDatabasesView) {
+	@Page(s) {
+		<main class="wrap">
+			<div class="page-head">
+				<h1>{ i18n.T(ctx, "env.tab_databases") }</h1>
+				if isAdmin(s.Role) {
+					<div class="page-keys">
+						<a class="pill" href={ templ.SafeURL(envDBURL(s) + "?new=database") }>
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "db.new") }
+						</a>
+						<a class="pill" href={ templ.SafeURL(envDBURL(s) + "?new=bucket") }>
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "bucket.new") }
+						</a>
+					</div>
+				}
+			</div>
+			if len(v.Rows) == 0 {
+				<div class="empty-card">
+					<p class="empty-title">{ i18n.T(ctx, "envdb.empty_title") }</p>
+					<p class="hint">{ i18n.T(ctx, "envdb.empty_hint") }</p>
+				</div>
+			} else {
+				<ul class="reslist">
+					for _, r := range v.Rows {
+						<li class="res" id={ "db-" + r.Key }>
+							<div class="res-top">
+								@ui.Glyph(r.Glyph)
+								<h2>
+									if r.Href != "" {
+										<a href={ templ.SafeURL(r.Href) }>{ r.Name }</a>
+									} else {
+										{ r.Name }
+									}
+								</h2>
+								<span class="run-meta">{ r.KindLabel }</span>
+								@ui.State(r.StateKind, r.StateText)
+							</div>
+							<dl class="facts">
+								<div>
+									<dt>{ i18n.T(ctx, "envdb.server") }</dt>
+									<dd>
+										<a href={ templ.SafeURL(r.ServerHref) }>{ r.Server }</a>
+										if r.Node != "" {
+											{ " " + i18n.T(ctx, "envdb.on") + " " + r.Node }
+										}
+									</dd>
+								</div>
+								if r.Detail != "" {
+									<div><dt>{ i18n.T(ctx, "envdb.details") }</dt><dd>{ r.Detail }</dd></div>
+								}
+								<div>
+									<dt>{ i18n.T(ctx, "envdb.used_by") }</dt>
+									<dd>
+										if len(r.Users) == 0 {
+											{ i18n.T(ctx, "envdb.nothing_linked") }
+										} else {
+											for i, u := range r.Users {
+												if i > 0 {
+													{ ", " }
+												}
+												<a href={ templ.SafeURL(u.Href) }>{ u.Name }</a>
+											}
+										}
+									</dd>
+								</div>
+								<div>
+									<dt>{ i18n.T(ctx, "envdb.backups") }</dt>
+									<dd>
+										if r.BackupHref != "" {
+											<a class="state-link" href={ templ.SafeURL(r.BackupHref) }>
+												@ui.State(r.BackupKind, r.BackupText)
+											</a>
+										} else {
+											@ui.State(r.BackupKind, r.BackupText)
+										}
+									</dd>
+								</div>
+							</dl>
+						</li>
+					}
+				</ul>
+			}
+		</main>
+		switch v.Sheet {
+			case "database":
+				@Sheet(i18n.T(ctx, "db.new"), "i-pg", envDBURL(s)) {
+					<form class="form" method="post" action={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "/databases") }>
+						<div class="field">
+							<label for="nd-inst">{ i18n.T(ctx, "ldb.instance") }</label>
+							<select class="input" id="nd-inst" name="instance_id" required>
+								for _, in := range v.PgInsts {
+									<option value={ itoa(in.ID) }>{ in.Name + " (" + in.Image + ")" }</option>
+								}
+							</select>
+							if len(v.PgInsts) == 0 {
+								<p class="field-hint">
+									{ i18n.T(ctx, "ldb.no_instances") + " " }
+									<a href={ templ.SafeURL(orgURL(s.Org.ID) + "/db-servers?new=server") }>{ i18n.T(ctx, "dbi.title") }</a>
+								</p>
+							}
+						</div>
+						<div class="field">
+							<label for="nd-name">{ i18n.T(ctx, "common.name") }</label>
+							<input class="input input--mono" id="nd-name" name="name" required autocomplete="off" spellcheck="false" placeholder="shop"/>
+						</div>
+						<div class="row row--even">
+							<div class="field">
+								<label for="nd-db">{ i18n.T(ctx, "ldb.db_name") }</label>
+								<input class="input input--mono" id="nd-db" name="db_name" placeholder={ i18n.T(ctx, "ldb.auto") } autocomplete="off" spellcheck="false"/>
+							</div>
+							<div class="field">
+								<label for="nd-user">{ i18n.T(ctx, "ldb.username") }</label>
+								<input class="input input--mono" id="nd-user" name="username" placeholder={ i18n.T(ctx, "ldb.auto") } autocomplete="off" spellcheck="false"/>
+							</div>
+						</div>
+						<div class="form-keys">
+							<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "db.create") }</button>
+							<a class="pill" href={ templ.SafeURL(envDBURL(s)) }>{ i18n.T(ctx, "common.cancel") }</a>
+						</div>
+					</form>
+				}
+			case "bucket":
+				@Sheet(i18n.T(ctx, "bucket.new"), "i-bucket", envDBURL(s)) {
+					<p class="hint">{ i18n.T(ctx, "bucket.new_desc") }</p>
+					<form class="form" method="post" action={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "/buckets") }>
+						<div class="field">
+							<label for="nb-inst">{ i18n.T(ctx, "bucket.instance") }</label>
+							<select class="input" id="nb-inst" name="instance_id" required>
+								for _, in := range v.S3Insts {
+									<option value={ itoa(in.ID) }>{ in.Name + " (" + in.Image + ")" }</option>
+								}
+							</select>
+							if len(v.S3Insts) == 0 {
+								<p class="field-hint">
+									{ i18n.T(ctx, "bucket.no_instances") + " " }
+									<a href={ templ.SafeURL(orgURL(s.Org.ID) + "/db-servers?new=server") }>{ i18n.T(ctx, "dbi.title") }</a>
+								</p>
+							}
+						</div>
+						<div class="field">
+							<label for="nb-name">{ i18n.T(ctx, "bucket.name") }</label>
+							<input class="input input--mono" id="nb-name" name="name" required pattern="[a-z0-9][a-z0-9\-]{1,61}[a-z0-9]" placeholder="uploads" autocomplete="off" spellcheck="false" aria-describedby="nb-name-hint"/>
+							<p class="field-hint" id="nb-name-hint">{ i18n.T(ctx, "bucket.name_hint") }</p>
+						</div>
+						<fieldset class="choice">
+							<legend>{ i18n.T(ctx, "bucket.mode") }</legend>
+							<label class="choice-card"><input type="radio" name="mode" value="create" checked/><span class="choice-name">{ i18n.T(ctx, "bucket.mode_create") }</span></label>
+							<label class="choice-card"><input type="radio" name="mode" value="import"/><span class="choice-name">{ i18n.T(ctx, "bucket.mode_import") }</span></label>
+						</fieldset>
+						<div class="group" data-when="mode=import" hidden>
+							<p class="hint">{ i18n.T(ctx, "bucket.import_hint") }</p>
+							<div class="row row--even">
+								<div class="field">
+									<label for="nb-ak">{ i18n.T(ctx, "bucket.access_key") }</label>
+									<input class="input input--mono" id="nb-ak" name="access_key" autocomplete="off" spellcheck="false"/>
+								</div>
+								<div class="field">
+									<label for="nb-sk">{ i18n.T(ctx, "bucket.secret_key") }</label>
+									<input class="input input--mono" id="nb-sk" name="secret_key" type="password" autocomplete="off"/>
+								</div>
+							</div>
+						</div>
+						<div class="form-keys">
+							<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "bucket.create") }</button>
+							<a class="pill" href={ templ.SafeURL(envDBURL(s)) }>{ i18n.T(ctx, "common.cancel") }</a>
+						</div>
+					</form>
+				}
+		}
+	}
+}

@@ -93,12 +93,12 @@ func TestEnvironmentCloneHTTP(t *testing.T) {
 			}
 		}
 	}
-	get := httptest.NewRequest("GET", base, nil)
+	get := httptest.NewRequest("GET", base+"/settings", nil)
 	get.AddCookie(cookie)
 	page := httptest.NewRecorder()
 	h.ServeHTTP(page, get)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), `id="clone-env"`) || !strings.Contains(page.Body.String(), `value="staging"`) {
-		t.Fatal("clone modal missing")
+	if page.Code != 200 || !strings.Contains(page.Body.String(), `action="`+base+`/clone"`) || !strings.Contains(page.Body.String(), `value="staging"`) {
+		t.Fatal("clone form missing")
 	}
 	for _, secret := range []string{"source-secret", "source-dsn", "source-metrics-token", "source-server-secret"} {
 		if strings.Contains(page.Body.String(), secret) {

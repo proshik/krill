@@ -1,0 +1,130 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// Sheet is the panel that opens over a page: a title with a glyph, a close
+// link back to the page under it, and the body as children.
+templ Sheet(title, glyph, closeURL string) {
+	<aside class="sheet" aria-label={ title }>
+		<div class="sheet-head">
+			<div class="sheet-title">
+				if glyph != "" {
+					@ui.Glyph(glyph)
+				}
+				<h2>{ title }</h2>
+			</div>
+			<a class="pill pill--icon" href={ templ.SafeURL(closeURL) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
+				@ui.Icon("i-close")
+			</a>
+		</div>
+		{ children... }
+	</aside>
+}
+
+// NewAppSheet creates an app in the environment.
+templ NewAppSheet(s Shell, registries []db.Registry) {
+	@Sheet(i18n.T(ctx, "app.new_modal_title"), "i-app", envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID)) {
+		<p class="sheet-sub"><span class="run-meta">{ i18n.Tf(ctx, "app.new_in", s.Env.Project.Name, s.Env.Env.Name) }</span></p>
+		<form class="form" method="post" action={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "/apps") }>
+			<div class="field">
+				<label for="na-name">{ i18n.T(ctx, "common.name") }</label>
+				<input class="input input--mono" id="na-name" name="name" required pattern="[a-z0-9-]+" placeholder="web" autocomplete="off" spellcheck="false" data-ghost-input aria-describedby="na-name-hint"/>
+				<p class="field-hint" id="na-name-hint">{ i18n.T(ctx, "app.name_hint") }</p>
+			</div>
+			<fieldset class="choice">
+				<legend>{ i18n.T(ctx, "app.source") }</legend>
+				<label class="choice-card"><input type="radio" name="source_type" value="image" checked/><span class="choice-name">{ i18n.T(ctx, "app.source_image") }</span><span class="choice-sub">{ i18n.T(ctx, "app.source_image_sub") }</span></label>
+				<label class="choice-card"><input type="radio" name="source_type" value="dockerfile"/><span class="choice-name">{ i18n.T(ctx, "app.source_dockerfile") }</span><span class="choice-sub">{ i18n.T(ctx, "app.source_dockerfile_sub") }</span></label>
+			</fieldset>
+			<div class="group" data-when="source_type=image">
+				<div class="row">
+					<div class="field">
+						<label for="na-image">{ i18n.T(ctx, "app.image") }</label>
+						<input class="input input--mono" id="na-image" name="image" placeholder="ghcr.io/owner/name" autocomplete="off" spellcheck="false"/>
+					</div>
+					<div class="field">
+						<label for="na-tag">{ i18n.T(ctx, "app.tag") }</label>
+						<input class="input input--mono" id="na-tag" name="tag" value="latest" autocomplete="off" spellcheck="false"/>
+					</div>
+				</div>
+				<div class="field">
+					<label for="na-reg">{ i18n.T(ctx, "app.registry") }</label>
+					<select class="input" id="na-reg" name="registry_id">
+						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
+						for _, reg := range registries {
+							<option value={ itoa(reg.ID) }>{ reg.Name + ", " + reg.RegistryUrl }</option>
+						}
+					</select>
+				</div>
+			</div>
+			<div class="group" data-when="source_type=dockerfile" hidden>
+				<div class="field">
+					<label for="na-git">{ i18n.T(ctx, "app.git_url") }</label>
+					<input class="input input--mono" id="na-git" name="git_url" placeholder="https://github.com/user/repo.git" autocomplete="off" spellcheck="false"/>
+				</div>
+				<div class="row">
+					<div class="field">
+						<label for="na-branch">{ i18n.T(ctx, "app.git_branch") }</label>
+						<input class="input input--mono" id="na-branch" name="git_branch" value="main" autocomplete="off" spellcheck="false"/>
+					</div>
+					<div class="field">
+						<label for="na-df">{ i18n.T(ctx, "app.dockerfile_path") }</label>
+						<input class="input input--mono" id="na-df" name="dockerfile_path" value="Dockerfile" autocomplete="off" spellcheck="false"/>
+					</div>
+				</div>
+			</div>
+			<div class="row">
+				<div class="field">
+					<label for="na-domain">{ i18n.T(ctx, "app.domain") }</label>
+					<input class="input input--mono" id="na-domain" name="domain" placeholder={ i18n.T(ctx, "app.domain_auto") } autocomplete="off" spellcheck="false" aria-describedby="na-domain-hint"/>
+					<p class="field-hint" id="na-domain-hint">{ i18n.T(ctx, "app.domain_internal_hint") }</p>
+				</div>
+				<div class="field">
+					<label for="na-port">{ i18n.T(ctx, "app.port") }</label>
+					<input class="input input--mono" id="na-port" name="port" type="number" value="80" min="1" max="65535" required/>
+				</div>
+			</div>
+			<div class="form-keys">
+				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "app.create") }</button>
+				<a class="pill" href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID)) }>{ i18n.T(ctx, "common.cancel") }</a>
+			</div>
+		</form>
+	}
+}
+
+// ProjectNoEnv is a project without environments yet.
+templ ProjectNoEnv(s Shell, project db.Project) {
+	@Page(s) {
+		<main class="wrap wrap--narrow">
+			<div class="page-head"><h1>{ project.Name }</h1></div>
+			<div class="empty-card">
+				<p class="empty-title">{ i18n.T(ctx, "project.no_envs") }</p>
+				<p class="hint">{ i18n.T(ctx, "project.create_env_hint") }</p>
+				if isAdmin(s.Role) {
+					<form class="add-row" method="post" action={ templ.SafeURL(projectURL(s.Org.ID, project.ID) + "/environments") }>
+						<div class="field">
+							<label for="ne-name">{ i18n.T(ctx, "common.name") }</label>
+							<input class="input" id="ne-name" name="name" required value="production" autocomplete="off"/>
+						</div>
+						<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "project.create_env") }</button>
+					</form>
+				}
+			</div>
+			if isAdmin(s.Role) {
+				@deleteProjectForm(s.Org.ID, project)
+			}
+		</main>
+	}
+}
+
+templ deleteProjectForm(orgID int64, project db.Project) {
+	<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(projectURL(orgID, project.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_project", project.Name) } data-more={ i18n.T(ctx, "confirm.delete_project_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="pdel-h">
+		<h2 id="pdel-h">{ i18n.T(ctx, "projects.delete") }</h2>
+		<p class="hint">{ i18n.T(ctx, "confirm.delete_project_more") }</p>
+		<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", project.Name) }</button></div>
+	</form>
+}

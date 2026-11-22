@@ -829,6 +829,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* Additions to the mockup's system for what Krill has beyond the mockups. */
 @layer components {
+  .plane { width: var(--plane-w, 1096px); height: var(--plane-h, 640px); }
+  @media (min-width: 60.0625rem) {
+    .canvas .plane[data-zoomed], .has-sheet .canvas .plane[data-zoomed] { top: 0; left: 0; transform: translate(var(--pan-x, 0px), var(--pan-y, 0px)) scale(var(--zoom, 1)); transform-origin: 0 0; }
+    .canvas[data-canvas] { cursor: grab; }
+    .canvas.is-panning { cursor: grabbing; user-select: none; }
+    .canvas.is-panning .svc { pointer-events: none; }
+  }
+  .mini-svc--warn::after { background: var(--color-warn); }
+  .project-desc { margin-inline: var(--space-xs); }
+  .canvas-empty { display: grid; place-items: center; height: 100%; padding: var(--space-lg); }
+  .canvas-empty .empty-card { max-width: 440px; }
+  .float--clone { max-width: 520px; }
+  .has-sheet .float--clone { display: none; }
+  .svc { cursor: pointer; }
   .subnav form { display: contents; }
   .subnav-out { padding: var(--space-sm); border: 0; border-radius: 12px; background: none; color: var(--color-muted); font: 500 var(--text-md)/1 var(--font-display); text-align: left; cursor: pointer; text-box: trim-both ex alphabetic; }
   .subnav-out:hover { background: var(--color-paper-2); color: var(--color-ink); }

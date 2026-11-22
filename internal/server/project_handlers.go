@@ -10,7 +10,6 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
-	"github.com/proshik/krill/internal/envclone"
 	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/web/templates"
@@ -217,89 +216,6 @@ func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("environment deleted", "environment_id", e.ID, "project_id", p.ID, "org_id", o.ID, "slug", e.Slug)
 	s.flashOK(w, r, "flash.ok.env_deleted")
 	http.Redirect(w, r, projURL(o.ID, p.ID), http.StatusSeeOther)
-}
-
-// projectPage displays the project with the selected (or first) environment.
-func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
-	o, role, ok := s.loadOrg(w, r)
-	if !ok {
-		return
-	}
-	p, ok := s.loadProject(w, r)
-	if !ok {
-		return
-	}
-	envs, err := s.q.ListEnvironments(r.Context(), p.ID)
-	if err != nil {
-		logFrom(r).Error("projectPage: list environments", "err", err, "project_id", p.ID, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var active db.Environment
-	if envID, ok := pathID(r, "envID"); ok {
-		for _, e := range envs {
-			if e.ID == envID {
-				active = e
-			}
-		}
-		if active.ID == 0 {
-			http.NotFound(w, r)
-			return
-		}
-	} else if len(envs) > 0 {
-		active = envs[0]
-	}
-	var apps []db.Application
-	var dbs []db.ListLogicalDatabasesByEnvironmentRow
-	if active.ID != 0 {
-		apps, _ = s.q.ListApplicationsByEnvironment(r.Context(), active.ID)
-		dbs, _ = s.q.ListLogicalDatabasesByEnvironment(r.Context(), active.ID)
-		// Reflect the LIVE Swarm state on the cards (the stored status can be
-		// stale) — one bulk call, not one per card.
-		s.deriveCardStatuses(r.Context(), apps, dbs)
-	}
-	registries, err := s.q.ListRegistriesByOrg(r.Context(), o.ID)
-	if err != nil {
-		logFrom(r).Error("projectPage: list registries", "err", err, "org_id", o.ID)
-	}
-	var pgInsts []db.DbInstance
-	var res templates.EnvResources
-	if all, err := s.q.ListDBInstancesByOrg(r.Context(), o.ID); err == nil {
-		for _, in := range all {
-			switch in.Engine {
-			case "postgres":
-				pgInsts = append(pgInsts, in)
-			case "minio":
-				res.S3Insts = append(res.S3Insts, in)
-			}
-		}
-	} else {
-		logFrom(r).Error("projectPage: list db instances", "err", err, "org_id", o.ID)
-	}
-	if active.ID != 0 {
-		buckets, err := s.q.ListS3BucketsByEnvironment(r.Context(), active.ID)
-		if err != nil {
-			logFrom(r).Error("projectPage: list buckets", "err", err, "environment_id", active.ID)
-		}
-		res.Buckets = buckets
-		res.View = s.envView(r.Context(), o.ID, p.ID, active, apps, dbs, buckets)
-	}
-	cloneView := templates.EnvironmentCloneView{}
-	if s.cloner != nil && active.ID != 0 {
-		if notice, err := s.q.EnvironmentCloneNotice(r.Context(), &active.ID); err == nil {
-			cloneView.Cloned, cloneView.Pending = notice.Cloned, notice.Pending
-		} else {
-			logFrom(r).Error("projectPage: clone notice lookup failed", "environment_id", active.ID)
-		}
-		if role == "owner" || role == "admin" {
-			if key, err := envclone.NewRequestKey(); err == nil {
-				cloneView.RequestKey = key
-			} else {
-				logFrom(r).Error("projectPage: clone request identity generation failed", "environment_id", active.ID)
-			}
-		}
-	}
-	render(w, r, http.StatusOK, templates.Project(o, role, p, envs, active, apps, dbs, pgInsts, registries, res, cloneView))
 }
 
 // deriveCardStatuses replaces each app/logical-db stored status with the LIVE

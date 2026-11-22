@@ -3,74 +3,116 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
+// ProjectCard is one project on the projects page: its environments with a
+// health summary and a miniature of the first one.
 type ProjectCard struct {
-	Project  db.Project
-	EnvCount int64
-	AppCount int64
+	Project db.Project
+	Envs    []ProjectEnv
+	Mini    []string // state kinds of the first environment's cards
 }
 
-templ OrgDashboard(org db.Organization, role string, projects []ProjectCard) {
-	@Layout(i18n.T(ctx, "projects.page_title"), org, role) {
-		<div class="k-frame">
-			<div class="k-panel">
-				<div class="k-panel-head">
-					<div>
-						<div class="k-panel-title">{ i18n.T(ctx, "projects.title") }</div>
-						<div class="k-panel-desc">{ i18n.T(ctx, "projects.desc") }</div>
-					</div>
-					if role == "owner" || role == "admin" {
-						<button type="button" class="k-btn k-btn-primary" onclick="krillOpenModal('new-project')">+ { i18n.T(ctx, "projects.new") }</button>
+// ProjectEnv is one environment row of a project card.
+type ProjectEnv struct {
+	ID        int64
+	Name      string
+	StateKind string
+	StateText string
+}
+
+// ClusterNode is one node of the cluster strip (instance operators only).
+type ClusterNode struct {
+	Name      string
+	CPU, Mem  int
+	StateKind string
+	StateText string
+}
+
+templ OrgDashboard(org db.Organization, role string, projects []ProjectCard, cluster []ClusterNode, newProject bool) {
+	@Page(Shell{Title: i18n.T(ctx, "projects.page_title"), Org: org, Role: role, Tab: "projects", Body: dashBody(newProject)}) {
+		<main class="wrap">
+			<div class="page-head"><h1>{ i18n.T(ctx, "projects.title") }</h1></div>
+			if len(projects) == 0 {
+				<div class="empty-card">
+					<p class="empty-title">{ i18n.T(ctx, "projects.empty") }</p>
+					<p class="hint">{ i18n.T(ctx, "projects.empty_hint") }</p>
+					if isAdmin(role) {
+						<a class="btn btn--primary" href={ templ.SafeURL(orgURL(org.ID) + "?new=project") }>
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "projects.new") }
+						</a>
 					}
 				</div>
-				<div class="k-panel-body">
-					if len(projects) == 0 {
-						<div class="flex flex-col items-center justify-center min-h-[40vh] gap-3">
-							<p class="k-mono">{ i18n.T(ctx, "projects.empty") }</p>
-							if role == "owner" || role == "admin" {
-								<button type="button" class="k-btn k-btn-secondary" onclick="krillOpenModal('new-project')">{ i18n.T(ctx, "projects.create_first") }</button>
-							}
-						</div>
-					} else {
-						<div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
-							for _, pc := range projects {
-								<a class="k-card hover:border-[color:var(--color-border-strong)] flex flex-col" href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects/" + itoa(pc.Project.ID)) }>
-									<div class="font-semibold text-base mb-1">{ pc.Project.Name }</div>
-									if pc.Project.Description != "" {
-										<div class="text-sm text-[color:var(--color-muted)] mb-2">{ pc.Project.Description }</div>
+			} else {
+				<ul class="projects">
+					for _, pc := range projects {
+						<li class="project">
+							<a class="project-main" href={ templ.SafeURL(projectURL(org.ID, pc.Project.ID)) }>
+								<span class="mini" aria-hidden="true">
+									for _, k := range pc.Mini {
+										<span class={ "mini-svc", "mini-svc--" + k }></span>
 									}
-									<div class="k-mono text-xs mt-auto pt-3">{ itoa(pc.EnvCount) } { i18n.T(ctx, "projects.env_count_suffix") } · { itoa(pc.AppCount) } { i18n.T(ctx, "projects.app_count_suffix") }</div>
-								</a>
+								</span>
+								<span class="project-name">{ pc.Project.Name }</span>
+								if pc.Project.Description != "" {
+									<span class="run-meta project-desc">{ pc.Project.Description }</span>
+								}
+							</a>
+							if len(pc.Envs) == 0 {
+								<p class="empty project-none">{ i18n.T(ctx, "project.no_envs") }</p>
+							} else {
+								<ul class="project-envs" aria-label={ i18n.Tf(ctx, "projects.envs_of", pc.Project.Name) }>
+									for _, e := range pc.Envs {
+										<li>
+											<a href={ templ.SafeURL(envURL(org.ID, pc.Project.ID, e.ID)) }>
+												<span class="project-env">{ e.Name }</span>
+												@ui.State(e.StateKind, e.StateText)
+											</a>
+										</li>
+									}
+								</ul>
 							}
-						</div>
+						</li>
 					}
-				</div>
-			</div>
-		</div>
-		if role == "owner" || role == "admin" {
-			<dialog id="new-project" class="k-modal">
-				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/projects") }>
-					<div class="k-modal-head">
-						<div class="k-modal-title">{ i18n.T(ctx, "project.new_modal_title") }</div>
-						<div class="k-modal-desc">{ i18n.T(ctx, "project.new_modal_desc") }</div>
+				</ul>
+			}
+			if len(cluster) > 0 {
+				<section class="nodes-strip" aria-labelledby="cluster-h">
+					<h2 id="cluster-h">{ i18n.T(ctx, "projects.cluster") }</h2>
+					<ul>
+						for _, n := range cluster {
+							<li>
+								<a href={ templ.SafeURL(orgURL(org.ID) + "/nodes#node-" + n.Name) }>
+									<span class="run-node">{ n.Name }</span>
+									<span class="run-meta">{ i18n.Tf(ctx, "projects.node_use", n.CPU, n.Mem) }</span>
+									@ui.State(n.StateKind, n.StateText)
+								</a>
+							</li>
+						}
+					</ul>
+				</section>
+			}
+		</main>
+		if newProject {
+			@Sheet(i18n.T(ctx, "project.new_modal_title"), "", orgURL(org.ID)) {
+				<form class="form" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/projects") }>
+					<div class="field">
+						<label for="np-name">{ i18n.T(ctx, "common.name") }</label>
+						<input class="input" id="np-name" name="name" required placeholder="payments" autocomplete="off" autofocus/>
 					</div>
-					<div class="k-modal-body">
-						<div>
-							<label class="k-label">{ i18n.T(ctx, "common.name") }</label>
-							<input class="k-input" name="name" required placeholder="Vandelay Industries"/>
-						</div>
-						<div>
-							<label class="k-label">{ i18n.T(ctx, "common.description") }</label>
-							<textarea class="k-textarea" name="description" rows="2" placeholder={ i18n.T(ctx, "common.optional") }></textarea>
-						</div>
+					<div class="field">
+						<label for="np-desc">{ i18n.T(ctx, "common.description") }</label>
+						<textarea class="input textarea" id="np-desc" name="description" rows="2" placeholder={ i18n.T(ctx, "common.optional") }></textarea>
 					</div>
-					<div class="k-modal-foot">
-						<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('new-project')">{ i18n.T(ctx, "common.cancel") }</button>
-						<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+					<p class="hint">{ i18n.T(ctx, "project.new_then_env") }</p>
+					<div class="form-keys">
+						<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "projects.create") }</button>
+						<a class="pill" href={ templ.SafeURL(orgURL(org.ID)) }>{ i18n.T(ctx, "common.cancel") }</a>
 					</div>
 				</form>
-			</dialog>
+			}
 		}
 	}
 }

@@ -1189,3 +1189,185 @@ function krillShellEnhance() {
 document.addEventListener("DOMContentLoaded", krillShellEnhance);
 document.addEventListener("htmx:afterSettle", krillShellEnhance);
 krillShellEnhance();
+
+// ── Wired maps: the environment canvas, the nodes lanes and the topology ──
+// Cards carry data-to (and data-detected) with the element ids they link to;
+// the map draws a curve per link into its .wires svg. Pointing at a card
+// lights it and its links; a node chip (data-node) lights every card placed
+// on that node and pins the filter when clicked. The canvas also zooms
+// (buttons, ctrl+wheel) and pans (drag on the background).
+function mountWiredMap(map) {
+  map.setAttribute("data-mounted", "");
+  const svg = map.querySelector(".wires");
+  const cards = Array.from(map.querySelectorAll(".svc"));
+  const links = [];
+  cards.forEach(function (c) {
+    (c.dataset.to || "").split(" ").filter(Boolean).forEach(function (id) {
+      const to = document.getElementById(id);
+      if (to && map.contains(to)) links.push({ from: c, to: to });
+    });
+    (c.dataset.detected || "").split(" ").filter(Boolean).forEach(function (id) {
+      const to = document.getElementById(id);
+      if (!to) return;
+      links.forEach(function (l) { if (l.from === c && l.to === to) l.detected = true; });
+    });
+  });
+  const draw = function () {
+    if (!svg) return;
+    svg.replaceChildren();
+    if (getComputedStyle(svg).display === "none") return;
+    const host = map.getBoundingClientRect();
+    const k = host.width / map.offsetWidth || 1;
+    links.forEach(function (l) {
+      l.path = null;
+      if (!l.from.offsetParent || !l.to.offsetParent || l.from.hidden || l.to.hidden) return;
+      const a = l.from.getBoundingClientRect(), b = l.to.getBoundingClientRect();
+      const dir = b.left >= a.right ? 1 : b.right <= a.left ? -1 : 0;
+      const ya = (a.top + a.height / 2 - host.top) / k, yb = (b.top + b.height / 2 - host.top) / k;
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      if (dir === 0) {
+        const x = (Math.max(a.right, b.right) - host.left) / k;
+        const xa = (a.right - host.left) / k, xb = (b.right - host.left) / k;
+        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + 48) + " " + ya + " " + (x + 48) + " " + yb + " " + xb + " " + yb);
+      } else {
+        const x1 = ((dir > 0 ? a.right : a.left) - host.left) / k;
+        const x2 = ((dir > 0 ? b.left : b.right) - host.left) / k;
+        const dx = Math.max(40, Math.abs(x2 - x1) / 2) * dir;
+        p.setAttribute("d", "M" + x1 + " " + ya + "C" + (x1 + dx) + " " + ya + " " + (x2 - dx) + " " + yb + " " + x2 + " " + yb);
+      }
+      if (l.from.hasAttribute("data-gateway")) p.classList.add("w-ingress");
+      else if (l.detected) p.classList.add("w-detected");
+      else if (l.from.closest(".lane") && l.from.closest(".lane") !== l.to.closest(".lane")) p.classList.add("w-cross");
+      else p.classList.add("w-link");
+      l.path = p;
+      svg.append(p);
+    });
+  };
+  const scope = map.closest("main") || document;
+  const chips = Array.from(scope.querySelectorAll(".chip[data-node]"));
+  let pinned = null;
+  const light = function (hovered) {
+    const node = hovered && hovered.dataset.node ? hovered.dataset.node : (!hovered && pinned) || null;
+    chips.forEach(function (c) {
+      c.classList.toggle("is-lit", c.dataset.node === node);
+      c.setAttribute("aria-pressed", String(c.dataset.node === pinned));
+    });
+    if (node) {
+      map.classList.add("is-focus");
+      links.forEach(function (l) { if (l.path) l.path.classList.remove("is-lit"); });
+      cards.forEach(function (c) { c.classList.toggle("is-lit", (c.dataset.nodes || "").split(" ").indexOf(node) >= 0); });
+      return;
+    }
+    const card = hovered && hovered.classList.contains("svc") ? hovered : map.querySelector('.svc[aria-current="true"]');
+    map.classList.toggle("is-focus", !!card);
+    cards.forEach(function (c) { c.classList.remove("is-lit"); });
+    links.forEach(function (l) {
+      const hit = card && (l.from === card || l.to === card);
+      if (l.path) l.path.classList.toggle("is-lit", !!hit);
+      if (hit) { l.from.classList.add("is-lit"); l.to.classList.add("is-lit"); }
+    });
+    if (card) card.classList.add("is-lit");
+  };
+  cards.forEach(function (c) {
+    c.addEventListener("pointerenter", function () { light(c); });
+    c.addEventListener("pointerleave", function () { light(null); });
+    c.addEventListener("focus", function () { light(c); });
+    c.addEventListener("blur", function () { light(null); });
+  });
+  chips.forEach(function (c) {
+    c.addEventListener("pointerenter", function () { light(c); });
+    c.addEventListener("pointerleave", function () { light(null); });
+    c.addEventListener("click", function () { pinned = pinned === c.dataset.node ? null : c.dataset.node; light(null); });
+  });
+  map.__krillRedraw = function () { draw(); light(null); };
+
+  // Zoom and pan: the canvas only.
+  const canvas = map.closest(".canvas");
+  if (canvas && map.classList.contains("plane")) {
+    const label = canvas.querySelector("[data-zoom-label]");
+    let zoom = 1, px = 0, py = 0;
+    const apply = function () {
+      map.style.setProperty("--zoom", String(zoom));
+      map.style.setProperty("--pan-x", px + "px");
+      map.style.setProperty("--pan-y", py + "px");
+      if (label) label.textContent = Math.round(zoom * 100) + "%";
+      requestAnimationFrame(map.__krillRedraw);
+    };
+    const fit = function () {
+      if (getComputedStyle(svg).display === "none") return;
+      map.setAttribute("data-zoomed", "");
+      const sheet = document.querySelector(".sheet");
+      const cw = canvas.clientWidth - (sheet ? sheet.offsetWidth + 24 : 0);
+      const top = 84, ch = canvas.clientHeight - top - 24;
+      zoom = Math.max(0.3, Math.min(1, (cw - 48) / map.offsetWidth, ch / map.offsetHeight));
+      px = Math.max(24, (cw - map.offsetWidth * zoom) / 2);
+      py = top;
+      apply();
+    };
+    map.__krillFit = fit;
+    canvas.querySelectorAll("[data-zoom]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const z = b.dataset.zoom;
+        if (z === "fit") { fit(); return; }
+        const before = zoom;
+        zoom = Math.max(0.3, Math.min(2, Math.round((zoom + (z === "in" ? 0.1 : -0.1)) * 10) / 10));
+        const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
+        px = cx - (cx - px) * zoom / before;
+        py = cy - (cy - py) * zoom / before;
+        apply();
+      });
+    });
+    canvas.addEventListener("wheel", function (e) {
+      if (!map.hasAttribute("data-zoomed")) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const before = zoom;
+        zoom = Math.max(0.3, Math.min(2, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+        const r = canvas.getBoundingClientRect();
+        const mx = e.clientX - r.left, my = e.clientY - r.top;
+        px = mx - (mx - px) * zoom / before;
+        py = my - (my - py) * zoom / before;
+      } else {
+        px -= e.deltaX;
+        py -= e.deltaY;
+      }
+      apply();
+    }, { passive: false });
+    let drag = null;
+    canvas.addEventListener("pointerdown", function (e) {
+      if (!map.hasAttribute("data-zoomed") || e.button !== 0 || e.target.closest(".svc, .float, a, button")) return;
+      drag = { x: e.clientX, y: e.clientY, px: px, py: py, id: e.pointerId };
+    });
+    canvas.addEventListener("pointermove", function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!canvas.classList.contains("is-panning") && Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 4) return;
+      canvas.classList.add("is-panning");
+      px = drag.px + e.clientX - drag.x;
+      py = drag.py + e.clientY - drag.y;
+      apply();
+    });
+    const end = function () { drag = null; canvas.classList.remove("is-panning"); };
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
+    fit();
+  }
+  map.__krillRedraw();
+  if (document.fonts) document.fonts.ready.then(function () { if (map.isConnected) map.__krillRedraw(); });
+}
+function krillMountMaps() {
+  document.querySelectorAll(".plane:not([data-mounted]), .lanemap:not([data-mounted]), .topomap:not([data-mounted])").forEach(mountWiredMap);
+}
+document.addEventListener("DOMContentLoaded", krillMountMaps);
+document.addEventListener("htmx:afterSettle", krillMountMaps);
+krillMountMaps();
+window.addEventListener("resize", function () {
+  document.querySelectorAll(".plane[data-mounted], .lanemap[data-mounted], .topomap[data-mounted]").forEach(function (m) {
+    if (m.__krillFit) m.__krillFit(); else if (m.__krillRedraw) m.__krillRedraw();
+  });
+});
+// The new-app sheet names its ghost card as the name is typed.
+document.addEventListener("input", function (e) {
+  if (!e.target.matches || !e.target.matches("[data-ghost-input]")) return;
+  const g = document.querySelector("[data-ghost-name]");
+  if (g) g.textContent = e.target.value.trim() || g.dataset.empty || g.textContent;
+});

@@ -1,0 +1,178 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// EnvSettings is the environment's settings page: the project's name, the
+// systems that group the canvas, new and cloned environments, deletion.
+templ EnvSettings(s Shell, v EnvSettingsView) {
+	@Page(s) {
+		<main class="wrap wrap--narrow">
+			<div class="page-head"><h1>{ i18n.T(ctx, "envset.title") }</h1></div>
+			if v.Cloned {
+				<div class="callout callout--warn" data-clone-notice>
+					<div class="callout-body">
+						<p>{ i18n.T(ctx, "clone.review") }</p>
+						<p class="hint">
+							{ i18n.T(ctx, "clone.servers") + " " }
+							<a href={ templ.SafeURL(orgURL(s.Org.ID) + "/db-servers") }>{ i18n.T(ctx, "dbi.title") }</a>
+						</p>
+					</div>
+				</div>
+			}
+			if v.Pending {
+				<div class="callout"><p>{ i18n.T(ctx, "clone.pending") }</p></div>
+			}
+			<form class="sec" method="post" action={ templ.SafeURL(projectURL(s.Org.ID, s.Env.Project.ID) + "/rename") } aria-labelledby="pn-h">
+				<h2 id="pn-h">{ i18n.T(ctx, "envset.project_name") }</h2>
+				<div class="add-row">
+					<div class="field">
+						<label for="pn-name">{ i18n.T(ctx, "envset.project") }</label>
+						<input class="input" id="pn-name" name="name" value={ s.Env.Project.Name } required autocomplete="off"/>
+					</div>
+					<button type="submit" class="pill">{ i18n.T(ctx, "project.rename_btn") }</button>
+				</div>
+			</form>
+			<section class="sec" aria-labelledby="sys-h">
+				<div class="sec-head"><h2 id="sys-h">{ i18n.T(ctx, "envset.systems") }</h2></div>
+				<p class="hint">{ i18n.T(ctx, "envset.systems_hint") }</p>
+				if len(v.View.Systems) == 0 {
+					<p class="empty">{ i18n.T(ctx, "envset.no_systems") }</p>
+				} else {
+					<ul class="systems">
+						for _, sy := range v.View.Systems {
+							<li class="system">
+								<details class="system-edit">
+									<summary class="row-item sys">
+										<span class="link-var">{ sy.Name }</span>
+										<span class="link-src">
+											if len(sy.Apps) == 0 {
+												{ i18n.T(ctx, "system.no_apps") }
+											} else {
+												for i, a := range sy.Apps {
+													if i > 0 {
+														{ ", " }
+													}
+													<a href={ templ.SafeURL(envBaseURL(s) + "/apps/" + itoa(a.ID)) }>{ a.Name }</a>
+												}
+											}
+										</span>
+										<span class="pill">{ i18n.T(ctx, "common.edit") }</span>
+									</summary>
+									<div class="system-body">
+										<form class="add-row" method="post" action={ templ.SafeURL(envBaseURL(s) + "/systems/" + itoa(sy.ID) + "/rename") }>
+											<div class="field">
+												<label for={ "sys-name-" + itoa(sy.ID) }>{ i18n.T(ctx, "common.name") }</label>
+												<input class="input" id={ "sys-name-" + itoa(sy.ID) } name="name" value={ sy.Name } required maxlength="80" autocomplete="off"/>
+											</div>
+											<button type="submit" class="pill">{ i18n.T(ctx, "project.rename_btn") }</button>
+										</form>
+										if cands := systemCandidates(v.View, sy.ID); len(cands) > 0 {
+											<form class="add-row" method="post" action={ templ.SafeURL(envBaseURL(s) + "/systems/" + itoa(sy.ID) + "/apps") }>
+												<div class="field">
+													<label for={ "sys-add-" + itoa(sy.ID) }>{ i18n.T(ctx, "system.add_app") }</label>
+													<select class="input" id={ "sys-add-" + itoa(sy.ID) } name="app_id">
+														for _, c := range cands {
+															<option value={ itoa(c.ID) }>{ c.Name }</option>
+														}
+													</select>
+												</div>
+												<button type="submit" class="pill">
+													@ui.Icon("i-plus")
+													{ i18n.T(ctx, "system.add") }
+												</button>
+											</form>
+										}
+										if len(sy.Apps) > 0 {
+											<ul class="users">
+												for _, a := range sy.Apps {
+													<li>
+														<code>{ a.Name }</code>
+														<form method="post" action={ templ.SafeURL(envBaseURL(s) + "/systems/" + itoa(sy.ID) + "/apps/" + itoa(a.ID) + "/remove") }>
+															<button type="submit" class="pill pill--icon" aria-label={ i18n.Tf(ctx, "system.remove_app", a.Name) } title={ i18n.Tf(ctx, "system.remove_app", a.Name) }>
+																@ui.Icon("i-close")
+															</button>
+														</form>
+													</li>
+												}
+											</ul>
+										}
+										<form method="post" hx-boost="false" action={ templ.SafeURL(envBaseURL(s) + "/systems/" + itoa(sy.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "system.confirm_delete", sy.Name) } data-more={ i18n.T(ctx, "system.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+											<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "system.delete") }</button>
+										</form>
+									</div>
+								</details>
+							</li>
+						}
+					</ul>
+				}
+				if len(v.View.Ungrouped.Apps) > 0 {
+					<p class="hint">
+						{ i18n.T(ctx, "envset.not_in_system") + " " }
+						for i, a := range v.View.Ungrouped.Apps {
+							if i > 0 {
+								{ ", " }
+							}
+							<a href={ templ.SafeURL(envBaseURL(s) + "/apps/" + itoa(a.ID)) }>{ a.Name }</a>
+						}
+					</p>
+				}
+				<form class="add-row" method="post" action={ templ.SafeURL(envBaseURL(s) + "/systems") }>
+					<div class="field">
+						<label for="sys-new">{ i18n.T(ctx, "system.new") }</label>
+						<input class="input" id="sys-new" name="name" required maxlength="80" placeholder="payments" autocomplete="off"/>
+					</div>
+					<button type="submit" class="pill">
+						@ui.Icon("i-plus")
+						{ i18n.T(ctx, "common.add") }
+					</button>
+				</form>
+			</section>
+			<form class="sec" id="new-env" method="post" action={ templ.SafeURL(projectURL(s.Org.ID, s.Env.Project.ID) + "/environments") } aria-labelledby="ne-h">
+				<h2 id="ne-h">{ i18n.Tf(ctx, "envset.new_env", s.Env.Project.Name) }</h2>
+				<div class="add-row">
+					<div class="field">
+						<label for="ne-name">{ i18n.T(ctx, "common.name") }</label>
+						<input class="input" id="ne-name" name="name" required placeholder="staging" autocomplete="off"/>
+					</div>
+					<button type="submit" class="pill">
+						@ui.Icon("i-plus")
+						{ i18n.T(ctx, "common.add") }
+					</button>
+				</div>
+				<p class="hint">
+					{ i18n.Tf(ctx, "envset.envs_of", s.Env.Project.Name) + " " }
+					for i, e := range v.Envs {
+						if i > 0 {
+							{ ", " }
+						}
+						<a href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, e.ID)) }>{ e.Name }</a>
+					}
+				</p>
+			</form>
+			if v.RequestKey != "" {
+				<form class="sec" method="post" action={ templ.SafeURL(envBaseURL(s) + "/clone") } aria-labelledby="cl-h">
+					<input type="hidden" name="request_key" value={ v.RequestKey }/>
+					<h2 id="cl-h">{ i18n.T(ctx, "clone.button") }</h2>
+					<p class="hint">{ i18n.T(ctx, "clone.review") }</p>
+					<p class="hint">{ i18n.T(ctx, "clone.servers") }</p>
+					<div class="add-row">
+						<div class="field">
+							<label for="clone-name">{ i18n.T(ctx, "common.name") }</label>
+							<input class="input" id="clone-name" name="name" required value={ cloneDefaultName(s.Env.Env) } autocomplete="off"/>
+						</div>
+						<button type="submit" class="pill">{ i18n.Tf(ctx, "clone.submit", s.Env.Env.Name) }</button>
+					</div>
+				</form>
+			}
+			<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(envBaseURL(s) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_env", s.Env.Env.Name) } data-more={ i18n.T(ctx, "envset.delete_hint") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="edel-h">
+				<h2 id="edel-h">{ i18n.T(ctx, "env.delete") }</h2>
+				<p class="hint">{ i18n.T(ctx, "envset.delete_hint") }</p>
+				<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", s.Env.Env.Name) }</button></div>
+			</form>
+			@deleteProjectForm(s.Org.ID, s.Env.Project)
+		</main>
+	}
+}

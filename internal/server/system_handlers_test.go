@@ -50,11 +50,16 @@ func TestSystemsGroupAppsWithoutOwningThem(t *testing.T) {
 		t.Fatalf("membership: %v", got)
 	}
 
-	// The environment page renders each system with its apps.
+	// The canvas draws each system as a group holding its apps' cards, and
+	// the settings page manages them.
 	page := getPage(t, f.h, f.envBase, f.cookie, nil)
 	body := page.Body.String()
-	if page.Code != http.StatusOK || !strings.Contains(body, "data-sys") || !strings.Contains(body, `data-sys-app="`+i64(f.app.ID)+`"`) {
+	if page.Code != http.StatusOK || !strings.Contains(body, `<h2 class="grp-name">Penpot</h2>`) || !strings.Contains(body, `id="s-app-`+i64(f.app.ID)+`"`) {
 		t.Fatalf("environment page: %d", page.Code)
+	}
+	page = getPage(t, f.h, f.envBase+"/settings", f.cookie, nil)
+	if body := page.Body.String(); page.Code != http.StatusOK || !strings.Contains(body, sysURL(penpot)+"/delete") {
+		t.Fatalf("environment settings: %d", page.Code)
 	}
 
 	postForm(t, f.h, sysURL(other)+"/rename", f.cookie, url.Values{"name": {"Frontends"}})
@@ -117,10 +122,13 @@ func TestSystemTenancyAndRBAC(t *testing.T) {
 			t.Fatalf("member POST %s: %d", path, rec.Code)
 		}
 	}
-	// Members see the systems view, without its management controls.
+	// Members see the systems on the canvas, without their management.
 	f.q.SetAppSystem(ctx, db.SetAppSystemParams{ApplicationID: f.app.ID, SystemID: sy.ID})
 	page := getPage(t, f.h, f.envBase, member, nil)
-	if body := page.Body.String(); !strings.Contains(body, "data-sys") || strings.Contains(body, "/systems/"+i64(sy.ID)+"/delete") {
+	if body := page.Body.String(); !strings.Contains(body, `<h2 class="grp-name">Penpot</h2>`) || strings.Contains(body, "/systems/"+i64(sy.ID)+"/delete") {
 		t.Fatal("members see systems but not their management")
+	}
+	if rec := getPage(t, f.h, f.envBase+"/settings", member, nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("member environment settings: %d", rec.Code)
 	}
 }

@@ -17,6 +17,13 @@ import (
 // environment or to servers its own apps link to, so nothing of another
 // environment reaches the page beyond a server's name and a "shared" flag.
 func (s *Server) envView(ctx context.Context, orgID, projID int64, env db.Environment, apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow, buckets []db.ListS3BucketsByEnvironmentRow) topology.EnvView {
+	v, _ := s.envViewResources(ctx, orgID, projID, env, apps, ldbs, buckets)
+	return v
+}
+
+// envViewResources is envView plus every resource the view knows of: the
+// environment's databases and buckets and the servers its apps link to.
+func (s *Server) envViewResources(ctx context.Context, orgID, projID int64, env db.Environment, apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow, buckets []db.ListS3BucketsByEnvironmentRow) (topology.EnvView, map[string]topology.EnvResource) {
 	base := envURL(orgID, projID, env.ID)
 	in := topology.EnvViewInput{Members: map[int64]int64{}, Resources: map[string]topology.EnvResource{}, HostedByInstance: map[int64]int{}}
 	if systems, err := s.q.ListSystemsByEnvironment(ctx, env.ID); err == nil {
@@ -126,7 +133,7 @@ func (s *Server) envView(ctx context.Context, orgID, projID int64, env db.Enviro
 			slog.Warn("envView: count server resources", "err", err)
 		}
 	}
-	return topology.BuildEnvView(in)
+	return topology.BuildEnvView(in), in.Resources
 }
 
 // loadSystem parses {systemID} and verifies it belongs to the environment.

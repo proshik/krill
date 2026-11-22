@@ -512,6 +512,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/rename", s.renameProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)
+				r.Get("/projects/{projID}/environments/{envID}/settings", s.envSettingsPage)
 				r.Post("/projects/{projID}/environments/{envID}/clone", s.cloneEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/delete", s.deleteEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)
@@ -557,6 +558,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/projects/{projID}", s.projectPage)
 			r.Get("/projects/{projID}/environments/{envID}", s.projectPage)
 			r.Get("/projects/{projID}/environments/{envID}/statuses", s.envStatuses)
+			r.Get("/projects/{projID}/environments/{envID}/databases", s.envDatabasesPage)
 
 			r.Route("/projects/{projID}/environments/{envID}/apps/{appID}", func(r chi.Router) {
 				r.Get("/", s.appDetail)

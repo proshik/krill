@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -155,50 +157,8 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	}
 	sortRows(rows)
 
-	// Build per-node summaries from the latest samples + stored capacity.
 	caps, _ := s.metrics.ListCapacity(r.Context())
-	capByNode := map[string]metrics.NodeCapacity{}
-	for _, c := range caps {
-		capByNode[c.Node] = c
-	}
-	staleBefore := now.Add(-freshness)
-	type agg struct {
-		cpu  float64
-		mem  int64
-		n    int
-		last time.Time
-	}
-	byNode := map[string]*agg{}
-	for _, sm := range latest {
-		a := byNode[sm.Node]
-		if a == nil {
-			a = &agg{}
-			byNode[sm.Node] = a
-		}
-		a.cpu += sm.CPUPct
-		a.mem += sm.MemBytes
-		a.n++
-		if sm.TS.After(a.last) {
-			a.last = sm.TS
-		}
-	}
-	// Include nodes that have capacity but no fresh samples (stale).
-	for node := range capByNode {
-		if _, ok := byNode[node]; !ok {
-			byNode[node] = &agg{}
-		}
-	}
-	nodes := make([]monNode, 0, len(byNode))
-	for node, a := range byNode {
-		c := capByNode[node]
-		mn := monNode{Node: node, MemUsed: a.mem, NCPU: c.NCPU, MemTotal: c.MemTotal, Containers: a.n}
-		if c.NCPU > 0 {
-			mn.CPUPct = a.cpu / float64(c.NCPU)
-		}
-		mn.Stale = a.n == 0 || a.last.Before(staleBefore)
-		nodes = append(nodes, mn)
-	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Node < nodes[j].Node })
+	nodes := summarizeNodes(latest, caps, now.Add(-freshness))
 
 	body, err := json.Marshal(monData{Nodes: nodes, X: x, Series: series, Rows: rows})
 	if err != nil {
@@ -317,4 +277,73 @@ func (s *Server) metricLabels(r *http.Request, orgID int64) (apps, dbs map[strin
 		}
 	}
 	return apps, dbs
+}
+
+// summarizeNodes builds each node's current summary from the latest samples
+// and the stored capacity. A node with capacity but no fresh sample is stale.
+func summarizeNodes(latest []metrics.Sample, caps []metrics.NodeCapacity, staleBefore time.Time) []monNode {
+	capByNode := map[string]metrics.NodeCapacity{}
+	for _, c := range caps {
+		capByNode[c.Node] = c
+	}
+	type agg struct {
+		cpu  float64
+		mem  int64
+		n    int
+		last time.Time
+	}
+	byNode := map[string]*agg{}
+	for _, sm := range latest {
+		a := byNode[sm.Node]
+		if a == nil {
+			a = &agg{}
+			byNode[sm.Node] = a
+		}
+		a.cpu += sm.CPUPct
+		a.mem += sm.MemBytes
+		a.n++
+		if sm.TS.After(a.last) {
+			a.last = sm.TS
+		}
+	}
+	for node := range capByNode {
+		if _, ok := byNode[node]; !ok {
+			byNode[node] = &agg{}
+		}
+	}
+	nodes := make([]monNode, 0, len(byNode))
+	for node, a := range byNode {
+		c := capByNode[node]
+		mn := monNode{Node: node, MemUsed: a.mem, NCPU: c.NCPU, MemTotal: c.MemTotal, Containers: a.n}
+		if c.NCPU > 0 {
+			mn.CPUPct = a.cpu / float64(c.NCPU)
+		}
+		mn.Stale = a.n == 0 || a.last.Before(staleBefore)
+		nodes = append(nodes, mn)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Node < nodes[j].Node })
+	return nodes
+}
+
+// nodeSummaries is the current per-node summary (instance operators' pages
+// only: it spans every tenant's containers). Empty without a metrics store.
+func (s *Server) nodeSummaries(ctx context.Context) []monNode {
+	if s.metrics == nil {
+		return nil
+	}
+	freshness := 3 * s.cfg.MetricsInterval
+	if freshness < 2*time.Minute {
+		freshness = 2 * time.Minute
+	}
+	now := time.Now()
+	latest, err := s.metrics.Latest(ctx, now.Add(-freshness))
+	if err != nil {
+		slog.Warn("nodeSummaries: latest samples", "err", err)
+		return nil
+	}
+	caps, err := s.metrics.ListCapacity(ctx)
+	if err != nil {
+		slog.Warn("nodeSummaries: capacity", "err", err)
+	}
+	return summarizeNodes(latest, caps, now.Add(-freshness))
 }

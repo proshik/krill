@@ -181,3 +181,14 @@ func settingsGroups(ctx context.Context, orgID int64, role string) []SettingsGro
 	}
 	return groups
 }
+
+func envBaseURL(s Shell) string { return envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) }
+
+func envDBURL(s Shell) string { return envBaseURL(s) + "/databases" }
+
+func dashBody(sheet bool) string {
+	if sheet {
+		return "page has-sheet"
+	}
+	return "page"
+}

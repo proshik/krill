@@ -75,6 +75,9 @@ type SystemView struct {
 type AppView struct {
 	EnvApp
 	Uses []string // resource keys, sorted
+	// Detected are the keys in Uses that are only inferred from a raw env
+	// value, never modeled as a link.
+	Detected []string
 }
 
 // ResourceView is a resource chip of a system.
@@ -162,12 +165,16 @@ func BuildEnvView(in EnvViewInput) EnvView {
 			sid = 0
 		}
 		av := AppView{EnvApp: a}
-		for k := range links {
+		for k, l := range links {
 			if k.app == a.ID {
 				av.Uses = append(av.Uses, k.res)
+				if l.Detected {
+					av.Detected = append(av.Detected, k.res)
+				}
 			}
 		}
 		sort.Strings(av.Uses)
+		sort.Strings(av.Detected)
 		v.Apps = append(v.Apps, av)
 		switch a.Status {
 		case "running":

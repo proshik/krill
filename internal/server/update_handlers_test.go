@@ -402,7 +402,7 @@ func TestUpdatesPage(t *testing.T) {
 				t.Errorf("page does not contain %q", want)
 			}
 		}
-		if strings.Contains(body, "hx-trigger") {
+		if strings.Contains(body, `hx-trigger="every 2s"`) {
 			t.Errorf("a failed job still polls the status")
 		}
 		if form := formHTML(body, install); form == "" || strings.Contains(form, "disabled") {
@@ -699,20 +699,20 @@ func TestUpdateBadge(t *testing.T) {
 
 	c, i := newUpdateFakes()
 	h := f.handler(c, i)
-	if body := getPage(t, h, adminBase+"/registries", adminCookie, nil).Body.String(); !strings.Contains(body, "k-nav-badge") {
+	if body := getPage(t, h, adminBase+"/registries", adminCookie, nil).Body.String(); !strings.Contains(body, "tab-badge") {
 		t.Errorf("instance admin with an update available: no badge in the sidebar")
 	}
-	if body := getPage(t, h, ownerBase+"/registries", ownerCookie, nil).Body.String(); strings.Contains(body, "k-nav-badge") {
+	if body := getPage(t, h, ownerBase+"/registries", ownerCookie, nil).Body.String(); strings.Contains(body, "tab-badge") {
 		t.Errorf("plain owner: the sidebar shows the update badge")
 	}
 
 	c.newer = false
-	if body := getPage(t, h, adminBase+"/registries", adminCookie, nil).Body.String(); strings.Contains(body, "k-nav-badge") {
+	if body := getPage(t, h, adminBase+"/registries", adminCookie, nil).Body.String(); strings.Contains(body, "tab-badge") {
 		t.Errorf("instance admin without an update: the sidebar shows the badge")
 	}
 
 	c.newer = true
-	if body := getPage(t, f.handler(nil, nil), adminBase+"/registries", adminCookie, nil).Body.String(); strings.Contains(body, "k-nav-badge") {
+	if body := getPage(t, f.handler(nil, nil), adminBase+"/registries", adminCookie, nil).Body.String(); strings.Contains(body, "tab-badge") {
 		t.Errorf("unwired server: the sidebar shows the badge")
 	}
 }
