@@ -18,6 +18,33 @@ const (
 	quoteClose = "</blockquote>"
 )
 
+// idleLineMax wraps a list of app names well below the part limit.
+const idleLineMax = 1000
+
+// groupKey is a digest group: one environment of one project. The ids keep
+// two projects that share a display name apart; the names head the group.
+type groupKey struct {
+	project, env     string
+	projectID, envID int64
+}
+
+// sortGroups orders groups by their headings.
+func sortGroups(keys []groupKey) {
+	sort.SliceStable(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.project != b.project {
+			return a.project < b.project
+		}
+		if a.env != b.env {
+			return a.env < b.env
+		}
+		if a.projectID != b.projectID {
+			return a.projectID < b.projectID
+		}
+		return a.envID < b.envID
+	})
+}
+
 // digestLines accumulates the digest's lines (Telegram HTML, every tag but
 // the node quote opened and closed on one line).
 type digestLines struct {
@@ -131,25 +158,25 @@ type appDeploys struct {
 // its recorded version, or the shortened image of an older deployment.
 func deployVersion(dep DeploymentInfo) string {
 	if dep.Version != "" {
-		return dep.Version
+		return clipVersion(dep.Version)
 	}
-	return shortImage(dep.ImageTag)
+	return clip(shortImage(dep.ImageTag))
 }
 
 // renderDeploys lists the window's deploys collapsed per app: one line for
 // an app's successful deploys (how many, the version of the newest one and
-// when it went out) and a line of its own for every failed one. Only the
-// success lines are capped; a failure is never left out. A deploy Krill made
-// itself is not counted, but when it is the newest success its version is
-// the one shown (it may have shipped a branch or tag that moved).
+// when it went out) and a line of its own for every failed one. Success and
+// failure lines are capped separately, so successes never crowd a failure
+// out; the rest is counted. A deploy Krill made itself is not counted, but
+// when it is the newest success its version is the one shown (it may have
+// shipped a branch or tag that moved).
 func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 	esc := html.EscapeString
-	type gkey struct{ project, env string }
-	groups := map[gkey]map[int64]*appDeploys{}
+	groups := map[groupKey]map[int64]*appDeploys{}
 	okN, errN := 0, 0
 	for _, dep := range d.Deploys {
 		system := dep.Trigger == triggerSystem
-		k := gkey{dep.Project, dep.Env}
+		k := groupKey{dep.Project, dep.Env, dep.ProjectID, dep.EnvID}
 		if groups[k] == nil {
 			groups[k] = map[int64]*appDeploys{}
 		}
@@ -176,17 +203,12 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 	}
 	b.add("")
 	b.add("🚀 <b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.deploys")), esc(summary(ctx, okN, errN)))
-	keys := make([]gkey, 0, len(groups))
+	keys := make([]groupKey, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].project != keys[j].project {
-			return keys[i].project < keys[j].project
-		}
-		return keys[i].env < keys[j].env
-	})
-	shownOK, hiddenOK := 0, 0
+	sortGroups(keys)
+	shownOK, hiddenOK, shownErr, hiddenErr := 0, 0, 0, 0
 	for _, k := range keys {
 		apps := make([]*appDeploys, 0, len(groups[k]))
 		for _, a := range groups[k] {
@@ -195,6 +217,7 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 		sort.Slice(apps, func(i, j int) bool { return apps[i].name < apps[j].name })
 		var lines []string
 		for _, a := range apps {
+			name := linkName(a.url, clip(a.name))
 			if a.ok > 0 {
 				if shownOK == digestListMax {
 					hiddenOK++
@@ -207,11 +230,15 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 					} else {
 						text = i18n.Tf(ctx, "tg.dg.dep_last", count, at)
 					}
-					lines = append(lines, lvlOK.mark()+" "+linkName(a.url, a.name)+" — "+esc(text))
+					lines = append(lines, lvlOK.mark()+" "+name+" — "+esc(text))
 					shownOK++
 				}
 			}
 			for _, f := range a.failed {
+				if shownErr == digestListMax {
+					hiddenErr++
+					continue
+				}
 				parts := []string{}
 				if v := deployVersion(f); v != "" {
 					parts = append(parts, v)
@@ -220,7 +247,8 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 				if e := strings.TrimSpace(f.Error); e != "" {
 					parts = append(parts, oneLine(e, 120))
 				}
-				lines = append(lines, lvlCrit.mark()+" "+linkName(a.url, a.name)+" — "+esc(strings.Join(parts, " · ")))
+				lines = append(lines, lvlCrit.mark()+" "+name+" — "+esc(strings.Join(parts, " · ")))
+				shownErr++
 			}
 		}
 		if len(lines) == 0 {
@@ -232,23 +260,31 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 	if hiddenOK > 0 {
 		b.add("%s", esc(i18n.Tf(ctx, "tg.dg.more", hiddenOK)))
 	}
+	if hiddenErr > 0 {
+		b.add("%s %s", lvlCrit.mark(), esc(i18n.Tf(ctx, "tg.dg.more_failed", hiddenErr)))
+	}
 }
 
 // renderBackups lists the window's backup runs grouped by project and
-// environment, in the order they finished.
+// environment, in the order they finished. Successful and failed runs are
+// capped separately (the first ones of the window), so successes never
+// crowd a failure out.
 func renderBackups(ctx context.Context, b *digestLines, d digestData) {
 	esc := html.EscapeString
 	okN, errN := 0, 0
-	type gkey struct{ project, env string }
-	var keys []gkey
-	groups := map[gkey][]BackupRun{}
+	var keys []groupKey
+	groups := map[groupKey][]BackupRun{}
 	for _, r := range d.Runs {
-		if r.Status == "error" {
+		failed := r.Status == "error"
+		if failed {
 			errN++
 		} else {
 			okN++
 		}
-		k := gkey{r.Project, r.Env}
+		if (failed && errN > digestListMax) || (!failed && okN > digestListMax) {
+			continue
+		}
+		k := groupKey{project: r.Project, env: r.Env}
 		if _, ok := groups[k]; !ok {
 			keys = append(keys, k)
 		}
@@ -256,23 +292,11 @@ func renderBackups(ctx context.Context, b *digestLines, d digestData) {
 	}
 	b.add("")
 	b.add("💾 <b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.backups")), esc(summary(ctx, okN, errN)))
-	sort.SliceStable(keys, func(i, j int) bool {
-		if keys[i].project != keys[j].project {
-			return keys[i].project < keys[j].project
-		}
-		return keys[i].env < keys[j].env
-	})
-	shown := 0
+	sortGroups(keys)
 	for _, k := range keys {
-		if shown == digestListMax {
-			break
-		}
 		b.group(k.project, k.env)
 		for _, r := range groups[k] {
-			if shown == digestListMax {
-				break
-			}
-			parts := []string{kindLabel(ctx, r.Kind) + " " + r.Target}
+			parts := []string{kindLabel(ctx, r.Kind) + " " + clip(r.Target)}
 			if r.Status != "error" && r.SizeBytes > 0 {
 				parts = append(parts, humanBytes(r.SizeBytes))
 			}
@@ -285,11 +309,13 @@ func renderBackups(ctx context.Context, b *digestLines, d digestData) {
 				mark = lvlCrit.mark()
 			}
 			b.add("%s %s", mark, esc(strings.Join(parts, " · ")))
-			shown++
 		}
 	}
-	if shown < len(d.Runs) {
-		b.add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(d.Runs)-shown)))
+	if okN > digestListMax {
+		b.add("%s", esc(i18n.Tf(ctx, "tg.dg.more", okN-digestListMax)))
+	}
+	if errN > digestListMax {
+		b.add("%s %s", lvlCrit.mark(), esc(i18n.Tf(ctx, "tg.dg.more_failed", errN-digestListMax)))
 	}
 }
 
@@ -386,12 +412,11 @@ func renderApps(ctx context.Context, b *digestLines, d digestData) {
 		b.add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
 		return
 	}
-	type gkey struct{ project, env string }
 	type group struct{ apps, down, noData, stopped []appRow }
-	groups := map[gkey]*group{}
-	var keys []gkey
+	groups := map[groupKey]*group{}
+	var keys []groupKey
 	at := func(a appRow) *group {
-		k := gkey{a.Project, a.Env}
+		k := groupKey{a.Project, a.Env, a.projectID, a.envID}
 		g := groups[k]
 		if g == nil {
 			g = &group{}
@@ -412,25 +437,36 @@ func renderApps(ctx context.Context, b *digestLines, d digestData) {
 	for _, a := range d.Stopped {
 		at(a).stopped = append(at(a).stopped, a)
 	}
-	sort.SliceStable(keys, func(i, j int) bool {
-		if keys[i].project != keys[j].project {
-			return keys[i].project < keys[j].project
-		}
-		return keys[i].env < keys[j].env
-	})
+	sortGroups(keys)
+	// names lists apps of one state, wrapped between whole links so no line
+	// is long enough to be cut.
 	names := func(mark, key string, list []appRow) {
 		if len(list) == 0 {
 			return
 		}
 		more := ""
 		if len(list) > digestListMax {
-			list, more = list[:digestListMax], " "+esc(i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax))
+			list, more = list[:digestListMax], esc(i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax))
 		}
-		linked := make([]string, len(list))
-		for i, a := range list {
-			linked[i] = linkName(a.URL, a.Name)
+		line := mark + " " + esc(i18n.T(ctx, key)) + ": "
+		first := true
+		for _, a := range list {
+			item := linkName(a.URL, clip(a.Name))
+			if !first && len([]rune(line))+len([]rune(item)) > idleLineMax {
+				b.lines = append(b.lines, line+",")
+				line = ""
+				first = true
+			}
+			if !first {
+				line += ", "
+			}
+			line += item
+			first = false
 		}
-		b.add("%s %s: %s%s", mark, esc(i18n.T(ctx, key)), strings.Join(linked, ", "), more)
+		if more != "" {
+			line += " " + more
+		}
+		b.lines = append(b.lines, line)
 	}
 	for _, k := range keys {
 		g := groups[k]
@@ -445,7 +481,7 @@ func renderApps(ctx context.Context, b *digestLines, d digestData) {
 			if d.RestartsKnown && a.Restarts > 0 {
 				text += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
 			}
-			b.add("%s %s — %s", a.level().mark(), linkName(a.URL, a.Name), esc(text))
+			b.add("%s %s — %s", a.level().mark(), linkName(a.URL, clip(a.Name)), esc(text))
 		}
 		names(lvlCrit.mark(), "tg.dg.down", g.down)
 		names("⚪", "tg.dg.no_samples", g.noData)

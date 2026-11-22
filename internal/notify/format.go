@@ -71,7 +71,7 @@ func format(ev Event, lang string) string {
 	case ev.Deploy != nil:
 		parts := []string{}
 		if ev.Deploy.Version != "" {
-			parts = append(parts, i18n.T(ctx, "tg.version")+" "+clip(ev.Deploy.Version))
+			parts = append(parts, i18n.T(ctx, "tg.version")+" "+clipVersion(ev.Deploy.Version))
 		} else if ev.Deploy.Image != "" {
 			parts = append(parts, i18n.T(ctx, "tg.image")+" "+clip(ev.Deploy.Image))
 		}
@@ -125,6 +125,26 @@ func clip(s string) string {
 	return s
 }
 
+// clipVersion is clip for a version, keeping what tells two deploys apart:
+// the commit of "branch@commit" or the digest of "tag (digest)".
+func clipVersion(v string) string {
+	r := []rune(v)
+	if len(r) <= fieldMax {
+		return v
+	}
+	tail := ""
+	if i := strings.LastIndex(v, "@"); i >= 0 {
+		tail = v[i:]
+	} else if i := strings.LastIndex(v, " ("); i >= 0 {
+		tail = v[i:]
+	}
+	t := []rune(tail)
+	if len(t) > fieldMax/2 {
+		return clip(v)
+	}
+	return string(r[:fieldMax-1-len(t)]) + "…" + tail
+}
+
 // placeLine names a subject's project and environment ("project p ·
 // environment e"); "" when it has neither (a database server, a node).
 func placeLine(ctx context.Context, project, env string) string {
@@ -163,7 +183,9 @@ func linkName(href, name string) string {
 func linkBase(base string) string {
 	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	u, err := url.Parse(base)
-	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	// A query or fragment, even an empty one ("…/?"), would swallow the
+	// app's path appended after it.
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" || u.User != nil || strings.ContainsAny(base, "?#") {
 		return ""
 	}
 	return base

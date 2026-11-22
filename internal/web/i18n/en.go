@@ -1299,6 +1299,7 @@ var en = map[string]string{
 	"tg.dg.state_on_demand":            "on demand only, last backup %s",
 	"tg.dg.state_never":                "never",
 	"tg.dg.more":                       "…and %d more",
+	"tg.dg.more_failed":                "…and %d more failed",
 	"tg.dg.deploys":                    "Deploys",
 	"tg.dg.backups":                    "Backups",
 	"tg.dg.nodes":                      "Nodes",

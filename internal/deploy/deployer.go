@@ -1168,17 +1168,15 @@ func pinnedTag(tag string) bool {
 	if versionTagRe.MatchString(tag) {
 		return true
 	}
-	for _, f := range strings.FieldsFunc(strings.ToLower(tag), func(r rune) bool {
-		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f')
-	}) {
-		if len(f) >= 7 && strings.ContainsAny(f, "0123456789") && strings.ContainsAny(f, "abcdef") {
-			return true // a commit hash
-		}
-	}
-	return false
+	h := commitTagRe.FindStringSubmatch(tag)
+	return h != nil && strings.ContainsAny(h[1], "0123456789") && strings.ContainsAny(h[1], "abcdef")
 }
 
-var versionTagRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
+// The whole tag has to be the version or the hash: "latest-for-1.2.3" moves.
+var (
+	versionTagRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
+	commitTagRe  = regexp.MustCompile(`^(?:[a-z]+-)?([0-9a-f]{7,64})$`)
+)
 
 // imageVersion names an image deploy by its tag. A tag that may move
 // (latest, main, stable-2, v1, 16) also gets the short digest of the image it

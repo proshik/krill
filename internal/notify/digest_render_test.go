@@ -267,3 +267,75 @@ func TestCutLineClosesTags(t *testing.T) {
 		t.Errorf("cut inside an entity: %q", got)
 	}
 }
+
+// Failure lines have their own cap: a flood of failed deploys or backups is
+// counted, not sent as dozens of messages, and successes never take their
+// place.
+func TestDigestCapsFailuresSeparately(t *testing.T) {
+	now := time.Now()
+	st := &fakeStore{}
+	for i := 0; i < 25; i++ {
+		st.orgDeploys = append(st.orgDeploys, DeploymentInfo{AppID: 1, Project: "p", Env: "e", App: "web", Status: "error", Error: "boom", FinishedAt: now})
+	}
+	for i := 0; i < 25; i++ {
+		st.runs = append(st.runs, BackupRun{OrgID: 7, Kind: BackupKindDatabase, Project: "alpha", Env: "e", Target: fmt.Sprintf("db%02d", i), Status: "ok", FinishedAt: now.Add(time.Duration(i) * time.Minute)})
+	}
+	st.runs = append([]BackupRun{{OrgID: 7, Kind: BackupKindBucket, Project: "zeta", Env: "e", Target: "assets", Status: "error", Error: "denied", FinishedAt: now.Add(-time.Hour)}}, st.runs...)
+	d := NewDigest(New(st), st, fakeMetrics{}, nil)
+	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
+	got := strings.Join(parts, "\n")
+	if c := strings.Count(got, "🔴 web — "); c != digestListMax || !strings.Contains(got, "🔴 …and 5 more failed") {
+		t.Errorf("failed deploys: %d lines\n%s", c, got)
+	}
+	if !strings.Contains(got, "<b>zeta · e</b>\n🔴 bucket assets · ") || strings.Count(got, "🟢 database db") != digestListMax || !strings.Contains(got, "\n…and 5 more") {
+		t.Errorf("backups:\n%s", got)
+	}
+}
+
+// Two projects may share a display name; each environment of theirs is its
+// own group.
+func TestDigestGroupsByIDs(t *testing.T) {
+	now := time.Now()
+	st := &fakeStore{orgApps: []WatchedApp{
+		{AppID: 1, ProjectID: 1, EnvID: 1, Project: "shop", Env: "prod", Name: "a"},
+		{AppID: 2, ProjectID: 2, EnvID: 2, Project: "shop", Env: "prod", Name: "b"},
+	}}
+	d := NewDigest(New(st), st, fakeMetrics{}, nil)
+	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
+	got := strings.Join(parts, "\n")
+	if strings.Count(got, "<b>shop · prod</b>") != 2 {
+		t.Fatalf("two projects named alike were merged:\n%s", got)
+	}
+}
+
+// A long list of idle apps wraps between whole links: none is cut off.
+func TestDigestWrapsIdleAppNames(t *testing.T) {
+	now := time.Now()
+	st := &fakeStore{}
+	for i := 0; i < 20; i++ {
+		st.orgApps = append(st.orgApps, WatchedApp{AppID: int64(i + 1), OrgID: 7, ProjectID: 2, EnvID: 3, Project: "p", Env: "e",
+			Name: fmt.Sprintf("%02d-%s", i, strings.Repeat("n", 60))})
+	}
+	svc := New(st)
+	svc.SetPublicURL(func(context.Context) string {
+		return "https://krill-control-plane.production.infrastructure.example.com"
+	})
+	d := NewDigest(svc, st, fakeMetrics{}, nil)
+	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
+	all := strings.Join(parts, "\n")
+	for _, l := range strings.Split(all, "\n") {
+		if n := len([]rune(l)); n > idleLineMax+200 {
+			t.Errorf("a %d-character line", n)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		if !strings.Contains(all, fmt.Sprintf(">%02d-%s</a>", i, strings.Repeat("n", 60))) {
+			t.Errorf("app %d lost its link", i)
+		}
+	}
+	for i, p := range parts {
+		if !balanced(p) {
+			t.Errorf("part %d not balanced", i)
+		}
+	}
+}

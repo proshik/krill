@@ -1299,6 +1299,7 @@ var ru = map[string]string{
 	"tg.dg.state_on_demand":            "только по запросу, последний бэкап: %s",
 	"tg.dg.state_never":                "не было",
 	"tg.dg.more":                       "…и ещё %d",
+	"tg.dg.more_failed":                "…и ещё %d с ошибкой",
 	"tg.dg.deploys":                    "Деплои",
 	"tg.dg.backups":                    "Бэкапы",
 	"tg.dg.nodes":                      "Ноды",

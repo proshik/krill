@@ -88,6 +88,8 @@ func TestLinkBase(t *testing.T) {
 		"http://krill.example.com":    "",
 		"https://user:pw@example.com": "",
 		"https://example.com/?a=b":    "",
+		"https://krill.example.com/?": "",
+		"https://krill.example.com/#": "",
 		"":                            "",
 		"krill.example.com":           "",
 		"https://":                    "",
@@ -144,5 +146,18 @@ func TestFormatClipsLongFields(t *testing.T) {
 	failed := format(Event{Kind: DeployFailed, Project: long, Env: long, Target: long, Detail: strings.Repeat("e ", 3000)}, "en")
 	if n := len([]rune(failed)); n > 4096 {
 		t.Fatalf("failure alert is %d characters", n)
+	}
+}
+
+// A long branch keeps its commit when clipped: it is what tells two
+// deploys apart.
+func TestClipVersionKeepsTheCommit(t *testing.T) {
+	v := strings.Repeat("b", 250) + "@1a09ec0"
+	got := clipVersion(v)
+	if n := len([]rune(got)); n != fieldMax || !strings.HasSuffix(got, "…@1a09ec0") {
+		t.Fatalf("clipVersion = %q (%d)", got, n)
+	}
+	if got := clipVersion("latest (b1139b7c55e2)"); got != "latest (b1139b7c55e2)" {
+		t.Fatalf("a short version changed: %q", got)
 	}
 }

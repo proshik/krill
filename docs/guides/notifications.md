@@ -83,12 +83,13 @@ names link to their pages as in the messages above.
   is that deploy on record, not a check of the running service — an app stopped since then is
   listed under **Apps** as stopped. A deploy Krill made itself (moving apps to their
   organization's network) is not counted, but when it is the newest success its version is the one
-  shown. Every failed deploy gets a 🔴 line of its own with its version, time and reason, however
-  many there are; at most 20 success lines are listed, the rest counted. "none" when there were
-  none.
+  shown. Every failed deploy gets a 🔴 line of its own with its version, time and reason. Success
+  and failure lines are capped at 20 each, separately — so successes never push a failure out —
+  and the rest is counted. "none" when there were none.
 - **Backups**: every database, volume and bucket backup run, named by what was backed up (the
   logical database, `app / volume`, the bucket), 🟢 with its stored size or 🔴 with the error;
-  "none" when there were none. Runs journalled by v0.11.0 or earlier named a database by its server.
+  "none" when there were none. As with deploys, at most 20 successful and 20 failed runs are listed
+  (the first of the day), the rest counted. Runs journalled by v0.11.0 or earlier named a database by its server.
 - **Nodes** (infrastructure channels only): one line per node with its figures in short — the
   fullest disk, the memory the containers use and the sum of their limits against the node, and
   CPU (the day's average and peak). The line carries the worst of its figures; when that is yellow
@@ -113,7 +114,8 @@ names link to their pages as in the messages above.
   data follow, named on one line per what Swarm says: 🔴 **Not running** (it should
   run and does not), ⚪ **Stopped or never deployed** (zero replicas on purpose, or no service),
   ⚪ **No fresh data** (Swarm runs it, but its node's metrics are missing — or Swarm could not be
-  read, and then every such app is listed here).
+  read, and then every such app is listed here). An app with a sample from the last 10 minutes
+  keeps its memory line, so one stopped moments before the digest still shows it.
 
 | Figure | 🟡 from | 🔴 from |
 |--------|---------|---------|

@@ -16,6 +16,9 @@ func TestImageVersion(t *testing.T) {
 		{"v1", pinned, "v1 (b1139b7c55e2)"},             // a major tag moves
 		{"stable-2", pinned, "stable-2 (b1139b7c55e2)"}, // so does a channel
 		{"16", pinned, "16 (b1139b7c55e2)"},
+		{"latest-for-1.2.3", pinned, "latest-for-1.2.3 (b1139b7c55e2)"}, // a version inside a channel name
+		{"1a09ec0f", pinned, "1a09ec0f"},
+		{"deadbeef", pinned, "deadbeef (b1139b7c55e2)"}, // no digit: a word, not a hash
 		{"latest", pinned, "latest (b1139b7c55e2)"},
 		{"main", "docker.io/library/nginx@sha256:abc123", "main (abc123)"},
 		{"latest", "nginx:latest", "latest"}, // digest lookup failed: the plain tag
