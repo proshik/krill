@@ -190,3 +190,49 @@ func (q *Queries) ListLogicalDatabasesByInstance(ctx context.Context, instanceID
 	}
 	return items, nil
 }
+
+const searchLogicalDatabasesByOrg = `-- name: SearchLogicalDatabasesByOrg :many
+SELECT ld.id, ld.name, ld.environment_id
+FROM logical_databases ld
+JOIN environments e ON e.id = ld.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+  AND (ld.name ILIKE $2 OR ld.db_name ILIKE $2)
+ORDER BY ld.name, ld.id
+LIMIT $3
+`
+
+type SearchLogicalDatabasesByOrgParams struct {
+	OrganizationID int64  `json:"organization_id"`
+	Pattern        string `json:"pattern"`
+	MaxRows        int32  `json:"max_rows"`
+}
+
+type SearchLogicalDatabasesByOrgRow struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	EnvironmentID int64  `json:"environment_id"`
+}
+
+// The command palette's database search: an organization's logical
+// databases whose name or database name contains the pattern (an ILIKE
+// pattern, % and _ escaped by the caller with a backslash).
+func (q *Queries) SearchLogicalDatabasesByOrg(ctx context.Context, arg SearchLogicalDatabasesByOrgParams) ([]SearchLogicalDatabasesByOrgRow, error) {
+	rows, err := q.db.Query(ctx, searchLogicalDatabasesByOrg, arg.OrganizationID, arg.Pattern, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchLogicalDatabasesByOrgRow
+	for rows.Next() {
+		var i SearchLogicalDatabasesByOrgRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.EnvironmentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

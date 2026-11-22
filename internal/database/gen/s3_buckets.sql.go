@@ -391,3 +391,47 @@ func (q *Queries) RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyPa
 	}
 	return result.RowsAffected(), nil
 }
+
+const searchS3BucketsByOrg = `-- name: SearchS3BucketsByOrg :many
+SELECT b.id, b.name, b.environment_id
+FROM s3_buckets b
+JOIN environments e ON e.id = b.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+  AND b.name ILIKE $2
+ORDER BY b.name, b.id
+LIMIT $3
+`
+
+type SearchS3BucketsByOrgParams struct {
+	OrganizationID int64  `json:"organization_id"`
+	Pattern        string `json:"pattern"`
+	MaxRows        int32  `json:"max_rows"`
+}
+
+type SearchS3BucketsByOrgRow struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	EnvironmentID int64  `json:"environment_id"`
+}
+
+// The command palette's bucket search, as SearchLogicalDatabasesByOrg.
+func (q *Queries) SearchS3BucketsByOrg(ctx context.Context, arg SearchS3BucketsByOrgParams) ([]SearchS3BucketsByOrgRow, error) {
+	rows, err := q.db.Query(ctx, searchS3BucketsByOrg, arg.OrganizationID, arg.Pattern, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchS3BucketsByOrgRow
+	for rows.Next() {
+		var i SearchS3BucketsByOrgRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.EnvironmentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

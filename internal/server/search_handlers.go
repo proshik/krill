@@ -8,12 +8,16 @@ import (
 	"strings"
 
 	"github.com/proshik/krill/internal/auth"
+	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
 // paletteMax caps each group of the palette's results.
 const paletteMax = 8
+
+// likeEscaper makes a search term literal inside an ILIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // orgSearch answers the command palette: the organization's projects,
 // environments, apps, databases, buckets, servers and the pages the viewer
@@ -46,6 +50,9 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deriveCardStatuses(ctx, ix.apps, nil)
+	for _, a := range ix.apps { // the lookup below must see the live statuses
+		ix.appByID[a.ID] = a
+	}
 	base := "/orgs/" + strconv.FormatInt(o.ID, 10)
 	admin := isAdminRole(role)
 	var groups []templates.PaletteGroup
@@ -108,35 +115,42 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 		add(g)
 	}
 
-	// Databases and buckets.
+	// Databases, buckets and servers: one organization-wide query each,
+	// matched and capped in SQL.
 	if q != "" {
 		g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.databases")}
-		envIDs := make([]int64, 0, len(ix.envs))
-		for id := range ix.envs {
-			envIDs = append(envIDs, id)
+		pattern := "%" + likeEscaper.Replace(q) + "%"
+		ldbs, err := s.q.SearchLogicalDatabasesByOrg(ctx, db.SearchLogicalDatabasesByOrgParams{OrganizationID: o.ID, Pattern: pattern, MaxRows: paletteMax})
+		if err != nil {
+			logFrom(r).Error("orgSearch: databases", "err", err, "org_id", o.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
-		sort.Slice(envIDs, func(i, j int) bool { return envIDs[i] < envIDs[j] })
-		for _, id := range envIDs {
-			if ldbs, err := s.q.ListLogicalDatabasesByEnvironment(ctx, id); err == nil {
-				for _, l := range ldbs {
-					if match(l.Name, l.DbName) {
-						g.Items = append(g.Items, templates.PaletteItem{Label: l.Name, Sub: ix.envLabel(id), Href: ix.envURL(id) + "/databases/" + strconv.FormatInt(l.ID, 10), Glyph: "i-pg"})
-					}
-				}
-			}
-			if bs, err := s.q.ListS3BucketsByEnvironment(ctx, id); err == nil {
-				for _, b := range bs {
-					if match(b.Name) {
-						g.Items = append(g.Items, templates.PaletteItem{Label: b.Name, Sub: ix.envLabel(id), Href: ix.envURL(id) + "/buckets/" + strconv.FormatInt(b.ID, 10), Glyph: "i-bucket"})
-					}
-				}
+		for _, l := range ldbs {
+			if _, ok := ix.envs[l.EnvironmentID]; ok {
+				g.Items = append(g.Items, templates.PaletteItem{Label: l.Name, Sub: ix.envLabel(l.EnvironmentID), Href: ix.envURL(l.EnvironmentID) + "/databases/" + strconv.FormatInt(l.ID, 10), Glyph: "i-pg"})
 			}
 		}
-		if insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID); err == nil {
-			for _, in := range insts {
-				if match(in.Name, in.Engine) {
-					g.Items = append(g.Items, templates.PaletteItem{Label: in.Name, Sub: i18n.Tf(ctx, "canvas.server", engineLabel(in.Engine)), Href: base + "/db-servers/" + strconv.FormatInt(in.ID, 10), Glyph: engineGlyph(in.Engine)})
-				}
+		bs, err := s.q.SearchS3BucketsByOrg(ctx, db.SearchS3BucketsByOrgParams{OrganizationID: o.ID, Pattern: pattern, MaxRows: paletteMax})
+		if err != nil {
+			logFrom(r).Error("orgSearch: buckets", "err", err, "org_id", o.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, b := range bs {
+			if _, ok := ix.envs[b.EnvironmentID]; ok {
+				g.Items = append(g.Items, templates.PaletteItem{Label: b.Name, Sub: ix.envLabel(b.EnvironmentID), Href: ix.envURL(b.EnvironmentID) + "/buckets/" + strconv.FormatInt(b.ID, 10), Glyph: "i-bucket"})
+			}
+		}
+		insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
+		if err != nil {
+			logFrom(r).Error("orgSearch: database servers", "err", err, "org_id", o.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, in := range insts {
+			if match(in.Name, in.Engine) {
+				g.Items = append(g.Items, templates.PaletteItem{Label: in.Name, Sub: i18n.Tf(ctx, "canvas.server", engineLabel(in.Engine)), Href: base + "/db-servers/" + strconv.FormatInt(in.ID, 10), Glyph: engineGlyph(in.Engine)})
 			}
 		}
 		add(g)

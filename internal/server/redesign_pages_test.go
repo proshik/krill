@@ -141,3 +141,69 @@ func TestOrgSearchTenancy(t *testing.T) {
 		t.Fatalf("cross-tenant search answered %d", rec.Code)
 	}
 }
+
+// The palette finds databases and buckets with one organization-wide query
+// each: another organization's never appear, and a % in the term is literal.
+func TestOrgSearchResources(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	seed := func(email, orgName, ldb, bucket string) (int64, *http.Cookie) {
+		u := mkUser(t, q, email)
+		o, _ := orgSvc.CreateOrg(ctx, u, orgName)
+		p, _ := orgSvc.CreateProject(ctx, o.ID, "shop", "")
+		e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+		pg, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: o.ID, Engine: "postgres", Name: "main", AppName: "krill-postgres-" + orgName, Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{InstanceID: pg.ID, EnvironmentID: e.ID, Name: ldb, DbName: ldb, Username: ldb, Password: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		s3, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: o.ID, Engine: "minio", Name: "files", AppName: "krill-minio-" + orgName, Image: "pgsty/silo", Superuser: "root", SuperuserPassword: "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: s3.ID, EnvironmentID: e.ID, Name: bucket, AccessKey: "k", SecretKey: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		return o.ID, loginAs(t, q, email)
+	}
+	orgA, cookieA := seed("res-a@k.local", "resa", "orders_main", "orders-files")
+	seed("res-b@k.local", "resb", "orders_secret", "orders-private")
+
+	body := getWithCookie(t, h, "/orgs/"+i64(orgA)+"/search?q=orders", cookieA).Body.String()
+	if !strings.Contains(body, "orders_main") || !strings.Contains(body, "orders-files") {
+		t.Fatalf("own database or bucket missing:\n%s", body)
+	}
+	if strings.Contains(body, "orders_secret") || strings.Contains(body, "orders-private") {
+		t.Fatal("SECURITY: another organization's database or bucket in the results")
+	}
+	if body := getWithCookie(t, h, "/orgs/"+i64(orgA)+"/search?q=%25", cookieA).Body.String(); strings.Contains(body, "orders_main") {
+		t.Fatal("a % in the search term matched everything")
+	}
+}
+
+// The palette shows an app's live status, not the stored one.
+func TestOrgSearchLiveStatus(t *testing.T) {
+	h, q, orgSvc, _ := newDeployServer(t)
+	ctx := context.Background()
+	u := mkUser(t, q, "live-palette@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, u, "LivePalette")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "shop", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{EnvironmentID: e.ID, Name: "recovered-api", Image: "nginx", Tag: "1", Domain: "live-palette.example.com", Port: 80, SourceType: "image", DockerfilePath: "Dockerfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: a.ID, Status: "error"}); err != nil {
+		t.Fatal(err)
+	}
+	// newDeployServer's engine reports every service running.
+	body := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/search?q=recovered&env="+i64(e.ID), loginAs(t, q, "live-palette@k.local")).Body.String()
+	if !strings.Contains(body, "recovered-api") {
+		t.Fatalf("app missing:\n%s", body)
+	}
+	if strings.Contains(body, "state--err") {
+		t.Fatal("the palette shows the stored error of an app Swarm reports running")
+	}
+}

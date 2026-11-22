@@ -13,6 +13,19 @@ FROM logical_databases ld
 JOIN db_instances di ON di.id = ld.instance_id
 WHERE ld.environment_id = $1 ORDER BY ld.created_at;
 
+-- name: SearchLogicalDatabasesByOrg :many
+-- The command palette's database search: an organization's logical
+-- databases whose name or database name contains the pattern (an ILIKE
+-- pattern, % and _ escaped by the caller with a backslash).
+SELECT ld.id, ld.name, ld.environment_id
+FROM logical_databases ld
+JOIN environments e ON e.id = ld.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = @organization_id
+  AND (ld.name ILIKE @pattern OR ld.db_name ILIKE @pattern)
+ORDER BY ld.name, ld.id
+LIMIT @max_rows;
+
 -- name: ListLogicalDatabasesByInstance :many
 SELECT ld.*, e.name AS env_name, p.name AS project_name, p.id AS project_id
 FROM logical_databases ld

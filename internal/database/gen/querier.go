@@ -336,6 +336,12 @@ type Querier interface {
 	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error)
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
+	// The command palette's database search: an organization's logical
+	// databases whose name or database name contains the pattern (an ILIKE
+	// pattern, % and _ escaped by the caller with a backslash).
+	SearchLogicalDatabasesByOrg(ctx context.Context, arg SearchLogicalDatabasesByOrgParams) ([]SearchLogicalDatabasesByOrgRow, error)
+	// The command palette's bucket search, as SearchLogicalDatabasesByOrg.
+	SearchS3BucketsByOrg(ctx context.Context, arg SearchS3BucketsByOrgParams) ([]SearchS3BucketsByOrgRow, error)
 	SetAlertState(ctx context.Context, arg SetAlertStateParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error
