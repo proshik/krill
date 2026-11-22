@@ -25,16 +25,7 @@ templ EnvSettings(s Shell, v EnvSettingsView) {
 			if v.Pending {
 				<div class="callout"><p>{ i18n.T(ctx, "clone.pending") }</p></div>
 			}
-			<form class="sec" method="post" action={ templ.SafeURL(projectURL(s.Org.ID, s.Env.Project.ID) + "/rename") } aria-labelledby="pn-h">
-				<h2 id="pn-h">{ i18n.T(ctx, "envset.project_name") }</h2>
-				<div class="add-row">
-					<div class="field">
-						<label for="pn-name">{ i18n.T(ctx, "envset.project") }</label>
-						<input class="input" id="pn-name" name="name" value={ s.Env.Project.Name } required autocomplete="off"/>
-					</div>
-					<button type="submit" class="pill">{ i18n.T(ctx, "project.rename_btn") }</button>
-				</div>
-			</form>
+			@renameProjectForm(s.Org.ID, s.Env.Project)
 			<section class="sec" aria-labelledby="sys-h">
 				<div class="sec-head"><h2 id="sys-h">{ i18n.T(ctx, "envset.systems") }</h2></div>
 				<p class="hint">{ i18n.T(ctx, "envset.systems_hint") }</p>

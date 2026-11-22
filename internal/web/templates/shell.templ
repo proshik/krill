@@ -37,6 +37,10 @@ templ Page(s Shell) {
 			@docHead(s.Title)
 		</head>
 		<body class={ bodyClass(s) } hx-boost="true">
+			// A boosted navigation swaps the body's content, not its attributes,
+			// and htmx's history cache keeps only the content: this marker
+			// carries the page's body classes through both (see app.js).
+			<div id="k-frame" hidden data-body={ bodyClass(s) }></div>
 			@ui.Sprite()
 			@bar(s)
 			{ children... }

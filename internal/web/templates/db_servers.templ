@@ -288,13 +288,17 @@ templ serverMain(c DBServerCtx) {
 			<form method="post" action={ templ.SafeURL(c.Base + "/deploy") }>
 				<button type="submit" class="pill" title={ i18n.T(ctx, "dbi.deploy_hint") }>{ i18n.T(ctx, "db.deploy") }</button>
 			</form>
-			if c.Status == "running" {
-				<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/stop") } data-confirm={ i18n.Tf(ctx, "dbi.stop_q", c.Inst.Name) } data-more={ i18n.T(ctx, "dbi.stop_more") } data-ok={ i18n.T(ctx, "db.stop") } onsubmit="return krillConfirm(this)">
-					<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "db.stop") }</button>
-				</form>
-			} else {
+			// Start unless it runs, Stop unless it is stopped: a server whose node
+			// is down still has a desired replica, and Stop keeps it from
+			// starting when the node returns.
+			if c.Status != "running" {
 				<form method="post" action={ templ.SafeURL(c.Base + "/start") }>
 					<button type="submit" class="pill">{ i18n.T(ctx, "db.start") }</button>
+				</form>
+			}
+			if c.Status != "stopped" {
+				<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/stop") } data-confirm={ i18n.Tf(ctx, "dbi.stop_q", c.Inst.Name) } data-more={ i18n.T(ctx, "dbi.stop_more") } data-ok={ i18n.T(ctx, "db.stop") } onsubmit="return krillConfirm(this)">
+					<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "db.stop") }</button>
 				</form>
 			}
 		</div>

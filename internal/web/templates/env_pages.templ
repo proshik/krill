@@ -115,10 +115,26 @@ templ ProjectNoEnv(s Shell, project db.Project) {
 				}
 			</div>
 			if isAdmin(s.Role) {
+				@renameProjectForm(s.Org.ID, project)
 				@deleteProjectForm(s.Org.ID, project)
 			}
 		</main>
 	}
+}
+
+// renameProjectForm renames the project; on an environment's settings page,
+// and on a project that has no environment yet.
+templ renameProjectForm(orgID int64, project db.Project) {
+	<form class="sec" method="post" action={ templ.SafeURL(projectURL(orgID, project.ID) + "/rename") } aria-labelledby="pn-h">
+		<h2 id="pn-h">{ i18n.T(ctx, "envset.project_name") }</h2>
+		<div class="add-row">
+			<div class="field">
+				<label for="pn-name">{ i18n.T(ctx, "envset.project") }</label>
+				<input class="input" id="pn-name" name="name" value={ project.Name } required autocomplete="off"/>
+			</div>
+			<button type="submit" class="pill">{ i18n.T(ctx, "project.rename_btn") }</button>
+		</div>
+	</form>
 }
 
 templ deleteProjectForm(orgID int64, project db.Project) {

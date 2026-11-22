@@ -151,3 +151,59 @@ func TestIdleDockerfileAppOffersRebuild(t *testing.T) {
 		t.Fatal("an idle Dockerfile app must offer Start and Rebuild")
 	}
 }
+
+// nodeDownEngine: worker w2 is down and the server's task waits there.
+type nodeDownEngine struct{ nodesEngine }
+
+func (nodeDownEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	out := map[string]docker.ServiceState{}
+	for _, n := range names {
+		out[n] = docker.ServiceState{Found: true, Desired: 1}
+	}
+	return out, nil
+}
+
+// A database server pinned to a node that is down keeps its Stop control
+// (Swarm still wants a replica; Stop keeps it from starting when the node
+// returns), next to Start.
+func TestDBServerOnDownNodeCanBeStopped(t *testing.T) {
+	eng := nodeDownEngine{nodesEngine{live: []docker.SwarmNode{
+		{ID: "n1", Hostname: "cp", Role: "manager", State: "ready", Leader: true},
+		{ID: "n2", Hostname: "w2", Role: "worker", State: "down"},
+	}}}
+	h, q, orgSvc, _, _ := buildDeployServer(t, nil, eng)
+	ctx := context.Background()
+	owner := mkUser(t, q, "down-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, owner, "Down")
+	in, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: o.ID, Engine: "postgres", Name: "main", AppName: "krill-postgres-main-d1",
+		Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "x", NodeHostname: "w2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/orgs/" + i64(o.ID) + "/db-servers/" + i64(in.ID)
+	body := getWithCookie(t, h, base, loginAs(t, q, "down-owner@k.local")).Body.String()
+	if !strings.Contains(body, `action="`+base+`/stop"`) || !strings.Contains(body, `action="`+base+`/start"`) {
+		t.Fatal("a server on a down node must offer Stop as well as Start")
+	}
+}
+
+// A project with no environment can still be renamed, by an admin only.
+func TestProjectWithoutEnvironmentsCanBeRenamed(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	owner := mkUser(t, q, "noenv-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, owner, "NoEnv")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "bare", "")
+	member := mkUser(t, q, "noenv-member@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: member, Role: "member"}); err != nil {
+		t.Fatal(err)
+	}
+	path := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID)
+	rename := `action="` + path + `/rename"`
+	if body := getWithCookie(t, h, path, loginAs(t, q, "noenv-owner@k.local")).Body.String(); !strings.Contains(body, rename) {
+		t.Fatal("an admin cannot rename a project without environments")
+	}
+	if body := getWithCookie(t, h, path, loginAs(t, q, "noenv-member@k.local")).Body.String(); strings.Contains(body, rename) {
+		t.Fatal("a member is offered the rename")
+	}
+}

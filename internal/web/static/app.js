@@ -945,8 +945,23 @@ document.addEventListener("htmx:afterSwap", function (e) {
   }
 });
 
+// The page's layout classes (page, has-sheet, is-canvas) sit on <body>, which
+// a boosted navigation and a history restore keep from the previous page; the
+// #k-frame marker inside the swapped content says what this page needs.
+function krillSyncBodyClass() {
+  const m = document.getElementById("k-frame");
+  if (!m) return;
+  const want = (m.dataset.body || "").split(" ").filter(Boolean);
+  ["page", "has-sheet", "is-canvas"].forEach(function (c) {
+    document.body.classList.toggle(c, want.indexOf(c) >= 0);
+  });
+}
+document.addEventListener("htmx:afterSwap", krillSyncBodyClass);
+document.addEventListener("htmx:historyRestore", krillSyncBodyClass);
+
 // Per page: the theme button's name, server toasts' timers, conditional fields.
 function krillShellEnhance() {
+  krillSyncBodyClass();
   krillModeName();
   document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
     el.removeAttribute("data-toast-auto");
