@@ -382,7 +382,7 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 			row := templates.EnvResourceRow{Name: l.Name, Href: href, Detail: l.ProjectName + " " + l.EnvName, BackupHref: href + "#backups"}
 			row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
 			if bks, err := s.q.ListBackupsByLogicalDB(ctx, l.ID); err == nil && len(bks) > 0 {
-				row.BackupKind, row.BackupText = backupSummary(ctx, bks[0].Enabled, bks[0].LastStatus, bks[0].LastRunAt.Valid)
+				row.BackupKind, row.BackupText = backupSummary(ctx, dbBackupConfigs(bks))
 			}
 			c.Backups = append(c.Backups, row)
 		}

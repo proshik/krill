@@ -496,7 +496,7 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 		}
 		row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
 		if bks, err := s.q.ListBackupsByLogicalDB(ctx, l.ID); err == nil && len(bks) > 0 {
-			row.BackupKind, row.BackupText = backupSummary(ctx, bks[0].Enabled, bks[0].LastStatus, bks[0].LastRunAt.Valid)
+			row.BackupKind, row.BackupText = backupSummary(ctx, dbBackupConfigs(bks))
 		}
 		v.Rows = append(v.Rows, row)
 	}
@@ -512,7 +512,7 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 		}
 		row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
 		if bks, err := s.q.ListBucketBackupsByBucket(ctx, b.ID); err == nil && len(bks) > 0 {
-			row.BackupKind, row.BackupText = backupSummary(ctx, bks[0].Enabled, bks[0].LastStatus, bks[0].LastRunAt.Valid)
+			row.BackupKind, row.BackupText = backupSummary(ctx, bucketBackupConfigs(bks))
 		}
 		v.Rows = append(v.Rows, row)
 	}
@@ -551,17 +551,56 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // backupSummary is a backup's state in one line.
-func backupSummary(ctx context.Context, enabled bool, status string, ran bool) (string, string) {
+// backupConfig is what a resource's backup summary reads of one of its
+// backup configurations.
+type backupConfig struct {
+	Enabled bool
+	Status  string // the last run's status
+	Ran     bool
+}
+
+// backupSummary sums up every backup configuration of a resource: paused only
+// when all are paused, failed when any running one's last run failed, "no
+// runs yet" when no running one has run, fine otherwise. A resource with no
+// configuration is the caller's "no backups".
+func backupSummary(ctx context.Context, cfgs []backupConfig) (string, string) {
+	active, ran := 0, 0
+	for _, c := range cfgs {
+		if !c.Enabled {
+			continue
+		}
+		active++
+		if c.Status == "error" {
+			return "err", i18n.T(ctx, "envdb.backup_failed")
+		}
+		if c.Ran {
+			ran++
+		}
+	}
 	switch {
-	case !enabled:
+	case active == 0:
 		return "idle", i18n.T(ctx, "envdb.backups_paused")
-	case status == "error":
-		return "err", i18n.T(ctx, "envdb.backup_failed")
-	case !ran:
+	case ran == 0:
 		return "idle", i18n.T(ctx, "envdb.backups_no_runs")
 	default:
 		return "ok", i18n.T(ctx, "envdb.backups_ok")
 	}
+}
+
+func dbBackupConfigs(bks []db.ListBackupsByLogicalDBRow) []backupConfig {
+	out := make([]backupConfig, len(bks))
+	for i, b := range bks {
+		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, Ran: b.LastRunAt.Valid}
+	}
+	return out
+}
+
+func bucketBackupConfigs(bks []db.BucketBackup) []backupConfig {
+	out := make([]backupConfig, len(bks))
+	for i, b := range bks {
+		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, Ran: b.LastRunAt.Valid}
+	}
+	return out
 }
 
 // envSettingsPage renders the environment's settings (admins only: every
