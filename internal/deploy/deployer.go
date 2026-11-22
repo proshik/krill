@@ -552,11 +552,16 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		return
 	}
 
+	// version is what notifications and the digest call this deploy (see
+	// imageVersion and gitVersion); recorded once the image is known.
+	var version string
 	if j.rollbackID != 0 {
 		fmt.Fprintf(out, "→ rollback to deployment %d (%s)\n", j.rollbackID, imageTag)
+		version = d.sourceVersion(ctx, j.rollbackID)
 	} else if app.SourceType == "dockerfile" {
 		imageTag = docker.BuildImageTag(app.ID, deployID)
-		err = d.builder.Build(ctx, builder.BuildRequest{
+		var res builder.BuildResult
+		res, err = d.builder.Build(ctx, builder.BuildRequest{
 			AppID: app.ID, DeployID: deployID,
 			GitURL: app.GitURL, GitBranch: app.GitBranch,
 			DockerfilePath: app.DockerfilePath, ImageTag: imageTag,
@@ -565,6 +570,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			BuildArgs:    app.BuildArgs,
 			BuildSecrets: app.BuildSecrets,
 		}, out)
+		version = gitVersion(app.GitBranch, res.Commit)
 	} else {
 		imageTag = app.Image + ":" + app.Tag
 		if app.PredeployCommand != "" && !j.skipPredeploy {
@@ -576,6 +582,10 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			imageTag = resolveImageRef(ctx, d.engine, app, imageTag)
 		}
 		fmt.Fprintf(out, "→ deploy image %s\n", imageTag)
+		version = imageVersion(app.Tag, imageTag)
+	}
+	if err == nil {
+		d.recordVersion(deployID, version)
 	}
 
 	// Resolve local builds once. The same immutable image goes into predeploy,
@@ -1095,6 +1105,82 @@ func (d *Deployer) chownOwnedVolumes(ctx context.Context, app App, out io.Writer
 		}
 	}
 	return nil
+}
+
+// versionStore is the optional store capability that records a deployment's
+// version (the database store has it; small test stores need not).
+type versionStore interface {
+	SetDeploymentVersion(ctx context.Context, deployID int64, version string) error
+	DeploymentVersion(ctx context.Context, deployID int64) (string, error)
+}
+
+// recordVersion stores the version a deployment ships. Best-effort: the
+// version only labels the deploy in messages, so a failed write is logged
+// and the deploy goes on.
+func (d *Deployer) recordVersion(deployID int64, version string) {
+	vs, ok := d.store.(versionStore)
+	if !ok || version == "" {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := vs.SetDeploymentVersion(wctx, deployID, version); err != nil {
+		slog.Warn("record deployment version failed", "deploy", deployID, "err", err)
+	}
+}
+
+// sourceVersion is the version of the deployment a rollback returns to; ""
+// when it has none (made before versions were recorded) or cannot be read.
+func (d *Deployer) sourceVersion(ctx context.Context, sourceID int64) string {
+	vs, ok := d.store.(versionStore)
+	if !ok {
+		return ""
+	}
+	v, err := vs.DeploymentVersion(ctx, sourceID)
+	if err != nil {
+		slog.Warn("read rollback source version failed", "deploy", sourceID, "err", err)
+		return ""
+	}
+	return v
+}
+
+// gitVersion names a Dockerfile build "branch@commit" ("main" when no branch
+// is set, as the builder clones); just the branch when the commit is unknown.
+func gitVersion(branch, commit string) string {
+	if branch == "" {
+		branch = "main"
+	}
+	if commit == "" {
+		return branch
+	}
+	return branch + "@" + commit
+}
+
+// shortDigestLen is how many hex digits of an image digest a version shows.
+const shortDigestLen = 12
+
+// imageVersion names an image deploy by its tag. A tag that can move (one
+// without a digit in it: latest, main, stable) also gets the short digest of
+// the image it pointed at, so two deploys of "latest" can be told apart.
+func imageVersion(tag, ref string) string {
+	if tag == "" {
+		return ""
+	}
+	if strings.ContainsAny(tag, "0123456789") {
+		return tag
+	}
+	_, digest, ok := strings.Cut(ref, "@")
+	if !ok {
+		return tag
+	}
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) > shortDigestLen {
+		digest = digest[:shortDigestLen]
+	}
+	if digest == "" {
+		return tag
+	}
+	return tag + " (" + digest + ")"
 }
 
 // resolveImageRef pins an image app's tag to its current registry digest so a

@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"fmt"
-	"html"
 	"log/slog"
 	"math"
 	"sort"
@@ -228,9 +227,11 @@ type digestData struct {
 	Loc      *time.Location
 	Lang     string
 	Instance string
-	Deploys  []DeploymentInfo
-	Runs     []BackupRun
-	Apps     []appRow
+	// Base is the public https address app names link to; "" = no links.
+	Base    string
+	Deploys []DeploymentInfo
+	Runs    []BackupRun
+	Apps    []appRow
 	idleApps
 	Infra bool
 	Nodes []nodeRow
@@ -250,11 +251,17 @@ type idleApps struct {
 }
 
 type appRow struct {
-	Path     string
-	Now      int64 // bytes, summed over replicas
-	Peak     int64 // highest single container in the window
-	Limit    int64 // per container; 0 = no limit
+	Path     string // project/env/name, for the attention block
+	Name     string
+	Project  string
+	Env      string
+	URL      string // the app's page, "" without a public https address
+	Now      int64  // bytes, summed over replicas
+	Peak     int64  // highest single container in the window
+	Limit    int64  // per container; 0 = no limit
 	Restarts int
+
+	appID, projectID, envID int64
 }
 
 type nodeRow struct {
@@ -282,7 +289,7 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 		eventsSince = *c.DigestLastAt
 	}
 	data := digestData{
-		Now: now, Loc: Location(c.DigestTZ), Lang: c.Lang, Instance: d.svc.instance(ctx),
+		Now: now, Loc: Location(c.DigestTZ), Lang: c.Lang, Instance: d.svc.instance(ctx), Base: d.svc.linkBase(ctx),
 		Infra: c.NotifyInfra, DiskThreshold: c.DiskThresholdPct, MemThreshold: c.MemThresholdPct,
 	}
 	if data.DiskThreshold <= 0 {
@@ -337,6 +344,9 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 	}
 	data.RestartsKnown = restarts != nil
 	data.Apps, data.idleApps = appRows(apps, samples, memTotal, restarts, states, now)
+	for i := range data.Apps {
+		data.Apps[i].URL = appURL(data.Base, c.OrgID, data.Apps[i].projectID, data.Apps[i].envID, data.Apps[i].appID)
+	}
 	if c.NotifyInfra {
 		disks, err := d.metrics.ListDisks(ctx)
 		if err != nil {
@@ -365,8 +375,7 @@ func appRows(apps []WatchedApp, samples []metrics.Sample, memTotal map[string]in
 		path := targetPath(a.Project, a.Env, a.Name)
 		ss := byComp[comp]
 		latest := map[string]metrics.Sample{} // node → latest sample
-		var row appRow
-		row.Path = path
+		row := appRow{Path: path, Name: a.Name, Project: a.Project, Env: a.Env, appID: a.AppID, projectID: a.ProjectID, envID: a.EnvID}
 		row.Restarts = restarts[comp]
 		for _, s := range ss {
 			if s.MemBytes > row.Peak {
@@ -689,14 +698,6 @@ func attention(ctx context.Context, d digestData) []attItem {
 	return out
 }
 
-// counts is a section's "ok / failed" summary, or "none" with no runs.
-func counts(ctx context.Context, ok, failed int) string {
-	if ok+failed == 0 {
-		return i18n.T(ctx, "tg.dg.none")
-	}
-	return i18n.Tf(ctx, "tg.dg.counts", ok, failed)
-}
-
 func kindLabel(ctx context.Context, kind string) string {
 	return i18n.T(ctx, "tg.kind."+kind)
 }
@@ -711,234 +712,4 @@ func whenLabel(t, now time.Time, loc *time.Location, lang string) string {
 		return l.Format("02.01 15:04")
 	}
 	return l.Format("Jan 2 15:04")
-}
-
-// renderDigest renders the digest as Telegram HTML, split into parts at line
-// boundaries (every tag opens and closes on one line).
-func renderDigest(d digestData) []string {
-	ctx := msgCtx(d.Lang)
-	esc := html.EscapeString
-	var lines []string
-	add := func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
-
-	head := i18n.T(ctx, "tg.dg.title")
-	if d.Instance != "" {
-		head += " · " + d.Instance
-	}
-	add("<b>%s</b>", esc(head))
-	add("%s (%s)", esc(whenLabel(d.Now, d.Now, d.Loc, d.Lang)), esc(d.Loc.String()))
-	if att := attention(ctx, d); len(att) > 0 {
-		add("")
-		add("%s <b>%s</b>", att[0].lvl.mark(), esc(i18n.T(ctx, "tg.dg.attention")))
-		for i, a := range att {
-			if i == digestListMax {
-				add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(att)-i)))
-				break
-			}
-			add("%s %s", a.lvl.mark(), esc(a.text))
-		}
-	} else {
-		add("")
-		add("%s %s", lvlOK.mark(), esc(i18n.T(ctx, "tg.dg.all_ok")))
-	}
-	// metric adds a figure's line, marked only when it is not green, so the
-	// line behind a yellow or red node stands out.
-	metric := func(l level, text string) {
-		if l > lvlOK {
-			add("%s %s", l.mark(), esc(text))
-		} else {
-			add("%s", esc(text))
-		}
-	}
-	outcome := func(failed bool) string {
-		if failed {
-			return lvlCrit.mark()
-		}
-		return lvlOK.mark()
-	}
-
-	// Deploys.
-	okN, errN := 0, 0
-	for _, dep := range d.Deploys {
-		if dep.Status == "error" {
-			errN++
-		} else {
-			okN++
-		}
-	}
-	add("")
-	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.deploys")), esc(counts(ctx, okN, errN)))
-	for i, dep := range d.Deploys {
-		if i == digestListMax {
-			add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(d.Deploys)-i)))
-			break
-		}
-		parts := []string{targetPath(dep.Project, dep.Env, dep.App)}
-		if img := shortImage(dep.ImageTag); img != "" {
-			parts = append(parts, img)
-		}
-		parts = append(parts, whenLabel(dep.FinishedAt, d.Now, d.Loc, d.Lang))
-		if dep.Status == "error" && strings.TrimSpace(dep.Error) != "" {
-			parts = append(parts, oneLine(dep.Error, 120))
-		}
-		add("%s %s", outcome(dep.Status == "error"), esc(strings.Join(parts, " · ")))
-	}
-
-	// Backups.
-	okN, errN = 0, 0
-	for _, r := range d.Runs {
-		if r.Status == "error" {
-			errN++
-		} else {
-			okN++
-		}
-	}
-	add("")
-	add("<b>%s</b>: %s", esc(i18n.T(ctx, "tg.dg.backups")), esc(counts(ctx, okN, errN)))
-	for i, r := range d.Runs {
-		if i == digestListMax {
-			add("%s", esc(i18n.Tf(ctx, "tg.dg.more", len(d.Runs)-i)))
-			break
-		}
-		parts := []string{kindLabel(ctx, r.Kind) + " " + targetPath(r.Project, r.Env, r.Target)}
-		if r.Status != "error" && r.SizeBytes > 0 {
-			parts = append(parts, humanBytes(r.SizeBytes))
-		}
-		parts = append(parts, whenLabel(r.FinishedAt, d.Now, d.Loc, d.Lang))
-		if r.Status == "error" && strings.TrimSpace(r.Error) != "" {
-			parts = append(parts, oneLine(r.Error, 120))
-		}
-		add("%s %s", outcome(r.Status == "error"), esc(strings.Join(parts, " · ")))
-	}
-
-	// Nodes (infrastructure channels only).
-	if d.Infra {
-		add("")
-		add("<b>%s</b>", esc(i18n.T(ctx, "tg.dg.nodes")))
-		for _, n := range d.Nodes {
-			name := n.Name
-			if n.Stale {
-				name += " — " + i18n.T(ctx, "tg.dg.stale")
-			}
-			if why := d.nodeWhy(ctx, n); why != "" {
-				add("%s <b>%s</b> — %s", d.nodeLevel(n).mark(), esc(name), esc(why))
-			} else {
-				add("%s <b>%s</b>", d.nodeLevel(n).mark(), esc(name))
-			}
-			if n.Stale {
-				continue // its last figures would read as current
-			}
-			for _, dk := range n.Disks {
-				metric(d.diskLevel(dk), i18n.Tf(ctx, "tg.dg.node_disk", dk.Mount, dk.UsedPct(), bytesPair(ctx, "tg.pair", dk.Used, dk.Total), humanBytes(dk.Avail)))
-			}
-			if len(n.Disks) == 0 {
-				metric(lvlWarn, i18n.T(ctx, "tg.dg.node_disk_unknown"))
-			}
-			mem := i18n.Tf(ctx, "tg.dg.node_mem", bytesPair(ctx, "tg.pair", n.MemUsed, n.MemTotal), humanBytes(n.Limits), pct(n.Limits, n.MemTotal))
-			if n.Unlimited > 0 {
-				mem += " · " + i18n.Tf(ctx, "tg.dg.unlimited", n.Unlimited)
-			}
-			metric(worst(d.limitsLevel(n), memUsedLevel(n)), mem)
-			if n.CPUKnown {
-				metric(cpuLevel(n), i18n.Tf(ctx, "tg.dg.node_cpu", n.CPUAvg, n.CPUPeak, n.NCPU))
-			}
-		}
-		if len(d.Nodes) == 0 {
-			add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
-		}
-	}
-
-	// Krill's own state backups (infrastructure channels only).
-	if d.Infra && d.State != nil {
-		add("")
-		add("<b>%s</b>", esc(i18n.T(ctx, "tg.dg.state")))
-		for _, l := range stateLines(ctx, d) {
-			if l.lvl == nil {
-				add("%s", esc(l.text))
-			} else {
-				add("%s %s", l.lvl.mark(), esc(l.text))
-			}
-		}
-	}
-
-	// Apps.
-	add("")
-	add("<b>%s</b>", esc(i18n.T(ctx, "tg.dg.apps")))
-	for _, a := range d.Apps {
-		line := a.Path + ": " + i18n.Tf(ctx, "tg.dg.app_now", humanBytes(a.Now))
-		if a.Limit > 0 {
-			line += " · " + i18n.Tf(ctx, "tg.dg.app_peak_limit", bytesPair(ctx, "tg.pair_limit", a.Peak, a.Limit), pct(a.Peak, a.Limit))
-		} else {
-			line += " · " + i18n.Tf(ctx, "tg.dg.app_peak", humanBytes(a.Peak))
-		}
-		if d.RestartsKnown {
-			line += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
-		}
-		add("%s %s", a.level().mark(), esc(line))
-	}
-	names := func(mark, key string, list []string) {
-		if len(list) == 0 {
-			return
-		}
-		more := ""
-		if len(list) > digestListMax {
-			list, more = list[:digestListMax], " "+i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax)
-		}
-		add("%s %s", mark, esc(i18n.T(ctx, key)+": "+strings.Join(list, ", ")+more))
-	}
-	names(lvlCrit.mark(), "tg.dg.down", d.Down)
-	names("⚪", "tg.dg.no_samples", d.NoData)
-	names("⚪", "tg.dg.stopped", d.Stopped)
-	if len(d.Apps) == 0 && len(d.Down) == 0 && len(d.NoData) == 0 && len(d.Stopped) == 0 {
-		add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
-	}
-	return splitParts(lines, digestPartLimit)
-}
-
-// cutLine shortens an escaped line to at most limit runes without cutting
-// inside an HTML entity (Telegram rejects the whole message then).
-func cutLine(r []rune, limit int) string {
-	cut := limit
-	if amp := strings.LastIndex(string(r[:cut]), "&"); amp >= 0 {
-		if semi := strings.IndexByte(string(r[:cut])[amp:], ';'); semi < 0 {
-			cut = len([]rune(string(r[:cut])[:amp]))
-		}
-	}
-	return string(r[:cut])
-}
-
-// oneLine flattens and shortens an error message for a digest line.
-func oneLine(s string, max int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > max {
-		s = string(r[:max-1]) + "…"
-	}
-	return s
-}
-
-// splitParts joins lines into messages of at most limit characters, never
-// splitting a line (a longer single line is cut).
-func splitParts(lines []string, limit int) []string {
-	var parts []string
-	var b strings.Builder
-	for _, l := range lines {
-		if b.Len() == 0 && l == "" {
-			continue // a part never starts with a blank line
-		}
-		if r := []rune(l); len(r) > limit {
-			l = cutLine(r, limit)
-		}
-		if b.Len() > 0 && len([]rune(b.String()))+1+len([]rune(l)) > limit {
-			parts = append(parts, strings.TrimRight(b.String(), "\n"))
-			b.Reset()
-		}
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(l)
-	}
-	if strings.TrimSpace(b.String()) != "" {
-		parts = append(parts, strings.TrimRight(b.String(), "\n"))
-	}
-	return parts
 }

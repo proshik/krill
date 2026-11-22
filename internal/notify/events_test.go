@@ -52,7 +52,7 @@ func TestDeploySucceededGoesToSuccessChannelsInTheirLanguage(t *testing.T) {
 	if len(msgs) != 1 || !strings.HasPrefix(msgs[0], "ru|") {
 		t.Fatalf("sent %v, want only the success channel", msgs)
 	}
-	for _, want := range []string{"Деплой успешен", "p/prod/bot", "bot:v1.2", "42s", "вручную"} {
+	for _, want := range []string{"Деплой успешен", "\nbot\nпроект p · окружение prod\n", "образ bot:v1.2 · 42 с · вручную"} {
 		if !strings.Contains(msgs[0], want) {
 			t.Errorf("message lacks %q:\n%s", want, msgs[0])
 		}
@@ -122,7 +122,7 @@ func TestBackupSucceededRecordsRunWithoutMessage(t *testing.T) {
 
 func TestFormatInRussianAndUnknownLanguage(t *testing.T) {
 	ev := Event{Kind: DeployFailed, Project: "p", Env: "e", Target: "w", Detail: "boom"}
-	if got := format(ev, "ru"); !strings.Contains(got, "Деплой упал") || !strings.Contains(got, "p/e/w") {
+	if got := format(ev, "ru"); !strings.Contains(got, "Деплой упал") || !strings.Contains(got, "\nw\nпроект p · окружение e") {
 		t.Fatalf("ru: %s", got)
 	}
 	if got := format(ev, "xx"); !strings.Contains(got, "Deploy failed") {

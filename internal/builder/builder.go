@@ -48,9 +48,16 @@ func sortedKeys(m map[string]string) []string {
 	return ks
 }
 
+// BuildResult is what a build reports besides the image it tagged.
+type BuildResult struct {
+	// Commit is the short hash of the commit that was built; empty when it
+	// could not be read (the build itself still counts).
+	Commit string
+}
+
 // Builder clones the repository and builds the image, streaming output to out.
 type Builder interface {
-	Build(ctx context.Context, req BuildRequest, out io.Writer) error
+	Build(ctx context.Context, req BuildRequest, out io.Writer) (BuildResult, error)
 }
 
 // New creates a Builder. dockerHost is passed into docker build (for the

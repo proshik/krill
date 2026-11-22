@@ -79,7 +79,7 @@ func (q *Queries) CountRunningDeploymentsByOrg(ctx context.Context, id int64) (i
 }
 
 const createDeployment = `-- name: CreateDeployment :one
-INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id
+INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version
 `
 
 type CreateDeploymentParams struct {
@@ -101,6 +101,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.RollbackSourceID,
+		&i.Version,
 	)
 	return i, err
 }
@@ -150,7 +151,7 @@ func (q *Queries) FinishDeployment(ctx context.Context, arg FinishDeploymentPara
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id FROM deployments WHERE id = $1
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, error) {
@@ -167,8 +168,20 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.RollbackSourceID,
+		&i.Version,
 	)
 	return i, err
+}
+
+const getDeploymentVersion = `-- name: GetDeploymentVersion :one
+SELECT COALESCE(version, '')::text AS version FROM deployments WHERE id = $1
+`
+
+func (q *Queries) GetDeploymentVersion(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRow(ctx, getDeploymentVersion, id)
+	var version string
+	err := row.Scan(&version)
+	return version, err
 }
 
 const listDeploymentStatuses = `-- name: ListDeploymentStatuses :many
@@ -257,7 +270,7 @@ func (q *Queries) ListDeploymentSummariesByApplication(ctx context.Context, appl
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
 `
 
 func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error) {
@@ -280,6 +293,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationI
 			&i.StartedAt,
 			&i.FinishedAt,
 			&i.RollbackSourceID,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -289,4 +303,20 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationI
 		return nil, err
 	}
 	return items, nil
+}
+
+const setDeploymentVersion = `-- name: SetDeploymentVersion :exec
+UPDATE deployments SET version = $2 WHERE id = $1
+`
+
+type SetDeploymentVersionParams struct {
+	ID      int64   `json:"id"`
+	Version *string `json:"version"`
+}
+
+// Records the version a deployment ships, once the deployer knows it (after
+// the build or the image's digest lookup).
+func (q *Queries) SetDeploymentVersion(ctx context.Context, arg SetDeploymentVersionParams) error {
+	_, err := q.db.Exec(ctx, setDeploymentVersion, arg.ID, arg.Version)
+	return err
 }

@@ -538,6 +538,7 @@ func run() error {
 	})
 	app.SetNotify(notifySvc)
 	notifySvc.SetInstanceName(app.InstanceName)
+	notifySvc.SetPublicURL(app.NotifyLinkBase)
 	// Daily digest: crashes and stopped apps come from Swarm when the engine
 	// can list its task history.
 	var swarmReader notify.SwarmReader

@@ -265,17 +265,18 @@ type mockBuilder struct {
 	mu     sync.Mutex
 	called bool
 	fail   bool
+	commit string // reported as the built commit
 }
 
-func (b *mockBuilder) Build(_ context.Context, req builder.BuildRequest, out io.Writer) error {
+func (b *mockBuilder) Build(_ context.Context, req builder.BuildRequest, out io.Writer) (builder.BuildResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.called = true
 	out.Write([]byte("building " + req.ImageTag + "\n"))
 	if b.fail {
-		return errors.New("build boom")
+		return builder.BuildResult{}, errors.New("build boom")
 	}
-	return nil
+	return builder.BuildResult{Commit: b.commit}, nil
 }
 func (b *mockBuilder) wasCalled() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.called }
 
@@ -566,10 +567,10 @@ func TestStopIdempotent(t *testing.T) {
 
 type blockingBuilder struct{ started chan struct{} }
 
-func (b *blockingBuilder) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) error {
+func (b *blockingBuilder) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) (builder.BuildResult, error) {
 	close(b.started)
 	<-ctx.Done()
-	return ctx.Err()
+	return builder.BuildResult{}, ctx.Err()
 }
 
 func TestStopCancelsInFlightBuild(t *testing.T) {

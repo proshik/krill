@@ -21,13 +21,13 @@ import (
 
 type pausedPlacementBuild struct{ started, resume chan struct{} }
 
-func (b *pausedPlacementBuild) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) error {
+func (b *pausedPlacementBuild) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) (builder.BuildResult, error) {
 	close(b.started)
 	select {
 	case <-b.resume:
-		return nil
+		return builder.BuildResult{}, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return builder.BuildResult{}, ctx.Err()
 	}
 }
 

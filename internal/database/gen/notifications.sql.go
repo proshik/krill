@@ -13,7 +13,7 @@ import (
 )
 
 const appNotifyTarget = `-- name: AppNotifyTarget :one
-SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
@@ -22,6 +22,8 @@ WHERE a.id = $1
 
 type AppNotifyTargetRow struct {
 	OrgID       int64  `json:"org_id"`
+	ProjectID   int64  `json:"project_id"`
+	EnvID       int64  `json:"env_id"`
 	ProjectName string `json:"project_name"`
 	EnvName     string `json:"env_name"`
 	AppName     string `json:"app_name"`
@@ -32,6 +34,8 @@ func (q *Queries) AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTarge
 	var i AppNotifyTargetRow
 	err := row.Scan(
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvID,
 		&i.ProjectName,
 		&i.EnvName,
 		&i.AppName,
@@ -40,10 +44,9 @@ func (q *Queries) AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTarge
 }
 
 const backupNotifyTarget = `-- name: BackupNotifyTarget :one
-SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, di.app_name AS db_name
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, ld.name AS db_name
 FROM backups b
 JOIN logical_databases ld ON b.logical_database_id = ld.id
-JOIN db_instances di ON ld.instance_id = di.id
 JOIN environments e ON ld.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE b.id = $1
@@ -56,6 +59,7 @@ type BackupNotifyTargetRow struct {
 	DbName      string `json:"db_name"`
 }
 
+// Named by the logical database (several of them share one server).
 func (q *Queries) BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error) {
 	row := q.db.QueryRow(ctx, backupNotifyTarget, id)
 	var i BackupNotifyTargetRow
@@ -174,8 +178,8 @@ func (q *Queries) CountEnabledHealthChannels(ctx context.Context) (int64, error)
 }
 
 const deploymentNotifyInfo = `-- name: DeploymentNotifyInfo :one
-SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.started_at, d.finished_at,
-       p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, COALESCE(d.version, '')::text AS version, d.started_at, d.finished_at,
+       p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM deployments d
 JOIN applications a ON d.application_id = a.id
 JOIN environments e ON a.environment_id = e.id
@@ -189,9 +193,12 @@ type DeploymentNotifyInfoRow struct {
 	Status        string             `json:"status"`
 	Trigger       string             `json:"trigger"`
 	ImageTag      string             `json:"image_tag"`
+	Version       string             `json:"version"`
 	StartedAt     time.Time          `json:"started_at"`
 	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
 	OrgID         int64              `json:"org_id"`
+	ProjectID     int64              `json:"project_id"`
+	EnvID         int64              `json:"env_id"`
 	ProjectName   string             `json:"project_name"`
 	EnvName       string             `json:"env_name"`
 	AppName       string             `json:"app_name"`
@@ -206,9 +213,12 @@ func (q *Queries) DeploymentNotifyInfo(ctx context.Context, id int64) (Deploymen
 		&i.Status,
 		&i.Trigger,
 		&i.ImageTag,
+		&i.Version,
 		&i.StartedAt,
 		&i.FinishedAt,
 		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvID,
 		&i.ProjectName,
 		&i.EnvName,
 		&i.AppName,
@@ -444,7 +454,7 @@ func (q *Queries) ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSin
 }
 
 const listOrgApps = `-- name: ListOrgApps :many
-SELECT a.id AS app_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
+SELECT a.id AS app_id, p.id AS project_id, e.id AS env_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
@@ -454,6 +464,8 @@ ORDER BY p.name, e.name, a.name
 
 type ListOrgAppsRow struct {
 	AppID       int64  `json:"app_id"`
+	ProjectID   int64  `json:"project_id"`
+	EnvID       int64  `json:"env_id"`
 	AppName     string `json:"app_name"`
 	EnvName     string `json:"env_name"`
 	ProjectName string `json:"project_name"`
@@ -470,6 +482,8 @@ func (q *Queries) ListOrgApps(ctx context.Context, organizationID int64) ([]List
 		var i ListOrgAppsRow
 		if err := rows.Scan(
 			&i.AppID,
+			&i.ProjectID,
+			&i.EnvID,
 			&i.AppName,
 			&i.EnvName,
 			&i.ProjectName,
@@ -485,8 +499,8 @@ func (q *Queries) ListOrgApps(ctx context.Context, organizationID int64) ([]List
 }
 
 const listOrgDeploymentsSince = `-- name: ListOrgDeploymentsSince :many
-SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.error_message, d.started_at, d.finished_at,
-       p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, COALESCE(d.version, '')::text AS version, d.error_message, d.started_at, d.finished_at,
+       p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM deployments d
 JOIN applications a ON d.application_id = a.id
 JOIN environments e ON a.environment_id = e.id
@@ -506,9 +520,12 @@ type ListOrgDeploymentsSinceRow struct {
 	Status        string             `json:"status"`
 	Trigger       string             `json:"trigger"`
 	ImageTag      string             `json:"image_tag"`
+	Version       string             `json:"version"`
 	ErrorMessage  string             `json:"error_message"`
 	StartedAt     time.Time          `json:"started_at"`
 	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
+	ProjectID     int64              `json:"project_id"`
+	EnvID         int64              `json:"env_id"`
 	ProjectName   string             `json:"project_name"`
 	EnvName       string             `json:"env_name"`
 	AppName       string             `json:"app_name"`
@@ -530,9 +547,12 @@ func (q *Queries) ListOrgDeploymentsSince(ctx context.Context, arg ListOrgDeploy
 			&i.Status,
 			&i.Trigger,
 			&i.ImageTag,
+			&i.Version,
 			&i.ErrorMessage,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.ProjectID,
+			&i.EnvID,
 			&i.ProjectName,
 			&i.EnvName,
 			&i.AppName,
@@ -548,7 +568,7 @@ func (q *Queries) ListOrgDeploymentsSince(ctx context.Context, arg ListOrgDeploy
 }
 
 const listWatchedApps = `-- name: ListWatchedApps :many
-SELECT a.id AS app_id, p.organization_id AS org_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
+SELECT a.id AS app_id, p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
@@ -557,6 +577,8 @@ JOIN projects p ON e.project_id = p.id
 type ListWatchedAppsRow struct {
 	AppID       int64  `json:"app_id"`
 	OrgID       int64  `json:"org_id"`
+	ProjectID   int64  `json:"project_id"`
+	EnvID       int64  `json:"env_id"`
 	AppName     string `json:"app_name"`
 	EnvName     string `json:"env_name"`
 	ProjectName string `json:"project_name"`
@@ -576,6 +598,8 @@ func (q *Queries) ListWatchedApps(ctx context.Context) ([]ListWatchedAppsRow, er
 		if err := rows.Scan(
 			&i.AppID,
 			&i.OrgID,
+			&i.ProjectID,
+			&i.EnvID,
 			&i.AppName,
 			&i.EnvName,
 			&i.ProjectName,

@@ -113,20 +113,26 @@ type DeploymentInfo struct {
 	Project    string
 	Env        string
 	App        string
+	ProjectID  int64
+	EnvID      int64
 	Status     string // deployments.status: running/done/error
 	Trigger    string
 	ImageTag   string
+	Version    string // deployments.version; "" for deploys made before it was recorded
 	Error      string
 	StartedAt  time.Time
 	FinishedAt time.Time
 }
 
-// Target is the human-readable location of an event's subject.
+// Target is the human-readable location of an event's subject. The ids are
+// set for an app (they build the link to its page) and zero otherwise.
 type Target struct {
 	OrgID   int64
 	Project string
 	Env     string
 	Name    string
+
+	ProjectID, EnvID, AppID int64
 }
 
 // WatchedApp is one app the health watcher tracks.
@@ -136,6 +142,8 @@ type WatchedApp struct {
 	Project string
 	Env     string
 	Name    string
+
+	ProjectID, EnvID int64
 }
 
 // WatchedDB is one database server the health watcher tracks.
@@ -311,8 +319,8 @@ func (s *DBStore) DeploymentInfo(ctx context.Context, id int64) (DeploymentInfo,
 	}
 	return DeploymentInfo{
 		ID: r.ID, AppID: r.ApplicationID, OrgID: r.OrgID,
-		Project: r.ProjectName, Env: r.EnvName, App: r.AppName,
-		Status: r.Status, Trigger: r.Trigger, ImageTag: r.ImageTag,
+		Project: r.ProjectName, Env: r.EnvName, App: r.AppName, ProjectID: r.ProjectID, EnvID: r.EnvID,
+		Status: r.Status, Trigger: r.Trigger, ImageTag: r.ImageTag, Version: r.Version,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt.Time,
 	}, nil
 }
@@ -326,8 +334,8 @@ func (s *DBStore) OrgDeploymentsSince(ctx context.Context, orgID int64, since ti
 	for _, r := range rows {
 		out = append(out, DeploymentInfo{
 			ID: r.ID, AppID: r.ApplicationID, OrgID: orgID,
-			Project: r.ProjectName, Env: r.EnvName, App: r.AppName,
-			Status: r.Status, Trigger: r.Trigger, ImageTag: r.ImageTag, Error: r.ErrorMessage,
+			Project: r.ProjectName, Env: r.EnvName, App: r.AppName, ProjectID: r.ProjectID, EnvID: r.EnvID,
+			Status: r.Status, Trigger: r.Trigger, ImageTag: r.ImageTag, Version: r.Version, Error: r.ErrorMessage,
 			StartedAt: r.StartedAt, FinishedAt: r.FinishedAt.Time,
 		})
 	}
@@ -341,7 +349,7 @@ func (s *DBStore) OrgApps(ctx context.Context, orgID int64) ([]WatchedApp, error
 	}
 	out := make([]WatchedApp, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WatchedApp{AppID: r.AppID, OrgID: orgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName})
+		out = append(out, WatchedApp{AppID: r.AppID, OrgID: orgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName, ProjectID: r.ProjectID, EnvID: r.EnvID})
 	}
 	return out, nil
 }
@@ -351,7 +359,7 @@ func (s *DBStore) AppTarget(ctx context.Context, appID int64) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	return Target{OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName}, nil
+	return Target{OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName, ProjectID: r.ProjectID, EnvID: r.EnvID, AppID: appID}, nil
 }
 
 func (s *DBStore) BackupTarget(ctx context.Context, backupID int64) (Target, error) {
@@ -393,7 +401,7 @@ func (s *DBStore) ListWatchedApps(ctx context.Context) ([]WatchedApp, error) {
 	}
 	out := make([]WatchedApp, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, WatchedApp{AppID: r.AppID, OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName})
+		out = append(out, WatchedApp{AppID: r.AppID, OrgID: r.OrgID, Project: r.ProjectName, Env: r.EnvName, Name: r.AppName, ProjectID: r.ProjectID, EnvID: r.EnvID})
 	}
 	return out, nil
 }

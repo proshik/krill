@@ -27,13 +27,16 @@ func TestGitBuilderBuildsImage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	err := builder.New("", false).Build(ctx, builder.BuildRequest{
+	res, err := builder.New("", false).Build(ctx, builder.BuildRequest{
 		AppID: 1, DeployID: 1,
 		GitURL: testRepo, GitBranch: "main", DockerfilePath: "Dockerfile",
 		ImageTag: tag,
 	}, &buf)
 	if err != nil {
 		t.Fatalf("build: %v\n--- log ---\n%s", err, buf.String())
+	}
+	if len(res.Commit) != 7 || !strings.Contains(buf.String(), "→ commit "+res.Commit) {
+		t.Errorf("built commit not reported: %q\n%s", res.Commit, buf.String())
 	}
 	if !strings.Contains(buf.String(), "build complete") {
 		t.Errorf("log missing completion marker:\n%s", buf.String())

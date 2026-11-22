@@ -152,6 +152,13 @@ func TestReleaseRollbackRestoresEditorsAndImmutableImage(t *testing.T) {
 	if err != nil || next.Env["TOKEN"] != "old-secret" || !reflect.DeepEqual(next.Runtime.EnvPublicKeys, []string{"PUBLIC"}) {
 		t.Fatalf("next deploy settings: %+v %v", next.Runtime, err)
 	}
+	// Each deploy of the mutable tag records the digest it shipped; the
+	// rollback ships v1's image again and says so.
+	for id, want := range map[int64]string{v1: "latest (111111111111)", v2: "latest (222222222222)", rollback: "latest (111111111111)"} {
+		if got, err := st.DeploymentVersion(t.Context(), id); err != nil || got != want {
+			t.Errorf("deployment %d version = %q (%v), want %q", id, got, err, want)
+		}
+	}
 	history, err := q.ListDeploymentSummariesByApplication(t.Context(), appID)
 	if err != nil || !history[0].RollbackEligible || history[0].RollbackSourceID == nil || *history[0].RollbackSourceID != v1 {
 		t.Fatalf("history missing source/eligibility: %+v %v", history, err)

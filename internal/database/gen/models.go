@@ -197,6 +197,7 @@ type Deployment struct {
 	StartedAt        time.Time          `json:"started_at"`
 	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
 	RollbackSourceID *int64             `json:"rollback_source_id"`
+	Version          *string            `json:"version"`
 }
 
 type DeploymentRelease struct {

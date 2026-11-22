@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/proshik/krill/internal/netguard"
 )
@@ -82,10 +83,11 @@ type gitBuilder struct {
 	allowPrivate bool   // mirrors KRILL_ALLOW_PRIVATE_EGRESS for the git_url netguard check
 }
 
-func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer) error {
+func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer) (BuildResult, error) {
+	var res BuildResult
 	if err := ValidateBuildRequest(req); err != nil {
 		fmt.Fprintf(out, "❌ invalid build request: %v\n", err)
-		return err
+		return res, err
 	}
 
 	// git_url goes through the same SSRF egress guard as S3 and registry URLs:
@@ -96,15 +98,15 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 	// on a "host:port" string, so the port is stripped just for this call.
 	host, err := HostOf(req.GitURL)
 	if err != nil {
-		return err
+		return res, err
 	}
 	if err := netguard.CheckHost(ctx, bareHost(host), b.allowPrivate); err != nil {
-		return fmt.Errorf("git_url host %q is not allowed: %w", host, err)
+		return res, fmt.Errorf("git_url host %q is not allowed: %w", host, err)
 	}
 
 	dir, err := os.MkdirTemp("", fmt.Sprintf("krill-build-%d-%d-", req.AppID, req.DeployID))
 	if err != nil {
-		return err
+		return res, err
 	}
 	defer os.RemoveAll(dir)
 
@@ -125,14 +127,17 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 	if err != nil {
 		authCleanup() // belt and braces: gitAuthSetup already cleans up its own failures
 		fmt.Fprintf(out, "❌ %v\n", err)
-		return err
+		return res, err
 	}
 	defer authCleanup()
 	fmt.Fprintf(out, "→ git clone %s (branch %s)\n", sanitizeGitURL(req.GitURL), branch)
 	gitEnv := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=http:https")
 	gitEnv = append(gitEnv, authEnv...)
 	if err := b.run(ctx, out, "git", cloneArgs(req.GitURL, branch, dir), gitEnv); err != nil {
-		return fmt.Errorf("git clone failed: %w", err)
+		return res, fmt.Errorf("git clone failed: %w", err)
+	}
+	if res.Commit = headCommit(ctx, dir); res.Commit != "" {
+		fmt.Fprintf(out, "→ commit %s\n", res.Commit)
 	}
 
 	dfPath := filepath.Join(dir, dockerfile)
@@ -142,23 +147,23 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 	// dir OUTSIDE the build context (docker build never ingests it); wiped on return.
 	for k := range req.BuildArgs {
 		if !validBuildKey(k) {
-			return fmt.Errorf("invalid build arg key: %q", k)
+			return res, fmt.Errorf("invalid build arg key: %q", k)
 		}
 	}
 	secretFiles := map[string]string{}
 	if len(req.BuildSecrets) > 0 {
 		sdir, serr := os.MkdirTemp("", "krill-secrets-")
 		if serr != nil {
-			return serr
+			return res, serr
 		}
 		defer os.RemoveAll(sdir)
 		for k, v := range req.BuildSecrets {
 			if !validBuildKey(k) {
-				return fmt.Errorf("invalid build secret key: %q", k)
+				return res, fmt.Errorf("invalid build secret key: %q", k)
 			}
 			p := filepath.Join(sdir, k)
 			if werr := os.WriteFile(p, []byte(v), 0o600); werr != nil {
-				return werr
+				return res, werr
 			}
 			secretFiles[k] = p
 		}
@@ -174,10 +179,10 @@ func (b *gitBuilder) Build(ctx context.Context, req BuildRequest, out io.Writer)
 		env = append(env, "DOCKER_HOST="+b.dockerHost)
 	}
 	if err := b.run(ctx, out, "docker", buildArgs(req.ImageTag, dfPath, cdir, req.NoCache, req.BuildArgs, secretFiles), env); err != nil {
-		return fmt.Errorf("docker build failed: %w", err)
+		return res, fmt.Errorf("docker build failed: %w", err)
 	}
 	fmt.Fprintf(out, "✅ build complete: %s\n", req.ImageTag)
-	return nil
+	return res, nil
 }
 
 func (b *gitBuilder) run(ctx context.Context, out io.Writer, name string, args []string, env []string) error {
@@ -188,6 +193,36 @@ func (b *gitBuilder) run(ctx context.Context, out io.Writer, name string, args [
 		cmd.Env = env
 	}
 	return cmd.Run()
+}
+
+// shortCommitLen is how many hex digits of a commit a version shows.
+const shortCommitLen = 7
+
+// headCommit reads the short hash of the checked-out commit in dir. The
+// clone is local by then, so no credentials are involved; any failure
+// yields "" (the version then names only the branch).
+func headCommit(ctx context.Context, dir string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--verify", "HEAD")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	outb, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return shortCommit(strings.TrimSpace(string(outb)))
+}
+
+// shortCommit trims a full commit hash to shortCommitLen hex digits; anything
+// that is not a hash yields "".
+func shortCommit(h string) string {
+	if len(h) < shortCommitLen {
+		return ""
+	}
+	for _, c := range h {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return ""
+		}
+	}
+	return h[:shortCommitLen]
 }
 
 // Available checks that git and docker are present in PATH.

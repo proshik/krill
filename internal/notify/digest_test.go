@@ -195,8 +195,7 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 	got := parts[0]
 	t.Logf("digest:\n%s", got)
 	for _, want := range []string{
-		"Сводка Krill за сутки · krill.example.com",
-		"11:00 (Europe/Moscow)",
+		"<b>📋 Сводка Krill за сутки</b>\nkrill.example.com · 18.11, 11:00 (Europe/Moscow)",
 		"🔴 <b>Требует внимания</b>",
 		"🔴 деплой упал: p/prod/bot",
 		"🔴 бэкап упал: бакет p/prod/assets",
@@ -204,18 +203,19 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 		"🟡 p/prod/bot: пик памяти 94% от лимита",
 		"🔴 p/prod/worker: не запущено",
 		"🔴 нода control-plane, диск /: занято 88%",
-		"Деплои за 24 ч</b>: успешно 1, с ошибкой 1",
-		"🟢 p/prod/api · api:v2 · 09:00",
-		"🔴 p/prod/bot · 17.11 22:00 · service did not converge",
-		"Бэкапы за 24 ч</b>: успешно 1, с ошибкой 1",
-		"🟢 база p/prod/krill-postgres-x · 12.0 MiB · 03:00",
-		"🔴 <b>control-plane</b>",
-		"\n🔴 диск /: занято 88% (44.0 из 50.0 GiB), свободно 6.0 GiB",
+		"🚀 <b>Деплои</b>: 2, успешно 1, с ошибкой 1\n<b>p · prod</b>\n",
+		"🟢 api — 1 деплой, сейчас api:v2 (09:00)",
+		"🔴 bot — 17.11 22:00 · service did not converge",
+		"💾 <b>Бэкапы</b>: 2, успешно 1, с ошибкой 1\n<b>p · prod</b>\n",
+		"🟢 база krill-postgres-x · 12.0 MiB · 03:00",
+		"🔴 бакет assets · 03:00 · list bucket: denied",
+		"🔴 <b>control-plane</b> — диск 88% · память 12%, лимиты 25% · CPU 50% (пик 80%)\n↳ диск / занят 88%\n",
+		"🟢 <b>worker-1</b> — диск 25% · память 23%, лимиты 25% · CPU 25% (пик 40%)\n<blockquote expandable><b>control-plane</b>\n🔴 диск /: занято 88% (44.0 из 50.0 GiB), свободно 6.0 GiB",
 		"\nпамять: контейнеры занимают 250 MiB из 2.0 GiB · сумма лимитов 512 MiB — 25% памяти ноды · контейнеров без лимита: 1",
 		"\nCPU: в среднем 50%, пик 80% — от мощности всех ядер (2)",
-		"🟢 <b>worker-1</b>",
-		"🟢 p/prod/api: сейчас 200 MiB · пик 300 из лимита 512 MiB (59%) · падений 0",
-		"🔴 p/prod/bot: сейчас 240 MiB · пик 240 из лимита 256 MiB (94%) · падений 3",
+		"(2)</blockquote>\n\n📦 <b>Приложения</b>\n<b>p · prod</b>\n",
+		"🟢 api — 200 MiB, пик 300 из 512 MiB (59%)\n",
+		"🔴 bot — 240 MiB, пик 240 из 256 MiB (94%) · падений 3",
 		"🔴 Не запущены: p/prod/worker",
 		"⚪ Остановлены или не развёрнуты: p/dev/old, p/dev/never",
 	} {
@@ -223,7 +223,7 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 			t.Errorf("digest lacks %q", want)
 		}
 	}
-	for _, leak := range []string{"other-org", "system"} {
+	for _, leak := range []string{"other-org", "system", "падений 0"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("digest shows %q", leak)
 		}
@@ -265,7 +265,7 @@ func TestDigestAllGood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := parts[0]; !strings.Contains(got, "🟢 All good") || !strings.Contains(got, "Deploys, 24h</b>: none") || !strings.Contains(got, "Backups, 24h</b>: none") {
+	if got := parts[0]; !strings.Contains(got, "🟢 All good") || !strings.Contains(got, "🚀 <b>Deploys</b>: none") || !strings.Contains(got, "💾 <b>Backups</b>: none") {
 		t.Fatalf("empty digest:\n%s", got)
 	}
 }
@@ -275,7 +275,7 @@ func TestDigestEscapesNames(t *testing.T) {
 	st := &fakeStore{orgDeploys: []DeploymentInfo{{Project: "<b>x</b>", Env: "e", App: "a&b", Status: "done", FinishedAt: now}}}
 	d := NewDigest(New(st), st, fakeMetrics{}, nil)
 	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, DigestTZ: "UTC", DiskThresholdPct: 85, MemThresholdPct: 100}, now)
-	if got := parts[0]; strings.Contains(got, "<b>x</b>") || !strings.Contains(got, "&lt;b&gt;x&lt;/b&gt;/e/a&amp;b") {
+	if got := parts[0]; strings.Contains(got, "<b>x</b>") || !strings.Contains(got, "<b>&lt;b&gt;x&lt;/b&gt; · e</b>\n🟢 a&amp;b — ") {
 		t.Fatalf("names not escaped:\n%s", got)
 	}
 }
@@ -534,9 +534,10 @@ func TestDigestAllGreen(t *testing.T) {
 	t.Logf("digest:\n%s", got)
 	for _, want := range []string{
 		"🟢 Всё в норме",
-		"Бэкапы за 24 ч</b>: не было",
-		"🟢 <b>krill-worker-ams</b>\nдиск /: занято 14% (10.0 из 80.0 GiB), свободно 65.0 GiB",
-		"🟢 side/prod/pochitushki: сейчас 291 MiB · пик 291 из лимита 768 MiB (38%) · падений 0",
+		"💾 <b>Бэкапы</b>: не было",
+		"🟢 <b>krill-worker-ams</b> — диск 14% · память 7%, лимиты 20% · CPU 1% (пик 1%)\n<blockquote expandable><b>krill-worker-ams</b>\nдиск /: занято 14% (10.0 из 80.0 GiB), свободно 65.0 GiB",
+		"🟢 pochitushki — 1 деплой, сейчас pochitushki@cf691d6cd4d6 (",
+		"<b>side · prod</b>\n🟢 pochitushki — 291 MiB, пик 291 из 768 MiB (38%)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q", want)
@@ -629,8 +630,9 @@ func TestNodeHeadingNamesTheReason(t *testing.T) {
 	d.Infra, d.Nodes, d.Loc, d.Now = true, []nodeRow{penpot, green}, time.UTC, time.Now()
 	got := strings.Join(renderDigest(d), "\n")
 	for _, want := range []string{
-		"🔴 <b>krill-penpot-msk</b> — сумма лимитов 107% памяти ноды\nдиск /: занято 10%",
-		"🟢 <b>krill-penpot-msk</b>\n",
+		"🔴 <b>krill-penpot-msk</b> — диск 10% · память 36%, лимиты 107% · CPU 1% (пик 3%)\n↳ сумма лимитов 107% памяти ноды\n",
+		"🟢 <b>krill-penpot-msk</b> — диск 10%",
+		"<blockquote expandable><b>krill-penpot-msk</b>\nдиск /: занято 10%",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q:\n%s", want, got)
