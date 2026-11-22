@@ -392,9 +392,18 @@ window.krillConfirm = function (form, message, confirmLabel, kind, more) {
   if (!okEl.dataset.default) okEl.dataset.default = okEl.textContent;
   okEl.className = (kind || d.kind) === "primary" ? "btn btn--primary" : "btn btn--danger";
   window.__krillConfirmAction = function () {
+    // A polled fragment (the deployments list) may have replaced the form
+    // while the dialog was open: submit its live twin, the form with the same
+    // action, rather than a detached one that sends nothing.
+    let target = form;
+    if (!target.isConnected) {
+      const action = form.getAttribute("action");
+      target = Array.from(document.querySelectorAll("form")).find(function (f) { return f.getAttribute("action") === action; });
+      if (!target) return;
+    }
     // form.submit() fires no submit event, so the double-submit guard below
     // would not see it: mark the form busy here, and refuse a second run.
-    if (krillFormBusy(form)) form.submit();
+    if (krillFormBusy(target)) target.submit();
   };
   dlg.returnValue = "";
   dlg.showModal();

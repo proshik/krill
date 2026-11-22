@@ -228,7 +228,15 @@ templ deploymentsTab(c AppCtx) {
 		}
 		<p class="hint">{ placementText(ctx, c) }</p>
 	</section>
-	<div hx-get={ c.base() + "/deployments-list" } hx-trigger="every 3s" hx-swap="outerHTML">
+	// The app's action forms stay outside the polled part: a refresh must not
+	// replace a form whose confirmation is open. The buttons in the polled
+	// part reach them through form=.
+	<form id="deploy-again" method="post" action={ templ.SafeURL(c.base() + "/deploy") }></form>
+	<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
+	<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
+	<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-confirm={ i18n.Tf(ctx, "confirm.stop_app", c.App.Name) } data-more={ i18n.T(ctx, "app.stop_more") } data-ok={ i18n.T(ctx, "common.stop") } onsubmit="return krillConfirm(this)"></form>
+	// innerHTML: the polling element itself stays, so it keeps polling.
+	<div hx-get={ c.base() + "/deployments-list" } hx-trigger="every 3s" hx-swap="innerHTML">
 		@DeploymentsList(c, c.Deps)
 	</div>
 }
@@ -237,10 +245,6 @@ templ deploymentsTab(c AppCtx) {
 // deploy, the active one with the app's controls, and the history.
 templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	<div id="deployments-list">
-		<form id="deploy-again" method="post" action={ templ.SafeURL(c.base() + "/deploy") }></form>
-		<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
-		<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
-		<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-confirm={ i18n.Tf(ctx, "confirm.stop_app", c.App.Name) } data-more={ i18n.T(ctx, "app.stop_more") } data-ok={ i18n.T(ctx, "common.stop") } onsubmit="return krillConfirm(this)"></form>
 		{{ failed, active, rest := splitDeployments(c.App.Status, deps) }}
 		if failed != nil {
 			<section class="deploy deploy--failed" aria-label={ i18n.T(ctx, "deploy.failed") }>
@@ -290,6 +294,9 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 				if c.admin() {
 					if c.App.Status == "idle" {
 						<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.start") }</button>
+						if c.App.SourceType == "dockerfile" {
+							<button type="submit" form="rebuild-form" class="pill" title={ i18n.T(ctx, "app.rebuild_hint") }>{ i18n.T(ctx, "app.rebuild") }</button>
+						}
 					} else {
 						<button type="submit" form="reload-form" class="pill" title={ i18n.T(ctx, "app.reload_hint") }>{ i18n.T(ctx, "app.reload") }</button>
 						<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.deploy_again") }</button>
@@ -307,7 +314,7 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 				for _, dp := range rest {
 					<li class="deploy">
 						<div class="deploy-top">
-							<span class={ "tag", templ.KV("tag--failed", dp.Status == "error") }>{ deployTagLabel(ctx, dp.Status) }</span>
+							<span class={ "tag", templ.KV("tag--failed", dp.Status == "error"), templ.KV("tag--removed", dp.Status == "done") }>{ historyTagLabel(ctx, dp.Status) }</span>
 							<code>{ dp.ImageTag }</code>
 							<span class="when">{ deployWhen(ctx, dp) }</span>
 							if dp.RollbackSourceID != nil {

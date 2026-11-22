@@ -27,6 +27,11 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// The same live status the sheet shows: the stored one can lag behind
+	// Swarm (an app stopped through the API still reads running).
+	apps := []db.Application{c.App}
+	s.deriveCardStatuses(r.Context(), apps, nil)
+	c.App.Status = apps[0].Status
 	render(w, r, http.StatusOK, templates.DeploymentsList(c, deps))
 }
 

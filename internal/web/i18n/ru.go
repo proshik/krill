@@ -1544,6 +1544,7 @@ var ru = map[string]string{
 	"dblink.unlink_more":               "со следующей выкладки переменная больше не передаётся",
 	"deploy.active":                    "текущая выкладка",
 	"deploy.back":                      "назад",
+	"deploy.removed":                   "снят",
 	"deploy.done":                      "текущая",
 	"deploy.failed":                    "не удалась",
 	"deploy.history":                   "история",

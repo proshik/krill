@@ -129,6 +129,15 @@ func deployTagLabel(ctx context.Context, status string) string {
 	return status
 }
 
+// historyTagLabel labels a release in the history: a successful one there
+// has been replaced by a newer release, so it is "removed", not "active".
+func historyTagLabel(ctx context.Context, status string) string {
+	if status == "done" {
+		return i18n.T(ctx, "deploy.removed")
+	}
+	return deployTagLabel(ctx, status)
+}
+
 func deployState(ctx context.Context, status string) (string, string) {
 	switch status {
 	case "done":
