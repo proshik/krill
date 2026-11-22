@@ -184,7 +184,9 @@ function mountMonitoring(el) {
     nodeSeg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
     if (last) build(last);
   });
-  const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
+  // Escapes for text and for double- or single-quoted attribute values: names
+  // such as a worker's come from operators and go into aria-label="…".
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const gib = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GiB" : Math.round(b / 1048576) + " MiB";
   const mib = (b) => Math.round(b / 1048576) + " MiB";
   const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
@@ -534,6 +536,9 @@ if (!window.__krillSubmitGuardInit) {
   // already called preventDefault on the submits they take over.
   document.addEventListener("submit", function (e) {
     if (e.defaultPrevented) return;
+    // A dialog's own form (the confirm dialog's cancel/ok) only closes it:
+    // marking it busy would leave its buttons disabled for the next prompt.
+    if ((e.target.getAttribute("method") || "").toLowerCase() === "dialog") return;
     if (!krillFormBusy(e.target)) e.preventDefault();
   });
   window.addEventListener("pageshow", function (e) {
@@ -637,7 +642,14 @@ window.krillApplyEnvReveal = function () {
 // krillEnvReveal shows or hides every secret value, in both editors.
 function krillEnvReveal(form, on) {
   form.dataset.revealed = on ? "1" : "";
-  form.querySelectorAll("#env-secret-rows .env-val").forEach(i => { i.type = on ? "text" : "password"; });
+  form.querySelectorAll("#env-secret-rows .env-row").forEach(function (row) {
+    row.querySelector(".env-val").type = on ? "text" : "password";
+    const eye = row.querySelector(".env-eye");
+    if (!eye) return;
+    const label = on ? form.dataset.hideOne : form.dataset.showOne;
+    eye.setAttribute("aria-label", label); eye.title = label;
+    eye.setAttribute("aria-pressed", String(on));
+  });
   document.getElementById("env-secrets-raw").hidden = !on;
   document.getElementById("env-secrets-hidden").hidden = on;
   const button = document.getElementById("env-raw-reveal");
@@ -704,7 +716,25 @@ function envRenderRow(form, line) {
     krillEnvSyncToTextarea();
   }
   k.addEventListener("input", edit); v.addEventListener("input", edit);
-  row.append(k, v, move, del);
+  if (line.ordinary) {
+    row.append(k, v, move, del);
+  } else {
+    // A secret row can be shown on its own, without revealing its neighbours.
+    const eye = document.createElement("button");
+    eye.type = "button"; eye.className = "pill pill--icon env-eye"; eye.innerHTML = envIcon("i-eye");
+    const sync = function () {
+      const shown = v.type === "text";
+      const label = shown ? form.dataset.hideOne : form.dataset.showOne;
+      eye.setAttribute("aria-label", label); eye.title = label;
+      eye.setAttribute("aria-pressed", String(shown));
+    };
+    eye.addEventListener("click", function () {
+      v.type = v.type === "password" ? "text" : "password";
+      sync();
+    });
+    sync();
+    row.append(k, v, eye, move, del);
+  }
   document.getElementById(line.ordinary ? "env-variable-rows" : "env-secret-rows").appendChild(row);
   return row;
 }
@@ -928,7 +958,9 @@ krillShellEnhance();
 // on that node and pins the filter when clicked. The canvas also zooms
 // (buttons, ctrl+wheel) and pans (drag on the background).
 function mountWiredMap(map) {
-  map.setAttribute("data-mounted", "");
+  // A JS property, not an attribute: htmx's history cache restores a page from
+  // its serialized HTML, which would carry an attribute but not the listeners.
+  map.__krillMounted = true;
   const svg = map.querySelector(".wires");
   const cards = Array.from(map.querySelectorAll(".svc"));
   const links = [];
@@ -1086,13 +1118,17 @@ function mountWiredMap(map) {
   if (document.fonts) document.fonts.ready.then(function () { if (map.isConnected) map.__krillRedraw(); });
 }
 function krillMountMaps() {
-  document.querySelectorAll(".plane:not([data-mounted]), .lanemap:not([data-mounted]), .topomap:not([data-mounted])").forEach(mountWiredMap);
+  document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
+    if (!m.__krillMounted) mountWiredMap(m);
+  });
 }
 document.addEventListener("DOMContentLoaded", krillMountMaps);
 document.addEventListener("htmx:afterSettle", krillMountMaps);
+document.addEventListener("htmx:historyRestore", krillMountMaps);
 krillMountMaps();
 window.addEventListener("resize", function () {
-  document.querySelectorAll(".plane[data-mounted], .lanemap[data-mounted], .topomap[data-mounted]").forEach(function (m) {
+  document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
+    if (!m.__krillMounted) return;
     if (m.__krillFit) m.__krillFit(); else if (m.__krillRedraw) m.__krillRedraw();
   });
 });

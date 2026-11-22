@@ -1,11 +1,27 @@
-// Run with Playwright's browser_run_code_unsafe filename after signing into the
-// opt-in TestEnvEditorBrowser fixture and opening its first application's env tab.
-// Uses only disposable fixture data; no npm dependencies are needed by Krill.
+// Run with Playwright's code runner (a function of `page`) while signed in as
+// an organization admin, on the Variables tab of an app in an environment that
+// has a second app: http://localhost:18090/orgs/1/projects/1/environments/1/apps/2?tab=variables
+// on the local dev stand. It overwrites both apps' variables with disposable
+// fixture values first; use a disposable dev stand, never a real install.
 async (page) => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   await page.bringToFront();
   const appURL = page.url();
+  const appPath = new URL(appURL).pathname;
   const original = "# Keep comment=unchanged\n PUBLIC =  ordinary  \nTOKEN=private=one\nOTHER=private-two\n";
+  // The second app of this environment, from the canvas behind the sheet.
+  const secondPath = await page.locator('a.svc[href*="/apps/"]').evaluateAll(
+    (as, self) => as.map(a => new URL(a.href).pathname).find(p => p !== self), appPath);
+  assert(secondPath, 'the environment needs a second app');
+  const secondURL = new URL(secondPath + '?tab=variables', appURL).href;
+  const post = async (path, form) => {
+    const r = await page.request.post(new URL(path, appURL).href, { form, headers: { Origin: new URL(appURL).origin }, maxRedirects: 0 });
+    assert(r.status() === 303, 'seeding ' + path + ' answered ' + r.status());
+  };
+  await post(appPath + '/env', { env: original, env_public_keys: 'PUBLIC' });
+  await post(secondPath + '/env', { env: 'LEGACY=private-legacy', env_public_keys: '' });
+  await page.goto(appURL);
+  await page.waitForSelector('#env-form');
   // Input values are properties, not attributes, so resolve row indices from DOM.
   async function keyRow(key) {
     const keys = await page.locator('.env-row .env-key').evaluateAll(es => es.map(e => e.value));
@@ -28,7 +44,7 @@ async (page) => {
   await (await keyRow('PUBLIC')).locator('.env-val').fill('ordinary-history');
   await (await keyRow('OTHER')).locator('.env-val').fill('secret-history');
   const historyText = await page.locator('#env-textarea').inputValue();
-  await page.locator('a[href="' + new URL(appURL).pathname + '"]').click();
+  await page.locator('.sheet nav.seg a[href="' + appPath + '"]').click();
   await page.waitForFunction(() => !document.getElementById('env-form'));
   await page.goBack();
   await page.waitForSelector('#env-form');
@@ -96,12 +112,12 @@ async (page) => {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile horizontal overflow');
   // Exercise HTMX's HTML history cache, which does not preserve JS properties.
   await (await keyRow('OTHER')).locator('.env-eye').click();
-  await page.locator('a[href="' + new URL(appURL).pathname + '"]').click();
+  await page.locator('.sheet nav.seg a[href="' + appPath + '"]').click();
   await page.waitForFunction(() => !document.getElementById('env-form'));
   await page.goBack();
   await page.waitForSelector('#env-form');
   assert(await page.locator('#env-secret-rows .env-val').evaluateAll(es => es.every(e => e.type === 'password')), 'HTMX history kept reveal');
-  await page.goto(appURL.replace('/apps/1?', '/apps/2?'));
+  await page.goto(secondURL);
   await page.locator('[data-env-mode=kv]').click();
   assert(await page.locator('#env-variable-rows .env-row').count() === 0, 'legacy key became ordinary');
   assert(await page.locator('#env-secret-rows .env-val').getAttribute('type') === 'password', 'next app revealed');

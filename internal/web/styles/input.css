@@ -432,6 +432,12 @@ select.input { appearance: none; padding-right: var(--space-2xl); background-ima
 .link-src { color: var(--color-ink-2); font-size: var(--text-sm); }
 .link-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 0.9fr) auto; align-items: end; gap: var(--space-sm); padding: var(--space-md); border-radius: var(--radius-card); box-shadow: inset 0 0 0 1px var(--color-rule); }
 .kv { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto; align-items: center; gap: var(--space-xs); }
+/* Variables and secrets share one grid so their columns line up; only a
+   secret has the show-value button, a variable leaves its column empty. */
+.env-row.kv { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 40px 40px 40px; }
+.env-row .env-eye { grid-column: 3; }
+.env-row .env-move { grid-column: 4; }
+.env-row > :last-child { grid-column: 5; }
 .kv .pill--icon, .links .pill--icon, .users .pill--icon { box-shadow: none; color: var(--color-muted); }
 .kv .pill--icon:hover, .links .pill--icon:hover, .users .pill--icon:hover { color: var(--color-ink); background: var(--color-paper-3); }
 .sec-add { margin-top: var(--space-sm); }
@@ -467,6 +473,12 @@ select.input { appearance: none; padding-right: var(--space-2xl); background-ima
   .link-src { grid-column: 1; grid-row: 2; }
   .kvs { gap: var(--space-md); }
   .kv { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .env-row.kv { grid-template-columns: minmax(0, 1fr) 40px 40px 40px; }
+  .env-row .env-key { grid-column: 1; grid-row: 1; }
+  .env-row .env-val { grid-column: 1; grid-row: 2; }
+  .env-row .env-eye { grid-column: 2; grid-row: 1 / span 2; }
+  .env-row .env-move { grid-column: 3; grid-row: 1 / span 2; }
+  .env-row > :last-child { grid-column: 4; grid-row: 1 / span 2; }
   .kv input[name="value"] { grid-column: 1; grid-row: 2; }
   .kv .pill--icon { grid-row: 1 / span 2; }
   .domain-states { margin-left: 0; width: 100%; order: 3; }

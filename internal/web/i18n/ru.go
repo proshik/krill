@@ -287,6 +287,8 @@ var ru = map[string]string{
 	"env.secrets_hidden":                   "секреты скрыты. Покажите значения для редактирования текста.",
 	"env.add_var":                          "добавить переменную",
 	"env.show_values":                      "показать значения",
+	"env.show_value":                       "показать значение",
+	"env.hide_value":                       "скрыть значение",
 	"env.hide_values":                      "скрыть значения",
 	"deploy.crumb_prefix":                  "/ деплой #",
 	"deploy.col_time":                      "время",

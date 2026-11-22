@@ -287,6 +287,8 @@ var en = map[string]string{
 	"env.secrets_hidden":                   "secrets are hidden. Reveal to edit the raw text.",
 	"env.add_var":                          "add variable",
 	"env.show_values":                      "show values",
+	"env.show_value":                       "show value",
+	"env.hide_value":                       "hide value",
 	"env.hide_values":                      "hide values",
 	"deploy.crumb_prefix":                  "/ deployment #",
 	"deploy.col_time":                      "time",
