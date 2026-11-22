@@ -697,3 +697,61 @@ func TestScheduledDigestWithALongReplySendsOnce(t *testing.T) {
 		t.Fatalf("sent %d times, released %d claims; want once, none", sent, st.released)
 	}
 }
+
+// componentMetrics records how the digest read its samples.
+type componentMetrics struct {
+	fakeMetrics
+	all  *int
+	only *[]string
+}
+
+func (c componentMetrics) Since(ctx context.Context, since time.Time) ([]metrics.Sample, error) {
+	*c.all++
+	return c.fakeMetrics.Since(ctx, since)
+}
+
+func (c componentMetrics) SinceFor(_ context.Context, _ time.Time, components []string) ([]metrics.Sample, error) {
+	*c.only = append([]string(nil), components...)
+	keep := map[string]bool{}
+	for _, n := range components {
+		keep[n] = true
+	}
+	var out []metrics.Sample
+	for _, s := range c.samples {
+		if keep[s.Component] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// A digest without the node part reads only the organization's apps'
+// samples, not the whole cluster's day; one with it still reads everything,
+// because the node rows sum every component.
+func TestDigestReadsOnlyTheOrgSamplesWithoutInfra(t *testing.T) {
+	now := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	st, m := digestFixture(now)
+	var all int
+	var only []string
+	cm := componentMetrics{fakeMetrics: m, all: &all, only: &only}
+	d := NewDigest(New(st), st, cm, nil)
+	ch := Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC", DiskThresholdPct: 85, MemThresholdPct: 100}
+	if _, err := d.Build(context.Background(), ch, now); err != nil {
+		t.Fatal(err)
+	}
+	if all != 0 || len(only) == 0 {
+		t.Fatalf("an app-only digest read the whole cluster (Since calls %d, components %v)", all, only)
+	}
+	for _, n := range only {
+		if !strings.HasPrefix(n, "krill-") {
+			t.Errorf("component %q is not one of the organization's apps", n)
+		}
+	}
+	ch.NotifyInfra = true
+	if _, err := d.Build(context.Background(), ch, now); err != nil {
+		t.Fatal(err)
+	}
+	if all != 1 {
+		t.Fatalf("an infrastructure digest must read every component (Since calls %d)", all)
+	}
+}

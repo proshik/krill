@@ -302,6 +302,7 @@ type Querier interface {
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
+	MetricSamplesSinceForComponents(ctx context.Context, arg MetricSamplesSinceForComponentsParams) ([]MetricSamplesSinceForComponentsRow, error)
 	PruneBackupRuns(ctx context.Context, finishedAt time.Time) error
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error

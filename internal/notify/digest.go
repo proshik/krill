@@ -316,7 +316,7 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 	if err != nil {
 		return data, fmt.Errorf("apps: %w", err)
 	}
-	samples, err := d.metrics.Since(ctx, since)
+	samples, err := d.samples(ctx, since, apps, c.NotifyInfra)
 	if err != nil {
 		return data, fmt.Errorf("metric samples: %w", err)
 	}
@@ -360,6 +360,27 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 		data.State = d.stateBlock(ctx, eventsSince, now)
 	}
 	return data, nil
+}
+
+// componentReader is the optional part of a MetricsReader that can read only
+// some components' samples.
+type componentReader interface {
+	SinceFor(ctx context.Context, since time.Time, components []string) ([]metrics.Sample, error)
+}
+
+// samples reads the day's metric samples the digest needs: every node's when
+// it has a node part (infra), only the organization's apps' otherwise — the
+// node rows are the only thing that reads other components.
+func (d *Digest) samples(ctx context.Context, since time.Time, apps []WatchedApp, infra bool) ([]metrics.Sample, error) {
+	cr, ok := d.metrics.(componentReader)
+	if infra || !ok {
+		return d.metrics.Since(ctx, since)
+	}
+	names := make([]string, len(apps))
+	for i, a := range apps {
+		names[i] = docker.ServiceName(a.AppID)
+	}
+	return cr.SinceFor(ctx, since, names)
 }
 
 // limited reports whether a container's reported limit is a real limit.

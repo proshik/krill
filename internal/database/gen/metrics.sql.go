@@ -182,6 +182,54 @@ func (q *Queries) MetricSamplesSince(ctx context.Context, ts time.Time) ([]Metri
 	return items, nil
 }
 
+const metricSamplesSinceForComponents = `-- name: MetricSamplesSinceForComponents :many
+SELECT node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
+FROM metric_samples
+WHERE ts >= $1 AND component = ANY($2::text[])
+ORDER BY node, component, ts
+`
+
+type MetricSamplesSinceForComponentsParams struct {
+	Ts         time.Time `json:"ts"`
+	Components []string  `json:"components"`
+}
+
+type MetricSamplesSinceForComponentsRow struct {
+	Node          string    `json:"node"`
+	Component     string    `json:"component"`
+	Ts            time.Time `json:"ts"`
+	CpuPct        float32   `json:"cpu_pct"`
+	MemBytes      int64     `json:"mem_bytes"`
+	MemLimitBytes int64     `json:"mem_limit_bytes"`
+}
+
+func (q *Queries) MetricSamplesSinceForComponents(ctx context.Context, arg MetricSamplesSinceForComponentsParams) ([]MetricSamplesSinceForComponentsRow, error) {
+	rows, err := q.db.Query(ctx, metricSamplesSinceForComponents, arg.Ts, arg.Components)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricSamplesSinceForComponentsRow
+	for rows.Next() {
+		var i MetricSamplesSinceForComponentsRow
+		if err := rows.Scan(
+			&i.Node,
+			&i.Component,
+			&i.Ts,
+			&i.CpuPct,
+			&i.MemBytes,
+			&i.MemLimitBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneMetricSamples = `-- name: PruneMetricSamples :exec
 DELETE FROM metric_samples WHERE ts < $1
 `
