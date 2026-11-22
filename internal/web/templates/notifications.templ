@@ -164,15 +164,27 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 						if v.Preview != nil {
 							<div class="tg-bubble">
 								for _, line := range v.Preview {
-									<p>
-										for _, run := range line {
-											if run.Bold {
-												<b>{ run.Text }</b>
-											} else {
-												{ run.Text }
+									if line.Break {
+										<hr class="tg-break"/>
+									} else {
+										<p class={ templ.KV("tg-quote", line.Quote) }>
+											for _, run := range line.Runs {
+												if run.Href != "" {
+													<a href={ templ.SafeURL(run.Href) }>
+														if run.Bold {
+															<b>{ run.Text }</b>
+														} else {
+															{ run.Text }
+														}
+													</a>
+												} else if run.Bold {
+													<b>{ run.Text }</b>
+												} else {
+													{ run.Text }
+												}
 											}
-										}
-									</p>
+										</p>
+									}
 								}
 							</div>
 						} else if v.PreviewErr {
