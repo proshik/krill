@@ -137,14 +137,18 @@ func deployVersion(dep DeploymentInfo) string {
 }
 
 // renderDeploys lists the window's deploys collapsed per app: one line for
-// an app's successful deploys (how many, the version it runs now and when it
-// went out) and a line of its own for every failed one.
+// an app's successful deploys (how many, the version of the newest one and
+// when it went out) and a line of its own for every failed one. Only the
+// success lines are capped; a failure is never left out. A deploy Krill made
+// itself is not counted, but when it is the newest success its version is
+// the one shown (it may have shipped a branch or tag that moved).
 func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 	esc := html.EscapeString
 	type gkey struct{ project, env string }
 	groups := map[gkey]map[int64]*appDeploys{}
 	okN, errN := 0, 0
 	for _, dep := range d.Deploys {
+		system := dep.Trigger == triggerSystem
 		k := gkey{dep.Project, dep.Env}
 		if groups[k] == nil {
 			groups[k] = map[int64]*appDeploys{}
@@ -155,12 +159,17 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 			groups[k][dep.AppID] = a
 		}
 		if dep.Status == "error" {
+			if system {
+				continue
+			}
 			errN++
 			a.failed = append(a.failed, dep)
 			continue
 		}
-		okN++
-		a.ok++
+		if !system {
+			okN++
+			a.ok++
+		}
 		if !dep.FinishedAt.Before(a.last.FinishedAt) {
 			a.last = dep
 		}
@@ -177,42 +186,32 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 		}
 		return keys[i].env < keys[j].env
 	})
-	shown, total := 0, 0
+	shownOK, hiddenOK := 0, 0
 	for _, k := range keys {
-		for _, a := range groups[k] {
-			total += len(a.failed)
-			if a.ok > 0 {
-				total++
-			}
-		}
-	}
-	for _, k := range keys {
-		if shown == digestListMax {
-			break
-		}
 		apps := make([]*appDeploys, 0, len(groups[k]))
 		for _, a := range groups[k] {
 			apps = append(apps, a)
 		}
 		sort.Slice(apps, func(i, j int) bool { return apps[i].name < apps[j].name })
-		b.group(k.project, k.env)
+		var lines []string
 		for _, a := range apps {
-			if a.ok > 0 && shown < digestListMax {
-				count := countOf(ctx, d.Lang, "tg.dg.n_deploys", a.ok)
-				at := whenLabel(a.last.FinishedAt, d.Now, d.Loc, d.Lang)
-				var text string
-				if v := deployVersion(a.last); v != "" {
-					text = i18n.Tf(ctx, "tg.dg.dep_now", count, v, at)
+			if a.ok > 0 {
+				if shownOK == digestListMax {
+					hiddenOK++
 				} else {
-					text = i18n.Tf(ctx, "tg.dg.dep_last", count, at)
+					count := countOf(ctx, d.Lang, "tg.dg.n_deploys", a.ok)
+					at := whenLabel(a.last.FinishedAt, d.Now, d.Loc, d.Lang)
+					var text string
+					if v := deployVersion(a.last); v != "" {
+						text = i18n.Tf(ctx, "tg.dg.dep_now", count, v, at)
+					} else {
+						text = i18n.Tf(ctx, "tg.dg.dep_last", count, at)
+					}
+					lines = append(lines, lvlOK.mark()+" "+linkName(a.url, a.name)+" — "+esc(text))
+					shownOK++
 				}
-				b.add("%s %s — %s", lvlOK.mark(), linkName(a.url, a.name), esc(text))
-				shown++
 			}
 			for _, f := range a.failed {
-				if shown == digestListMax {
-					break
-				}
 				parts := []string{}
 				if v := deployVersion(f); v != "" {
 					parts = append(parts, v)
@@ -221,13 +220,17 @@ func renderDeploys(ctx context.Context, b *digestLines, d digestData) {
 				if e := strings.TrimSpace(f.Error); e != "" {
 					parts = append(parts, oneLine(e, 120))
 				}
-				b.add("%s %s — %s", lvlCrit.mark(), linkName(a.url, a.name), esc(strings.Join(parts, " · ")))
-				shown++
+				lines = append(lines, lvlCrit.mark()+" "+linkName(a.url, a.name)+" — "+esc(strings.Join(parts, " · ")))
 			}
 		}
+		if len(lines) == 0 {
+			continue
+		}
+		b.group(k.project, k.env)
+		b.lines = append(b.lines, lines...)
 	}
-	if shown < total {
-		b.add("%s", esc(i18n.Tf(ctx, "tg.dg.more", total-shown)))
+	if hiddenOK > 0 {
+		b.add("%s", esc(i18n.Tf(ctx, "tg.dg.more", hiddenOK)))
 	}
 }
 
@@ -372,44 +375,81 @@ func renderNodes(ctx context.Context, b *digestLines, d digestData) {
 	b.lines = append(b.lines, details...)
 }
 
-// renderApps lists each app's memory grouped by project and environment,
-// then the apps without fresh data by what Swarm says about them.
+// renderApps lists each app's memory grouped by project and environment;
+// in each group the apps without fresh data follow, named (and linked) on
+// one line per what Swarm says about them.
 func renderApps(ctx context.Context, b *digestLines, d digestData) {
 	esc := html.EscapeString
 	b.add("")
 	b.add("📦 <b>%s</b>", esc(i18n.T(ctx, "tg.dg.apps")))
-	var project, env string
-	for i, a := range d.Apps {
-		if i == 0 || a.Project != project || a.Env != env {
-			project, env = a.Project, a.Env
-			b.group(project, env)
-		}
-		var text string
-		if a.Limit > 0 {
-			text = i18n.Tf(ctx, "tg.dg.app_mem_limit", humanBytes(a.Now), bytesPair(ctx, "tg.pair", a.Peak, a.Limit), pct(a.Peak, a.Limit))
-		} else {
-			text = i18n.Tf(ctx, "tg.dg.app_mem", humanBytes(a.Now), humanBytes(a.Peak))
-		}
-		if d.RestartsKnown && a.Restarts > 0 {
-			text += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
-		}
-		b.add("%s %s — %s", a.level().mark(), linkName(a.URL, a.Name), esc(text))
+	if len(d.Apps) == 0 && len(d.Down) == 0 && len(d.NoData) == 0 && len(d.Stopped) == 0 {
+		b.add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
+		return
 	}
-	names := func(mark, key string, list []string) {
+	type gkey struct{ project, env string }
+	type group struct{ apps, down, noData, stopped []appRow }
+	groups := map[gkey]*group{}
+	var keys []gkey
+	at := func(a appRow) *group {
+		k := gkey{a.Project, a.Env}
+		g := groups[k]
+		if g == nil {
+			g = &group{}
+			groups[k] = g
+			keys = append(keys, k)
+		}
+		return g
+	}
+	for _, a := range d.Apps {
+		at(a).apps = append(at(a).apps, a)
+	}
+	for _, a := range d.Down {
+		at(a).down = append(at(a).down, a)
+	}
+	for _, a := range d.NoData {
+		at(a).noData = append(at(a).noData, a)
+	}
+	for _, a := range d.Stopped {
+		at(a).stopped = append(at(a).stopped, a)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].project != keys[j].project {
+			return keys[i].project < keys[j].project
+		}
+		return keys[i].env < keys[j].env
+	})
+	names := func(mark, key string, list []appRow) {
 		if len(list) == 0 {
 			return
 		}
 		more := ""
 		if len(list) > digestListMax {
-			list, more = list[:digestListMax], " "+i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax)
+			list, more = list[:digestListMax], " "+esc(i18n.Tf(ctx, "tg.dg.more", len(list)-digestListMax))
 		}
-		b.add("%s %s", mark, esc(i18n.T(ctx, key)+": "+strings.Join(list, ", ")+more))
+		linked := make([]string, len(list))
+		for i, a := range list {
+			linked[i] = linkName(a.URL, a.Name)
+		}
+		b.add("%s %s: %s%s", mark, esc(i18n.T(ctx, key)), strings.Join(linked, ", "), more)
 	}
-	names(lvlCrit.mark(), "tg.dg.down", d.Down)
-	names("⚪", "tg.dg.no_samples", d.NoData)
-	names("⚪", "tg.dg.stopped", d.Stopped)
-	if len(d.Apps) == 0 && len(d.Down) == 0 && len(d.NoData) == 0 && len(d.Stopped) == 0 {
-		b.add("%s", esc(i18n.T(ctx, "tg.dg.no_data")))
+	for _, k := range keys {
+		g := groups[k]
+		b.group(k.project, k.env)
+		for _, a := range g.apps {
+			var text string
+			if a.Limit > 0 {
+				text = i18n.Tf(ctx, "tg.dg.app_mem_limit", humanBytes(a.Now), bytesPair(ctx, "tg.pair", a.Peak, a.Limit), pct(a.Peak, a.Limit))
+			} else {
+				text = i18n.Tf(ctx, "tg.dg.app_mem", humanBytes(a.Now), humanBytes(a.Peak))
+			}
+			if d.RestartsKnown && a.Restarts > 0 {
+				text += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
+			}
+			b.add("%s %s — %s", a.level().mark(), linkName(a.URL, a.Name), esc(text))
+		}
+		names(lvlCrit.mark(), "tg.dg.down", g.down)
+		names("⚪", "tg.dg.no_samples", g.noData)
+		names("⚪", "tg.dg.stopped", g.stopped)
 	}
 }
 
@@ -427,14 +467,20 @@ func dateLabel(t time.Time, loc *time.Location, lang string) string {
 // cut left open: Telegram rejects the whole message otherwise. The node
 // quote is not closed here; splitParts balances it.
 func cutLine(r []rune, limit int) string {
-	cut := string(r[:limit])
-	if amp := strings.LastIndex(cut, "&"); amp >= 0 && !strings.Contains(cut[amp:], ";") {
-		cut = cut[:amp]
+	for n := limit; n > 0; n-- {
+		cut := string(r[:n])
+		if amp := strings.LastIndex(cut, "&"); amp >= 0 && !strings.Contains(cut[amp:], ";") {
+			cut = cut[:amp]
+		}
+		if lt := strings.LastIndex(cut, "<"); lt >= 0 && !strings.Contains(cut[lt:], ">") {
+			cut = cut[:lt]
+		}
+		// The closing tags count towards the limit too.
+		if out := cut + closeInlineTags(cut); len([]rune(out)) <= limit {
+			return out
+		}
 	}
-	if lt := strings.LastIndex(cut, "<"); lt >= 0 && !strings.Contains(cut[lt:], ">") {
-		cut = cut[:lt]
-	}
-	return cut + closeInlineTags(cut)
+	return ""
 }
 
 // closeInlineTags returns the closing tags for the <a> and <b> elements s

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/metrics"
 )
 
@@ -67,18 +68,60 @@ func TestDigestCollapsesDeploysPerApp(t *testing.T) {
 	}
 }
 
-// A deploy line count beyond the cap is summarized.
+// Success lines beyond the cap are counted; a failed deploy is listed
+// whatever sorts before it.
 func TestDigestCapsDeployLines(t *testing.T) {
 	now := time.Now()
 	st := &fakeStore{}
 	for i := 0; i < 30; i++ {
 		st.orgDeploys = append(st.orgDeploys, DeploymentInfo{AppID: int64(i + 1), Project: "p", Env: "e", App: fmt.Sprintf("app%02d", i), Status: "done", Version: "v1", FinishedAt: now})
 	}
+	st.orgDeploys = append(st.orgDeploys,
+		DeploymentInfo{AppID: 99, Project: "p", Env: "e", App: "zz-last", Status: "error", Version: "v2", Error: "boom", FinishedAt: now},
+		DeploymentInfo{AppID: 98, Project: "z", Env: "e", App: "other", Status: "error", Error: "bang", FinishedAt: now})
 	d := NewDigest(New(st), st, fakeMetrics{}, nil)
 	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
 	got := strings.Join(parts, "\n")
 	if strings.Count(got, "1 deploy, now v1") != digestListMax || !strings.Contains(got, "…and 10 more") {
 		t.Fatalf("deploy lines not capped:\n%s", got)
+	}
+	for _, want := range []string{"🔴 zz-last — v2 · ", " · boom", "<b>z · e</b>\n🔴 other — ", " · bang"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a failed deploy is crowded out: %q missing\n%s", want, got)
+		}
+	}
+}
+
+// A deploy Krill made itself is not counted, but when it is the newest
+// success its version is what the app was last deployed with.
+func TestDigestSystemDeployMovesTheVersion(t *testing.T) {
+	now := time.Now()
+	st := &fakeStore{orgDeploys: []DeploymentInfo{
+		{AppID: 1, Project: "p", Env: "e", App: "web", Status: "done", Trigger: "manual", Version: "main@1a09ec0", FinishedAt: now.Add(-2 * time.Hour)},
+		{AppID: 1, Project: "p", Env: "e", App: "web", Status: "done", Trigger: "system", Version: "main@9f2c4d1", FinishedAt: now.Add(-time.Hour)},
+		{AppID: 2, Project: "p", Env: "e", App: "quiet", Status: "done", Trigger: "system", Version: "v1.0.0", FinishedAt: now},
+	}}
+	d := NewDigest(New(st), st, fakeMetrics{}, nil)
+	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
+	got := strings.Join(parts, "\n")
+	if !strings.Contains(got, "🚀 <b>Deploys</b>: 1, all succeeded") || !strings.Contains(got, "🟢 web — 1 deploy, now main@9f2c4d1") || strings.Contains(got, "quiet") {
+		t.Fatalf("system deploys:\n%s", got)
+	}
+}
+
+// Apps without fresh data stay in their project and environment, linked.
+func TestDigestIdleAppsAreGroupedAndLinked(t *testing.T) {
+	now := time.Now()
+	st := &fakeStore{orgApps: []WatchedApp{{AppID: 4, OrgID: 7, ProjectID: 2, EnvID: 3, Project: "side", Env: "prod", Name: "demo-app"}}}
+	svc := New(st)
+	svc.SetPublicURL(func(context.Context) string { return "https://krill.example.com" })
+	sw := fakeSwarm{fails: map[string]int{}, states: map[string]docker.ServiceState{"krill-4": {Found: true, Desired: 1}}}
+	d := NewDigest(svc, st, fakeMetrics{}, sw)
+	parts, _ := d.Build(context.Background(), Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC"}, now)
+	got := strings.Join(parts, "\n")
+	want := "<b>side · prod</b>\n🔴 Not running: <a href=\"https://krill.example.com/orgs/7/projects/2/environments/3/apps/4\">demo-app</a>"
+	if !strings.Contains(got, want) {
+		t.Fatalf("idle app:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -213,6 +256,11 @@ func TestCutLineClosesTags(t *testing.T) {
 		}
 		if amp := strings.LastIndex(got, "&"); amp >= 0 && !strings.Contains(got[amp:], ";") {
 			t.Fatalf("limit %d: a broken entity in %q", limit, got)
+		}
+	}
+	for limit := 1; limit < len(line); limit++ {
+		if n := len([]rune(cutLine(line, limit))); n > limit {
+			t.Fatalf("limit %d: %d characters with the closing tags", limit, n)
 		}
 	}
 	if got := cutLine([]rune("abc&amp;def"), 6); got != "abc" {

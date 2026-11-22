@@ -53,9 +53,10 @@ the name is plain text — an address derived from `KRILL_HOST` alone is not lin
 
 The **version** is what the deploy shipped:
 
-- an image app: the tag it deployed (`v1.8.3`); a tag that moves — one without a digit in it,
-  such as `latest`, `main` or `stable` — also gets the short digest of the image it pointed at,
-  `latest (b1139b7c55e2)`, so two deploys of `latest` can be told apart;
+- an image app: the tag it deployed (`v1.8.3`). A tag that can be moved to another image by a
+  later push — anything but a full `major.minor.patch` version or a commit hash, so `latest`,
+  `main`, `stable-2`, `v1` or `16` — also gets the short digest of the image it pointed at,
+  `latest (b1139b7c55e2)`, so two deploys of the same tag can be told apart;
 - a Dockerfile app: the branch and the commit that was built, `master@1a09ec0`;
 - a rollback: the version of the deploy it returned to.
 
@@ -77,9 +78,14 @@ works). It covers the last 24 hours:
 Deploys, backups and apps are grouped under a bold **project · environment** heading, and app
 names link to their pages as in the messages above.
 
-- **Deploys**: one line per app — how many deploys succeeded, the version it runs now and when that
-  one went out (`🟢 demo-app — 5 deploys, now v1.8.3 (22:43)`); every failed deploy gets a 🔴 line
-  of its own with its version, time and reason. "none" when there were none.
+- **Deploys**: one line per app — how many deploys succeeded, and the version of the newest
+  successful deploy and when it went out (`🟢 demo-app — 5 deploys, now v1.8.3 (22:43)`); "now"
+  is that deploy on record, not a check of the running service — an app stopped since then is
+  listed under **Apps** as stopped. A deploy Krill made itself (moving apps to their
+  organization's network) is not counted, but when it is the newest success its version is the one
+  shown. Every failed deploy gets a 🔴 line of its own with its version, time and reason, however
+  many there are; at most 20 success lines are listed, the rest counted. "none" when there were
+  none.
 - **Backups**: every database, volume and bucket backup run, named by what was backed up (the
   logical database, `app / volume`, the bucket), 🟢 with its stored size or 🔴 with the error;
   "none" when there were none. Runs journalled by v0.11.0 or earlier named a database by its server.
@@ -103,7 +109,8 @@ names link to their pages as in the messages above.
   An app is one line and every figure that colours it is on that line, so its mark has no
   separate reason.
 - **Apps**: memory now, the day's peak against the limit, and crashes (only when there were
-  any), each app marked with its status. Apps without fresh data are listed by what Swarm says: 🔴 **Not running** (it should
+  any), each app marked with its status. In each project and environment the apps without fresh
+  data follow, named on one line per what Swarm says: 🔴 **Not running** (it should
   run and does not), ⚪ **Stopped or never deployed** (zero replicas on purpose, or no service),
   ⚪ **No fresh data** (Swarm runs it, but its node's metrics are missing — or Swarm could not be
   read, and then every such app is listed here).

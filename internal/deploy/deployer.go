@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1159,14 +1160,35 @@ func gitVersion(branch, commit string) string {
 // shortDigestLen is how many hex digits of an image digest a version shows.
 const shortDigestLen = 12
 
-// imageVersion names an image deploy by its tag. A tag that can move (one
-// without a digit in it: latest, main, stable) also gets the short digest of
-// the image it pointed at, so two deploys of "latest" can be told apart.
+// pinnedTag reports whether a tag looks like it names a single build: a full
+// version (major.minor.patch, as in v1.8.3 or 16.4.1-alpine) or a commit hash
+// of at least seven hex digits (sha-1a09ec0). Anything else may be moved to
+// another image by a later push.
+func pinnedTag(tag string) bool {
+	if versionTagRe.MatchString(tag) {
+		return true
+	}
+	for _, f := range strings.FieldsFunc(strings.ToLower(tag), func(r rune) bool {
+		return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f')
+	}) {
+		if len(f) >= 7 && strings.ContainsAny(f, "0123456789") && strings.ContainsAny(f, "abcdef") {
+			return true // a commit hash
+		}
+	}
+	return false
+}
+
+var versionTagRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// imageVersion names an image deploy by its tag. A tag that may move
+// (latest, main, stable-2, v1, 16) also gets the short digest of the image it
+// pointed at, so two deploys of the same moving tag can be told apart; a
+// pinned one (pinnedTag) is shown alone.
 func imageVersion(tag, ref string) string {
 	if tag == "" {
 		return ""
 	}
-	if strings.ContainsAny(tag, "0123456789") {
+	if pinnedTag(tag) {
 		return tag
 	}
 	_, digest, ok := strings.Cut(ref, "@")

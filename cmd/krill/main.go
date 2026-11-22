@@ -320,9 +320,6 @@ func run() error {
 	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
 	dbSvc.SetNotifier(notifySvc)
 
-	// Health watcher: polls service state for app down/recovered alerts.
-	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
-	go watcher.Run(ctx)
 
 	// Monitoring: sample container stats into Postgres for the Monitoring page.
 	// The control-plane node is labelled "control-plane" (a friendly, stable name
@@ -539,6 +536,10 @@ func run() error {
 	app.SetNotify(notifySvc)
 	notifySvc.SetInstanceName(app.InstanceName)
 	notifySvc.SetPublicURL(app.NotifyLinkBase)
+	// Health watcher: polls service state for app down/recovered alerts.
+	// Started once the messages can name the installation and link to it.
+	watcher := notify.NewWatcher(engine, notifyStore, notifySvc, cfg.HealthPollInterval)
+	go watcher.Run(ctx)
 	// Daily digest: crashes and stopped apps come from Swarm when the engine
 	// can list its task history.
 	var swarmReader notify.SwarmReader

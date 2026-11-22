@@ -245,9 +245,9 @@ type digestData struct {
 // idleApps are the apps without fresh samples (and no crashes), by what
 // Swarm says about them.
 type idleApps struct {
-	Down    []string // should be running (desired > 0) and run nothing
-	Stopped []string // stopped on purpose (0 replicas) or never deployed
-	NoData  []string // running per Swarm but not sampled, or Swarm unreadable
+	Down    []appRow // should be running (desired > 0) and run nothing
+	Stopped []appRow // stopped on purpose (0 replicas) or never deployed
+	NoData  []appRow // running per Swarm but not sampled, or Swarm unreadable
 }
 
 type appRow struct {
@@ -303,7 +303,9 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 		return data, fmt.Errorf("deployments: %w", err)
 	}
 	for _, dep := range deps {
-		if dep.Trigger != triggerSystem && dep.Status != "running" {
+		// A deploy Krill made itself is kept only when it succeeded: it is
+		// not reported, but it may be what the app runs now.
+		if dep.Status != "running" && (dep.Trigger != triggerSystem || dep.Status == "done") {
 			data.Deploys = append(data.Deploys, dep)
 		}
 	}
@@ -344,8 +346,10 @@ func (d *Digest) collect(ctx context.Context, c Channel, now time.Time) (digestD
 	}
 	data.RestartsKnown = restarts != nil
 	data.Apps, data.idleApps = appRows(apps, samples, memTotal, restarts, states, now)
-	for i := range data.Apps {
-		data.Apps[i].URL = appURL(data.Base, c.OrgID, data.Apps[i].projectID, data.Apps[i].envID, data.Apps[i].appID)
+	for _, rows := range [][]appRow{data.Apps, data.Down, data.Stopped, data.NoData} {
+		for i := range rows {
+			rows[i].URL = appURL(data.Base, c.OrgID, rows[i].projectID, rows[i].envID, rows[i].appID)
+		}
 	}
 	if c.NotifyInfra {
 		disks, err := d.metrics.ListDisks(ctx)
@@ -411,13 +415,13 @@ func appRows(apps []WatchedApp, samples []metrics.Sample, memTotal map[string]in
 			case row.Restarts > 0:
 				rows = append(rows, row) // crash-looping: worth showing
 			case states == nil:
-				idle.NoData = append(idle.NoData, path)
+				idle.NoData = append(idle.NoData, row)
 			case known && st.Found && st.Running > 0:
-				idle.NoData = append(idle.NoData, path) // its node's metrics are missing
+				idle.NoData = append(idle.NoData, row) // its node's metrics are missing
 			case known && st.Found && st.Desired > 0:
-				idle.Down = append(idle.Down, path)
+				idle.Down = append(idle.Down, row)
 			default:
-				idle.Stopped = append(idle.Stopped, path)
+				idle.Stopped = append(idle.Stopped, row)
 			}
 			continue
 		}
@@ -676,8 +680,8 @@ func attention(ctx context.Context, d digestData) []attItem {
 			add(lvlCrit, "tg.dg.att_app_restarts", a.Path, a.Restarts)
 		}
 	}
-	for _, p := range d.Down {
-		add(lvlCrit, "tg.dg.att_app_down", p)
+	for _, a := range d.Down {
+		add(lvlCrit, "tg.dg.att_app_down", a.Path)
 	}
 	for _, n := range d.Nodes {
 		if n.Stale {

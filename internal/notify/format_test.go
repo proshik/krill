@@ -131,3 +131,18 @@ func TestFormatDBEventHasNoPlace(t *testing.T) {
 		t.Fatalf("message:\n%s", got)
 	}
 }
+
+// However long a user made a name, the alert stays under Telegram's 4096
+// characters.
+func TestFormatClipsLongFields(t *testing.T) {
+	long := strings.Repeat("p", 4000)
+	msg := format(Event{Kind: DeploySucceeded, Project: long, Env: long, Target: long,
+		Deploy: &DeployDetail{Version: strings.Repeat("b", 250) + "@1a09ec0", Trigger: "api", Duration: time.Second}}, "en")
+	if n := len([]rune(msg)); n > 4096 {
+		t.Fatalf("alert is %d characters", n)
+	}
+	failed := format(Event{Kind: DeployFailed, Project: long, Env: long, Target: long, Detail: strings.Repeat("e ", 3000)}, "en")
+	if n := len([]rune(failed)); n > 4096 {
+		t.Fatalf("failure alert is %d characters", n)
+	}
+}

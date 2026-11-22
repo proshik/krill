@@ -213,11 +213,11 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 		"🟢 <b>worker-1</b> — диск 25% · память 23%, лимиты 25% · CPU 25% (пик 40%)\n<blockquote expandable><b>control-plane</b>\n🔴 диск /: занято 88% (44.0 из 50.0 GiB), свободно 6.0 GiB",
 		"\nпамять: контейнеры занимают 250 MiB из 2.0 GiB · сумма лимитов 512 MiB — 25% памяти ноды · контейнеров без лимита: 1",
 		"\nCPU: в среднем 50%, пик 80% — от мощности всех ядер (2)",
-		"(2)</blockquote>\n\n📦 <b>Приложения</b>\n<b>p · prod</b>\n",
+		"(2)</blockquote>\n\n📦 <b>Приложения</b>\n",
 		"🟢 api — 200 MiB, пик 300 из 512 MiB (59%)\n",
 		"🔴 bot — 240 MiB, пик 240 из 256 MiB (94%) · падений 3",
-		"🔴 Не запущены: p/prod/worker",
-		"⚪ Остановлены или не развёрнуты: p/dev/old, p/dev/never",
+		"📦 <b>Приложения</b>\n<b>p · dev</b>\n⚪ Остановлены или не развёрнуты: old, never\n<b>p · prod</b>\n",
+		"· падений 3\n🔴 Не запущены: worker",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q", want)
@@ -455,7 +455,7 @@ func TestDigestCapsStoppedApps(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(parts, "\n")
-	if !strings.Contains(got, "…and 130 more") || strings.Count(got, "p&amp;q/e/") != 20 {
+	if !strings.Contains(got, "<b>p&amp;q · e</b>\n⚪ No fresh data: ") || !strings.Contains(got, "…and 130 more") || strings.Count(got, "appxxx") != 20 {
 		t.Fatalf("stopped list not capped:\n%s", got)
 	}
 }

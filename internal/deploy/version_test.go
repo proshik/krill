@@ -10,7 +10,12 @@ func TestImageVersion(t *testing.T) {
 	const pinned = "ghcr.io/acme/demo@sha256:b1139b7c55e2f00dfeedbeef"
 	for _, c := range []struct{ tag, ref, want string }{
 		{"v1.8.3", pinned, "v1.8.3"},
-		{"1.2", "ghcr.io/acme/demo:1.2", "1.2"},
+		{"16.4.1-alpine", pinned, "16.4.1-alpine"},
+		{"sha-1a09ec0", pinned, "sha-1a09ec0"},
+		{"1.2", "ghcr.io/acme/demo:1.2", "1.2"},         // no digest resolved
+		{"v1", pinned, "v1 (b1139b7c55e2)"},             // a major tag moves
+		{"stable-2", pinned, "stable-2 (b1139b7c55e2)"}, // so does a channel
+		{"16", pinned, "16 (b1139b7c55e2)"},
 		{"latest", pinned, "latest (b1139b7c55e2)"},
 		{"main", "docker.io/library/nginx@sha256:abc123", "main (abc123)"},
 		{"latest", "nginx:latest", "latest"}, // digest lookup failed: the plain tag

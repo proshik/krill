@@ -62,18 +62,18 @@ func format(ev Event, lang string) string {
 	// The subject on its own line (a link to its page when there is one),
 	// then where it lives.
 	if ev.Target != "" {
-		fmt.Fprintf(&b, "\n%s", linkName(ev.URL, ev.Target))
+		fmt.Fprintf(&b, "\n%s", linkName(ev.URL, clip(ev.Target)))
 	}
-	if p := placeLine(ctx, ev.Project, ev.Env); p != "" {
+	if p := placeLine(ctx, clip(ev.Project), clip(ev.Env)); p != "" {
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(p))
 	}
 	switch {
 	case ev.Deploy != nil:
 		parts := []string{}
 		if ev.Deploy.Version != "" {
-			parts = append(parts, i18n.T(ctx, "tg.version")+" "+ev.Deploy.Version)
+			parts = append(parts, i18n.T(ctx, "tg.version")+" "+clip(ev.Deploy.Version))
 		} else if ev.Deploy.Image != "" {
-			parts = append(parts, i18n.T(ctx, "tg.image")+" "+ev.Deploy.Image)
+			parts = append(parts, i18n.T(ctx, "tg.image")+" "+clip(ev.Deploy.Image))
 		}
 		if ev.Deploy.Duration > 0 {
 			parts = append(parts, humanDuration(ctx, ev.Deploy.Duration))
@@ -110,6 +110,19 @@ func format(ev Event, lang string) string {
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(d))
 	}
 	return b.String()
+}
+
+// fieldMax caps a name, a place or a version in an alert, so that with the
+// detail (detailMax) the message stays under Telegram's 4096 characters
+// whatever a user named things.
+const fieldMax = 200
+
+// clip shortens s to fieldMax runes.
+func clip(s string) string {
+	if r := []rune(s); len(r) > fieldMax {
+		return string(r[:fieldMax-1]) + "…"
+	}
+	return s
 }
 
 // placeLine names a subject's project and environment ("project p ·
