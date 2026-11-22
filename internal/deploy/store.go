@@ -410,6 +410,16 @@ func (s *DBStore) CountRunningDeploymentsByOrg(ctx context.Context, appID int64)
 	return s.q.CountRunningDeploymentsByOrg(ctx, appID)
 }
 
+// SetDeploymentVersion records the version a deployment ships.
+func (s *DBStore) SetDeploymentVersion(ctx context.Context, deployID int64, version string) error {
+	return s.q.SetDeploymentVersion(ctx, db.SetDeploymentVersionParams{ID: deployID, Version: &version})
+}
+
+// DeploymentVersion reads a deployment's recorded version ("" when none).
+func (s *DBStore) DeploymentVersion(ctx context.Context, deployID int64) (string, error) {
+	return s.q.GetDeploymentVersion(ctx, deployID)
+}
+
 func (s *DBStore) FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error {
 	return s.q.FinishDeployment(ctx, db.FinishDeploymentParams{
 		ID: deployID, Status: status, ImageTag: imageTag, ErrorMessage: errMsg, Log: log,

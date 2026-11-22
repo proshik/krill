@@ -89,7 +89,9 @@ func (noopEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error
 
 type noopBuilder struct{}
 
-func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer) error { return nil }
+func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer) (builder.BuildResult, error) {
+	return builder.BuildResult{}, nil
+}
 
 // newWriteFixture builds on newAPIFixture, additionally wiring a real
 // deployer (noop engine + noop builder) so Deploy/Rebuild/Reload/Stop success

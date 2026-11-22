@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"html"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,17 +59,24 @@ func format(ev Event, lang string) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "<b>%s</b>", html.EscapeString(head))
-	if p := targetPath(ev.Project, ev.Env, ev.Target); p != "" {
+	// The subject on its own line (a link to its page when there is one),
+	// then where it lives.
+	if ev.Target != "" {
+		fmt.Fprintf(&b, "\n%s", linkName(ev.URL, clip(ev.Target)))
+	}
+	if p := placeLine(ctx, clip(ev.Project), clip(ev.Env)); p != "" {
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(p))
 	}
 	switch {
 	case ev.Deploy != nil:
 		parts := []string{}
-		if ev.Deploy.Image != "" {
-			parts = append(parts, i18n.T(ctx, "tg.image")+" "+ev.Deploy.Image)
+		if ev.Deploy.Version != "" {
+			parts = append(parts, i18n.T(ctx, "tg.version")+" "+clipVersion(ev.Deploy.Version))
+		} else if ev.Deploy.Image != "" {
+			parts = append(parts, i18n.T(ctx, "tg.image")+" "+clip(ev.Deploy.Image))
 		}
 		if ev.Deploy.Duration > 0 {
-			parts = append(parts, ev.Deploy.Duration.Round(time.Second).String())
+			parts = append(parts, humanDuration(ctx, ev.Deploy.Duration))
 		}
 		if tr := triggerLabel(ctx, ev.Deploy.Trigger); tr != "" {
 			parts = append(parts, tr)
@@ -101,6 +110,111 @@ func format(ev Event, lang string) string {
 		fmt.Fprintf(&b, "\n%s", html.EscapeString(d))
 	}
 	return b.String()
+}
+
+// fieldMax caps a name, a place or a version in an alert, so that with the
+// detail (detailMax) the message stays under Telegram's 4096 characters
+// whatever a user named things.
+const fieldMax = 200
+
+// clip shortens s to fieldMax runes.
+func clip(s string) string {
+	if r := []rune(s); len(r) > fieldMax {
+		return string(r[:fieldMax-1]) + "…"
+	}
+	return s
+}
+
+// clipVersion is clip for a version, keeping what tells two deploys apart:
+// the commit of "branch@commit" or the digest of "tag (digest)".
+func clipVersion(v string) string {
+	r := []rune(v)
+	if len(r) <= fieldMax {
+		return v
+	}
+	tail := ""
+	if i := strings.LastIndex(v, "@"); i >= 0 {
+		tail = v[i:]
+	} else if i := strings.LastIndex(v, " ("); i >= 0 {
+		tail = v[i:]
+	}
+	t := []rune(tail)
+	if len(t) > fieldMax/2 {
+		return clip(v)
+	}
+	return string(r[:fieldMax-1-len(t)]) + "…" + tail
+}
+
+// placeLine names a subject's project and environment ("project p ·
+// environment e"); "" when it has neither (a database server, a node).
+func placeLine(ctx context.Context, project, env string) string {
+	switch {
+	case project != "" && env != "":
+		return i18n.Tf(ctx, "tg.place", project, env)
+	case project != "":
+		return i18n.Tf(ctx, "tg.place_project", project)
+	}
+	return ""
+}
+
+// groupLine names a digest group: "project · environment".
+func groupLine(project, env string) string {
+	switch {
+	case project != "" && env != "":
+		return project + " · " + env
+	case project != "":
+		return project
+	}
+	return env
+}
+
+// linkName renders name as a link to href, or as plain text without one.
+// Both are escaped (the href as an attribute value).
+func linkName(href, name string) string {
+	if href == "" {
+		return html.EscapeString(name)
+	}
+	return `<a href="` + html.EscapeString(href) + `">` + html.EscapeString(name) + `</a>`
+}
+
+// linkBase returns base when it is an absolute https URL, without a trailing
+// slash; "" otherwise. Messages link only to a public https address: a plain
+// http or internal one is not worth sending to a phone.
+func linkBase(base string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	u, err := url.Parse(base)
+	// A query or fragment, even an empty one ("…/?"), would swallow the
+	// app's path appended after it.
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Host == "" || u.User != nil || strings.ContainsAny(base, "?#") {
+		return ""
+	}
+	return base
+}
+
+// appURL is an app's page under base ("" when base is empty or an id is
+// missing).
+func appURL(base string, org, project, env, app int64) string {
+	if base == "" || org <= 0 || project <= 0 || env <= 0 || app <= 0 {
+		return ""
+	}
+	return base + "/orgs/" + strconv.FormatInt(org, 10) + "/projects/" + strconv.FormatInt(project, 10) +
+		"/environments/" + strconv.FormatInt(env, 10) + "/apps/" + strconv.FormatInt(app, 10)
+}
+
+// humanDuration renders a deploy's duration for a phone: "52s", "3m 5s",
+// "1h 2m" (in the channel's language).
+func humanDuration(ctx context.Context, d time.Duration) string {
+	d = d.Round(time.Second)
+	h, m, sec := int(d/time.Hour), int(d%time.Hour/time.Minute), int(d%time.Minute/time.Second)
+	switch {
+	case h > 0:
+		return i18n.Tf(ctx, "tg.dur.hm", h, m)
+	case m > 0 && sec == 0:
+		return i18n.Tf(ctx, "tg.dur.m", m)
+	case m > 0:
+		return i18n.Tf(ctx, "tg.dur.ms", m, sec)
+	}
+	return i18n.Tf(ctx, "tg.dur.s", sec)
 }
 
 // targetPath joins the non-empty parts of project/env/target.

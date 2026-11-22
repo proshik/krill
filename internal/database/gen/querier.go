@@ -13,6 +13,7 @@ type Querier interface {
 	ActivatePanelDomain(ctx context.Context, host string) (int64, error)
 	AdvanceEnvironmentCloneCleanup(ctx context.Context, arg AdvanceEnvironmentCloneCleanupParams) (string, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
+	// Named by the logical database (several of them share one server).
 	BackupNotifyTarget(ctx context.Context, id int64) (BackupNotifyTargetRow, error)
 	BucketBackupNotifyTarget(ctx context.Context, id int64) (BucketBackupNotifyTargetRow, error)
 	ChannelsForOrg(ctx context.Context, orgID int64) ([]NotificationChannel, error)
@@ -173,6 +174,7 @@ type Querier interface {
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
 	GetDeploymentRelease(ctx context.Context, arg GetDeploymentReleaseParams) (DeploymentRelease, error)
+	GetDeploymentVersion(ctx context.Context, id int64) (string, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
@@ -354,6 +356,9 @@ type Querier interface {
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error
 	SetDeploymentRollbackSource(ctx context.Context, arg SetDeploymentRollbackSourceParams) error
+	// Records the version a deployment ships, once the deployer knows it (after
+	// the build or the image's digest lookup).
+	SetDeploymentVersion(ctx context.Context, arg SetDeploymentVersionParams) error
 	SetDomainAllowedIPs(ctx context.Context, arg SetDomainAllowedIPsParams) error
 	SetDomainBasicAuth(ctx context.Context, arg SetDomainBasicAuthParams) error
 	// Never on the primary: the CHECK backs this up, the condition keeps it a

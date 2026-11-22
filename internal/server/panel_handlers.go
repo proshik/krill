@@ -108,6 +108,20 @@ func (s *Server) baseURL(ctx context.Context) string {
 	return s.cfg.BaseURL()
 }
 
+// NotifyLinkBase is where notifications link to: KRILL_PUBLIC_URL when it is
+// https, else the active panel domain; "" when the installation has no
+// public https address (KRILL_HOST alone is not one), so messages carry no
+// links.
+func (s *Server) NotifyLinkBase(ctx context.Context) string {
+	if strings.HasPrefix(strings.ToLower(s.cfg.PublicURL), "https://") {
+		return s.cfg.PublicURL
+	}
+	if row, err := s.panelRow(ctx); err == nil && row.State == panel.StateActive && row.Host != "" {
+		return "https://" + row.Host
+	}
+	return ""
+}
+
 // hostReservedByPanel reports whether host is the panel's domain, which no app
 // may claim: its router would compete with the panel's for the admin's login.
 func (s *Server) hostReservedByPanel(ctx context.Context, host string) (bool, error) {

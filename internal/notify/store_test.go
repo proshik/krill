@@ -107,7 +107,7 @@ func TestBackupTargetResolvesThroughLogicalDatabase(t *testing.T) {
 		t.Fatalf("create db instance: %v", err)
 	}
 	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
-		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "maindb", DbName: "app", Username: "postgres", Password: "secret",
+		InstanceID: inst.ID, EnvironmentID: e.ID, Name: "orders", DbName: "app", Username: "postgres", Password: "secret",
 	})
 	if err != nil {
 		t.Fatalf("create logical database: %v", err)
@@ -130,7 +130,8 @@ func TestBackupTargetResolvesThroughLogicalDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BackupTarget: %v", err)
 	}
-	if tgt.OrgID != o.ID || tgt.Project != "P" || tgt.Env != "prod" || tgt.Name != "krill-postgres-maindb-nt1" {
+	// Named by the logical database, not by the server several share.
+	if tgt.OrgID != o.ID || tgt.Project != "P" || tgt.Env != "prod" || tgt.Name != "orders" {
 		t.Fatalf("target = %+v", tgt)
 	}
 }
@@ -369,21 +370,30 @@ func TestDeploymentQueries(t *testing.T) {
 	if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{ID: done.ID, Status: "done", ImageTag: "nginx:1"}); err != nil {
 		t.Fatal(err)
 	}
+	ver := "1"
+	if err := q.SetDeploymentVersion(ctx, db.SetDeploymentVersionParams{ID: done.ID, Version: &ver}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app.ID, Trigger: "manual"}); err != nil { // still running
 		t.Fatal(err)
 	}
 	st := notify.NewDBStore(q)
 	info, err := st.DeploymentInfo(ctx, done.ID)
-	if err != nil || info.OrgID != o.ID || info.App != "web" || info.Project != "P" || info.ImageTag != "nginx:1" || info.FinishedAt.IsZero() || info.Trigger != "manual" {
+	if err != nil || info.OrgID != o.ID || info.App != "web" || info.Project != "P" || info.ImageTag != "nginx:1" || info.FinishedAt.IsZero() || info.Trigger != "manual" ||
+		info.Version != "1" || info.ProjectID != p.ID || info.EnvID != e.ID || info.AppID != app.ID {
 		t.Fatalf("DeploymentInfo = %+v, %v", info, err)
 	}
 	deps, err := st.OrgDeploymentsSince(ctx, o.ID, time.Now().Add(-time.Hour))
-	if err != nil || len(deps) != 1 || deps[0].ID != done.ID {
+	if err != nil || len(deps) != 1 || deps[0].ID != done.ID || deps[0].Version != "1" || deps[0].ProjectID != p.ID || deps[0].EnvID != e.ID {
 		t.Fatalf("OrgDeploymentsSince = %+v, %v (an unfinished deploy must not be listed)", deps, err)
 	}
 	apps, err := st.OrgApps(ctx, o.ID)
-	if err != nil || len(apps) != 1 || apps[0].AppID != app.ID || apps[0].Env != "prod" {
+	if err != nil || len(apps) != 1 || apps[0].AppID != app.ID || apps[0].Env != "prod" || apps[0].ProjectID != p.ID || apps[0].EnvID != e.ID {
 		t.Fatalf("OrgApps = %+v, %v", apps, err)
+	}
+	tgt, err := st.AppTarget(ctx, app.ID)
+	if err != nil || tgt.AppID != app.ID || tgt.ProjectID != p.ID || tgt.EnvID != e.ID || tgt.Name != "web" {
+		t.Fatalf("AppTarget = %+v, %v", tgt, err)
 	}
 }
 

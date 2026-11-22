@@ -76,17 +76,17 @@ SELECT * FROM notification_channels WHERE org_id = $1 AND enabled;
 SELECT count(*) FROM notification_channels WHERE enabled AND notify_health;
 
 -- name: AppNotifyTarget :one
-SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE a.id = $1;
 
 -- name: BackupNotifyTarget :one
-SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, di.app_name AS db_name
+-- Named by the logical database (several of them share one server).
+SELECT p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, ld.name AS db_name
 FROM backups b
 JOIN logical_databases ld ON b.logical_database_id = ld.id
-JOIN db_instances di ON ld.instance_id = di.id
 JOIN environments e ON ld.environment_id = e.id
 JOIN projects p ON e.project_id = p.id
 WHERE b.id = $1;
@@ -94,7 +94,7 @@ WHERE b.id = $1;
 -- name: ListWatchedApps :many
 -- Returns ALL apps across ALL orgs; used only by the internal health watcher.
 -- Never expose these rows in a user/org-scoped handler without re-filtering (IDOR).
-SELECT a.id AS app_id, p.organization_id AS org_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
+SELECT a.id AS app_id, p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id;
@@ -165,8 +165,8 @@ SELECT * FROM backup_runs WHERE org_id = $1 AND finished_at >= $2 ORDER BY finis
 DELETE FROM backup_runs WHERE finished_at < $1;
 
 -- name: DeploymentNotifyInfo :one
-SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.started_at, d.finished_at,
-       p.organization_id AS org_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, COALESCE(d.version, '')::text AS version, d.started_at, d.finished_at,
+       p.organization_id AS org_id, p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM deployments d
 JOIN applications a ON d.application_id = a.id
 JOIN environments e ON a.environment_id = e.id
@@ -175,8 +175,8 @@ WHERE d.id = $1;
 
 -- name: ListOrgDeploymentsSince :many
 -- An organization's deployments that finished since $2 (the digest window).
-SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, d.error_message, d.started_at, d.finished_at,
-       p.name AS project_name, e.name AS env_name, a.name AS app_name
+SELECT d.id, d.application_id, d.status, d.trigger, d.image_tag, COALESCE(d.version, '')::text AS version, d.error_message, d.started_at, d.finished_at,
+       p.id AS project_id, e.id AS env_id, p.name AS project_name, e.name AS env_name, a.name AS app_name
 FROM deployments d
 JOIN applications a ON d.application_id = a.id
 JOIN environments e ON a.environment_id = e.id
@@ -185,7 +185,7 @@ WHERE p.organization_id = $1 AND d.finished_at >= $2
 ORDER BY d.finished_at;
 
 -- name: ListOrgApps :many
-SELECT a.id AS app_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
+SELECT a.id AS app_id, p.id AS project_id, e.id AS env_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
 FROM applications a
 JOIN environments e ON a.environment_id = e.id
 JOIN projects p ON e.project_id = p.id

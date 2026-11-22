@@ -37,6 +37,31 @@ Leaving the token field empty keeps the stored one.
 | Backup failures | A database, volume or bucket backup (or restore) fails. | At once |
 | App or database server down / recovered | An app or a database server that was running loses its tasks — a crash, or its node switched off — and when it comes back. Stopping a server, or moving it to another node, is not reported. | Down: after two failed health checks in a row (`KRILL_HEALTH_POLL_INTERVAL`, 30 s by default). Recovered: at the first healthy check after a down alert. |
 
+A message about an app names the app on its own line, then its project and environment, then —
+for a successful deploy — the version that went out, how long it took and what started it:
+
+```
+🟢 Deploy succeeded
+demo-app
+project side · environment prod
+version v1.8.3 · 52s · via API
+```
+
+The app's name is a link to its page in Krill when the installation has a public https address:
+`KRILL_PUBLIC_URL` (when it is `https://…`) or an active [panel domain](domains.md). Without one
+the name is plain text — an address derived from `KRILL_HOST` alone is not linked.
+
+The **version** is what the deploy shipped:
+
+- an image app: the tag it deployed (`v1.8.3`). A tag that can be moved to another image by a
+  later push — anything but a full `major.minor.patch` version or a commit hash, so `latest`,
+  `main`, `stable-2`, `v1` or `16` — also gets the short digest of the image it pointed at,
+  `latest (b1139b7c55e2)`, so two deploys of the same tag can be told apart;
+- a Dockerfile app: the branch and the commit that was built, `master@1a09ec0`;
+- a rollback: the version of the deploy it returned to.
+
+Deploys made by v0.11.0 or earlier recorded no version; for them the message names the image instead.
+
 Successful backups have no message of their own: they usually run at night, so they are listed in
 the [daily digest](#3-daily-digest) instead. A failed restore is alerted like a failed backup but
 is not counted among the digest's backup runs.
@@ -50,31 +75,47 @@ works). It covers the last 24 hours:
 - **Needs attention** — first, so it is the first thing you see; or 🟢 **All good** when every
   figure below is green. It lists every yellow and red figure, red first, and its heading carries
   the worst of them.
-- **Deploys**: each finished deploy with its image (or build number) and time, 🟢 or 🔴, failures
-  with their reason; "none" when there were none.
-- **Backups**: every database, volume and bucket backup run, 🟢 with its stored size or 🔴 with
-  the error; "none" when there were none.
-- **Nodes** (infrastructure channels only): disk use per filesystem, memory in use, the sum of the
-  containers' memory limits against the node's memory, and CPU (average and peak over the day).
-  The node's name carries the worst of its figures and, when that is yellow or red, what made it
-  so — the figures at that colour, at most two and "and N more" — so a red heading over a green
-  disk line is not read as the disk's; a figure's own line is marked only when it is yellow or
+Deploys, backups and apps are grouped under a bold **project · environment** heading, and app
+names link to their pages as in the messages above.
+
+- **Deploys**: one line per app — how many deploys succeeded, and the version of the newest
+  successful deploy and when it went out (`🟢 demo-app — 5 deploys, now v1.8.3 (22:43)`); "now"
+  is that deploy on record, not a check of the running service — an app stopped since then is
+  listed under **Apps** as stopped. A deploy Krill made itself (moving apps to their
+  organization's network) is not counted, but when it is the newest success its version is the one
+  shown. Every failed deploy gets a 🔴 line of its own with its version, time and reason. Success
+  and failure lines are capped at 20 each, separately — so successes never push a failure out —
+  and the rest is counted. "none" when there were none.
+- **Backups**: every database, volume and bucket backup run, named by what was backed up (the
+  logical database, `app / volume`, the bucket), 🟢 with its stored size or 🔴 with the error;
+  "none" when there were none. As with deploys, at most 20 successful and 20 failed runs are listed
+  (the first of the day), the rest counted. Runs journalled by v0.11.0 or earlier named a database by its server.
+- **Nodes** (infrastructure channels only): one line per node with its figures in short — the
+  fullest disk, the memory the containers use and the sum of their limits against the node, and
+  CPU (the day's average and peak). The line carries the worst of its figures; when that is yellow
+  or red, the next line says what made it so — the figures at that colour, at most two and "and N
+  more" — so a red node is not read as its disk's. The full lines of every node follow in one
+  collapsed quote (tap to expand), where a figure's own line is marked only when it is yellow or
   red:
 
   ```
-  🔴 krill-penpot-msk — memory limits at 107% of its memory
-  disk /: 10% used (12.9 of 148 GiB), 128 GiB free
-  🔴 memory: containers use 2.6 of 7.3 GiB · limits add up to 7.8 GiB — 107% of the node’s memory
-  CPU: 1% on average, 3% at peak — of all cores (2)
+  🔴 krill-penpot-msk — disk 10% · memory 36%, limits 107% · CPU 1% (peak 3%)
+  ↳ memory limits at 107% of its memory
+  ▸ krill-penpot-msk
+    disk /: 10% used (12.9 of 148 GiB), 128 GiB free
+    🔴 memory: containers use 2.6 of 7.3 GiB · limits add up to 7.8 GiB — 107% of the node’s memory
+    CPU: 1% on average, 3% at peak — of all cores (2)
   ```
 
   An app is one line and every figure that colours it is on that line, so its mark has no
   separate reason.
-- **Apps**: memory now, the day's peak against the limit, and crashes, each app marked with its
-  status. Apps without fresh data are listed by what Swarm says: 🔴 **Not running** (it should
+- **Apps**: memory now, the day's peak against the limit, and crashes (only when there were
+  any), each app marked with its status. In each project and environment the apps without fresh
+  data follow, named on one line per what Swarm says: 🔴 **Not running** (it should
   run and does not), ⚪ **Stopped or never deployed** (zero replicas on purpose, or no service),
   ⚪ **No fresh data** (Swarm runs it, but its node's metrics are missing — or Swarm could not be
-  read, and then every such app is listed here).
+  read, and then every such app is listed here). An app with a sample from the last 10 minutes
+  keeps its memory line, so one stopped moments before the digest still shows it.
 
 | Figure | 🟡 from | 🔴 from |
 |--------|---------|---------|
@@ -91,7 +132,9 @@ works). It covers the last 24 hours:
 The CPU peak is shown but not graded: a peak is one sampling interval, and a build or a backup
 reaches 100 % routinely.
 
-A long digest is split into several messages. If Krill is not running at the scheduled time, the
+A long digest is split into several messages, at line boundaries; when the split falls inside the
+collapsed node details, the quote is closed at the end of one message and opened again in the
+next. If Krill is not running at the scheduled time, the
 digest is sent when it comes back, but only within 3 hours of that time; otherwise that day is
 skipped, so a digest never arrives at night. The digest is sent once per local day — also across
 restarts, and also when the time or zone is changed after today's digest went out — and a failed
@@ -142,8 +185,8 @@ reporting into one chat can be told apart.
   container with a limit; over 100 % means the containers may ask for more than the node has. A
   container without one is counted apart ("containers without a limit"): it can use the whole
   node.
-- An app's line reads `now 335 MiB · peak 584 MiB of the 1.5 GiB limit (38%)`: the memory it
-  uses at the time of the digest, and the day's peak of one container against its limit.
+- An app's line reads `demo-app — 335 MiB, peak 584 MiB of 1.5 GiB (38%)`: the memory it uses
+  at the time of the digest, and the day's peak of one container against its limit.
 - **Crashes** are the app's failed tasks in Swarm's history over the day: a non-zero exit code
   (137 is a SIGKILL — an OOM kill, or a stop that outlived the grace period), a container killed
   for failing its healthcheck, a task Swarm could not start. Planned stops are not counted:

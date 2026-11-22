@@ -43,6 +43,9 @@ type Event struct {
 	// Instance names the Krill installation (node-level messages: two
 	// installations both have a "control-plane").
 	Instance string
+	// URL is the page of the event's subject in Krill (an app's page); empty
+	// when the installation has no public https address.
+	URL string
 
 	Deploy *DeployDetail // DeploySucceeded
 	Disk   *DiskDetail   // DiskHigh, DiskRecovered
@@ -52,7 +55,8 @@ type Event struct {
 
 // DeployDetail is what a success message says about the deploy.
 type DeployDetail struct {
-	Image    string
+	Version  string // deployments.version; "" for an older deployment
+	Image    string // shortened image reference, shown when there is no version
 	Trigger  string
 	Duration time.Duration
 }
@@ -95,6 +99,9 @@ type Service struct {
 	// instanceName names this installation in node-level messages; set
 	// after the watchers may already run, hence atomic.
 	instanceName atomic.Pointer[func(ctx context.Context) string]
+	// publicURL is the installation's public https address, from which links
+	// to app pages are built ("" = no links). Atomic like instanceName.
+	publicURL atomic.Pointer[func(ctx context.Context) string]
 	// proxyVia / proxyErr record the Telegram proxy setting for the settings
 	// page (written once by SetTelegramProxy at startup, before any reader).
 	proxyVia string
@@ -111,6 +118,26 @@ func (s *Service) instance(ctx context.Context) string {
 		return ""
 	}
 	return (*f)(ctx)
+}
+
+// SetPublicURL sets where messages link to: the installation's public https
+// address (KRILL_PUBLIC_URL or the active panel domain), or "" for none.
+// Safe to call at any time.
+func (s *Service) SetPublicURL(f func(ctx context.Context) string) { s.publicURL.Store(&f) }
+
+// linkBase is the https address links are built from, "" for none.
+func (s *Service) linkBase(ctx context.Context) string {
+	f := s.publicURL.Load()
+	if f == nil || *f == nil {
+		return ""
+	}
+	return linkBase((*f)(ctx))
+}
+
+// appEventURL is the link to the page of the app tgt names, "" when there
+// is no public address or tgt is not an app.
+func (s *Service) appEventURL(ctx context.Context, tgt Target) string {
+	return appURL(s.linkBase(ctx), tgt.OrgID, tgt.ProjectID, tgt.EnvID, tgt.AppID)
 }
 
 // SetMonitor wires the resource monitor that checks memory overcommit after
@@ -161,7 +188,7 @@ func (s *Service) appEvent(ctx context.Context, kind EventKind, appID int64, det
 		s.log.Warn("notify: app target lookup failed", "app", appID, "err", err)
 		return Event{}, false
 	}
-	return Event{Kind: kind, OrgID: tgt.OrgID, Project: tgt.Project, Env: tgt.Env, Target: tgt.Name, Detail: detail, Time: s.now()}, true
+	return Event{Kind: kind, OrgID: tgt.OrgID, Project: tgt.Project, Env: tgt.Env, Target: tgt.Name, Detail: detail, Time: s.now(), URL: s.appEventURL(ctx, tgt)}, true
 }
 
 // backupFailedEvent resolves a failed backup's owner through lookup (each
@@ -247,7 +274,7 @@ func (s *Service) DeploySucceeded(_ context.Context, deploymentID int64) {
 		if d.Trigger == triggerSystem {
 			return
 		}
-		tgt := Target{OrgID: d.OrgID, Project: d.Project, Env: d.Env, Name: d.App}
+		tgt := Target{OrgID: d.OrgID, Project: d.Project, Env: d.Env, Name: d.App, ProjectID: d.ProjectID, EnvID: d.EnvID, AppID: d.AppID}
 		if s.monitor != nil {
 			s.monitor.QueueOvercommitCheck(d.AppID, tgt, s.now())
 		}
@@ -257,7 +284,8 @@ func (s *Service) DeploySucceeded(_ context.Context, deploymentID int64) {
 		}
 		s.notify(ctx, Event{
 			Kind: DeploySucceeded, OrgID: d.OrgID, Project: d.Project, Env: d.Env, Target: d.App, Time: s.now(),
-			Deploy: &DeployDetail{Image: shortImage(d.ImageTag), Trigger: d.Trigger, Duration: dur},
+			URL:    s.appEventURL(ctx, tgt),
+			Deploy: &DeployDetail{Version: d.Version, Image: shortImage(d.ImageTag), Trigger: d.Trigger, Duration: dur},
 		})
 	}()
 }

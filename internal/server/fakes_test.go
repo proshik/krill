@@ -97,7 +97,9 @@ func (noopEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error
 
 type noopBuilder struct{}
 
-func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer) error { return nil }
+func (noopBuilder) Build(_ context.Context, _ builder.BuildRequest, _ io.Writer) (builder.BuildResult, error) {
+	return builder.BuildResult{}, nil
+}
 
 // newNodeServer is like newServer but wires a noopEngine (so addNode/removeNode
 // can reach their success paths without a real docker daemon) and a fake

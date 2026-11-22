@@ -38,19 +38,19 @@ type releaseFixtureBuilder struct {
 	tags   []string
 }
 
-func (b *releaseFixtureBuilder) Build(ctx context.Context, r builder.BuildRequest, w io.Writer) error {
+func (b *releaseFixtureBuilder) Build(ctx context.Context, r builder.BuildRequest, w io.Writer) (builder.BuildResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	source, ok := b.images[r.GitBranch]
 	if !ok {
-		return fmt.Errorf("unknown fixture branch")
+		return builder.BuildResult{}, fmt.Errorf("unknown fixture branch")
 	}
 	if err := b.cli.ImageTag(ctx, source, r.ImageTag); err != nil {
-		return err
+		return builder.BuildResult{}, err
 	}
 	b.tags = append(b.tags, r.ImageTag)
 	fmt.Fprintln(w, "fixture build completed")
-	return nil
+	return builder.BuildResult{}, nil
 }
 
 // TestReleaseBrowser exposes the real router, deployment worker, PostgreSQL and
