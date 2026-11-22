@@ -161,276 +161,135 @@ window.krillExecConnect = function () {
   if (el && el._krillConnect) el._krillConnect();
 };
 
+// The monitoring page: CPU and memory per node as SVG lines (% of the node),
+// and a column per node with its containers. Polls every 10 s; the timer is
+// cleared by krillEnhance when the page is left.
 function mountMonitoring(el) {
   if (!el || el.dataset.mounted) return;
-  if (typeof uPlot === "undefined") { setTimeout(() => mountMonitoring(el), 50); return; }
   el.dataset.mounted = "1";
   const base = el.dataset.url;
-  let range = "24h", cpuU = null, memU = null, nodeFilter = "", lastData = null;
-  const I18N = { stale: el.dataset.i18nStale || "stale", allNodes: el.dataset.i18nAllnodes || "All nodes" };
-  const ACTIVE = "k-seg-active"; // must match the template + CSS active class
-
-  el.querySelectorAll("#mon-range .k-seg-btn").forEach((b) => b.addEventListener("click", () => {
-    el.querySelectorAll("#mon-range .k-seg-btn").forEach((x) => x.classList.remove(ACTIVE));
-    b.classList.add(ACTIVE); range = b.dataset.range; load();
+  const t = el.dataset;
+  let range = "24h", nodeFilter = "", last = null;
+  const status = el.querySelector(".mon-status");
+  const nodeSeg = el.querySelector("[data-mon-nodes]");
+  el.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
+    range = b.dataset.range;
+    el.querySelectorAll("[data-range]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    load();
   }));
-
-  // Node filter (charts only): re-render from the last fetched data, no re-fetch.
-  const nodeSel = el.querySelector("#mon-node-sel");
-  if (nodeSel) nodeSel.addEventListener("change", () => { nodeFilter = nodeSel.value; if (lastData) build(lastData); });
-
-  function fmtMB(mb){ return mb >= 1024 ? (mb/1024).toFixed(1)+" GB" : Math.round(mb)+" MB"; }
-  function mkChart(node, data, series){
-    return new uPlot({ width: node.clientWidth || 520, height: 190, padding:[6,8,0,2], legend:{show:false},
-      cursor:{points:{size:5}}, scales:{x:{time:true}},
-      axes:[{stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:30},
-            {stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:42}], series }, data, node);
-  }
-  function build(d){
-    lastData = d;
-    const xs = d.x || [];
-    // Refresh the node filter options, preserving the current selection (fall back to All if that node vanished).
-    if (nodeSel) {
-      const want = nodeFilter;
-      nodeSel.innerHTML = [`<option value="">${escapeHtml(I18N.allNodes)}</option>`]
-        .concat((d.nodes||[]).map((n) => `<option value="${escapeHtml(n.node)}">${escapeHtml(n.node)}</option>`)).join("");
-      nodeSel.value = want;
-      nodeFilter = nodeSel.value;
-    }
-    const cpuData=[xs], memData=[xs], cpuSer=[{}], memSer=[{}];
-    for (const s of (d.series||[])) {
-      if (nodeFilter && s.node !== nodeFilter) continue; // charts: show only the selected node (All = no filter)
-      cpuData.push(s.cpu); memData.push(s.mem);
-      cpuSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
-      memSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
-    }
-    const cpuNode=el.querySelector("#mon-cpu"), memNode=el.querySelector("#mon-mem");
-    if (cpuU) cpuU.destroy(); if (memU) memU.destroy();
-    cpuNode.innerHTML=""; memNode.innerHTML="";
-    cpuU=mkChart(cpuNode,cpuData,cpuSer); memU=mkChart(memNode,memData,memSer);
-
-    const nodes = d.nodes || [];
-    el.querySelector("#mon-nodes").innerHTML = nodes.map(function(n){
-      const memPct = n.mem_total ? Math.round(n.mem_used/n.mem_total*100) : 0;
-      const stale = n.stale ? ` <span class='k-badge k-badge-warn'>${escapeHtml(I18N.stale)}</span>` : "";
-      return `<span class='k-mon-node'><b>${escapeHtml(n.node)}</b>${stale} cpu ${(n.cpu_pct||0).toFixed(0)}% · mem ${fmtMB((n.mem_used||0)/1048576)} / ${fmtMB((n.mem_total||0)/1048576)} (${memPct}%) · ${n.containers||0}c</span>`;
-    }).join("");
-
-    // Group by node: a node header, then that node's components ordered by class (control/infra/app/db) then name.
-    const ord = function(g){ return g==="control"?0:g==="infra"?1:g==="app"?2:g==="db"?3:9; };
-    const rows = (d.rows||[]).slice().sort(function(a,b){
-      const an=a.node||"", bn=b.node||"";
-      if (an!==bn) return an<bn?-1:1;
-      const go=ord(a.group)-ord(b.group);
-      return go!==0 ? go : (a.name||"").localeCompare(b.name||"");
+  nodeSeg.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-node]");
+    if (!b) return;
+    nodeFilter = b.dataset.node;
+    nodeSeg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (last) build(last);
+  });
+  const esc = (s) => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
+  const gib = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GiB" : Math.round(b / 1048576) + " MiB";
+  const mib = (b) => Math.round(b / 1048576) + " MiB";
+  const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
+  function nodeSeries(d) {
+    // Per node, per bucket: sum of the containers' values, as % of the node.
+    const cap = {};
+    (d.nodes || []).forEach((n) => { cap[n.node] = n; });
+    const out = {};
+    const len = (d.x || []).length;
+    (d.series || []).forEach((s) => {
+      const n = cap[s.node] || {};
+      if (!out[s.node]) out[s.node] = { cpu: new Array(len).fill(null), mem: new Array(len).fill(null) };
+      for (let i = 0; i < len; i++) {
+        const c = s.cpu[i], m = s.mem[i];
+        if (c != null && n.ncpu) out[s.node].cpu[i] = (out[s.node].cpu[i] || 0) + c / n.ncpu;
+        if (m != null && n.mem_total) out[s.node].mem[i] = (out[s.node].mem[i] || 0) + m * 1048576 * 100 / n.mem_total;
+      }
     });
-    let html="<table class='k-table'><thead><tr><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", curNode=null;
-    for (const r of rows) {
-      if (nodeFilter && r.node !== nodeFilter) continue; // node selector also filters the table (All = no filter)
-      if (r.node!==curNode){ curNode=r.node; html+=`<tr class='k-mon-grp'><td colspan='3'>${escapeHtml(curNode||"—")}</td></tr>`; }
-      html+=`<tr><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${fmtMB(r.mem/1048576)}</td></tr>`;
-    }
-    el.querySelector("#mon-table").innerHTML = html+"</tbody></table>";
+    return out;
   }
-  function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
-  function load(){ fetch(`${base}?range=${range}`).then(r=>r.json()).then(build).catch(()=>{}); }
+  function path(pts) {
+    let d = "", pen = false;
+    const n = pts.length;
+    pts.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      const x = (n > 1 ? i * 600 / (n - 1) : 0).toFixed(1);
+      const y = (200 - Math.max(0, Math.min(100, v)) * 2).toFixed(1);
+      d += (pen ? "L" : "M") + x + " " + y;
+      pen = true;
+    });
+    return d;
+  }
+  function lastVal(pts) { for (let i = pts.length - 1; i >= 0; i--) if (pts[i] != null) return pts[i]; return null; }
+  function chart(kind, series, names) {
+    const sec = el.querySelector('[data-chart="' + kind + '"]');
+    const svg = sec.querySelector("svg");
+    let html = '<line x1="0" y1="0.5" x2="600" y2="0.5"/><line x1="0" y1="100" x2="600" y2="100"/><line x1="0" y1="199.5" x2="600" y2="199.5"/>';
+    let ends = "";
+    names.forEach((n, i) => {
+      if (nodeFilter && n !== nodeFilter) return;
+      const pts = (series[n] || {})[kind] || [];
+      html += '<path class="' + CLS[i % CLS.length] + '" d="' + path(pts) + '"/>';
+      const v = lastVal(pts);
+      ends += '<li class="' + CLS[i % CLS.length] + '"><span class="swatch"></span>' + esc(n) + "<b>" + (v == null ? "—" : Math.round(v) + "%") + "</b></li>";
+    });
+    svg.innerHTML = html;
+    sec.querySelector(".ends").innerHTML = ends;
+  }
+  function spark(pts) {
+    return '<svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true"><path d="' +
+      path(pts).replace(/([ML])([\d.]+) ([\d.]+)/g, (m, c, x, y) => c + (x / 5).toFixed(1) + " " + (y * 0.16).toFixed(1)) + '"/></svg>';
+  }
+  function meter(pct, warn) {
+    return '<span class="meter' + (warn ? " meter--warn" : "") + '" aria-hidden="true"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
+  }
+  function build(d) {
+    last = d;
+    status.textContent = "";
+    const nodes = (d.nodes || []).map((n) => n.node);
+    // The node switch keeps the current choice when the node still exists.
+    if (nodeFilter && nodes.indexOf(nodeFilter) < 0) nodeFilter = "";
+    const all = nodeSeg.querySelector('[data-node=""]');
+    nodeSeg.querySelectorAll("button:not([data-node=''])").forEach((b) => b.remove());
+    nodes.forEach((n) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.node = n; b.textContent = n;
+      b.setAttribute("aria-pressed", String(n === nodeFilter));
+      nodeSeg.appendChild(b);
+    });
+    all.setAttribute("aria-pressed", String(nodeFilter === ""));
+    const series = nodeSeries(d);
+    chart("cpu", series, nodes);
+    chart("mem", series, nodes);
+    const rows = d.rows || [];
+    const ord = (g) => g === "control" ? 0 : g === "infra" ? 1 : g === "app" ? 2 : g === "db" ? 3 : 9;
+    let cols = "";
+    (d.nodes || []).forEach((n) => {
+      if (nodeFilter && n.node !== nodeFilter) return;
+      const memPct = n.mem_total ? Math.round(n.mem_used * 100 / n.mem_total) : 0;
+      const warn = memPct >= 85;
+      const st = n.stale ? '<span class="state state--idle"><svg class="sig sig--idle" aria-hidden="true"><use href="#s-idle"></use></svg>' + esc(t.i18nStale) + "</span>"
+        : warn ? '<span class="state state--warn"><svg class="sig sig--warn" aria-hidden="true"><use href="#s-warn"></use></svg>' + esc((t.i18nPressure || "%d").replace("%d", memPct).replace("%%", "%")) + "</span>"
+        : '<span class="state state--ok"><svg class="sig sig--ok" aria-hidden="true"><use href="#s-ok"></use></svg>' + esc(t.i18nHealthy) + "</span>";
+      const comps = rows.filter((r) => r.node === n.node).sort((a, b) => ord(a.group) - ord(b.group) || (a.name || "").localeCompare(b.name || ""));
+      const cpuPts = (series[n.node] || {}).cpu || [];
+      cols += '<section class="nodecol' + (warn ? " nodecol--warn" : "") + '" aria-label="' + esc(n.node) + '">' +
+        '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
+        '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc((t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
+        '<div class="fig"><b>' + gib(n.mem_used || 0) + "<small> " + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
+        '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", comps.length)) + "</h3><ul class=\"comps\">" +
+        comps.map((r) => {
+          const name = r.href ? '<a href="' + esc(r.href) + '">' + esc(r.name) + "</a>" : "<span>" + esc(r.name) + "</span>";
+          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + mib(r.mem) + " / " + mib(r.mem_limit) : mib(r.mem);
+          return '<li><span class="comp-name">' + name + "<em>" + esc(r.detail || r.group || "") + '</em></span><span class="comp-cpu">' + (r.cpu || 0).toFixed(1) + '%</span><span class="comp-mem">' + lim + "</span></li>";
+        }).join("") + "</ul></section>";
+    });
+    el.querySelector(".nodecols").innerHTML = cols;
+  }
+  function load() {
+    fetch(base + "?range=" + range).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(build).catch(() => { status.textContent = t.i18nError || "metrics unavailable"; });
+  }
   load();
-  // Store the poll timer globally so krillEnhance clears it on the next nav/swap
-  // (otherwise an extra fetch loop would stack on every visit to this page).
   if (window.__krillMonTimer) clearInterval(window.__krillMonTimer);
   window.__krillMonTimer = setInterval(load, 10000);
-  // A single resize handler, stored globally and removed on the next nav/swap by
-  // krillEnhance (otherwise a new listener pinning a detached chart leaks per visit).
-  if (window.__krillMonResize) window.removeEventListener("resize", window.__krillMonResize);
-  window.__krillMonResize = function(){
-    if (cpuU) cpuU.setSize({width:el.querySelector("#mon-cpu").clientWidth,height:190});
-    if (memU) memU.setSize({width:el.querySelector("#mon-mem").clientWidth,height:190});
-  };
-  window.addEventListener("resize", window.__krillMonResize);
-}
-
-function mountTopology(el) {
-  if (!el || el.dataset.mounted) return;
-  el.dataset.mounted = "1";
-  const base = el.dataset.url;
-  const I18N = {
-    empty: el.dataset.i18nEmpty || "No services yet",
-    cross: el.dataset.i18nCrossnode || "cross-node",
-  };
-  const NS = "http://www.w3.org/2000/svg";
-  const canvas = el.querySelector(".k-topo-canvas");
-  const btn = el.querySelector(".k-topo-refresh");
-  let data = null;
-
-  function mk(tag, attrs, text) {
-    const n = document.createElementNS(NS, tag);
-    for (const k in attrs) n.setAttribute(k, attrs[k]);
-    if (text != null) n.textContent = text;
-    return n;
-  }
-
-  function draw() {
-    canvas.innerHTML = "";
-    const realSvcs = (data && data.services || []).filter((s) => s.kind === "app" || s.kind === "db");
-    if (!realSvcs.length) {
-      const p = document.createElement("p");
-      p.className = "k-muted";
-      p.style.padding = "1rem";
-      p.textContent = I18N.empty;
-      canvas.appendChild(p);
-      return;
-    }
-    const LANE_W = 240, LANE_GAP = 56, PAD = 16, HEAD_H = 34,
-      BOX_H = 46, BOX_GAP = 12, CHIP_H = 20, CHIP_GAP = 4, BOX_W = LANE_W - PAD * 2;
-
-    // Order lanes: control-plane/manager first, workers by name, unplaced last.
-    const rank = (n) => (n.id === "ingress" ? -1 : n.id === "unplaced" ? 2 : (n.leader || n.role === "manager") ? 0 : 1);
-    const nodes = (data.nodes || []).slice().sort((a, b) => {
-      const r = rank(a) - rank(b);
-      return r !== 0 ? r : (a.name || "").localeCompare(b.name || "");
-    });
-
-    const byNode = {};
-    for (const s of data.services) (byNode[s.node] = byNode[s.node] || []).push(s);
-    const dbsByInst = {};
-    for (const d of (data.dbs || [])) (dbsByInst[d.service] = dbsByInst[d.service] || []).push(d);
-
-    // Geometry, keyed by service id and "L"+dbId.
-    const anchor = {};
-    let maxH = 0;
-    nodes.forEach((n, ci) => {
-      const laneX = PAD + ci * (LANE_W + LANE_GAP);
-      let y = HEAD_H + PAD;
-      for (const s of (byNode[n.id] || [])) {
-        const chips = s.kind === "db" ? (dbsByInst[s.id] || []) : [];
-        s.__x = laneX + PAD; s.__y = y; s.__w = BOX_W;
-        anchor[s.id] = {
-          left: { x: laneX + PAD, y: y + BOX_H / 2 },
-          right: { x: laneX + PAD + BOX_W, y: y + BOX_H / 2 },
-        };
-        let cy = y + BOX_H + CHIP_GAP;
-        for (const d of chips) {
-          d.__x = laneX + PAD + 8; d.__y = cy; d.__w = BOX_W - 16;
-          anchor["L" + d.id] = {
-            left: { x: laneX + PAD + 8, y: cy + CHIP_H / 2 },
-            right: { x: laneX + PAD + BOX_W - 8, y: cy + CHIP_H / 2 },
-          };
-          cy += CHIP_H + CHIP_GAP;
-        }
-        const h = BOX_H + (chips.length ? chips.length * (CHIP_H + CHIP_GAP) + CHIP_GAP : 0);
-        y += h + BOX_GAP;
-      }
-      n.__x = laneX;
-      if (y > maxH) maxH = y;
-    });
-
-    const totalW = PAD * 2 + nodes.length * LANE_W + Math.max(0, nodes.length - 1) * LANE_GAP;
-    const totalH = Math.max(maxH + PAD, 160);
-    const svg = mk("svg", { width: totalW, height: totalH, viewBox: `0 0 ${totalW} ${totalH}`, class: "k-topo-svg" });
-
-    const defs = mk("defs", {});
-    const marker = mk("marker", { id: "k-topo-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" });
-    marker.appendChild(mk("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "k-topo-arrowhead" }));
-    defs.appendChild(marker);
-    svg.appendChild(defs);
-
-    // Lanes.
-    for (const n of nodes) {
-      svg.appendChild(mk("rect", { x: n.__x, y: 0, width: LANE_W, height: totalH, rx: 10, class: "k-topo-lane" }));
-      svg.appendChild(mk("text", { x: n.__x + PAD, y: 22, class: "k-topo-lanehead" }, n.name));
-      if (n.role) svg.appendChild(mk("text", { x: n.__x + LANE_W - PAD, y: 22, "text-anchor": "end", class: "k-topo-lanerole" }, n.role));
-    }
-
-    // Boxes/chips are drawn first; links and their domain labels layer ABOVE
-    // them, so a cross-lane link (or its label) is never hidden behind an
-    // intervening box.
-    const linkEls = [];
-    function focusOn(key) {
-      svg.classList.add("k-topo-focused");
-      for (const p of linkEls) {
-        const on = p.getAttribute("data-from") === key || p.getAttribute("data-to") === key;
-        p.classList.toggle("k-topo-lit", on);
-      }
-    }
-    function focusOff() {
-      svg.classList.remove("k-topo-focused");
-      for (const p of linkEls) p.classList.remove("k-topo-lit");
-    }
-
-    // Service boxes + chips (chips are siblings, not nested, so hover is independent).
-    for (const n of nodes) {
-      for (const s of (byNode[n.id] || [])) {
-        const g = mk("g", { class: "k-topo-svc k-topo-" + s.kind + (s.status && s.status !== "running" ? " k-topo-off" : ""), "data-id": s.id });
-        g.appendChild(mk("rect", { x: s.__x, y: s.__y, width: s.__w, height: BOX_H, rx: 8, class: "k-topo-box" }));
-        g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 20, class: "k-topo-name" }, s.label));
-        if (s.sub) g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 36, class: "k-topo-sub" }, s.sub));
-        g.addEventListener("mouseenter", () => focusOn(s.id));
-        g.addEventListener("mouseleave", focusOff);
-        svg.appendChild(g);
-        for (const d of (dbsByInst[s.id] || [])) {
-          const cg = mk("g", { class: "k-topo-chip", "data-id": "L" + d.id });
-          cg.appendChild(mk("rect", { x: d.__x, y: d.__y, width: d.__w, height: CHIP_H, rx: 5, class: "k-topo-chipbox" }));
-          cg.appendChild(mk("text", { x: d.__x + 8, y: d.__y + 14, class: "k-topo-chiptext" }, d.name + (d.env ? " · " + d.env : "")));
-          cg.addEventListener("mouseenter", () => focusOn("L" + d.id));
-          cg.addEventListener("mouseleave", focusOff);
-          svg.appendChild(cg);
-        }
-      }
-    }
-
-    // Links above the boxes. Directed: arrowhead at the `to` end.
-    const edgeLabels = [];
-    for (const l of (data.links || [])) {
-      const from = anchor[l.from];
-      const to = l.to_kind === "logical" ? anchor["L" + l.to_id] : anchor[l.to_id];
-      if (!from || !to) continue;
-      const rightward = from.right.x <= to.left.x;
-      const a = rightward ? from.right : from.left;
-      const b = rightward ? to.left : to.right;
-      const dx = Math.abs(b.x - a.x) / 2 + 24;
-      const c1 = a.x + (b.x >= a.x ? dx : -dx);
-      const c2 = b.x + (b.x >= a.x ? -dx : dx);
-      const d = `M ${a.x} ${a.y} C ${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
-      let cls = "k-topo-link";
-      if (l.kind === "ingress") cls += " k-topo-link-ingress";
-      else cls += " k-topo-link-" + (l.engine || "postgres");
-      if (l.detected) cls += " k-topo-link-detected";
-      if (l.cross_node) cls += " k-topo-cross";
-      const toKey = l.to_kind === "logical" ? "L" + l.to_id : l.to_id;
-      const path = mk("path", { d: d, class: cls, "marker-end": "url(#k-topo-arrow)", "data-from": l.from, "data-to": toKey });
-      let tip;
-      if (l.kind === "ingress") tip = l.label || "";
-      else {
-        const base = l.label || (l.field ? l.var + " → " + l.field : l.var);
-        tip = base + (l.detected ? " (env)" : "") + (l.cross_node ? " (" + I18N.cross + ")" : "");
-      }
-      path.appendChild(mk("title", {}, tip));
-      linkEls.push(path);
-      svg.appendChild(path);
-      if (l.kind === "ingress" && l.label) {
-        edgeLabels.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4, t: l.label });
-      }
-    }
-
-    // Domain labels on the very top; the CSS halo keeps them readable over anything.
-    for (const el2 of edgeLabels) {
-      svg.appendChild(mk("text", { x: el2.x, y: el2.y, "text-anchor": "middle", class: "k-topo-edgelabel" }, el2.t));
-    }
-
-    canvas.appendChild(svg);
-  }
-
-  function load() {
-    fetch(base).then((r) => r.json()).then((d) => { data = d; draw(); }).catch(() => {});
-  }
-  if (btn) btn.addEventListener("click", load);
-  load();
-
-  // Redraw on resize (layout is width-independent here, but keep the same
-  // single-global-handler discipline as monitoring so it is cleaned up on nav).
-  if (window.__krillTopoResize) window.removeEventListener("resize", window.__krillTopoResize);
-  window.__krillTopoResize = function () { if (data) draw(); };
-  window.addEventListener("resize", window.__krillTopoResize);
 }
 
 // krillEnhance wires up content present on the page or just swapped in: it mounts
@@ -440,8 +299,7 @@ window.krillEnhance = function () {
   document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
   document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
   document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
-  document.querySelectorAll(".k-mon:not([data-mounted])").forEach(mountMonitoring);
-  document.querySelectorAll(".k-topo:not([data-mounted])").forEach(mountTopology);
+  document.querySelectorAll(".mon:not([data-mounted])").forEach(mountMonitoring);
   const envForm = document.getElementById("env-form");
   if (envForm && !envForm.envLines) {
     let mode = "kv";
@@ -452,12 +310,9 @@ window.krillEnhance = function () {
   krillMountSchedulePresets();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
-  if (!document.querySelector(".k-mon")) {
+  if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
     if (window.__krillMonResize) { window.removeEventListener("resize", window.__krillMonResize); window.__krillMonResize = null; }
-  }
-  if (!document.querySelector(".k-topo")) {
-    if (window.__krillTopoResize) { window.removeEventListener("resize", window.__krillTopoResize); window.__krillTopoResize = null; }
   }
   // Stop any previous status-refresh timer (the page/element may have swapped),
   // then restore the toggle from localStorage on the current page.

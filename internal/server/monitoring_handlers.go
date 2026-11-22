@@ -39,6 +39,8 @@ type monRow struct {
 	CPU       float64 `json:"cpu"`
 	Mem       int64   `json:"mem"`
 	MemLimit  int64   `json:"mem_limit"`
+	Detail    string  `json:"detail,omitempty"` // project/environment of the org's app, engine of its server
+	Href      string  `json:"href,omitempty"`   // the org's own app or server page
 }
 
 // monNode is one cluster node's current summary.
@@ -146,14 +148,22 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 		freshness = 2 * time.Minute
 	}
 	latest, _ := s.metrics.Latest(r.Context(), now.Add(-freshness))
+	hrefs := s.metricHrefs(r, o.ID)
 	rows := make([]monRow, 0, len(latest))
 	for _, sm := range latest {
 		grp, name := metrics.Classify(sm.Component, sm.Component == selfComp, apps, dbs)
 		key := sm.Node + "\x1f" + sm.Component
-		rows = append(rows, monRow{
+		row := monRow{
 			Node: sm.Node, Component: sm.Component, Name: name, Group: grp,
 			Color: colorByKey[key], CPU: sm.CPUPct, Mem: sm.MemBytes, MemLimit: sm.MemLimitBytes,
-		})
+			Href: hrefs[sm.Component],
+		}
+		if l, ok := apps[sm.Component]; ok {
+			row.Detail = l.Detail
+		} else if l, ok := dbs[sm.Component]; ok {
+			row.Detail = l.Detail
+		}
+		rows = append(rows, row)
 	}
 	sortRows(rows)
 
@@ -346,4 +356,24 @@ func (s *Server) nodeSummaries(ctx context.Context) []monNode {
 		slog.Warn("nodeSummaries: capacity", "err", err)
 	}
 	return summarizeNodes(latest, caps, now.Add(-freshness))
+}
+
+// metricHrefs maps the organization's own apps' and servers' components to
+// their pages; other tenants' components get none.
+func (s *Server) metricHrefs(r *http.Request, orgID int64) map[string]string {
+	out := map[string]string{}
+	ix, err := s.loadOrgIndex(r.Context(), orgID)
+	if err != nil {
+		logFrom(r).Warn("monitoring: org index", "err", err)
+		return out
+	}
+	for _, a := range ix.apps {
+		out[dockerName(a.ID)] = ix.appURL(a)
+	}
+	if insts, err := s.q.ListDBInstancesByOrg(r.Context(), orgID); err == nil {
+		for _, in := range insts {
+			out[in.AppName] = "/orgs/" + strconv.FormatInt(orgID, 10) + "/db-servers/" + strconv.FormatInt(in.ID, 10)
+		}
+	}
+	return out
 }

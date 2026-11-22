@@ -30,6 +30,7 @@ type GService struct {
 	Sub    string `json:"sub"`    // "project / env" (app) or "Postgres"/"Redis" (db)
 	Engine string `json:"engine"` // "" | "postgres" | "redis"
 	Status string `json:"status"` // "running" | stored status (greys the box when not running)
+	Href   string `json:"href,omitempty"` // the service's page in the panel
 }
 
 type GDB struct {
@@ -77,6 +78,7 @@ type ServiceInput struct {
 	Sub    string
 	Engine string
 	Status string
+	Href   string
 }
 
 type DBInput struct {
@@ -290,7 +292,7 @@ func Build(in Inputs) Graph {
 	}
 	svcNode := make(map[string]string, len(in.Services))
 	for _, s := range in.Services {
-		g.Services = append(g.Services, GService{ID: s.ID, Kind: s.Kind, NodeID: s.NodeID, Label: s.Label, Sub: s.Sub, Engine: s.Engine, Status: s.Status})
+		g.Services = append(g.Services, GService{ID: s.ID, Kind: s.Kind, NodeID: s.NodeID, Label: s.Label, Sub: s.Sub, Engine: s.Engine, Status: s.Status, Href: s.Href})
 		svcNode[s.ID] = s.NodeID
 	}
 	dbNode := make(map[int64]string, len(in.Dbs))

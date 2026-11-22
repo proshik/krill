@@ -116,6 +116,11 @@ func TestTopologyDataCrossTenant(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "app-b") {
 		t.Errorf("org B's own app missing from its topology")
 	}
+	// The same holds for the server-drawn page.
+	rec = getWithCookie(t, h, "/orgs/"+i64(orgB.ID)+"/topology", cookieB)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "app-a") || !strings.Contains(rec.Body.String(), "app-b") {
+		t.Errorf("SECURITY: the topology page must show org B's app and never org A's (code %d)", rec.Code)
+	}
 }
 
 func TestTopologyPageOwnerOK(t *testing.T) {
@@ -128,11 +133,13 @@ func TestTopologyPageOwnerOK(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("owner want 200, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `class="k-topo"`) {
-		t.Errorf("topology island missing from page HTML")
+	// The page is drawn on the server: the lanes and the gateway card are in
+	// the HTML, the client only adds the wires.
+	if !strings.Contains(rec.Body.String(), `class="topomap"`) {
+		t.Errorf("topology lanes missing from page HTML")
 	}
-	if !strings.Contains(rec.Body.String(), "/topology/data") {
-		t.Errorf("island data-url missing from page HTML")
+	if !strings.Contains(rec.Body.String(), `id="t-gateway"`) {
+		t.Errorf("gateway card missing from page HTML")
 	}
 }
 

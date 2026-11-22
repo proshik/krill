@@ -2,11 +2,13 @@ package templates
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
 )
@@ -134,6 +136,8 @@ func ago(ctx context.Context, t time.Time) string {
 // AppState maps a stored or derived app status to a signal kind and label.
 func AppState(ctx context.Context, status string) (string, string) {
 	switch status {
+	case "node_down", "node_removed":
+		return "err", i18n.T(ctx, "state."+status)
 	case "running":
 		return "ok", i18n.T(ctx, "state.online")
 	case "deploying":
@@ -148,6 +152,8 @@ func AppState(ctx context.Context, status string) (string, string) {
 // ServerState maps a database server's status to a signal kind and label.
 func ServerState(ctx context.Context, status string) (string, string) {
 	switch status {
+	case "node_down", "node_removed":
+		return "err", i18n.T(ctx, "state."+status)
 	case "running":
 		return "ok", i18n.T(ctx, "state.online")
 	case "deploying", "migrating":
@@ -230,3 +236,53 @@ func addScheduleTitle(ctx context.Context, n int) string {
 	}
 	return i18n.T(ctx, "backup.add_another")
 }
+
+func laneCols(n int) string {
+	if n > 4 {
+		n = 4
+	}
+	if n < 1 {
+		n = 1
+	}
+	return "--lanes:" + strconv.Itoa(n)
+}
+
+func nodeStateKind(n docker.SwarmNode) string {
+	switch {
+	case n.State != "ready":
+		return "err"
+	case n.Availability == "drain":
+		return "warn"
+	}
+	return "ok"
+}
+
+func nodeStateText(ctx context.Context, n docker.SwarmNode) string {
+	switch {
+	case n.State != "ready":
+		return i18n.T(ctx, "nodes.state_down")
+	case n.Availability == "drain":
+		return i18n.T(ctx, "nodes.state_drained")
+	}
+	return i18n.T(ctx, "nodes.state_ready")
+}
+
+func nodeRoleLine(ctx context.Context, l NodeLane) string {
+	role := i18n.T(ctx, "nodes.role_worker")
+	if l.Node.Role == "manager" {
+		role = i18n.T(ctx, "nodes.role_manager")
+		if l.Node.Leader {
+			role = i18n.T(ctx, "nodes.role_leader")
+		}
+	}
+	s := role
+	if l.Node.Addr != "" {
+		s += ", " + l.Node.Addr
+	}
+	if l.Label != "" && l.Label != l.Node.Hostname {
+		s += ", " + l.Node.Hostname
+	}
+	return s
+}
+
+func urlQuery(s string) string { return url.QueryEscape(s) }

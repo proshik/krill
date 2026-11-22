@@ -247,13 +247,56 @@ func (s *Server) bucketDetail(w http.ResponseWriter, r *http.Request) {
 		Base: c.url(), Endpoint: "http://" + inst.AppName + ":9000", AccessKey: c.Bucket.AccessKey,
 		PrevAccessKey: c.Bucket.PrevAccessKey,
 	}
+	ctx := r.Context()
+	envs, err := s.q.ListEnvironments(ctx, c.Project.ID)
+	if err != nil {
+		logFrom(r).Error("bucketDetail: list environments", "err", err, "project_id", c.Project.ID)
+	}
+	v.Shell = s.envShell(ctx, c.Org, c.Role, c.Project, c.Env, envs, c.Bucket.Name+", "+c.Project.Name+" "+c.Env.Name, "databases", "page")
+	running, _, _ := s.placement(ctx)
+	if n := running[inst.AppName]; len(n) > 0 {
+		v.Node = strings.Join(n, ", ")
+	} else {
+		v.Node = inst.NodeHostname
+	}
+	v.Linked = len(links) > 0
+	vars := map[int64][]string{}
+	var order []int64
+	appName := map[int64]string{}
 	for _, l := range links {
-		v.Links = append(v.Links, templates.BucketLinkUse{App: l.AppName, VarName: l.VarName, Field: l.Field})
+		if _, seen := vars[l.ApplicationID]; !seen {
+			order = append(order, l.ApplicationID)
+		}
+		vars[l.ApplicationID] = append(vars[l.ApplicationID], l.VarName)
+		appName[l.ApplicationID] = l.AppName
+	}
+	for _, id := range order {
+		v.Users = append(v.Users, templates.UsedBy{Name: appName[id], Href: envURL(c.Org.ID, c.Project.ID, c.Env.ID) + "/apps/" + strconv.FormatInt(id, 10) + "?tab=variables", Note: strings.Join(vars[id], ", ")})
 	}
 	if c.Role == "owner" || c.Role == "admin" {
-		v.Backups = s.bucketBackupViews(r, c.Bucket.ID)
-		if dests, err := s.q.ListDestinationsByOrg(r.Context(), c.Org.ID); err == nil {
-			v.Destinations = dests
+		dests, err := s.q.ListDestinationsByOrg(ctx, c.Org.ID)
+		if err != nil {
+			logFrom(r).Error("bucketDetail: list destinations", "err", err, "org_id", c.Org.ID)
+		}
+		v.Backup = templates.BackupBlock{
+			ID: "backups", Title: i18n.T(ctx, "backup.section"), Hint: i18n.T(ctx, "bbackup.desc"), Destinations: dests,
+			AddURL: v.Base + "/backups", OrgID: c.Org.ID, ReturnURL: v.Base + "#backups", Admin: true, Big: true,
+		}
+		for _, b := range s.bucketBackupViews(r, c.Bucket.ID) {
+			id := v.Base + "/backups/" + strconv.FormatInt(b.Row.ID, 10)
+			cfg := templates.BackupConfig{
+				ID: b.Row.ID, Storage: b.Destination, Schedule: b.Row.Schedule, Retention: b.Row.Retention, Enabled: b.Row.Enabled,
+				LastRun: b.Row.LastRunAt.Time, Ran: b.Row.LastRunAt.Valid, LastStatus: b.Row.LastStatus, LastError: b.Row.LastError,
+				RunURL: id + "/run", ToggleURL: id + "/toggle", DeleteURL: id + "/delete",
+				Stored: templates.BucketSnapshots(v.Base, b, c.Bucket.Name),
+			}
+			if b.Row.LastRestoreStatus != "" {
+				cfg.Note = i18n.Tf(ctx, "bbackup.last_restore_line", b.Row.LastRestoreAt.Time.Local().Format("2006-01-02 15:04"), b.Row.LastRestoreStatus)
+				if b.Row.LastRestoreError != "" {
+					cfg.Note += ": " + b.Row.LastRestoreError
+				}
+			}
+			v.Backup.Configs = append(v.Backup.Configs, cfg)
 		}
 		if sk, derr := secret.Dec(c.Bucket.SecretKey); derr != nil {
 			logFrom(r).Error("bucketDetail: secret undecryptable", "err", derr, "bucket_id", c.Bucket.ID)
@@ -401,7 +444,7 @@ func (s *Server) deleteBucket(w http.ResponseWriter, r *http.Request) {
 	s.reloadBucketBackupSchedules() // its backup configurations cascaded away
 	logFrom(r).Info("bucket removed", "bucket_id", c.Bucket.ID, "bucket", c.Bucket.Name, "destroy_data", destroy)
 	s.flashOK(w, r, "flash.ok.bucket_deleted")
-	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID), http.StatusSeeOther)
+	http.Redirect(w, r, envURL(c.Org.ID, c.Project.ID, c.Env.ID)+"/databases", http.StatusSeeOther)
 }
 
 // removeGeneratedPrincipals removes the bucket's principals Krill generated,

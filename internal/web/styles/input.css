@@ -883,6 +883,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .deploy-keys .pill--small, .snap-keys .pill--small { min-height: 32px; }
   .seg button { text-transform: lowercase; }
   .sheet .seg a { padding: var(--space-sm) var(--space-md); }
+  .lanemap { grid-template-columns: repeat(var(--lanes, 3), minmax(0, 1fr)); }
+  .topomap { grid-template-columns: minmax(250px, 0.85fr) repeat(var(--lanes, 3), minmax(0, 1fr)); }
+  @media (max-width: 60rem) { .lanemap, .topomap { grid-template-columns: minmax(0, 1fr); } }
+  .lane-label { display: flex; align-items: center; gap: var(--space-2xs); }
+  .lane-label .input--compact { min-width: 0; width: 9em; min-height: 32px; }
+  .lane-keys .state { margin-right: 0; }
+  path.s4 { stroke: var(--color-ok); }
+  path.s5 { stroke: var(--color-err); stroke-dasharray: 2 4; }
+  path.s6 { stroke: var(--color-muted); stroke-dasharray: 8 3; }
+  .s4 .swatch { border-color: var(--color-ok); }
+  .s5 .swatch { border-top: 2px dotted var(--color-err); }
+  .s6 .swatch { border-top: 2px dashed var(--color-muted); }
+  .mon-status:empty { display: none; }
   .subnav form { display: contents; }
   .subnav-out { padding: var(--space-sm); border: 0; border-radius: 12px; background: none; color: var(--color-muted); font: 500 var(--text-md)/1 var(--font-display); text-align: left; cursor: pointer; text-box: trim-both ex alphabetic; }
   .subnav-out:hover { background: var(--color-paper-2); color: var(--color-ink); }

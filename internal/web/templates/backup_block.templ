@@ -41,6 +41,11 @@ type BackupConfig struct {
 	ToggleURL  string
 	DeleteURL  string
 	ObjectsURL string // fragment with the stored backups ("" when listing is not offered)
+	// Stored, when set, is drawn as the stored backups instead of loading
+	// ObjectsURL (bucket snapshots are read with the page).
+	Stored templ.Component
+	// Note is an extra line under the schedule (a bucket's last restore).
+	Note string
 }
 
 func backupConfigState(c BackupConfig) string {
@@ -98,7 +103,13 @@ templ backupBlock(b BackupBlock) {
 				if c.LastError != "" {
 					<p class="deploy-msg deploy-msg--err">{ c.LastError }</p>
 				}
-				if c.ObjectsURL != "" {
+				if c.Note != "" {
+					<p class="hint">{ c.Note }</p>
+				}
+				if c.Stored != nil {
+					<h4 class="list-head">{ i18n.T(ctx, "backup.stored") }</h4>
+					@c.Stored
+				} else if c.ObjectsURL != "" {
 					<h4 class="list-head">{ i18n.T(ctx, "backup.stored") }</h4>
 					<div hx-get={ c.ObjectsURL } hx-trigger="load" hx-swap="innerHTML">
 						<p class="empty"><span class="spin" aria-hidden="true"></span> { i18n.T(ctx, "common.loading") }</p>
@@ -230,18 +241,3 @@ templ inlineDestinationForm(orgID int64, returnURL string) {
 	</form>
 }
 
-// scheduleSelect and backupAdvanced keep the pages not yet moved to the
-// backup block building; removed with them.
-templ scheduleSelect() {
-	@schedulePresets("bk")
-}
-
-templ backupAdvanced() {
-	<details class="adv">
-		<summary>{ i18n.T(ctx, "backup.advanced") }</summary>
-		<div class="field">
-			<label for="bk-pre">{ i18n.T(ctx, "backup.prefix") }</label>
-			<input class="input input--mono" id="bk-pre" name="prefix"/>
-		</div>
-	</details>
-}
