@@ -54,9 +54,9 @@ templ Topology(org db.Organization, role string, v TopoView) {
 				<h1>{ i18n.T(ctx, "topo.title") }</h1>
 				if len(v.Projects) > 1 {
 					<nav class="seg seg--tight" aria-label={ i18n.T(ctx, "topo.project") }>
-						<a href={ templ.SafeURL(orgURL(org.ID) + "/topology") } aria-current?={ v.Project == "" }>{ i18n.T(ctx, "topo.all_projects") }</a>
+						<a href={ templ.SafeURL(orgURL(org.ID) + "/topology") } { ariaCurrent(v.Project == "", "page")... }>{ i18n.T(ctx, "topo.all_projects") }</a>
 						for _, p := range v.Projects {
-							<a href={ templ.SafeURL(orgURL(org.ID) + "/topology?project=" + urlQuery(p)) } aria-current?={ v.Project == p }>{ p }</a>
+							<a href={ templ.SafeURL(orgURL(org.ID) + "/topology?project=" + urlQuery(p)) } { ariaCurrent(v.Project == p, "page")... }>{ p }</a>
 						}
 					</nav>
 				}

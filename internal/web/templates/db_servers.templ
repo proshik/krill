@@ -85,7 +85,7 @@ templ DBServers(org db.Organization, role string, v DBServersView) {
 				<ul class="servers">
 					for _, c := range v.Cards {
 						<li>
-							<a class="server" href={ templ.SafeURL(orgURL(org.ID) + "/db-servers/" + itoa(c.Inst.ID)) } aria-current?={ v.Sheet != nil && v.Sheet.Inst.ID == c.Inst.ID }>
+							<a class="server" href={ templ.SafeURL(orgURL(org.ID) + "/db-servers/" + itoa(c.Inst.ID)) } { ariaCurrent(v.Sheet != nil && v.Sheet.Inst.ID == c.Inst.ID, "true")... }>
 								<span class="server-top">
 									@ui.Glyph(serverGlyph(c.Inst.Engine))
 									<span class="svc-name">{ c.Inst.Name }</span>
@@ -229,7 +229,7 @@ templ serverSheet(c DBServerCtx) {
 		</p>
 		<nav class="seg" aria-label={ c.Inst.Name }>
 			for _, t := range serverTabs(ctx, c) {
-				<a href={ templ.SafeURL(t.Href) } aria-current?={ t.Key == c.Tab }>{ t.Label }</a>
+				<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == c.Tab, "page")... }>{ t.Label }</a>
 			}
 		</nav>
 		switch c.Tab {

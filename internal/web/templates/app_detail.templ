@@ -160,7 +160,7 @@ templ AppDetail(c AppCtx, tab string) {
 			</p>
 			<nav class="seg" aria-label={ c.App.Name }>
 				for _, t := range c.appTabs(ctx) {
-					<a href={ templ.SafeURL(t.Href) } aria-current?={ t.Key == tab }>{ t.Label }</a>
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == tab, "page")... }>{ t.Label }</a>
 				}
 			</nav>
 			switch tab {

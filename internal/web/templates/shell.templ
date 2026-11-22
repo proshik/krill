@@ -112,7 +112,7 @@ templ bar(s Shell) {
 		<nav class="tabs" aria-label={ barTabsLabel(ctx, s) }>
 			if s.Env != nil {
 				for _, t := range envTabs(ctx, s) {
-					<a href={ templ.SafeURL(t.Href) } aria-current?={ t.Key == s.Tab }>{ t.Label }</a>
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == s.Tab, "page")... }>{ t.Label }</a>
 				}
 				<span class="tabs-sep">{ s.Org.Name }</span>
 				for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
@@ -120,7 +120,7 @@ templ bar(s Shell) {
 				}
 			} else {
 				for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
-					<a href={ templ.SafeURL(t.Href) } aria-current?={ t.Key == currentOrgTab(ctx, s) }>
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == currentOrgTab(ctx, s), "page")... }>
 						{ t.Label }
 						if t.Key == "settings" && auth.IsInstanceAdmin(ctx) && nav.UpdateAvailable(ctx) != "" {
 							<span class="tab-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", nav.UpdateAvailable(ctx)) }>{ i18n.T(ctx, "nav.update_badge") }</span>
@@ -180,7 +180,7 @@ templ envPicker(s Shell) {
 		</summary>
 		<div class="envmenu">
 			for _, e := range s.Env.Envs {
-				<a href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, e.ID)) } aria-current?={ e.ID == s.Env.Env.ID }>
+				<a href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, e.ID)) } { ariaCurrent(e.ID == s.Env.Env.ID, "page")... }>
 					@ui.Sig(e.Health)
 					{ e.Name }
 				</a>

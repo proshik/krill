@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"github.com/a-h/templ"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -190,4 +191,13 @@ func dashBody(sheet bool) string {
 		return "page has-sheet"
 	}
 	return "page"
+}
+
+// ariaCurrent marks the current link or card: aria-current="page" (or
+// "true") when on, no attribute at all otherwise.
+func ariaCurrent(on bool, value string) templ.Attributes {
+	if on {
+		return templ.Attributes{"aria-current": value}
+	}
+	return templ.Attributes{}
 }

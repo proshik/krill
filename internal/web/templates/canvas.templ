@@ -132,7 +132,7 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			data-to={ joinSpace(c.To) }
 			data-detected={ joinSpace(c.Detected) }
 			data-nodes={ joinSpace(c.Nodes) }
-			aria-current?={ key == v.Current }
+			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">
 				@ui.Glyph(c.Glyph)
