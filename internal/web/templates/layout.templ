@@ -3,89 +3,18 @@ package templates
 import (
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
-	"github.com/proshik/krill/internal/web/flash"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/nav"
 )
 
+// Layout is the frame for pages not yet given a layout of their own: the shell
+// with the body in a wide page wrap.
 templ Layout(title string, org db.Organization, role string) {
-	<!DOCTYPE html>
-	<html lang="en" class="dark">
-		<head>
-			<meta charset="utf-8"/>
-			<meta name="viewport" content="width=device-width, initial-scale=1"/>
-			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
-			<title>{ title } — Krill</title>
-			<link rel="stylesheet" href="/static/xterm.css"/>
-			<link rel="stylesheet" href="/static/app.css"/>
-			<script src="/static/htmx.min.js"></script>
-			<script defer src="/static/app.js"></script>
-		</head>
-		<body class="flex" hx-boost="true">
-			<div class="k-topbar">
-				<button type="button" class="k-menu-btn" aria-controls="k-side" aria-expanded="false" aria-label={ i18n.T(ctx, "nav.menu") } onclick="krillToggleNav()">☰</button>
-				<span class="k-side-brand"><span aria-hidden="true">🦐</span> Krill</span>
-				<span class="k-topbar-org">{ org.Name }</span>
-			</div>
-			<div class="k-nav-backdrop" onclick="krillToggleNav(false)"></div>
-			<aside id="k-side" class="k-side">
-				<div class="k-side-brand"><span aria-hidden="true">🦐</span> Krill</div>
-				<div class="k-org-badge">
-					<button type="button" class="k-org-switch" hx-get={ "/orgs/switcher?current=" + itoa(org.ID) } hx-target="#org-switcher" hx-swap="innerHTML" onclick="krillOpenModal('org-switcher')" title={ i18n.T(ctx, "orgs.switch_title") }>
-						<span>{ org.Name }</span>
-						<span class="chev">▾</span>
-					</button>
-					<span class="role">{ role }</span>
-				</div>
-				<nav>
-					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "projects")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID)) }>{ i18n.T(ctx, "nav.projects") }</a>
-					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "db-servers")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/db-servers") }>{ i18n.T(ctx, "nav.dbservers") }</a>
-					if role == "owner" || role == "admin" {
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "members")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>{ i18n.T(ctx, "nav.members") }</a>
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "topology")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/topology") }>{ i18n.T(ctx, "nav.topology") }</a>
-					}
-					if auth.IsInstanceAdmin(ctx) {
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "monitoring")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/monitoring") }>{ i18n.T(ctx, "nav.monitoring") }</a>
-					}
-				</nav>
-				<div class="k-side-foot">
-					if role == "owner" || role == "admin" {
-						<a class={ "k-nav", templ.KV("k-nav-active", nav.IsSettings(ctx)) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") }>
-							{ i18n.T(ctx, "nav.settings") }
-							if tag := nav.UpdateAvailable(ctx); tag != "" && auth.IsInstanceAdmin(ctx) {
-								<span class="k-nav-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", tag) }>{ i18n.T(ctx, "nav.update_badge") }</span>
-							}
-						</a>
-					}
-					<a class={ "k-nav", templ.KV("k-nav-active", nav.IsActive(ctx, "account")) } href={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/account/password") }>{ i18n.T(ctx, "nav.change_password") }</a>
-					<form method="post" action="/logout" hx-boost="false">
-						<button type="submit" class="k-nav k-nav-logout k-nav-logout-btn"><span class="k-nav-logout-ico">⎋</span> { i18n.T(ctx, "nav.logout") }</button>
-					</form>
-				</div>
-			</aside>
-			<main class="flex-1 min-w-0">
-				<div class="k-content">
-					if f := flash.From(ctx); f != nil {
-						<div class="k-toast-host">
-							<div class={ "k-toast", "k-toast-" + f.Kind, "k-toast-pop" } onclick="krillDismissToast(this)" role="status">{ f.Msg }</div>
-						</div>
-					}
-					{ children... }
-				</div>
-			</main>
-			<dialog id="org-switcher" class="k-modal"></dialog>
-			<dialog id="k-confirm" class="k-modal">
-				<div class="k-modal-head">
-					<div class="k-modal-title">{ i18n.T(ctx, "confirm.title") }</div>
-					<div class="k-modal-desc" id="k-confirm-msg"></div>
-				</div>
-				<div class="k-modal-foot">
-					<button type="button" class="k-btn k-btn-secondary" onclick="window.__krillConfirmAction=null;krillCloseModal('k-confirm')">{ i18n.T(ctx, "common.cancel") }</button>
-					<button type="button" id="k-confirm-ok" class="k-btn k-btn-danger" onclick="krillConfirmRun()">{ i18n.T(ctx, "common.delete") }</button>
-				</div>
-			</dialog>
-		</body>
-	</html>
+	@Page(Shell{Title: title, Org: org, Role: role}) {
+		<main class="wrap wrap--wide">
+			{ children... }
+		</main>
+	}
 }
 
 // settingsNav is the Settings sub-navigation shared by the Destinations and
@@ -117,26 +46,9 @@ templ settingsNav(orgID int64) {
 	</div>
 }
 
+// Bare is the frame without navigation (sign in, the organization list).
 templ Bare(title string) {
-	<!DOCTYPE html>
-	<html lang="en" class="dark">
-		<head>
-			<meta charset="utf-8"/>
-			<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
-			<title>{ title } — Krill</title>
-			<link rel="stylesheet" href="/static/app.css"/>
-			<script src="/static/htmx.min.js"></script>
-			<script defer src="/static/app.js"></script>
-		</head>
-		<body class="flex" hx-boost="true">
-			<main class="flex-1 flex items-center justify-center min-h-screen p-4">
-				if f := flash.From(ctx); f != nil {
-					<div class="k-toast-host">
-						<div class={ "k-toast", "k-toast-" + f.Kind, "k-toast-pop" } onclick="krillDismissToast(this)" role="status">{ f.Msg }</div>
-					</div>
-				}
-				{ children... }
-			</main>
-		</body>
-	</html>
+	@AuthPage(title) {
+		{ children... }
+	}
 }

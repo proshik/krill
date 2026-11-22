@@ -419,6 +419,7 @@ func (s *Server) Router() http.Handler {
 			// Every member may change their own password; the page lives under
 			// the organization only so it renders inside the normal layout.
 			r.Get("/account/password", s.orgAccountPasswordPage)
+			r.Get("/settings", s.settingsOverview)
 			r.Post("/account/password", s.orgAccountPasswordSubmit)
 			r.Get("/members", s.listMembers)
 			r.Get("/destinations", s.listDestinations)

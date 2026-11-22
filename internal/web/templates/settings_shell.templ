@@ -1,0 +1,54 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+)
+
+// SettingsPage is the frame of every settings page: the heading and the
+// sub-navigation grouped into organization, you and this Krill.
+templ SettingsPage(org db.Organization, role, current, title string) {
+	@Page(Shell{Title: title, Org: org, Role: role, Tab: "settings"}) {
+		<main class="wrap wrap--wide">
+			<div class="page-head"><h1>{ title }</h1></div>
+			<div class="setpage">
+				@settingsSubnav(org.ID, role, current)
+				<div class="setbody">
+					{ children... }
+				</div>
+			</div>
+		</main>
+	}
+}
+
+templ settingsSubnav(orgID int64, role, current string) {
+	<nav class="subnav" aria-label={ i18n.T(ctx, "nav.settings") }>
+		for _, g := range settingsGroups(ctx, orgID, role) {
+			<h2>{ g.Title }</h2>
+			for _, it := range g.Items {
+				<a href={ templ.SafeURL(it.Href) } aria-current?={ it.Key == current }>{ it.Label }</a>
+			}
+			if g.You {
+				<form method="post" action="/logout" hx-boost="false">
+					<button type="submit" class="subnav-out">{ i18n.T(ctx, "nav.logout") }</button>
+				</form>
+			}
+		}
+	</nav>
+}
+
+// SettingsOverview is the settings start page.
+templ SettingsOverview(org db.Organization, role string) {
+	@SettingsPage(org, role, "overview", i18n.T(ctx, "nav.settings")) {
+		<section class="sec setsec" id="you" aria-labelledby="you-h">
+			<h3 id="you-h">{ i18n.T(ctx, "settings.group_you") }</h3>
+			<ul class="links">
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "settings.password") }</span>
+					<span class="link-src"></span>
+					<a class="pill" href={ templ.SafeURL(orgURL(org.ID) + "/account/password") }>{ i18n.T(ctx, "settings.change") }</a>
+				</li>
+			</ul>
+		</section>
+	}
+}

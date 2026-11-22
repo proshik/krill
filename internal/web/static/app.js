@@ -597,46 +597,44 @@ if (!window.__krillClickInit) {
   });
 }
 
-// Styled confirmation dialog (replaces the native confirm()). Used from a
-// form's onsubmit: `return krillConfirm(this, 'message', 'Delete')`. Returns
-// false to block the triggering submit, opens #k-confirm, and only submits the
-// form natively when the user clicks the confirm button. The form must carry
-// hx-boost="false" so HTMX does not fire its own request on the submit event.
-window.krillConfirm = function (form, message, confirmLabel, kind) {
-  const dlg = document.getElementById("k-confirm");
+// The confirmation dialog (#confirm, in the page frame). Used from a form's
+// onsubmit: `return krillConfirm(this, 'Delete the app api?')`, optionally
+// with the confirm button's verb, its kind ("primary" for a non-destructive
+// action) and a second line saying what is lost; the form's data-ok, data-kind
+// and data-more attributes supply them when the arguments are left out.
+// Returns false to block the triggering submit and submits the form natively
+// once confirmed. The form must carry hx-boost="false" so htmx does not fire
+// its own request on the submit event.
+window.krillConfirm = function (form, message, confirmLabel, kind, more) {
+  const dlg = document.getElementById("confirm");
   if (!dlg || typeof dlg.showModal !== "function") return confirm(message);
-  const msgEl = dlg.querySelector("#k-confirm-msg");
-  const okEl = dlg.querySelector("#k-confirm-ok");
-  if (msgEl) msgEl.textContent = message;
-  if (okEl) {
-    okEl.textContent = confirmLabel || "Delete";
-    okEl.className = "k-btn " + (kind === "primary" ? "k-btn-primary" : "k-btn-danger");
-  }
+  const d = (form && form.dataset) || {};
+  dlg.querySelector(".confirm-q").textContent = message || d.confirm || "";
+  dlg.querySelector(".confirm-more").textContent = more || d.more || "";
+  const okEl = dlg.querySelector("#confirm-ok");
+  okEl.textContent = confirmLabel || d.ok || d.label || okEl.dataset.default || okEl.textContent;
+  if (!okEl.dataset.default) okEl.dataset.default = okEl.textContent;
+  okEl.className = (kind || d.kind) === "primary" ? "btn btn--primary" : "btn btn--danger";
   window.__krillConfirmAction = function () {
     // form.submit() fires no submit event, so the double-submit guard below
     // would not see it: mark the form busy here, and refuse a second run.
     if (krillFormBusy(form)) form.submit();
   };
+  dlg.returnValue = "";
   dlg.showModal();
+  okEl.focus();
   return false;
 };
-// Invoked by the confirm dialog's confirm button.
-window.krillConfirmRun = function () {
-  const action = window.__krillConfirmAction;
-  window.__krillConfirmAction = null;
-  krillCloseModal("k-confirm");
-  if (action) action();
-};
-// Clear the pending action when the dialog is dismissed (Esc/backdrop), so a
-// cancel never runs it. 'close' does not bubble, so listen in the capture phase.
+// The dialog's own form (method="dialog") closes it with the button's value:
+// run the pending action on "ok" only. 'close' does not bubble, so listen in
+// the capture phase.
 if (!window.__krillConfirmInit) {
   window.__krillConfirmInit = true;
   document.addEventListener("close", function (e) {
-    // The close event is queued: when a confirmed action opens the dialog
-    // again right away (an unsaved-changes prompt followed by a delete
-    // confirmation), the first close arrives after the second prompt set its
-    // action and must not clear it.
-    if (e.target && e.target.id === "k-confirm" && !e.target.open) window.__krillConfirmAction = null;
+    if (!e.target || e.target.id !== "confirm" || e.target.open) return;
+    const action = window.__krillConfirmAction;
+    window.__krillConfirmAction = null;
+    if (e.target.returnValue === "ok" && action) action();
   }, true);
 }
 
@@ -685,7 +683,7 @@ if (!window.__krillUnsavedInit) {
       form.__krillUnsavedOK = true;
       form.requestSubmit(submitter);
     };
-    const dlg = document.getElementById("k-confirm");
+    const dlg = document.getElementById("confirm");
     if (!dlg || typeof dlg.showModal !== "function") {
       if (confirm(msg)) resubmit();
       return;
@@ -792,27 +790,27 @@ function krillFallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 
-// Show a transient toast. kind: "ok" | "err".
+// Show a transient toast. kind: "ok" | "err" | "warn" | "idle".
 window.krillShowToast = function (msg, kind) {
-  let host = document.getElementById("k-toast-host");
-  if (!host) {
-    host = document.createElement("div");
-    host.id = "k-toast-host";
-    host.className = "k-toast-host";
-    document.body.appendChild(host);
-  }
+  const host = document.getElementById("toasts");
+  if (!host) return;
+  const k = ["ok", "err", "warn", "idle"].indexOf(kind) >= 0 ? kind : "ok";
   const el = document.createElement("div");
-  el.className = "k-toast k-toast-" + (kind === "err" ? "err" : "ok") + " k-toast-pop";
-  el.textContent = msg;
-  el.addEventListener("click", function () { krillDismissToast(el); });
+  el.className = "toast toast--" + k;
+  el.setAttribute("role", "status");
+  el.innerHTML = '<svg class="sig sig--' + k + '" aria-hidden="true"><use href="#s-' + k + '"></use></svg><span></span>';
+  el.querySelector("span").textContent = msg;
   host.appendChild(el);
-  setTimeout(function () { krillDismissToast(el); }, 4000);
+  krillToastLater(el);
 };
+function krillToastLater(el) {
+  el.addEventListener("click", function () { krillDismissToast(el); });
+  setTimeout(function () { krillDismissToast(el); }, el.classList.contains("toast--err") ? 8000 : 4000);
+}
 window.krillDismissToast = function (el) {
   if (!el || el.dataset.gone) return;
   el.dataset.gone = "1";
-  el.classList.add("k-toast-out");
-  setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+  if (el.parentNode) el.parentNode.removeChild(el);
 };
 
 // Disable a submit button on form submit to prevent double-submits and signal activity.
@@ -826,10 +824,10 @@ window.krillBusy = function (btn, label) {
 // Toggle masking of a single input (e.g. a connection string) between password
 // and text; flips the eye icon on the button that triggered it.
 window.krillReveal = function (btn) {
-  const inp = btn.parentElement.querySelector("input");
+  const inp = btn.dataset.reveal ? document.getElementById(btn.dataset.reveal) : btn.parentElement.querySelector("input");
   if (!inp) return;
   inp.type = inp.type === "password" ? "text" : "password";
-  btn.textContent = inp.type === "password" ? "👁" : "🙈";
+  btn.setAttribute("aria-pressed", inp.type === "text" ? "true" : "false");
 };
 
 // Environment editor state belongs to this form, never to the previous app.
@@ -1051,25 +1049,143 @@ window.krillEnhance();
   });
 })();
 
-// Mobile navigation: the sidebar opens over the page below 768px. Opening
-// moves focus into it, closing (button, backdrop, Escape) returns focus to
-// the menu button. A boosted navigation replaces the body and so closes it.
-window.krillToggleNav = function (force) {
-  var open = typeof force === "boolean" ? force : !document.body.classList.contains("k-nav-open");
-  document.body.classList.toggle("k-nav-open", open);
-  var btn = document.querySelector(".k-menu-btn");
-  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-  if (open) {
-    // The panel is visibility:hidden until its style recalculates; an element
-    // under it cannot take focus yet.
-    requestAnimationFrame(function () {
-      var first = document.querySelector("#k-side a, #k-side button");
-      if (first) first.focus();
+// ── The page frame: theme, bar menu, pickers, copy, reveal, conditional fields ──
+// Delegated on document, so boosted swaps need no re-binding. Guarded so a
+// re-executed app.js does not stack listeners.
+if (!window.__krillShellInit) {
+  window.__krillShellInit = true;
+  const root = document.documentElement;
+
+  document.addEventListener("click", function (e) {
+    const t = e.target;
+    // Theme: remember the explicit choice.
+    const mode = t.closest && t.closest("#mode");
+    if (mode) {
+      root.dataset.mode = root.dataset.mode === "dark" ? "light" : "dark";
+      try { localStorage.setItem("krill-mode", root.dataset.mode); } catch (_) { /* private mode */ }
+      krillModeLabel();
+      return;
+    }
+    // The bar's menu on narrow screens.
+    const menu = t.closest && t.closest(".pill--menu");
+    if (menu) {
+      const open = document.querySelector(".bar").classList.toggle("is-open");
+      menu.setAttribute("aria-expanded", String(open));
+      return;
+    }
+    const copy = t.closest && t.closest("[data-copy]");
+    if (copy) {
+      const src = copy.dataset.copyFrom && document.getElementById(copy.dataset.copyFrom);
+      krillCopyToClip(src ? src.value : copy.dataset.copy, copy.dataset.copyLabel || copy.getAttribute("aria-label") || "");
+      return;
+    }
+    const reveal = t.closest && t.closest("[data-reveal]");
+    if (reveal) { krillReveal(reveal); return; }
+    const open = t.closest && t.closest("[data-palette-open]");
+    if (open) { krillPalette(true); return; }
+    if (t.id === "palette-scrim") { krillPalette(false); return; }
+    // An open picker closes on a click outside it.
+    document.querySelectorAll("details.envpick[open]").forEach(function (d) {
+      if (!d.contains(t)) d.open = false;
     });
-  } else if (btn && document.getElementById("k-side").contains(document.activeElement)) {
-    btn.focus();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && document.getElementById("palette")) {
+      e.preventDefault();
+      krillPalette(document.getElementById("palette").hidden);
+      return;
+    }
+    if (e.key !== "Escape") return;
+    const pal = document.getElementById("palette");
+    if (pal && !pal.hidden) { krillPalette(false); return; }
+    const picker = document.querySelector("details.envpick[open]");
+    if (picker) { picker.open = false; picker.querySelector("summary").focus(); return; }
+    const bar = document.querySelector(".bar.is-open");
+    if (bar) { bar.classList.remove("is-open"); bar.querySelector(".pill--menu").setAttribute("aria-expanded", "false"); return; }
+    // A sheet over the canvas closes with Escape unless focus is in a field.
+    const close = document.querySelector(".sheet [data-sheet-close]");
+    const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable], .xterm");
+    if (close && !typing && !document.querySelector("dialog[open]")) close.click();
+  });
+
+  // Fields shown only for one value of a radio group or select: data-when="name=value".
+  document.addEventListener("change", function (e) {
+    const form = e.target.form;
+    if (form) krillSyncWhen(form);
+  });
+}
+
+function krillModeLabel() {
+  const b = document.getElementById("mode");
+  if (!b) return;
+  b.textContent = document.documentElement.dataset.mode === "dark" ? b.dataset.light : b.dataset.dark;
+}
+
+function krillSyncWhen(form) {
+  form.querySelectorAll("[data-when]").forEach(function (g) {
+    const parts = g.dataset.when.split("=");
+    const el = form.querySelector('[name="' + parts[0] + '"]:checked') || form.querySelector('select[name="' + parts[0] + '"]');
+    const values = (parts[1] || "").split("|");
+    g.hidden = !el || values.indexOf(el.value) < 0;
+  });
+}
+
+// The command palette: an overlay whose results come from the search route.
+window.krillPalette = function (open) {
+  const pal = document.getElementById("palette");
+  const scrim = document.getElementById("palette-scrim");
+  if (!pal) return;
+  pal.hidden = !open;
+  if (scrim) scrim.hidden = !open;
+  document.body.classList.toggle("has-palette", open);
+  const input = pal.querySelector("input");
+  if (open) {
+    input.value = "";
+    input.focus();
+    if (window.htmx) htmx.trigger(input, "palette-open");
+  } else if (window.__krillPaletteFrom) {
+    try { window.__krillPaletteFrom.focus(); } catch (_) { /* gone */ }
   }
+  window.__krillPaletteFrom = open ? document.activeElement : null;
 };
+// Arrow keys move through the results, Enter opens the selected one.
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && document.body.classList.contains("k-nav-open")) window.krillToggleNav(false);
+  const pal = document.getElementById("palette");
+  if (!pal || pal.hidden || (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter")) return;
+  const items = Array.from(pal.querySelectorAll(".palette-groups a"));
+  if (!items.length) return;
+  let i = items.findIndex(function (a) { return a.getAttribute("aria-selected") === "true"; });
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const a = items[i < 0 ? 0 : i];
+    krillPalette(false);
+    a.click();
+    return;
+  }
+  e.preventDefault();
+  i = e.key === "ArrowDown" ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1);
+  items.forEach(function (a, j) { a.setAttribute("aria-selected", String(j === i)); });
+  items[i].scrollIntoView({ block: "nearest" });
 });
+document.addEventListener("htmx:afterSwap", function (e) {
+  if (e.target && e.target.id === "palette-results") {
+    const first = e.target.querySelector("a");
+    if (first) first.setAttribute("aria-selected", "true");
+  }
+});
+
+// Per page: the theme button's label, server toasts' timers, conditional fields.
+function krillShellEnhance() {
+  krillModeLabel();
+  document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
+    el.removeAttribute("data-toast-auto");
+    krillToastLater(el);
+  });
+  document.querySelectorAll("form").forEach(function (f) { if (f.querySelector("[data-when]")) krillSyncWhen(f); });
+  const pal = document.getElementById("palette");
+  if (pal && pal.hidden) document.body.classList.remove("has-palette");
+}
+document.addEventListener("DOMContentLoaded", krillShellEnhance);
+document.addEventListener("htmx:afterSettle", krillShellEnhance);
+krillShellEnhance();

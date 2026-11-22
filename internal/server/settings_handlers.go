@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates"
 )
 
 // setLanguage stores the chosen UI language in the krill_lang cookie and
@@ -21,4 +22,14 @@ func (s *Server) setLanguage(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, s.backURL(r), http.StatusSeeOther)
+}
+
+// settingsOverview renders the settings start page: every settings section the
+// viewer may open, with a summary of each.
+func (s *Server) settingsOverview(w http.ResponseWriter, r *http.Request) {
+	o, role, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	render(w, r, http.StatusOK, templates.SettingsOverview(o, role))
 }

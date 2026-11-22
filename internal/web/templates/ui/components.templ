@@ -1,16 +1,83 @@
 package ui
 
-// Badge renders a status badge with a status dot.
-templ Badge(status string) {
-	<span class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ status }</span>
+import "strconv"
+
+// Sprite holds every icon once; Icon and Sig reference it with <use>.
+templ Sprite() {
+	@templ.Raw(spriteSVG)
 }
 
-// PrimaryButton is the primary button (submit by default).
-templ PrimaryButton(label string) {
-	<button type="submit" class="k-btn k-btn-primary">{ label }</button>
+// Mark is the Krill logo mark.
+templ Mark() {
+	<svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M46 21C30 16 17 24 18 36c1 10 12 14 21 9"></path><path d="M39 45l9 4M39 45l4 9M39 45l-3 9"></path><path d="M46 21q8-6 13-11M46 21q9-1 14-5M24 41l-2 6M30 44l-1 6M36 45v6" stroke-width="2.5"></path></svg>
 }
 
-// Toast is a success/error/info banner. kind: "ok" | "err".
-templ Toast(kind, msg string) {
-	<div class={ "k-toast", "k-toast-" + kind }>{ msg }</div>
+// Icon draws a sprite icon with the default 16px icon class.
+templ Icon(id string) {
+	<svg class="ico" aria-hidden="true"><use href={ "#" + id }></use></svg>
+}
+
+// Glyph draws a sprite icon as a card glyph (20px).
+templ Glyph(id string) {
+	<svg class="glyph" aria-hidden="true"><use href={ "#" + id }></use></svg>
+}
+
+// Sig is the status signal: ok (dot), err (diamond), warn (triangle), idle (ring).
+templ Sig(kind string) {
+	<svg class={ "sig", "sig--" + SigKind(kind) } aria-hidden="true"><use href={ "#s-" + SigKind(kind) }></use></svg>
+}
+
+// State is a signal with its label.
+templ State(kind, text string) {
+	<span class={ "state", "state--" + SigKind(kind) }>
+		@Sig(kind)
+		{ text }
+	</span>
+}
+
+// StateID is State with a stable id, so a live refresh can replace it
+// out of band.
+templ StateID(id, kind, text string, oob bool) {
+	if oob {
+		<span id={ id } class={ "state", "state--" + SigKind(kind) } hx-swap-oob="true">
+			@Sig(kind)
+			{ text }
+		</span>
+	} else {
+		<span id={ id } class={ "state", "state--" + SigKind(kind) }>
+			@Sig(kind)
+			{ text }
+		</span>
+	}
+}
+
+// Meter is a small usage bar, warn colors it as pressure.
+templ Meter(pct int, warn bool) {
+	<span class={ "meter", templ.KV("meter--warn", warn) } aria-hidden="true"><span style={ "width:" + strconv.Itoa(clamp(pct)) + "%" }></span></span>
+}
+
+// CopyButton copies value to the clipboard.
+templ CopyButton(value, label string) {
+	<button type="button" class="pill pill--icon" data-copy={ value } aria-label={ label } title={ label }>
+		@Icon("i-copy")
+	</button>
+}
+
+// CopyField is a read-only value with a copy button; secret masks it (with a
+// reveal button) and copies the real value.
+templ CopyField(id, label, value string, secret bool, copyLabel, revealLabel string) {
+	<div class="field">
+		<label for={ id }>{ label }</label>
+		<div class={ "input-group", templ.KV("input-group--secret", secret) }>
+			if secret {
+				<input class="input input--mono" id={ id } type="password" value={ value } readonly/>
+				<button type="button" class="pill pill--icon" data-reveal={ id } aria-label={ revealLabel } title={ revealLabel }>
+					@Icon("i-eye")
+				</button>
+			} else {
+				<input class="input input--mono" id={ id } value={ value } readonly/>
+			}
+			@CopyButton(value, copyLabel)
+		</div>
+	</div>
 }
