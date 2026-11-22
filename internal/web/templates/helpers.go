@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/backup"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -27,17 +26,6 @@ func placementHas(csv, nodeID string) bool {
 		}
 	}
 	return false
-}
-
-// nodeManagedName returns the Krill-managed name for a Swarm node ID, or "" if
-// the node was not added through Krill (e.g. the manager itself).
-func nodeManagedName(rows []db.ClusterNode, swarmID string) string {
-	for _, r := range rows {
-		if r.SwarmNodeID != "" && r.SwarmNodeID == swarmID {
-			return r.Name
-		}
-	}
-	return ""
 }
 
 // nodeDisplay returns the human-readable display label for a Swarm node ID,
@@ -83,65 +71,6 @@ func i32v(p *int32) string {
 		return ""
 	}
 	return strconv.Itoa(int(*p))
-}
-
-// destName returns the Name of the destination with the given id, or "" if none.
-func destName(dests []db.Destination, id int64) string {
-	for _, d := range dests {
-		if d.ID == id {
-			return d.Name
-		}
-	}
-	return ""
-}
-
-// tsStr formats a timestamptz as "2006-01-02 15:04", or "—" if not set.
-func tsStr(t pgtype.Timestamptz) string {
-	if !t.Valid {
-		return "—"
-	}
-	return t.Time.Format("2006-01-02 15:04")
-}
-
-// statusLabel prettifies computed status values for display. Badges render the
-// raw status string (English by convention); the node-unavailable states get a
-// friendlier label.
-func statusLabel(s string) string {
-	switch s {
-	case "node_down":
-		return "node down"
-	case "node_removed":
-		return "node removed"
-	default:
-		return s
-	}
-}
-
-// dbiStatus returns the computed display status for an instance, falling back to
-// its stored status when no computed entry exists (engine unavailable).
-func dbiStatus(statuses map[int64]string, in db.DbInstance) string {
-	if s, ok := statuses[in.ID]; ok {
-		return s
-	}
-	return in.Status
-}
-
-// dbEngineIcon returns the display icon for a db_instances engine value.
-func dbEngineIcon(engine string) string {
-	switch engine {
-	case "postgres":
-		return "🐘"
-	case "redis":
-		return "🟥"
-	case "dragonfly":
-		return "🪰"
-	case "valkey":
-		return "🔑"
-	case "minio":
-		return "🪣"
-	default:
-		return "🗄"
-	}
 }
 
 // firstEngineDefaultImage returns the default image of the first registered
@@ -222,74 +151,6 @@ func onOff(b bool) string {
 	return "0"
 }
 
-func envBase(org db.Organization, project db.Project, env db.Environment) string {
-	return "/orgs/" + itoa(org.ID) + "/projects/" + itoa(project.ID) + "/environments/" + itoa(env.ID)
-}
-
-func joinIDs(ids []int64) string {
-	parts := make([]string, len(ids))
-	for i, id := range ids {
-		parts[i] = itoa(id)
-	}
-	return strings.Join(parts, " ")
-}
-
-// systemSummary is a system card's count line: apps, running, failing.
-func systemSummary(ctx context.Context, sy topology.SystemView) string {
-	s := i18n.Tf(ctx, "system.summary", len(sy.Apps), sy.Running)
-	if sy.Failing > 0 {
-		s += " · " + i18n.Tf(ctx, "system.failing", sy.Failing)
-	}
-	return s
-}
-
-// collapsedResources is the one-line resource list a collapsed card shows.
-func collapsedResources(ctx context.Context, sy topology.SystemView) string {
-	parts := make([]string, 0, len(sy.Resources))
-	for _, r := range sy.Resources {
-		p := resourceKind(r) + " " + resourceLabel(r)
-		if r.Shared {
-			p += " ⇄ " + i18n.T(ctx, "system.shared")
-		}
-		parts = append(parts, p)
-	}
-	return strings.Join(parts, " · ")
-}
-
-func resourceKind(r topology.ResourceView) string {
-	switch r.Kind {
-	case "ldb":
-		return "PG"
-	case "bucket":
-		return "S3"
-	}
-	switch r.Engine {
-	case "redis":
-		return "Redis"
-	case "valkey":
-		return "Valkey"
-	case "dragonfly":
-		return "DragonFly"
-	case "minio":
-		return "S3"
-	}
-	return r.Engine
-}
-
-func resourceLabel(r topology.ResourceView) string {
-	if r.Kind == "instance" {
-		return r.Label
-	}
-	return r.Label + " @ " + r.Server
-}
-
-func resourceIcon(r topology.ResourceView) string {
-	if r.Kind == "bucket" {
-		return "🪣"
-	}
-	return dbEngineIcon(r.Engine)
-}
-
 // systemCandidates are the environment's apps not in system sysID: the ones
 // "Add app" can move into it.
 func systemCandidates(view topology.EnvView, sysID int64) []topology.AppView {
@@ -300,22 +161,6 @@ func systemCandidates(view topology.EnvView, sysID int64) []topology.AppView {
 		}
 	}
 	return append(out, view.Ungrouped.Apps...)
-}
-
-// resourceAria is a resource chip's accessible name: what it shows, its
-// badges, then the variables it feeds (the chip's title carries only those).
-func resourceAria(ctx context.Context, r topology.ResourceView) string {
-	s := resourceKind(r) + " " + resourceLabel(r)
-	if r.Shared {
-		s += ", " + i18n.T(ctx, "system.shared")
-	}
-	if r.Detected {
-		s += ", " + i18n.T(ctx, "system.detected")
-	}
-	if len(r.Vars) > 0 {
-		s += ": " + strings.Join(r.Vars, ", ")
-	}
-	return s
 }
 
 // limitText is an effective limit with where it comes from.

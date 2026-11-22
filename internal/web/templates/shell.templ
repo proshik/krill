@@ -2,6 +2,7 @@ package templates
 
 import (
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/web"
 	"github.com/proshik/krill/internal/web/flash"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/nav"
@@ -21,9 +22,9 @@ templ docHead(title string) {
 	<title>{ title } · Krill</title>
 	@templ.Raw("<script>" + themeScript + "</script>")
 	<link rel="stylesheet" href="/static/xterm.css"/>
-	<link rel="stylesheet" href="/static/app.css"/>
+	<link rel="stylesheet" href={ "/static/app.css?v=" + web.AssetVersion }/>
 	<script src="/static/htmx.min.js"></script>
-	<script defer src="/static/app.js"></script>
+	<script defer src={ "/static/app.js?v=" + web.AssetVersion }></script>
 }
 
 // Page is the frame of every signed-in page: the bar, the page body, the

@@ -23,13 +23,13 @@ type GNode struct {
 }
 
 type GService struct {
-	ID     string `json:"id"`     // "app-<appID>" | "db-<instanceID>"
-	Kind   string `json:"kind"`   // "app" | "db" | "gateway" | "internet"
-	NodeID string `json:"node"`   // FK -> GNode.ID
-	Label  string `json:"label"`  // display name
-	Sub    string `json:"sub"`    // "project / env" (app) or "Postgres"/"Redis" (db)
-	Engine string `json:"engine"` // "" | "postgres" | "redis"
-	Status string `json:"status"` // "running" | stored status (greys the box when not running)
+	ID     string `json:"id"`             // "app-<appID>" | "db-<instanceID>"
+	Kind   string `json:"kind"`           // "app" | "db" | "gateway" | "internet"
+	NodeID string `json:"node"`           // FK -> GNode.ID
+	Label  string `json:"label"`          // display name
+	Sub    string `json:"sub"`            // "project / env" (app) or "Postgres"/"Redis" (db)
+	Engine string `json:"engine"`         // "" | "postgres" | "redis"
+	Status string `json:"status"`         // "running" | stored status (greys the box when not running)
 	Href   string `json:"href,omitempty"` // the service's page in the panel
 }
 

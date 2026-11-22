@@ -7,7 +7,7 @@ To deploy an image from a private registry:
 1. Open **Settings → Registries** (admin) and add one: a name, the registry URL (`ghcr.io`,
    `registry-1.docker.io` for Docker Hub, `registry.gitlab.com`, …), a username, and a password
    or token. Krill checks the credentials against the registry when you save them.
-2. On the app — in the create dialog or on the **General** tab — choose that registry instead
+2. On the app — in the new-app sheet or in its **Settings** tab, **Source** — choose that registry instead
    of "Public (no auth)".
 3. Deploy. Krill hands the credentials to Swarm, which pulls the image with them on whichever
    node runs the app.

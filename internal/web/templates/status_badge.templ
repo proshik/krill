@@ -5,10 +5,6 @@ import (
 	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
-templ StatusBadge(status string) {
-	<span id="status-badge" class={ "k-badge", "k-badge-" + status }><span class="k-dot"></span>{ statusLabel(status) }</span>
-}
-
 // EnvStatuses renders the out-of-band state updates for every app and
 // logical database card of an environment (the canvas's live refresh).
 templ EnvStatuses(apps []db.Application, ldbs []db.ListLogicalDatabasesByEnvironmentRow) {

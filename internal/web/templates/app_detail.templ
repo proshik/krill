@@ -348,7 +348,7 @@ templ deploymentLog(c AppCtx, dep db.Deployment) {
 			<code>{ dep.ImageTag }</code>
 			<span class="when">{ dep.StartedAt.Local().Format("2006-01-02 15:04:05") + ", " + dep.Trigger }</span>
 		</div>
-		<div class="term k-term" data-ws={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
+		<div class="term" data-term-log={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 	</section>
@@ -360,20 +360,20 @@ templ logsTab(c AppCtx) {
 
 // logViewer is the structured log viewer bound to a log WebSocket.
 templ logViewer(wsPath string) {
-	<section class="sec k-logs" data-ws={ wsPath } data-empty={ i18n.T(ctx, "log.empty") } data-error={ i18n.T(ctx, "log.error") } aria-labelledby="lg-h">
+	<section class="sec" data-logs={ wsPath } data-empty={ i18n.T(ctx, "log.empty") } data-error={ i18n.T(ctx, "log.error") } aria-labelledby="lg-h">
 		<div class="sec-head">
 			<h3 id="lg-h">{ i18n.T(ctx, "log.runtime") }</h3>
 			<div class="sec-keys" role="group" aria-label={ i18n.T(ctx, "log.level") }>
-				<button type="button" class="chip chip--level k-logs-lvlchip" data-level="all" aria-pressed="true">{ i18n.T(ctx, "log.all") }</button>
-				<button type="button" class="chip chip--level k-logs-lvlchip" data-level="debug" aria-pressed="false">debug</button>
-				<button type="button" class="chip chip--level k-logs-lvlchip" data-level="info" aria-pressed="false">info</button>
-				<button type="button" class="chip chip--level k-logs-lvlchip" data-level="warn" aria-pressed="false">warn</button>
-				<button type="button" class="chip chip--level k-logs-lvlchip" data-level="error" aria-pressed="false">error</button>
+				<button type="button" class="chip chip--level" data-level="all" aria-pressed="true">{ i18n.T(ctx, "log.all") }</button>
+				<button type="button" class="chip chip--level" data-level="debug" aria-pressed="false">debug</button>
+				<button type="button" class="chip chip--level" data-level="info" aria-pressed="false">info</button>
+				<button type="button" class="chip chip--level" data-level="warn" aria-pressed="false">warn</button>
+				<button type="button" class="chip chip--level" data-level="error" aria-pressed="false">error</button>
 			</div>
 		</div>
 		<label class="visually-hidden" for={ "lgq-" + logID(wsPath) }>{ i18n.T(ctx, "log.search") }</label>
-		<input class="input k-logs-search" id={ "lgq-" + logID(wsPath) } type="search" placeholder={ i18n.T(ctx, "log.search") } autocomplete="off"/>
-		<ol class="logs k-logs-body" aria-live="off"></ol>
+		<input class="input" data-logs-search id={ "lgq-" + logID(wsPath) } type="search" placeholder={ i18n.T(ctx, "log.search") } autocomplete="off"/>
+		<ol class="logs" data-logs-body aria-live="off"></ol>
 	</section>
 }
 
@@ -392,7 +392,7 @@ templ terminalTab(c AppCtx) {
 			</button>
 		</div>
 		<p id="term-status" class="hint" aria-live="polite"></p>
-		<div class="term k-term" data-term-ws={ c.base() + "/terminal/ws" }></div>
+		<div class="term" data-term-ws={ c.base() + "/terminal/ws" }></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 	</section>

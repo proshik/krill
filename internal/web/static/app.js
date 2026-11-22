@@ -1,11 +1,11 @@
-// Mounts an xterm log viewer into a `.k-term[data-ws]` element and streams logs
+// Mounts an xterm log viewer into a `.term[data-term-log]` element and streams logs
 // over WebSocket. Mounting is driven by krillEnhance (DOMContentLoaded +
 // htmx:afterSettle), so any log view added by a page swap mounts automatically;
 // the data-mounted guard makes it idempotent and the singleton id is gone.
 const KRILL_TERM_THEME = { background: "#1c1d20", foreground: "#d6d7da", cursor: "#a9a6d8", selectionBackground: "#3a3950" };
 function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
-  const wsPath = el.dataset.ws;
+  const wsPath = el.dataset.termLog;
   if (!wsPath) return;
   // After an hx-boost swap the external xterm.js / addon-fit.js scripts may
   // still be loading; wait for them before building, and only mark mounted on
@@ -38,7 +38,7 @@ function mountTerminalEl(el) {
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 }
 
-// Mounts an INTERACTIVE exec terminal into `.k-term[data-term-ws]`: xterm with
+// Mounts an INTERACTIVE exec terminal into `.term[data-term-ws]`: xterm with
 // stdin (binary frames), resize (text JSON frames), and binary output. Status
 // text is hardcoded English to match the log viewer.
 function mountExecTerminal(el) {
@@ -81,15 +81,15 @@ function mountExecTerminal(el) {
   connect();
 }
 
-// Mounts the structured log viewer into `.k-logs[data-ws]`: streams JSON frames
+// Mounts the structured log viewer into `[data-logs]`: streams JSON frames
 // {t,lvl,msg}, renders time|level|message rows with per-level colors, and does
 // client-side text search + level filtering. Status text is hardcoded English.
 function mountLogViewer(el) {
   if (!el || el.dataset.mounted) return;
   el.dataset.mounted = "1";
   const MAX_ROWS = 2000;
-  const body = el.querySelector(".k-logs-body");
-  const searchEl = el.querySelector(".k-logs-search");
+  const body = el.querySelector("[data-logs-body]");
+  const searchEl = el.querySelector("[data-logs-search]");
   let level = "all";
   let query = "";
 
@@ -104,7 +104,7 @@ function mountLogViewer(el) {
   if (searchEl) {
     searchEl.addEventListener("input", () => { query = searchEl.value.toLowerCase(); applyFilter(); });
   }
-  const chips = el.querySelectorAll(".k-logs-lvlchip");
+  const chips = el.querySelectorAll("[data-level]");
   chips.forEach((chip) => {
     chip.addEventListener("click", () => {
       level = chip.dataset.level;
@@ -144,7 +144,7 @@ function mountLogViewer(el) {
   }
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}${el.dataset.ws}`);
+  const ws = new WebSocket(`${proto}://${location.host}${el.dataset.logs}`);
   let got = false;
   ws.onmessage = (e) => { got = true; try { addRow(JSON.parse(e.data)); } catch (_) { /* ignore */ } };
   ws.onclose = () => { if (!got) addRow({ msg: el.dataset.empty || "no logs yet" }); };
@@ -157,7 +157,7 @@ function mountLogViewer(el) {
 
 // krillExecConnect (re)connects the terminal using the current command field.
 window.krillExecConnect = function () {
-  const el = document.querySelector(".k-term[data-term-ws]");
+  const el = document.querySelector(".term[data-term-ws]");
   if (el && el._krillConnect) el._krillConnect();
 };
 
@@ -296,9 +296,9 @@ function mountMonitoring(el) {
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
   krillGuardForms();
-  document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
-  document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
-  document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
+  document.querySelectorAll(".term[data-term-log]:not([data-mounted])").forEach(mountTerminalEl);
+  document.querySelectorAll(".term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
+  document.querySelectorAll("[data-logs]:not([data-mounted])").forEach(mountLogViewer);
   document.querySelectorAll(".mon:not([data-mounted])").forEach(mountMonitoring);
   const envForm = document.getElementById("env-form");
   if (envForm && !envForm.envLines) {
@@ -307,21 +307,10 @@ window.krillEnhance = function () {
     krillEnvMode(mode);
   }
   krillMountDBLink();
-  krillMountSchedulePresets();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
-    if (window.__krillMonResize) { window.removeEventListener("resize", window.__krillMonResize); window.__krillMonResize = null; }
-  }
-  // Stop any previous status-refresh timer (the page/element may have swapped),
-  // then restore the toggle from localStorage on the current page.
-  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
-  const arcb = document.querySelector('input[data-target="status-refresh"]');
-  if (arcb) {
-    let on = "0";
-    try { on = localStorage.getItem("krillAutoRefresh") || "0"; } catch (_) { /* private mode */ }
-    if (on === "1") { arcb.checked = true; krillAutoRefresh(arcb); }
   }
 };
 
@@ -380,80 +369,6 @@ function krillMountDBLink() {
   dbSel.addEventListener("change", apply);
   if (fieldSel) fieldSel.addEventListener("change", apply);
   apply();
-}
-
-// Reveals the custom-cron input when a backup "Schedule" select is set to
-// "custom". Idempotent (guarded per-select by data-mounted); works for the DB
-// form and every per-volume form on the page.
-function krillMountSchedulePresets() {
-  document.querySelectorAll(".k-sched-preset:not([data-mounted])").forEach((sel) => {
-    sel.dataset.mounted = "1";
-    const wrap = sel.parentElement && sel.parentElement.querySelector(".k-sched-custom");
-    if (!wrap) return;
-    const apply = () => { wrap.style.display = sel.value === "custom" ? "" : "none"; };
-    sel.addEventListener("change", apply);
-    apply();
-  });
-}
-
-// Toggle periodic status refresh: when checked, click the refresh button every
-// 5s (it hx-get's the OOB status fragment). A single global timer, cleared by
-// krillEnhance on navigation so it never leaks across page swaps.
-window.krillAutoRefresh = function (cb) {
-  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
-  try { localStorage.setItem("krillAutoRefresh", cb.checked ? "1" : "0"); } catch (_) { /* private mode */ }
-  if (cb.checked) {
-    window.__krillAutoTimer = setInterval(function () {
-      const b = document.getElementById(cb.dataset.target);
-      if (b) b.click();
-    }, 5000);
-  }
-};
-
-// Toggles the source fields in the application creation form.
-window.krillToggleSource = function (val) {
-  document.querySelectorAll('[data-src]').forEach(function (el) {
-    el.style.display = (el.getAttribute('data-src') === val) ? '' : 'none';
-  });
-};
-
-// Toggles engine-only fields in the DB-server creation form (e.g. MinIO's
-// root user + console port) and refreshes the version field's placeholder
-// from the selected option's data-default-image.
-window.krillToggleEngine = function (sel) {
-  const val = sel.value;
-  document.querySelectorAll('[data-engine-only]').forEach(function (el) {
-    el.style.display = (el.getAttribute('data-engine-only') === val) ? '' : 'none';
-  });
-  const opt = sel.selectedOptions && sel.selectedOptions[0];
-  const img = opt && opt.dataset ? opt.dataset.defaultImage : '';
-  const form = sel.closest('form');
-  const verInput = form && form.querySelector('[name="version"]');
-  if (verInput && img) verInput.placeholder = img;
-};
-
-// Open/close the native <dialog> modal by id.
-window.krillOpenModal = function (id) {
-  const d = document.getElementById(id);
-  if (d && typeof d.showModal === "function") {
-    d.showModal();
-    const f = d.querySelector("input, select, textarea");
-    if (f) { try { f.focus(); } catch (_) { /* not focusable yet */ } }
-  }
-};
-window.krillCloseModal = function (id) {
-  const d = document.getElementById(id);
-  if (d && typeof d.close === "function") d.close();
-};
-// Clicking the backdrop (outside the content) closes the modal.
-// Guarded so hx-boost re-running this script does not stack duplicate listeners.
-if (!window.__krillClickInit) {
-  window.__krillClickInit = true;
-  document.addEventListener("click", function (e) {
-    if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
-      e.target.close();
-    }
-  });
 }
 
 // The confirmation dialog (#confirm, in the page frame). Used from a form's
@@ -672,14 +587,6 @@ window.krillDismissToast = function (el) {
   if (el.parentNode) el.parentNode.removeChild(el);
 };
 
-// Disable a submit button on form submit to prevent double-submits and signal activity.
-window.krillBusy = function (btn, label) {
-  if (!btn) return;
-  btn.disabled = true;
-  btn.dataset.label = btn.textContent;
-  btn.textContent = label || "Working…";
-};
-
 // Toggle masking of a single input (e.g. a connection string) between password
 // and text; flips the eye icon on the button that triggered it.
 window.krillReveal = function (btn) {
@@ -853,46 +760,6 @@ if (!window.__krillEnhanceInit) {
   document.addEventListener("htmx:historyRestore", window.krillEnhance);
 }
 window.krillEnhance();
-
-// Environment systems: pointing at or focusing a component highlights the
-// resources it uses; a resource chip highlights the components using it.
-// Delegated on document so boosted swaps need no re-binding.
-(function () {
-  function clear(root) {
-    root.classList.remove("k-sys-active");
-    root.querySelectorAll(".k-sys-hit").forEach(function (n) { n.classList.remove("k-sys-hit"); });
-  }
-  function mark(root, attr, values) {
-    values.split(" ").forEach(function (v) {
-      if (!v) return;
-      root.querySelectorAll("[" + attr + '="' + v + '"]').forEach(function (n) { n.classList.add("k-sys-hit"); });
-    });
-  }
-  function show(e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (!root) return;
-    var el = e.target.closest("[data-sys-app],[data-sys-res]");
-    clear(root);
-    if (!el) return;
-    root.classList.add("k-sys-active");
-    el.classList.add("k-sys-hit");
-    if (el.hasAttribute("data-sys-app")) mark(root, "data-sys-res", el.getAttribute("data-uses") || "");
-    else mark(root, "data-sys-app", el.getAttribute("data-users") || "");
-  }
-  document.addEventListener("pointerover", show);
-  document.addEventListener("focusin", show);
-  document.addEventListener("pointerout", function (e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (root && !root.contains(e.relatedTarget)) clear(root);
-  });
-  document.addEventListener("focusout", function (e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (root && !root.contains(e.relatedTarget)) clear(root);
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") document.querySelectorAll("[data-sys].k-sys-active").forEach(clear);
-  });
-})();
 
 // ── The page frame: theme, bar menu, pickers, copy, reveal, conditional fields ──
 // Delegated on document, so boosted swaps need no re-binding. Guarded so a

@@ -1,51 +1,5 @@
 package templates
 
-import (
-	"github.com/proshik/krill/internal/auth"
-	db "github.com/proshik/krill/internal/database/gen"
-	"github.com/proshik/krill/internal/web/i18n"
-	"github.com/proshik/krill/internal/web/nav"
-)
-
-// Layout is the frame for pages not yet given a layout of their own: the shell
-// with the body in a wide page wrap.
-templ Layout(title string, org db.Organization, role string) {
-	@Page(Shell{Title: title, Org: org, Role: role}) {
-		<main class="wrap wrap--wide">
-			{ children... }
-		</main>
-	}
-}
-
-// settingsNav is the Settings sub-navigation shared by the Destinations and
-// Registries pages (they live under a single sidebar "Settings" entry).
-templ settingsNav(orgID int64) {
-	<h2 class="text-2xl mb-3">{ i18n.T(ctx, "nav.settings") }</h2>
-	<div class="k-card flex items-center mb-4 py-2 px-4">
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/registries") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "registries")) }>{ i18n.T(ctx, "reg.link") }</a>
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/git-credentials") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "git-credentials")) }>{ i18n.T(ctx, "gitcred.link") }</a>
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/api-tokens") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "api-tokens")) }>{ i18n.T(ctx, "api_tokens.link") }</a>
-		if auth.IsInstanceAdmin(ctx) {
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/nodes") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "nodes")) }>{ i18n.T(ctx, "nodes.link") }</a>
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/firewall") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "firewall")) }>{ i18n.T(ctx, "firewall.link") }</a>
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/panel-domain") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "panel-domain")) }>{ i18n.T(ctx, "panel.link") }</a>
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/observability") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "observability")) }>{ i18n.T(ctx, "obs.link") }</a>
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/krill-backups") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "krill-backups")) }>{ i18n.T(ctx, "sbk.link") }</a>
-			<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/updates") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "updates")) }>{ i18n.T(ctx, "update.link") }</a>
-		}
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/destinations") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "destinations")) }>{ i18n.T(ctx, "dest.link") }</a>
-		<a href={ templ.SafeURL("/orgs/" + itoa(orgID) + "/notifications") } class={ "k-tab", templ.KV("k-tab-active", nav.IsActive(ctx, "notifications")) }>{ i18n.T(ctx, "notif.link") }</a>
-		<form method="post" hx-boost="false" action="/lang" class="ml-auto flex items-center gap-2">
-			<label class="k-label" style="margin:0">{ i18n.T(ctx, "settings.language") }</label>
-			<select class="k-select" name="lang" style="width:auto" onchange="this.form.submit()">
-				for _, l := range i18n.Locales {
-					<option value={ l.Code } selected?={ l.Code == i18n.Current(ctx) }>{ l.Name }</option>
-				}
-			</select>
-		</form>
-	</div>
-}
-
 // Bare is the frame without navigation (sign in, the organization list).
 templ Bare(title string) {
 	@AuthPage(title) {
