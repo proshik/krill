@@ -5,6 +5,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
 // StateBackupRun is one row of the recent runs table.
@@ -63,19 +64,18 @@ func stateBackupStateKey(v StateBackupView) string {
 func sbkTime(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }
 
 templ StateBackupPage(org db.Organization, role string, v StateBackupView) {
-	@Layout(i18n.T(ctx, "sbk.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "sbk.desc") }</p>
+	@SettingsPage(org, role, "krill", i18n.T(ctx, "sbk.title")) {
+		<p class="hint">{ i18n.T(ctx, "sbk.desc") }</p>
 		if !v.Wired {
-			<div class="k-card mb-4">
-				<p style="max-width:720px">{ i18n.T(ctx, "sbk.unwired") }</p>
-			</div>
+			<div class="callout callout--warn"><p>{ i18n.T(ctx, "sbk.unwired") }</p></div>
 		} else {
-			<div class="k-card mb-4">
-				<p class="mb-2" style="max-width:720px">{ i18n.T(ctx, "sbk.warn_keys") }</p>
-				if !v.SecretKeySet {
-					<p class="mb-2" style="max-width:720px;color:var(--color-err)">{ i18n.T(ctx, "sbk.warn_plaintext") }</p>
-				}
+			<div class="callout">
+				<div class="callout-body">
+					<p>{ i18n.T(ctx, "sbk.warn_keys") }</p>
+					if !v.SecretKeySet {
+						@ui.State("err", i18n.T(ctx, "sbk.warn_plaintext"))
+					}
+				</div>
 			</div>
 			@stateBackupStatus(org.ID, v)
 			@stateBackupForm(org.ID, v)
@@ -85,138 +85,126 @@ templ StateBackupPage(org db.Organization, role string, v StateBackupView) {
 }
 
 templ stateBackupStatus(orgID int64, v StateBackupView) {
-	<div class="k-card mb-4">
-		<div class="flex items-center gap-2 mb-3">
-			if !v.Ready || !v.Enabled {
-				<span class="k-badge"><span class="k-dot"></span>{ i18n.T(ctx, stateBackupStateKey(v)) }</span>
-			} else {
-				<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, stateBackupStateKey(v)) }</span>
-			}
-			if v.Running {
-				<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "sbk.state.running") }</span>
-			}
-		</div>
-		if !v.NextRun.IsZero() {
-			<p class="mb-2">{ i18n.Tf(ctx, "sbk.next_run", sbkTime(v.NextRun)) }</p>
-		}
-		if v.HasLast {
-			<p class="mb-3">{ i18n.Tf(ctx, "sbk.last_ok", sbkTime(v.LastAt), humanSize(v.LastSize)) }</p>
-		} else {
-			<p class="mb-3">{ i18n.T(ctx, "sbk.last_never") }</p>
-		}
-		<div class="flex gap-2">
-			<form method="post" action={ templ.SafeURL(stateBackupPath(orgID) + "/run") }>
-				if v.Running || !v.Ready {
-					<button class="k-btn k-btn-primary" disabled>{ i18n.T(ctx, "sbk.run_now") }</button>
-				} else {
-					<button class="k-btn k-btn-primary">{ i18n.T(ctx, "sbk.run_now") }</button>
-				}
-			</form>
+	<section class="sec" aria-labelledby="kb-h">
+		<div class="sec-head">
+			<h3 id="kb-h">{ i18n.T(ctx, "sbk.schedule_title") }</h3>
 			if v.Ready {
 				<form method="post" action={ templ.SafeURL(stateBackupPath(orgID) + "/enabled") }>
 					if v.Enabled {
 						<input type="hidden" name="enabled" value="0"/>
-						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "sbk.pause") }</button>
 					} else {
 						<input type="hidden" name="enabled" value="1"/>
-						<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "sbk.resume") }</button>
 					}
+					@SwitchButton(v.Enabled, i18n.T(ctx, "backup.on"), i18n.T(ctx, "backup.paused"))
 				</form>
 			}
 		</div>
-	</div>
+		<div class="bk-top">
+			<span class="bk-what">
+				<span class="bk-sched">{ i18n.T(ctx, stateBackupStateKey(v)) }</span>
+				if !v.NextRun.IsZero() {
+					<span class="run-meta">{ i18n.Tf(ctx, "sbk.next_run", sbkTime(v.NextRun)) }</span>
+				}
+			</span>
+			if v.Running {
+				<span class="state state--warn"><span class="spin" aria-hidden="true"></span>{ i18n.T(ctx, "sbk.state.running") }</span>
+			} else if v.HasLast {
+				@ui.State("ok", i18n.Tf(ctx, "sbk.last_ok", sbkTime(v.LastAt), humanSize(v.LastSize)))
+			} else {
+				@ui.State("idle", i18n.T(ctx, "sbk.last_never"))
+			}
+			<form method="post" action={ templ.SafeURL(stateBackupPath(orgID) + "/run") }>
+				<button type="submit" class="pill" disabled?={ v.Running || !v.Ready }>{ i18n.T(ctx, "sbk.run_now") }</button>
+			</form>
+		</div>
+		<p class="hint">{ i18n.T(ctx, "sbk.pre_update_hint") }</p>
+	</section>
 }
 
 templ stateBackupForm(orgID int64, v StateBackupView) {
-	<form method="post" action={ templ.SafeURL(stateBackupPath(orgID)) } class="k-card mb-4 flex flex-col gap-3" autocomplete="off">
-		<h3 class="text-lg">{ i18n.T(ctx, "sbk.storage") }</h3>
-		<div>
-			<label class="k-label" for="sbk_endpoint">{ i18n.T(ctx, "dest.endpoint") }</label>
-			<input class="k-input" id="sbk_endpoint" name="endpoint" value={ v.Endpoint }/>
-			<p class="k-muted text-xs">{ i18n.T(ctx, "dest.endpoint_hint") }</p>
+	<form class="sec bk-settings" method="post" action={ templ.SafeURL(stateBackupPath(orgID)) } autocomplete="off" aria-labelledby="kbs-h">
+		<h3 id="kbs-h">{ i18n.T(ctx, "sbk.settings_title") }</h3>
+		@schedulePresets("sbk", v.Preset, v.CustomCron)
+		<div class="field">
+			<label for="sbk_retention">{ i18n.T(ctx, "backup.keep_last") }</label>
+			<input class="input input--mono" id="sbk_retention" name="retention" type="number" min="1" max="1000" value={ itoa(int64(v.Retention)) }/>
 		</div>
-		<div>
-			<label class="k-label" for="sbk_bucket">{ i18n.T(ctx, "dest.bucket") }</label>
-			<input class="k-input" id="sbk_bucket" name="bucket" value={ v.Bucket }/>
+		<h4 class="list-head">{ i18n.T(ctx, "sbk.storage") }</h4>
+		<div class="field">
+			<label for="sbk_endpoint">{ i18n.T(ctx, "dest.endpoint") }</label>
+			<input class="input input--mono" id="sbk_endpoint" name="endpoint" value={ v.Endpoint } placeholder="https://s3.example.com" spellcheck="false" aria-describedby="sbk_endpoint_hint"/>
+			<p class="field-hint" id="sbk_endpoint_hint">{ i18n.T(ctx, "dest.endpoint_hint") }</p>
 		</div>
-		<div>
-			<label class="k-label" for="sbk_region">{ i18n.T(ctx, "dest.region") }</label>
-			<input class="k-input" id="sbk_region" name="region" value={ v.Region } placeholder="us-east-1"/>
-		</div>
-		<div>
-			<label class="k-label" for="sbk_access_key">{ i18n.T(ctx, "dest.access_key") }</label>
-			<input class="k-input" id="sbk_access_key" name="access_key" value={ v.AccessKey }/>
-		</div>
-		<div>
-			<label class="k-label" for="sbk_secret_key">{ i18n.T(ctx, "dest.secret_key") }</label>
-			if v.HasSecret {
-				<input class="k-input" id="sbk_secret_key" name="secret_key" type="password" autocomplete="new-password" placeholder={ i18n.T(ctx, "sbk.secret_stored") }/>
-			} else {
-				<input class="k-input" id="sbk_secret_key" name="secret_key" type="password" autocomplete="new-password"/>
-			}
-			<p class="k-muted text-xs">{ i18n.T(ctx, "sbk.secret_hint") }</p>
-		</div>
-		<div>
-			<label class="k-label" for="sbk_prefix">{ i18n.T(ctx, "sbk.prefix") }</label>
-			<input class="k-input" id="sbk_prefix" name="prefix" value={ v.Prefix }/>
-			<p class="k-muted text-xs">{ i18n.T(ctx, "sbk.prefix_hint") }</p>
-		</div>
-		<div>
-			<label class="k-label" for="sbk_recipient">{ i18n.T(ctx, "sbk.recipient") }</label>
-			<input class="k-input k-mono" id="sbk_recipient" name="recipient" value={ v.Recipient }/>
-			<p class="k-muted text-xs" style="max-width:720px">{ i18n.T(ctx, "sbk.recipient_help") }</p>
-			<p class="k-muted text-xs" style="max-width:720px">{ i18n.T(ctx, "sbk.rotation_note") }</p>
-		</div>
-		<div>
-			<label class="k-label">{ i18n.T(ctx, "backup.schedule") }</label>
-			<select class="k-select k-sched-preset" name="schedule_preset">
-				<option value="off" selected?={ v.Preset == "off" }>{ i18n.T(ctx, "backup.sched.off") }</option>
-				<option value="hourly" selected?={ v.Preset == "hourly" }>{ i18n.T(ctx, "backup.sched.hourly") }</option>
-				<option value="daily" selected?={ v.Preset == "daily" }>{ i18n.T(ctx, "backup.sched.daily") }</option>
-				<option value="weekly" selected?={ v.Preset == "weekly" }>{ i18n.T(ctx, "backup.sched.weekly") }</option>
-				<option value="monthly" selected?={ v.Preset == "monthly" }>{ i18n.T(ctx, "backup.sched.monthly") }</option>
-				<option value="custom" selected?={ v.Preset == "custom" }>{ i18n.T(ctx, "backup.sched.custom") }</option>
-			</select>
-			<div class="k-sched-custom" style="display:none">
-				<input class="k-input mt-2" name="schedule_custom" placeholder="0 3 * * *" value={ v.CustomCron }/>
-				<p class="k-muted text-xs">{ i18n.T(ctx, "backup.sched.custom_hint") }</p>
+		<div class="row row--even">
+			<div class="field">
+				<label for="sbk_bucket">{ i18n.T(ctx, "dest.bucket") }</label>
+				<input class="input input--mono" id="sbk_bucket" name="bucket" value={ v.Bucket } spellcheck="false"/>
+			</div>
+			<div class="field">
+				<label for="sbk_region">{ i18n.T(ctx, "dest.region") }</label>
+				<input class="input input--mono" id="sbk_region" name="region" value={ v.Region } placeholder="us-east-1"/>
 			</div>
 		</div>
-		<div>
-			<label class="k-label" for="sbk_retention">{ i18n.T(ctx, "backup.retention") }</label>
-			<input class="k-input" id="sbk_retention" name="retention" type="number" min="1" max="1000" value={ itoa(int64(v.Retention)) }/>
+		<div class="row row--even">
+			<div class="field">
+				<label for="sbk_access_key">{ i18n.T(ctx, "dest.access_key") }</label>
+				<input class="input input--mono" id="sbk_access_key" name="access_key" value={ v.AccessKey } spellcheck="false"/>
+			</div>
+			<div class="field">
+				<label for="sbk_secret_key">{ i18n.T(ctx, "dest.secret_key") }</label>
+				if v.HasSecret {
+					<input class="input input--mono" id="sbk_secret_key" name="secret_key" type="password" autocomplete="new-password" placeholder={ i18n.T(ctx, "sbk.secret_stored") } aria-describedby="sbk_secret_hint"/>
+				} else {
+					<input class="input input--mono" id="sbk_secret_key" name="secret_key" type="password" autocomplete="new-password" aria-describedby="sbk_secret_hint"/>
+				}
+				<p class="field-hint" id="sbk_secret_hint">{ i18n.T(ctx, "sbk.secret_hint") }</p>
+			</div>
 		</div>
-		<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "sbk.save") }</button></div>
+		<details class="adv">
+			<summary>{ i18n.T(ctx, "backup.advanced") }</summary>
+			<div class="field">
+				<label for="sbk_prefix">{ i18n.T(ctx, "sbk.prefix") }</label>
+				<input class="input input--mono" id="sbk_prefix" name="prefix" value={ v.Prefix } aria-describedby="sbk_prefix_hint"/>
+				<p class="field-hint" id="sbk_prefix_hint">{ i18n.T(ctx, "sbk.prefix_hint") }</p>
+			</div>
+		</details>
+		<div class="field">
+			<label for="sbk_recipient">{ i18n.T(ctx, "sbk.recipient") }</label>
+			<input class="input input--mono" id="sbk_recipient" name="recipient" value={ v.Recipient } spellcheck="false" aria-describedby="sbk_recipient_hint"/>
+			<p class="field-hint" id="sbk_recipient_hint">{ i18n.T(ctx, "sbk.recipient_help") }</p>
+			<p class="field-hint">{ i18n.T(ctx, "sbk.rotation_note") }</p>
+		</div>
+		<div class="sec-add"><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "sbk.save") }</button></div>
 	</form>
 }
 
 templ stateBackupRuns(v StateBackupView) {
-	<div class="k-card mb-4">
-		<h3 class="text-lg mb-2">{ i18n.T(ctx, "sbk.runs") }</h3>
+	<section class="sec" aria-labelledby="kbr-h">
+		<h3 id="kbr-h">{ i18n.T(ctx, "sbk.runs") }</h3>
 		if len(v.Runs) == 0 {
-			<p class="k-muted">{ i18n.T(ctx, "sbk.runs_none") }</p>
+			<p class="empty">{ i18n.T(ctx, "sbk.runs_none") }</p>
 		} else {
-			<table class="k-table">
-				<thead><tr><th>{ i18n.T(ctx, "sbk.col.time") }</th><th>{ i18n.T(ctx, "sbk.col.trigger") }</th><th>{ i18n.T(ctx, "sbk.col.status") }</th><th>{ i18n.T(ctx, "sbk.col.size") }</th><th>{ i18n.T(ctx, "sbk.col.object") }</th><th>{ i18n.T(ctx, "sbk.col.error") }</th></tr></thead>
-				<tbody>
-					for _, r := range v.Runs {
-						<tr>
-							<td class="k-mono">{ r.At.Local().Format("2006-01-02 15:04:05") }</td>
-							<td>{ i18n.T(ctx, "sbk.trigger." + r.Trigger) }</td>
-							<td>
-								if r.OK {
-									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "sbk.status.ok") }</span>
-								} else {
-									<span class="k-badge k-badge-error"><span class="k-dot"></span>{ i18n.T(ctx, "sbk.status.error") }</span>
-								}
-							</td>
-							<td>{ humanSize(r.SizeBytes) }</td>
-							<td class="k-mono">{ r.ObjectKey }</td>
-							<td>{ r.Error }</td>
-						</tr>
-					}
-				</tbody>
-			</table>
+			<ul class="snaps">
+				for _, r := range v.Runs {
+					<li class="snap">
+						<span class="snap-when">{ r.At.Local().Format("2006-01-02 15:04") }</span>
+						<span class="run-meta">{ i18n.T(ctx, "sbk.trigger." + r.Trigger) + ", " + humanSize(r.SizeBytes) }</span>
+						if r.OK {
+							@ui.State("ok", i18n.T(ctx, "sbk.status.ok"))
+						} else {
+							@ui.State("err", i18n.T(ctx, "sbk.status.error"))
+						}
+						<span class="snap-keys"><code>{ r.ObjectKey }</code></span>
+						if r.Error != "" {
+							<p class="deploy-msg deploy-msg--err snap-err">{ r.Error }</p>
+						}
+					</li>
+				}
+			</ul>
+			<p class="hint">
+				{ i18n.T(ctx, "sbk.restore_hint") + " " }
+				<a href="https://github.com/proshik/krill/blob/master/docs/install.md" target="_blank" rel="noopener">{ i18n.T(ctx, "sbk.restore_guide") }</a>
+			</p>
 		}
-	</div>
+	</section>
 }

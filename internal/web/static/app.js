@@ -1249,3 +1249,28 @@ document.addEventListener("change", function (e) { if (e.target.name === "placem
 document.addEventListener("htmx:afterSettle", krillSyncPlacement);
 document.addEventListener("DOMContentLoaded", krillSyncPlacement);
 krillSyncPlacement();
+
+// Small page behaviours: a select that submits its form on change, the theme
+// back to following the system, a member's role save shown only on change,
+// and the new-server form's image placeholder following the engine.
+document.addEventListener("change", function (e) {
+  const t = e.target;
+  if (t.matches && t.matches("select[data-autosubmit]") && t.form) { t.form.requestSubmit(); return; }
+  if (t.matches && t.matches("select[data-was]")) {
+    const b = t.form && t.form.querySelector("[data-role-save]");
+    if (b) b.hidden = t.value === t.dataset.was;
+    return;
+  }
+  if (t.name === "engine" && t.dataset.defaultImage !== undefined) {
+    const v = t.form && t.form.querySelector('[name="version"]');
+    if (v) v.placeholder = t.dataset.defaultImage;
+  }
+});
+document.addEventListener("click", function (e) {
+  const b = e.target.closest && e.target.closest("[data-theme-reset]");
+  if (!b) return;
+  try { localStorage.removeItem("krill-mode"); } catch (_) { /* private mode */ }
+  const q = window.matchMedia && matchMedia("(prefers-color-scheme: dark)");
+  document.documentElement.dataset.mode = q && q.matches ? "dark" : "light";
+  krillModeLabel();
+});

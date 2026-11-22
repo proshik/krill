@@ -93,19 +93,20 @@ func (q *Queries) GetMembership(ctx context.Context, arg GetMembershipParams) (M
 }
 
 const listMembers = `-- name: ListMembers :many
-SELECT m.id, m.organization_id, m.user_id, m.role, m.created_at, u.email
+SELECT m.id, m.organization_id, m.user_id, m.role, m.created_at, u.email, u.must_change_password
 FROM members m JOIN users u ON u.id = m.user_id
 WHERE m.organization_id = $1
 ORDER BY m.created_at
 `
 
 type ListMembersRow struct {
-	ID             int64     `json:"id"`
-	OrganizationID int64     `json:"organization_id"`
-	UserID         int64     `json:"user_id"`
-	Role           string    `json:"role"`
-	CreatedAt      time.Time `json:"created_at"`
-	Email          string    `json:"email"`
+	ID                 int64     `json:"id"`
+	OrganizationID     int64     `json:"organization_id"`
+	UserID             int64     `json:"user_id"`
+	Role               string    `json:"role"`
+	CreatedAt          time.Time `json:"created_at"`
+	Email              string    `json:"email"`
+	MustChangePassword bool      `json:"must_change_password"`
 }
 
 func (q *Queries) ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error) {
@@ -124,6 +125,7 @@ func (q *Queries) ListMembers(ctx context.Context, organizationID int64) ([]List
 			&i.Role,
 			&i.CreatedAt,
 			&i.Email,
+			&i.MustChangePassword,
 		); err != nil {
 			return nil, err
 		}

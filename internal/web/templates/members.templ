@@ -1,65 +1,93 @@
 package templates
 
 import (
+	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
 templ Members(org db.Organization, role string, members []db.ListMembersRow, tempPassword string) {
-	@Layout(i18n.T(ctx, "members.page_title"), org, role) {
-		<h2 class="text-2xl mb-4">{ i18n.T(ctx, "members.title") }</h2>
+	@SettingsPage(org, role, "members", i18n.T(ctx, "members.title")) {
 		if tempPassword != "" {
-			<div class="k-toast k-toast-ok mb-3 flex items-center gap-3">
-				<span>{ i18n.T(ctx, "members.temp_password") } <b class="k-mono">{ tempPassword }</b></span>
-				<button type="button" class="k-copy" data-copy={ tempPassword } onclick="krillCopyToClip(this.dataset.copy, 'Password')">{ i18n.T(ctx, "common.copy") }</button>
+			<div class="callout callout--ok" role="status">
+				<div class="callout-body">
+					@ui.State("ok", i18n.T(ctx, "members.added"))
+					<p class="hint">{ i18n.T(ctx, "members.temp_password_once") }</p>
+					<div class="input-group">
+						<input class="input input--mono" id="tmp-pass" value={ tempPassword } readonly aria-label={ i18n.T(ctx, "members.temp_password_label") }/>
+						@ui.CopyButton(tempPassword, i18n.T(ctx, "common.copy"))
+					</div>
+				</div>
 			</div>
 		}
-		<div class="k-card mb-4">
-			<table class="k-table">
-				<thead><tr><th>Email</th><th>{ i18n.T(ctx, "common.role") }</th><th></th></tr></thead>
-				<tbody>
-					for _, m := range members {
-						<tr>
-							<td class="k-mono">{ m.Email }</td>
-							<td>{ m.Role }</td>
-							<td>
-								<div class="flex items-center gap-2 flex-wrap justify-end">
-									if role == "owner" || role == "admin" {
-										<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/role") } class="flex items-center gap-2">
-											<select class="k-select w-auto" name="role" aria-label={ i18n.T(ctx, "members.role.change") }>
-												<option value="owner" selected?={ m.Role == "owner" }>{ i18n.T(ctx, "members.role.owner") }</option>
-												<option value="admin" selected?={ m.Role == "admin" }>{ i18n.T(ctx, "members.role.admin") }</option>
-												<option value="member" selected?={ m.Role == "member" }>{ i18n.T(ctx, "members.role.member") }</option>
-											</select>
-											<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "members.role.save") }</button>
-										</form>
-									}
-									if (role == "owner" || role == "admin") && m.Role != "owner" {
-										<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members/" + itoa(m.ID) + "/remove") } class="inline" data-confirm={ i18n.Tf(ctx, "confirm.remove_member", m.Email) } data-label={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.label)">
-											<button type="submit" class="k-btn k-btn-danger">{ i18n.T(ctx, "common.delete") }</button>
-										</form>
-									}
-								</div>
-							</td>
-						</tr>
-					}
-				</tbody>
-			</table>
-		</div>
-		if role == "owner" || role == "admin" {
-			<div class="k-card">
-				<h3 class="text-lg mb-2">{ i18n.T(ctx, "members.add_title") }</h3>
-				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/members") }>
-					<label class="k-label k-label-required">Email</label>
-					<input class="k-input" name="email" type="email" required/>
-					<label class="k-label">{ i18n.T(ctx, "common.role") }</label>
-					<select class="k-select" name="role">
-						<option value="member">member</option>
-						<option value="admin">admin</option>
-					</select>
-					<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button></div>
-				</form>
-			</div>
+		<section class="sec" aria-labelledby="mm-h">
+			<div class="sec-head"><h3 id="mm-h">{ i18n.Tf(ctx, "members.n", len(members)) }</h3></div>
+			<ul class="members">
+				for _, m := range members {
+					<li class="member">
+						<span class="member-who">
+							<span class="member-email">{ m.Email }</span>
+							if m.UserID == auth.UserID(ctx) {
+								<span class="tag">{ i18n.T(ctx, "members.you") }</span>
+							}
+							if m.MustChangePassword {
+								<span class="run-meta">{ i18n.T(ctx, "members.temp_not_changed") }</span>
+							}
+						</span>
+						if isAdmin(role) && m.UserID != auth.UserID(ctx) {
+							<form class="member-form" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/members/" + itoa(m.ID) + "/role") }>
+								<label class="visually-hidden" for={ "role-" + itoa(m.ID) }>{ i18n.Tf(ctx, "members.role_of", m.Email) }</label>
+								<select class="input input--compact" id={ "role-" + itoa(m.ID) } name="role" data-was={ m.Role }>
+									<option value="owner" selected?={ m.Role == "owner" }>{ i18n.T(ctx, "members.role.owner") }</option>
+									<option value="admin" selected?={ m.Role == "admin" }>{ i18n.T(ctx, "members.role.admin") }</option>
+									<option value="member" selected?={ m.Role == "member" }>{ i18n.T(ctx, "members.role.member") }</option>
+								</select>
+								<button type="submit" class="pill" data-role-save hidden>{ i18n.T(ctx, "common.save") }</button>
+							</form>
+							if m.Role != "owner" {
+								<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/members/" + itoa(m.ID) + "/remove") } data-confirm={ i18n.Tf(ctx, "confirm.remove_member", m.Email) } data-more={ i18n.T(ctx, "members.remove_more") } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
+									<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "common.remove_named", m.Email) } title={ i18n.T(ctx, "common.remove") }>
+										@ui.Icon("i-trash")
+									</button>
+								</form>
+							} else {
+								<span></span>
+							}
+						} else {
+							<span class="member-role">{ i18n.T(ctx, "members.role."+m.Role) }</span>
+						}
+					</li>
+				}
+			</ul>
+		</section>
+		if isAdmin(role) {
+			<form class="sec" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/members") } aria-labelledby="add-h">
+				<h3 id="add-h">{ i18n.T(ctx, "members.add_title") }</h3>
+				<div class="add-member">
+					<div class="field">
+						<label for="memail">{ i18n.T(ctx, "login.email") }</label>
+						<input class="input" id="memail" name="email" type="email" required placeholder="name@example.com" autocomplete="off"/>
+					</div>
+					<div class="field">
+						<label for="mrole">{ i18n.T(ctx, "common.role") }</label>
+						<select class="input" id="mrole" name="role">
+							<option value="member">{ i18n.T(ctx, "members.role.member") }</option>
+							<option value="admin">{ i18n.T(ctx, "members.role.admin") }</option>
+						</select>
+					</div>
+					<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "members.add") }</button>
+				</div>
+				<p class="hint">{ i18n.T(ctx, "members.add_hint") }</p>
+			</form>
 		}
+		<section class="sec" aria-labelledby="roles-h">
+			<h3 id="roles-h">{ i18n.T(ctx, "members.roles") }</h3>
+			<dl class="roles">
+				<div><dt>{ i18n.T(ctx, "members.role.owner") }</dt><dd>{ i18n.T(ctx, "members.role_owner_desc") }</dd></div>
+				<div><dt>{ i18n.T(ctx, "members.role.admin") }</dt><dd>{ i18n.T(ctx, "members.role_admin_desc") }</dd></div>
+				<div><dt>{ i18n.T(ctx, "members.role.member") }</dt><dd>{ i18n.T(ctx, "members.role_member_desc") }</dd></div>
+			</dl>
+		</section>
 	}
 }

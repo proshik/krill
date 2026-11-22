@@ -3,58 +3,76 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
-templ Registries(org db.Organization, role string, regs []db.Registry) {
-	@Layout(i18n.T(ctx, "reg.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "reg.desc") }</p>
-		<div class="k-card">
-			<table class="k-table">
-				<thead>
-					<tr>
-						<th>{ i18n.T(ctx, "reg.name") }</th>
-						<th>{ i18n.T(ctx, "reg.url") }</th>
-						<th>{ i18n.T(ctx, "reg.username") }</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody>
+// Registries lists the organization's private registries with the apps that
+// pull through each.
+templ Registries(org db.Organization, role string, regs []db.Registry, usedBy map[int64][]UsedBy) {
+	@SettingsPage(org, role, "registries", i18n.T(ctx, "reg.title")) {
+		<section class="sec" aria-labelledby="rg-h">
+			<div class="sec-head"><h3 id="rg-h">{ i18n.Tf(ctx, "reg.n", len(regs)) }</h3></div>
+			if len(regs) == 0 {
+				<p class="empty">{ i18n.T(ctx, "reg.empty") }</p>
+			} else {
+				<ul class="regs">
 					for _, reg := range regs {
-						<tr>
-							<td>{ reg.Name }</td><td class="k-mono">{ reg.RegistryUrl }</td><td>{ reg.Username }</td>
-							<td>
-								if role == "owner" || role == "admin" {
-									<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries/" + itoa(reg.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_registry", reg.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
-										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "reg.delete") }</button>
+						<li class="reg">
+							<div class="reg-top">
+								<span class="reg-name">{ reg.Name }</span>
+								<code class="reg-host">{ reg.RegistryUrl }</code>
+								<span class="run-meta">{ i18n.Tf(ctx, "reg.signed_in_as", reg.Username) }</span>
+								if isAdmin(role) {
+									<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/registries/" + itoa(reg.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_registry", reg.Name) } data-more={ i18n.T(ctx, "reg.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+										<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "common.delete_named", reg.Name) } title={ i18n.T(ctx, "common.delete") }>
+											@ui.Icon("i-trash")
+										</button>
 									</form>
 								}
-							</td>
-						</tr>
+							</div>
+							<div class="reg-used">
+								<span class="field-label">{ i18n.T(ctx, "envdb.used_by") }</span>
+								@usedByChips(usedBy[reg.ID])
+							</div>
+						</li>
 					}
-				</tbody>
-			</table>
-			if role == "owner" || role == "admin" {
-				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/registries") } class="mt-4 flex flex-col gap-2">
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "reg.name") }</label>
-						<input class="k-input" name="name" required/>
-					</div>
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "reg.url") }</label>
-						<input class="k-input" name="registry_url" required placeholder="ghcr.io (host only — not the image path)"/>
-					</div>
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "reg.username") }</label>
-						<input class="k-input" name="username" required/>
-					</div>
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "reg.password") }</label>
-						<input class="k-input" name="password" type="password" required/>
-					</div>
-					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "reg.add") }</button></div>
-				</form>
+				</ul>
 			}
-		</div>
+			<p class="hint">{ i18n.T(ctx, "reg.desc") }</p>
+		</section>
+		if isAdmin(role) {
+			<form class="sec" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/registries") } aria-labelledby="ar-h">
+				<h3 id="ar-h">{ i18n.T(ctx, "reg.add_title") }</h3>
+				<div class="row row--even">
+					<div class="field"><label for="rname">{ i18n.T(ctx, "common.name") }</label><input class="input" id="rname" name="name" required placeholder="ghcr" autocomplete="off"/></div>
+					<div class="field">
+						<label for="rurl">{ i18n.T(ctx, "reg.url") }</label>
+						<input class="input input--mono" id="rurl" name="registry_url" required placeholder="ghcr.io" autocomplete="off" spellcheck="false" aria-describedby="rurl-hint"/>
+						<p class="field-hint" id="rurl-hint">{ i18n.T(ctx, "reg.host_only") }</p>
+					</div>
+				</div>
+				<div class="row row--even">
+					<div class="field"><label for="ruser">{ i18n.T(ctx, "reg.username") }</label><input class="input input--mono" id="ruser" name="username" required autocomplete="off" spellcheck="false"/></div>
+					<div class="field"><label for="rpass">{ i18n.T(ctx, "reg.password") }</label><input class="input input--mono" id="rpass" name="password" type="password" required autocomplete="new-password"/></div>
+				</div>
+				<div class="sec-add"><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "reg.add") }</button><span class="hint">{ i18n.T(ctx, "reg.checked_hint") }</span></div>
+			</form>
+		}
+	}
+}
+
+// usedByChips is the "used by" chips of a credential or registry.
+templ usedByChips(users []UsedBy) {
+	if len(users) == 0 {
+		<span class="run-meta">{ i18n.T(ctx, "reg.not_used") }</span>
+	} else {
+		<span class="reg-apps">
+			for _, u := range users {
+				<a href={ templ.SafeURL(u.Href) }>
+					{ u.Name }
+					<em>{ u.Note }</em>
+				</a>
+			}
+		</span>
 	}
 }

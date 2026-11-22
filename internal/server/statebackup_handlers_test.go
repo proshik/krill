@@ -220,7 +220,8 @@ func TestStateBackupPageStates(t *testing.T) {
 		env.ctl.view = readySettings()
 		env.ctl.view.Enabled = false
 		b := env.page(t)
-		if !strings.Contains(b, "Paused") || !strings.Contains(b, "Resume") {
+		// Paused: the switch is off and turning it on posts enabled=1.
+		if form := formHTML(b, env.base+"/enabled"); !strings.Contains(b, "Paused") || !strings.Contains(form, `aria-checked="false"`) || !strings.Contains(form, `name="enabled" value="1"`) {
 			t.Error("paused/resume missing")
 		}
 		if strings.Contains(formHTML(b, env.base+"/run"), "disabled") {

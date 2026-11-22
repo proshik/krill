@@ -23,7 +23,17 @@ func (s *Server) listGitCredentials(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, templates.GitCredentials(o, role, creds))
+	usedBy := map[int64][]templates.UsedBy{}
+	if ix, err := s.loadOrgIndex(r.Context(), o.ID); err != nil {
+		logFrom(r).Warn("listGitCredentials: org index", "err", err)
+	} else {
+		for _, a := range ix.apps {
+			if a.GitCredentialID != nil {
+				usedBy[*a.GitCredentialID] = append(usedBy[*a.GitCredentialID], templates.UsedBy{Name: a.Name, Note: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a) + "?tab=settings#s-source"})
+			}
+		}
+	}
+	render(w, r, http.StatusOK, templates.GitCredentials(o, role, creds, usedBy))
 }
 
 // createGitCredential validates the form and persists a new git credential

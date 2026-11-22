@@ -127,7 +127,7 @@ templ backupBlock(b BackupBlock) {
 			} else {
 				<form class="bk-form stack" method="post" action={ templ.SafeURL(b.AddURL) }>
 					<h4 class="list-head">{ addScheduleTitle(ctx, len(b.Configs)) }</h4>
-					@schedulePresets(b.ID)
+					@schedulePresets(b.ID, "daily", "")
 					<div class="row row--even">
 						<div class="field">
 							<label for={ b.ID + "-keep" }>{ i18n.T(ctx, "backup.keep_last") }</label>
@@ -159,17 +159,17 @@ templ backupBlock(b BackupBlock) {
 
 // schedulePresets is the preset picker every backup form shares; "custom"
 // reveals the cron field.
-templ schedulePresets(id string) {
+templ schedulePresets(id, selected, custom string) {
 	<fieldset class="presets">
 		<legend>{ i18n.T(ctx, "backup.schedule") }</legend>
 		for _, p := range []string{"off", "hourly", "daily", "weekly", "monthly", "custom"} {
-			<label class="preset"><input type="radio" name="schedule_preset" value={ p } checked?={ p == "daily" }/><span>{ i18n.T(ctx, "backup.sched."+p) }</span></label>
+			<label class="preset"><input type="radio" name="schedule_preset" value={ p } checked?={ p == selected }/><span>{ i18n.T(ctx, "backup.sched."+p) }</span></label>
 		}
 	</fieldset>
-	<div class="group" data-when="schedule_preset=custom" hidden>
+	<div class="group" data-when="schedule_preset=custom" hidden?={ selected != "custom" }>
 		<div class="field">
 			<label for={ id + "-cron" }>{ i18n.T(ctx, "backup.cron") }</label>
-			<input class="input input--mono" id={ id + "-cron" } name="schedule_custom" placeholder="0 3 * * *" aria-describedby={ id + "-cron-hint" }/>
+			<input class="input input--mono" id={ id + "-cron" } name="schedule_custom" value={ custom } placeholder="0 3 * * *" aria-describedby={ id + "-cron-hint" }/>
 			<p class="field-hint" id={ id + "-cron-hint" }>{ i18n.T(ctx, "backup.sched.custom_hint") }</p>
 		</div>
 	</div>

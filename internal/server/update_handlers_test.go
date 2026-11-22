@@ -290,7 +290,7 @@ func TestUpdatesPage(t *testing.T) {
 		if strings.Contains(form, "disabled") {
 			t.Errorf("install button is disabled: %s", form)
 		}
-		if !strings.Contains(form, `hx-boost="false"`) || !strings.Contains(form, "'primary'") {
+		if !strings.Contains(form, `hx-boost="false"`) || !strings.Contains(form, `data-kind="primary"`) {
 			t.Errorf("install form is not a primary confirm form outside boost: %s", form)
 		}
 		if formHTML(body, rollback) != "" {
