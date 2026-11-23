@@ -258,8 +258,10 @@ func commaPrefix(s string) string {
 	return ", " + s
 }
 
-// fwNoNft names the nodes without nft: a lockdown is refused while any is
-// left (the handler checks it too), so the page does not offer one.
+// fwNoNft names the nodes without nft, for the page's warning. A lockdown
+// leaves such a worker as it is and goes on with the others (it is reported
+// as failed), so only a control plane without nft makes it unavailable: see
+// fwControlPlaneNoNft.
 func fwNoNft(nodes []FirewallNode) []string {
 	var out []string
 	for _, n := range nodes {
@@ -268,6 +270,17 @@ func fwNoNft(nodes []FirewallNode) []string {
 		}
 	}
 	return out
+}
+
+// fwControlPlaneNoNft reports whether the control plane has no nft: the
+// lockdown handler refuses then, so the page does not offer one.
+func fwControlPlaneNoNft(nodes []FirewallNode) bool {
+	for _, n := range nodes {
+		if n.ControlPlane && n.State == "nft_missing" {
+			return true
+		}
+	}
+	return false
 }
 
 // Opening the cluster stays available whatever the nodes report: it also

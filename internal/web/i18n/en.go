@@ -1581,7 +1581,7 @@ var en = map[string]string{
 	"firewall.lockdown_more":           "the control plane reverts in 2 minutes unless you confirm from this page",
 	"firewall.open_more":               "inbound traffic on every node is no longer restricted",
 	"firewall.revert_hint":             "a node that becomes unreachable after a change reverts on its own",
-	"firewall.nft_missing_on":          "nft is not installed on: %s. Install nftables to lock the cluster down.",
+	"firewall.nft_missing_on":          "nft is not installed on: %s. Such a node cannot be locked down without nftables; on the control plane, the cluster cannot be locked down at all.",
 	"gitcred.add_title":                "add a credential",
 	"gitcred.as":                       "as %s",
 	"gitcred.delete_more":              "apps that clone through it fail their next build",
