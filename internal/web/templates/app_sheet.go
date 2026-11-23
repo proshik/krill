@@ -236,8 +236,10 @@ func (c AppCtx) nodeNameByHost(hostname string) string {
 }
 
 // connHintKey says how apps get a server's connection: a Redis-like server's
-// details are what a link injects, but a Postgres link injects its logical
-// database's own user and an S3 link its bucket's key — never these.
+// details are what a link injects; a Postgres link injects its logical
+// database's own user, never the superuser; on an S3 server a direct link's
+// access_key/secret_key are these root keys, while a bucket link injects the
+// bucket's own key.
 func connHintKey(engine string) string {
 	switch engine {
 	case "postgres":
