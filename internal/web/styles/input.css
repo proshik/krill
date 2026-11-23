@@ -197,7 +197,16 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .sheet-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin-top: var(--space-sm); }
 .sheet-sub a { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-ink-2); font-size: var(--text-sm); text-decoration: none; }
 .sheet-sub a:hover { text-decoration: underline; text-decoration-color: var(--color-accent); }
-.seg { display: flex; flex-wrap: wrap; gap: var(--space-2xs); margin-block: var(--space-lg); padding: var(--space-2xs); border-radius: var(--radius-pill); background: var(--color-paper); width: fit-content; }
+/* A segmented bar stays one line: wrapped, its pill radius no longer fits the
+   two-line frame and the first and last items stick out of the curve. Long
+   labels (ru) scroll sideways instead; krillSegScroll brings the current item
+   into view, and the edges fade while there is more to scroll. */
+.seg { display: flex; flex-wrap: nowrap; gap: var(--space-2xs); max-width: 100%; margin-block: var(--space-lg); padding: var(--space-2xs); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; border-radius: var(--radius-pill); background: var(--color-paper); width: fit-content; }
+.seg::-webkit-scrollbar { display: none; }
+.seg > * { flex: none; white-space: nowrap; }
+.seg.is-scroll-start { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.seg.is-scroll-end { mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+.seg.is-scroll-start.is-scroll-end { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .seg a { padding: var(--space-md); border-radius: var(--radius-pill); color: var(--color-muted); font: 500 var(--text-md)/1 var(--font-display); text-decoration: none; }
 .seg a:hover { color: var(--color-ink); }
 .seg a[aria-current="page"] { background: var(--color-paper-3); color: var(--color-ink); }
@@ -387,8 +396,6 @@ path.s3 { stroke: var(--color-warn); stroke-dasharray: 6 4; }
   .page .wrap { padding-inline: var(--space-md); }
   .nodecol { padding-inline: var(--space-md); }
   .comp-mem .meter { display: none; }
-  .seg--tight { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .seg--tight a { white-space: nowrap; }
 }
 
 /* ---------- new app form ---------- */

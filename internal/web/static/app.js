@@ -315,12 +315,37 @@ window.krillEnhance = function () {
     krillEnvMode(mode);
   }
   krillMountDBLink();
+  document.querySelectorAll(".seg").forEach(krillSegScroll);
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
   }
 };
+
+// krillSegScroll keeps a one-line segmented bar usable when its items are wider
+// than the bar: the current item is scrolled into view (sideways only — the
+// page must not jump), and is-scroll-start/-end fade the edge that hides more.
+function krillSegScroll(seg) {
+  const edges = () => {
+    const more = seg.scrollWidth - seg.clientWidth;
+    seg.classList.toggle("is-scroll-start", more > 1 && seg.scrollLeft < more - 1);
+    seg.classList.toggle("is-scroll-end", more > 1 && seg.scrollLeft > 1);
+  };
+  if (!seg.dataset.segMounted) {
+    seg.dataset.segMounted = "1";
+    seg.addEventListener("scroll", edges, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(edges).observe(seg);
+  }
+  const cur = seg.querySelector('[aria-current="page"], [aria-pressed="true"]');
+  if (cur && seg.scrollWidth > seg.clientWidth) {
+    const left = cur.getBoundingClientRect().left - seg.getBoundingClientRect().left + seg.scrollLeft, right = left + cur.offsetWidth;
+    if (left < seg.scrollLeft || right > seg.scrollLeft + seg.clientWidth) {
+      seg.scrollLeft = Math.max(0, left - (seg.clientWidth - cur.offsetWidth) / 2);
+    }
+  }
+  edges();
+}
 
 // Engine-aware Scheme + Field selects for the DB-link form: rebuilds the scheme
 // options to only those valid for the currently selected database (Postgres ->
