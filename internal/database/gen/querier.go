@@ -225,6 +225,8 @@ type Querier interface {
 	ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSinceParams) ([]BackupRun, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListBucketBackupsByBucket(ctx context.Context, bucketID int64) ([]BucketBackup, error)
+	// The org topology's bucket links, each with the S3 server holding its bucket.
+	ListBucketLinkTargetsByApplicationIDs(ctx context.Context, ids []int64) ([]ListBucketLinkTargetsByApplicationIDsRow, error)
 	ListBucketLinksByApplication(ctx context.Context, applicationID int64) ([]AppBucketLink, error)
 	ListBucketLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]AppBucketLink, error)
 	ListBucketLinksByBucket(ctx context.Context, bucketID int64) ([]ListBucketLinksByBucketRow, error)

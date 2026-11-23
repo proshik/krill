@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,9 +112,18 @@ func TestTopoViewProjectFilterServers(t *testing.T) {
 			{From: "app-1", ToKind: "logical", ToID: "10", Kind: "db"},
 			{From: "app-2", ToKind: "logical", ToID: "11", Kind: "db"},
 			{From: "app-1", ToKind: "instance", ToID: "db-2", Kind: "db", Engine: "minio"},
+			// A raw DSN of shop-api pointing at the blog project's database.
+			{From: "app-1", ToKind: "logical", ToID: "11", Kind: "db", Detected: true},
 		},
 	}
 	v := topoView(context.Background(), 1, g, "1")
+	for _, l := range v.Lanes {
+		for _, c := range l.Apps {
+			if c.Name == "shop-api" && !slices.Contains(c.Detected, "t-db-1") {
+				t.Errorf("the DSN to another project's database must end at its server card, detected = %v", c.Detected)
+			}
+		}
+	}
 	servers := map[string][]string{}
 	for _, l := range v.Lanes {
 		for _, c := range l.Servers {

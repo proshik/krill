@@ -93,6 +93,7 @@ func (s *Server) topologyGraph(w http.ResponseWriter, r *http.Request, orgID int
 func topoView(ctx context.Context, orgID int64, g topology.Graph, project string) templates.TopoView {
 	elem := func(serviceID string) string { return "t-" + serviceID }
 	dbOwner := map[string]string{}
+	dbHidden := map[string]bool{} // chips another project's filter leaves out
 	holds := map[string][]templates.TopoHold{}
 	for _, d := range g.Dbs {
 		id := strconv.FormatInt(d.ID, 10)
@@ -100,6 +101,7 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		// Narrowed to a project, a server shows only that project's
 		// databases: another project's chips do not belong to the view.
 		if project != "" && strconv.FormatInt(d.ProjectID, 10) != project {
+			dbHidden[id] = true
 			continue
 		}
 		holds[d.ServiceID] = append(holds[d.ServiceID], templates.TopoHold{ElemID: elem("ldb-" + id), Name: d.Name, Env: d.Env})
@@ -123,6 +125,11 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		target, owner := l.ToID, l.ToID
 		if l.ToKind == "logical" {
 			target, owner = "ldb-"+l.ToID, dbOwner[l.ToID]
+			// A chip the project filter left out (an app's DSN to another
+			// project's database): the wire ends at its server's card.
+			if dbHidden[l.ToID] {
+				target = owner
+			}
 		}
 		if owner == "" {
 			continue
@@ -493,29 +500,15 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 	}
 
 	// ---- app->bucket links: drawn to the bucket's S3 server ----
-	bucketInst := map[int64]int64{}
-	for _, eid := range envIDs {
-		bs, err := s.q.ListS3BucketsByEnvironment(ctx, eid)
-		if err != nil {
-			return topology.Graph{}, fmt.Errorf("topology: list buckets failed: %w", err)
-		}
-		for _, b := range bs {
-			bucketInst[b.ID] = b.InstanceID
-		}
-	}
 	if len(appIDs) > 0 {
-		bls, err := s.q.ListBucketLinksByApplicationIDs(ctx, appIDs)
+		bls, err := s.q.ListBucketLinkTargetsByApplicationIDs(ctx, appIDs)
 		if err != nil {
 			return topology.Graph{}, fmt.Errorf("topology: list bucket links failed: %w", err)
 		}
 		for _, l := range bls {
-			inst, ok := bucketInst[l.BucketID]
-			if !ok {
-				continue
-			}
 			dbLinks = append(dbLinks, topology.LinkInput{
 				From: "app-" + strconv.FormatInt(l.ApplicationID, 10), ToKind: "instance",
-				ToID: "db-" + strconv.FormatInt(inst, 10), Kind: "db", Engine: "minio", VarName: l.VarName,
+				ToID: "db-" + strconv.FormatInt(l.InstanceID, 10), Kind: "db", Engine: "minio", VarName: l.VarName,
 			})
 		}
 	}

@@ -63,3 +63,11 @@ WHERE l.bucket_id = $1 ORDER BY a.name, l.var_name;
 
 -- name: DeleteBucketLink :exec
 DELETE FROM app_bucket_links WHERE id = $1;
+
+-- name: ListBucketLinkTargetsByApplicationIDs :many
+-- The org topology's bucket links, each with the S3 server holding its bucket.
+SELECT l.application_id, l.var_name, b.instance_id
+FROM app_bucket_links l
+JOIN s3_buckets b ON b.id = l.bucket_id
+WHERE l.application_id = ANY(@ids::bigint[])
+ORDER BY l.application_id, l.var_name;
