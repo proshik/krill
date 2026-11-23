@@ -1443,7 +1443,6 @@ var ru = map[string]string{
 	"term.hint":                        "командная оболочка в одном из работающих контейнеров приложения",
 	"volumes.backups_of":               "копии тома %s",
 	"volumes.delete_more":              "подключение исчезнет со следующей выкладкой; сам том Docker и данные останутся",
-	"deploy.restore_release":           "восстановить этот релиз",
 	"bbackup.last_restore_line":        "последнее восстановление %s: %s",
 	"bucket.key_current":               "текущий",
 	"bucket.key_previous":              "предыдущий",

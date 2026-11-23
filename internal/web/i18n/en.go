@@ -1443,7 +1443,6 @@ var en = map[string]string{
 	"term.hint":                        "a shell inside one running container of the app",
 	"volumes.backups_of":               "backups of %s",
 	"volumes.delete_more":              "the binding goes on the next deploy; the Docker volume and its data stay",
-	"deploy.restore_release":           "restore this release",
 	"bbackup.last_restore_line":        "last restore %s: %s",
 	"bucket.key_current":               "current",
 	"bucket.key_previous":              "previous",

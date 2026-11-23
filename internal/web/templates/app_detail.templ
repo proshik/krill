@@ -296,12 +296,9 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 			}
 			<div class="deploy-keys">
 				if active != nil {
+					// No rollback here: this is the release that runs now. Older
+					// eligible releases in the history below keep theirs.
 					<a class="pill" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(active.ID)) }>{ i18n.T(ctx, "deploy.view_log") }</a>
-					if active.RollbackEligible && secret.Enabled() && c.admin() {
-						<form method="post" action={ templ.SafeURL(c.base() + "/deployments/" + itoa(active.ID) + "/rollback") } hx-boost="false" data-confirm={ i18n.T(ctx, "confirm.rollback_app") } data-ok={ i18n.T(ctx, "deploy.rollback") } data-kind="primary" onsubmit="return krillConfirm(this)">
-							<button type="submit" class="pill">{ i18n.T(ctx, "deploy.restore_release") }</button>
-						</form>
-					}
 				}
 				<a class="pill" href={ templ.SafeURL(c.base() + "?tab=logs") }>{ i18n.T(ctx, "app.view_logs") }</a>
 				if c.admin() {
