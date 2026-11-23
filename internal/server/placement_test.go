@@ -235,7 +235,7 @@ func TestMigrateDBInstanceNodeSameTargetButDrifted(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
 		t.Fatalf("drifted same-node target want 303+ok (dispatch), got %d body %s", rec.Code, rec.Body.String())
 	}
-	if want := "migration started — follow the progress in the instance log."; flashText(rec) != want {
+	if want := "migration started. Follow the progress in the instance log."; flashText(rec) != want {
 		t.Errorf("flash text = %q, want %q", flashText(rec), want)
 	}
 }

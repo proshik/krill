@@ -34,7 +34,7 @@ function mountTerminalEl(el) {
   ws.onmessage = (e) => { gotData = true; term.writeln(e.data); };
   ws.onclose = () => term.writeln(gotData
     ? "\x1b[90m[log stream closed]\x1b[0m"
-    : "\x1b[90m[no logs yet — start or redeploy the service to stream logs]\x1b[0m");
+    : "\x1b[90m[no logs yet: start or redeploy the service to stream logs]\x1b[0m");
   ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
 }
 
@@ -74,7 +74,7 @@ function mountExecTerminal(el) {
     ws.binaryType = "arraybuffer";
     ws.onopen = () => { setStatus(""); refit(); sendResize(); term.focus(); };
     ws.onmessage = (e) => term.write(new Uint8Array(e.data));
-    ws.onclose = () => setStatus("session ended — press Connect to start a new one");
+    ws.onclose = () => setStatus("session ended. Press connect to start a new one");
     ws.onerror = () => setStatus("connection error");
   }
   el._krillConnect = connect;
