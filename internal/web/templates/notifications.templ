@@ -70,6 +70,10 @@ templ notifyProxy(v NotifyView) {
 // notifyZones are suggestions for the time-zone field; any IANA name works.
 var notifyZones = []string{"Europe/Moscow", "Europe/Amsterdam", "Europe/Berlin", "Europe/London", "UTC", "Asia/Tbilisi", "Asia/Yerevan", "Asia/Almaty", "America/New_York"}
 
+// notifySwitch is an on/off switch with a caption. With no label the caption
+// follows the switch's state ("on" beside an off switch read as a claim):
+// both words are rendered and CSS shows the one that matches the checkbox,
+// before and after a click.
 templ notifySwitch(name, label string, checked, disabled bool) {
 	<label class="switch">
 		if name == "" {
@@ -78,7 +82,12 @@ templ notifySwitch(name, label string, checked, disabled bool) {
 			<input type="checkbox" name={ name } checked?={ checked } disabled?={ disabled }/>
 		}
 		<span class="switch-track" aria-hidden="true"></span>
-		{ label }
+		if label == "" {
+			<span class="switch-on">{ i18n.T(ctx, "common.on") }</span>
+			<span class="switch-off">{ i18n.T(ctx, "common.off") }</span>
+		} else {
+			{ label }
+		}
 	</label>
 }
 
@@ -90,7 +99,7 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 			<section class="sec" aria-labelledby="ch-h">
 				<div class="sec-head">
 					<h3 id="ch-h">Telegram</h3>
-					@notifySwitch("enabled", i18n.T(ctx, "common.on"), v.Enabled, false)
+					@notifySwitch("enabled", "", v.Enabled, false)
 				</div>
 				<p class="hint">{ i18n.T(ctx, "notif.desc") }</p>
 				<div class="row row--even">
@@ -123,7 +132,10 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 					</div>
 					@notifyProxy(v)
 				</div>
-				<div><button type="submit" form="notif-test" class="pill">{ i18n.T(ctx, "notif.test") }</button></div>
+				<div><button type="submit" form="notif-test" class="pill" disabled?={ !v.channelSaved() }>{ i18n.T(ctx, "notif.test") }</button></div>
+				if !v.channelSaved() {
+					<p class="hint">{ i18n.T(ctx, "notif.save_first") }</p>
+				}
 			</section>
 			<section class="sec" aria-labelledby="ev-h">
 				<h3 id="ev-h">{ i18n.T(ctx, "notif.sec_events") }</h3>
@@ -137,7 +149,7 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 			<section class="sec" aria-labelledby="dg-h">
 				<div class="sec-head">
 					<h3 id="dg-h">{ i18n.T(ctx, "notif.sec_digest") }</h3>
-					@notifySwitch("digest_enabled", i18n.T(ctx, "common.on"), v.DigestEnabled, false)
+					@notifySwitch("digest_enabled", "", v.DigestEnabled, false)
 				</div>
 				<div class="digest">
 					<div class="stack">
@@ -157,7 +169,7 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 							</div>
 						</div>
 						<p class="hint">{ i18n.T(ctx, "notif.digest_hint") }</p>
-						<div><button type="submit" form="notif-digest" class="pill">{ i18n.T(ctx, "notif.digest_now") }</button></div>
+						<div><button type="submit" form="notif-digest" class="pill" disabled?={ !v.channelSaved() }>{ i18n.T(ctx, "notif.digest_now") }</button></div>
 					</div>
 					<figure class="tg" aria-label={ i18n.T(ctx, "notif.preview") }>
 						<figcaption>{ i18n.T(ctx, "notif.preview") }</figcaption>
@@ -199,10 +211,10 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 				<div class="sec-head">
 					<h3 id="in-h">{ i18n.T(ctx, "notif.sec_infra") }</h3>
 					if v.CanInfra {
-						@notifySwitch("notify_infra", i18n.T(ctx, "common.on"), v.NotifyInfra, false)
+						@notifySwitch("notify_infra", "", v.NotifyInfra, false)
 					} else {
 						// Not a form field for anyone else: the server keeps the stored value.
-						@notifySwitch("", i18n.T(ctx, "common.on"), v.NotifyInfra, true)
+						@notifySwitch("", "", v.NotifyInfra, true)
 					}
 				</div>
 				<p class="hint">{ i18n.T(ctx, "notif.infra_hint") }</p>
@@ -227,3 +239,8 @@ templ Notifications(org db.Organization, role string, v NotifyView) {
 		</form>
 	}
 }
+
+// channelSaved reports whether a bot token and chat are stored: sending a
+// test message or the digest is refused until they are (the handlers check
+// the stored channel too).
+func (v NotifyView) channelSaved() bool { return v.HasToken && v.ChatID != "" }

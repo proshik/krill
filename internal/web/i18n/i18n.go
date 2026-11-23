@@ -113,6 +113,33 @@ func Tf(ctx context.Context, key string, args ...any) string {
 	return fmt.Sprintf(T(ctx, key), args...)
 }
 
+// Tn formats a count with its noun in the right plural form: the catalogs
+// hold key.one, key.few and key.many (English uses one and many; Russian all
+// three), each a format whose first verb is the count. Extra args follow it.
+func Tn(ctx context.Context, key string, n int, args ...any) string {
+	return Tf(ctx, key+"."+PluralForm(localeOf(ctx), n), append([]any{n}, args...)...)
+}
+
+// PluralForm is the plural category of n in loc: "one", "few" or "many".
+func PluralForm(loc string, n int) string {
+	if n < 0 {
+		n = -n
+	}
+	if loc != "ru" {
+		if n == 1 {
+			return "one"
+		}
+		return "many"
+	}
+	switch m10, m100 := n%10, n%100; {
+	case m10 == 1 && m100 != 11:
+		return "one"
+	case m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14):
+		return "few"
+	}
+	return "many"
+}
+
 // Sentence starts s with a capital letter. Catalog values are lowercase, as
 // the UI shows them; a value that becomes a new sentence after a period (a
 // flash joined from two messages, a browser tab title) goes through this.

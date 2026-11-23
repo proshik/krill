@@ -11,6 +11,9 @@ import (
 
 // keyCall finds a catalog key passed as a literal: to i18n.T / i18n.Tf, or to
 // the server's flash helpers (flashErrT, flashErrErr, flashOK, ...).
+// pluralCall matches i18n.Tn, whose key names a set of plural forms.
+var pluralCall = regexp.MustCompile(`i18n\.Tn\(\s*[A-Za-z_.()]+,\s*"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"`)
+
 var keyCall = regexp.MustCompile(`(?:i18n\.Tf?\(\s*[A-Za-z_.()]+,\s*|\.flash(?:ErrT|ErrErr|OK|OKf|ErrTf)\(\s*w,\s*r,\s*)"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"`)
 
 // Every key the code passes as a literal exists in both catalogs: removing an
@@ -47,6 +50,13 @@ func TestLiteralKeysExistInBothCatalogs(t *testing.T) {
 			key := src[m[2]:m[3]]
 			if _, seen := refs[key]; !seen {
 				refs[key] = path
+			}
+		}
+		for _, m := range pluralCall.FindAllStringSubmatch(src, -1) {
+			for _, form := range []string{"one", "few", "many"} {
+				if _, seen := refs[m[1]+"."+form]; !seen {
+					refs[m[1]+"."+form] = path
+				}
 			}
 		}
 		return nil

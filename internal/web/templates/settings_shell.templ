@@ -75,11 +75,13 @@ templ SettingsOverview(org db.Organization, role string, v SettingsOverviewView)
 				<li class="row-item">
 					<span class="link-var">{ i18n.T(ctx, "settings.password") }</span>
 					<span class="link-src">{ i18n.T(ctx, "settings.password_note") }</span>
+					<span></span>
 					<a class="pill" href={ templ.SafeURL(orgURL(org.ID) + "/account/password") }>{ i18n.T(ctx, "settings.change") }</a>
 				</li>
 				<li class="row-item">
 					<span class="link-var">{ i18n.T(ctx, "settings.session") }</span>
 					<span class="link-src">{ v.Email }</span>
+					<span></span>
 					<form method="post" action="/logout" hx-boost="false">
 						<button type="submit" class="pill">{ i18n.T(ctx, "nav.logout") }</button>
 					</form>

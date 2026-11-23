@@ -126,7 +126,7 @@ templ BucketSnapshots(base string, b BucketBackupView, bucketName string) {
 			for _, sn := range b.Snapshots {
 				<li class="snap">
 					<span class="snap-when">{ sn.Timestamp }</span>
-					<span class="run-meta">{ i18n.Tf(ctx, "bbackup.objects_bytes", sn.Objects, humanBytes(sn.Bytes)) }</span>
+					<span class="run-meta">{ i18n.Tn(ctx, "bbackup.objects_bytes", sn.Objects, humanBytes(sn.Bytes)) }</span>
 					if sn.Complete {
 						@ui.State("ok", i18n.T(ctx, "backup.complete"))
 						<form class="snap-keys snap-restore" method="post" hx-boost="false" action={ templ.SafeURL(base + "/backups/" + itoa(b.Row.ID) + "/restore") } data-confirm={ i18n.Tf(ctx, "backup.restore_q", sn.Timestamp) } data-more={ i18n.T(ctx, "bbackup.confirm_restore") } data-ok={ i18n.T(ctx, "backup.restore") } onsubmit="return krillConfirm(this)">

@@ -11,10 +11,10 @@ import (
 templ Registries(org db.Organization, role string, regs []db.Registry, usedBy map[int64][]UsedBy) {
 	@SettingsPage(org, role, "registries", i18n.T(ctx, "reg.title")) {
 		<section class="sec" aria-labelledby="rg-h">
-			<div class="sec-head"><h3 id="rg-h">{ i18n.Tf(ctx, "reg.n", len(regs)) }</h3></div>
 			if len(regs) == 0 {
-				<p class="empty">{ i18n.T(ctx, "reg.empty") }</p>
+				<p class="empty" id="rg-h">{ i18n.T(ctx, "reg.empty") }</p>
 			} else {
+				<div class="sec-head"><h3 id="rg-h">{ i18n.Tn(ctx, "reg.n", len(regs)) }</h3></div>
 				<ul class="regs">
 					for _, reg := range regs {
 						<li class="reg">

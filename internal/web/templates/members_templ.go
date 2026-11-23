@@ -114,7 +114,7 @@ func Members(org db.Organization, role string, members []db.ListMembersRow, temp
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tf(ctx, "members.n", len(members)))
+			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tn(ctx, "members.n", len(members)))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/members.templ`, Line: 25, Col: 80}
 			}

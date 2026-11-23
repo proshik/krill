@@ -73,7 +73,7 @@ templ StateBackupPage(org db.Organization, role string, v StateBackupView) {
 				<div class="callout-body">
 					<p>{ i18n.T(ctx, "sbk.warn_keys") }</p>
 					if !v.SecretKeySet {
-						@ui.State("err", i18n.T(ctx, "sbk.warn_plaintext"))
+						<p class="field-err">{ i18n.T(ctx, "sbk.warn_plaintext") }</p>
 					}
 				</div>
 			</div>
@@ -101,7 +101,13 @@ templ stateBackupStatus(orgID int64, v StateBackupView) {
 		</div>
 		<div class="bk-top">
 			<span class="bk-what">
-				<span class="bk-sched">{ i18n.T(ctx, stateBackupStateKey(v)) }</span>
+				if v.Ready {
+					<span class="bk-sched">{ i18n.T(ctx, stateBackupStateKey(v)) }</span>
+				} else {
+					// Nothing is scheduled yet, while the form below already
+					// offers a schedule: say when it starts to apply.
+					<span class="bk-sched">{ i18n.T(ctx, "sbk.schedule_none") }</span>
+				}
 				if !v.NextRun.IsZero() {
 					<span class="run-meta">{ i18n.Tf(ctx, "sbk.next_run", sbkTime(v.NextRun)) }</span>
 				}

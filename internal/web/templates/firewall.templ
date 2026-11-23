@@ -137,12 +137,16 @@ templ Firewall(org db.Organization, role string, nodes []FirewallNode, cp Contro
 				}
 			</ul>
 			if isAdmin(role) {
+				{{ noNft := fwNoNft(nodes) }}
+				if len(noNft) > 0 {
+					<p class="hint">{ i18n.Tf(ctx, "firewall.nft_missing_on", strings.Join(noNft, ", ")) }</p>
+				}
 				<div class="sec-add">
 					<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/firewall/lockdown") } data-confirm={ i18n.T(ctx, "firewall.confirm.lockdown") } data-more={ i18n.T(ctx, "firewall.lockdown_more") } data-ok={ i18n.T(ctx, "firewall.lockdown") } data-kind="primary" onsubmit="return krillConfirm(this)">
-						<button type="submit" class="pill">{ i18n.T(ctx, "firewall.lockdown") }</button>
+						<button type="submit" class="pill" disabled?={ len(noNft) > 0 }>{ i18n.T(ctx, "firewall.lockdown") }</button>
 					</form>
 					<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/firewall/open") } data-confirm={ i18n.T(ctx, "firewall.confirm.open") } data-more={ i18n.T(ctx, "firewall.open_more") } data-ok={ i18n.T(ctx, "firewall.open_action") } onsubmit="return krillConfirm(this)">
-						<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "firewall.open_action") }</button>
+						<button type="submit" class="pill pill--danger" disabled?={ !fwAnyLocked(nodes) }>{ i18n.T(ctx, "firewall.open_action") }</button>
 					</form>
 				</div>
 				<p class="hint">{ i18n.T(ctx, "firewall.revert_hint") }</p>

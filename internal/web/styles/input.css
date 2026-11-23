@@ -474,6 +474,7 @@ select.input { appearance: none; padding-right: var(--space-2xl); background-ima
 .switches { display: flex; flex-wrap: wrap; gap: var(--space-lg); }
 .switch { position: relative; display: inline-flex; align-items: center; gap: var(--space-sm); min-height: 40px; font: 500 var(--text-md)/1.2 var(--font-display); cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch input:checked ~ .switch-off, .switch input:not(:checked) ~ .switch-on { display: none; }
 .switch-track { position: relative; width: 40px; height: 24px; flex: none; border-radius: var(--radius-pill); background: var(--color-rule); transition: background-color var(--dur-micro) var(--ease-out); }
 .switch-track::after { content: ""; position: absolute; top: 4px; left: 4px; width: 16px; height: 16px; border-radius: 50%; background: var(--color-ink-2); transition: transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
 .switch input:checked + .switch-track { background: var(--color-accent); }
@@ -632,6 +633,9 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .sys, .row-item { grid-template-columns: minmax(8em, 12em) minmax(0, 1fr) auto auto; }
 .row-item { display: grid; align-items: center; gap: var(--space-sm); min-height: 52px; padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-md); border-radius: 14px; background: var(--color-paper); }
 .row-item .link-src + .link-src { color: var(--color-muted); }
+/* The language picker takes the row's last three columns, so its button
+   ends where the other rows' buttons do. */
+.links li > .lang-form { grid-column: 2 / -1; justify-self: end; }
 .setpage { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-2xl); align-items: start; }
 .subnav { position: sticky; top: calc(var(--bar-h) + var(--space-lg)); display: grid; gap: var(--space-2xs); }
 .subnav h2 { margin: var(--space-md) 0 var(--space-2xs); padding-left: var(--space-sm); color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); letter-spacing: 0; }
@@ -654,7 +658,7 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 @media (max-width: 60rem) {
   .setpage { grid-template-columns: minmax(0, 1fr); }
   .subnav { position: static; display: flex; flex-wrap: wrap; }
-  .subnav h2 { width: 100%; }
+  .subnav h2 { flex: 0 0 100%; max-width: none; }
   .sys, .row-item { grid-template-columns: minmax(0, 1fr) auto; }
   .row-item .link-src { grid-column: 1; }
   .logs li { grid-template-columns: 5em 3.5em minmax(0, 1fr); padding-inline: var(--space-sm); }
@@ -767,13 +771,16 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .project-envs a:hover { background: var(--color-paper-3); }
 .project-env { font: 500 var(--text-md)/1 var(--font-display); }
 /* api tokens */
-.tokens { display: grid; gap: var(--space-2xs); margin: 0; padding: 0; list-style: none; }
-.token { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto auto; align-items: center; gap: var(--space-md); min-height: 56px; padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-md); border-radius: 14px; background: var(--color-paper); }
+/* One grid for all rows (subgrid): the prefix, expiry and last-use columns
+   line up from row to row. */
+.tokens { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto auto auto; gap: var(--space-2xs) var(--space-md); margin: 0; padding: 0; list-style: none; }
+.token { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; row-gap: var(--space-2xs); min-height: 56px; padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-md); border-radius: 14px; background: var(--color-paper); }
 .token-name { font: 500 var(--text-md)/1.2 var(--font-display); }
 .token-prefix { color: var(--color-muted); }
 .tag--level { background: var(--color-accent-soft); color: var(--color-ink); }
 @media (max-width: 60rem) {
-  .token { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-2xs); padding-block: var(--space-sm); }
+  .tokens { grid-template-columns: minmax(0, 1fr) auto; }
+  .token { padding-block: var(--space-sm); }
   .token-prefix, .token .run-meta { grid-column: 1 / -1; }
   .token .pill--icon { grid-row: 1; grid-column: 2; }
 }

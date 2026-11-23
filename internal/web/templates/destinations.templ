@@ -10,13 +10,11 @@ import (
 templ Destinations(org db.Organization, role string, dests []db.Destination) {
 	@SettingsPage(org, role, "storage", i18n.T(ctx, "dest.title")) {
 		<section class="sec" aria-labelledby="st-h">
-			<div class="sec-head"><h3 id="st-h">{ i18n.Tf(ctx, "dest.n", len(dests)) }</h3></div>
 			if len(dests) == 0 {
-				<div class="empty-card">
-					<p class="empty-title">{ i18n.T(ctx, "backup.no_storage_title") }</p>
-					<p class="hint">{ i18n.T(ctx, "backup.no_storage_hint") }</p>
-				</div>
+				<p class="empty" id="st-h">{ i18n.T(ctx, "backup.no_storage_title") }</p>
+				<p class="hint">{ i18n.T(ctx, "backup.no_storage_hint") }</p>
 			} else {
+				<div class="sec-head"><h3 id="st-h">{ i18n.Tn(ctx, "dest.n", len(dests)) }</h3></div>
 				<ul class="links">
 					for _, d := range dests {
 						<li class="row-item">

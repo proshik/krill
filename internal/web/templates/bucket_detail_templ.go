@@ -761,7 +761,7 @@ func BucketSnapshots(base string, b BucketBackupView, bucketName string) templ.C
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var42 string
-				templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tf(ctx, "bbackup.objects_bytes", sn.Objects, humanBytes(sn.Bytes)))
+				templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tn(ctx, "bbackup.objects_bytes", sn.Objects, humanBytes(sn.Bytes)))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/bucket_detail.templ`, Line: 129, Col: 101}
 				}

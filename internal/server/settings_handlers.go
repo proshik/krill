@@ -51,7 +51,7 @@ func (s *Server) settingsOverview(w http.ResponseWriter, r *http.Request) {
 		for _, m := range ms {
 			roles[m.Role]++
 		}
-		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("nav.members"), Text: i18n.Tf(ctx, "members.n", len(ms)),
+		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("nav.members"), Text: i18n.Tn(ctx, "members.n", len(ms)),
 			Note: i18n.Tf(ctx, "settings.roles_summary", roles["owner"], roles["admin"], roles["member"]), Href: base + "/members"})
 	}
 	if regs, err := s.q.ListRegistriesByOrg(ctx, o.ID); err == nil {
@@ -59,21 +59,21 @@ func (s *Server) settingsOverview(w http.ResponseWriter, r *http.Request) {
 		for _, r := range regs {
 			hosts = append(hosts, r.RegistryUrl)
 		}
-		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("reg.link"), Text: i18n.Tf(ctx, "reg.n", len(regs)), Note: strings.Join(hosts, ", "), Href: base + "/registries"})
+		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("reg.link"), Text: i18n.Tn(ctx, "reg.n", len(regs)), Note: strings.Join(hosts, ", "), Href: base + "/registries"})
 	}
 	if gcs, err := s.q.ListGitCredentialsByOrg(ctx, o.ID); err == nil {
 		hosts := make([]string, 0, len(gcs))
 		for _, g := range gcs {
 			hosts = append(hosts, g.Host)
 		}
-		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("gitcred.link"), Text: i18n.Tf(ctx, "gitcred.n", len(gcs)), Note: strings.Join(hosts, ", "), Href: base + "/git-credentials"})
+		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("gitcred.link"), Text: i18n.Tn(ctx, "gitcred.n", len(gcs)), Note: strings.Join(hosts, ", "), Href: base + "/git-credentials"})
 	}
 	if dests, err := s.q.ListDestinationsByOrg(ctx, o.ID); err == nil {
 		names := make([]string, 0, len(dests))
 		for _, d := range dests {
 			names = append(names, d.Name)
 		}
-		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("dest.link"), Text: i18n.Tf(ctx, "dest.n", len(dests)), Note: strings.Join(names, ", "), Href: base + "/destinations"})
+		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("dest.link"), Text: i18n.Tn(ctx, "dest.n", len(dests)), Note: strings.Join(names, ", "), Href: base + "/destinations"})
 	}
 	if isAdminRole(role) {
 		row := templates.SettingsRow{Title: t("notif.link"), Text: "Telegram", Href: base + "/notifications", Kind: "idle", State: t("settings.off")}
@@ -86,13 +86,18 @@ func (s *Server) settingsOverview(w http.ResponseWriter, r *http.Request) {
 		org.Rows = append(org.Rows, row)
 	}
 	if toks, err := s.q.ListAPITokensByUserAndOrg(ctx, db.ListAPITokensByUserAndOrgParams{UserID: auth.UserID(ctx), OrgID: o.ID}); err == nil {
-		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("api_tokens.link"), Text: i18n.Tf(ctx, "api_tokens.n", len(toks)), Href: base + "/api-tokens"})
+		org.Rows = append(org.Rows, templates.SettingsRow{Title: t("api_tokens.link"), Text: i18n.Tn(ctx, "api_tokens.n", len(toks)), Href: base + "/api-tokens"})
 	}
 	v.Org = append(v.Org, org)
 
 	if auth.IsInstanceAdmin(ctx) {
 		kr := templates.SettingsSection{ID: "krill", Title: t("settings.group_krill")}
-		row := templates.SettingsRow{Title: t("panel.link"), Text: t("panel.state.off"), Href: base + "/panel-domain", Kind: "idle", State: t("panel.state.off")}
+		// The badge carries the state; the text says why it can't be set up
+		// when the gateway cannot reach Krill (the panel page explains how).
+		row := templates.SettingsRow{Title: t("panel.link"), Href: base + "/panel-domain", Kind: "idle", State: t("panel.state.off")}
+		if s.panel.tokens.Forwarded == "" || s.panel.upstreamErr != nil {
+			row.Text = t("settings.panel_unavailable")
+		}
 		if pg, err := s.q.GetPanelGateway(ctx); err == nil && pg.Host != "" {
 			row.Text = pg.Host
 			switch pg.State {
@@ -127,7 +132,11 @@ func (s *Server) settingsOverview(w http.ResponseWriter, r *http.Request) {
 		up := templates.SettingsRow{Title: t("update.link"), Href: base + "/updates"}
 		if uv := s.updatesView(ctx); uv.Wired {
 			up.Text = uv.Current
-			if uv.Available {
+			if !uv.IsRelease {
+				// A build from source is never offered an update: "latest"
+				// in green would claim something that was never checked.
+				up.Kind, up.State = "idle", t("update.dev_build_short")
+			} else if uv.Available {
 				up.Kind, up.State = "warn", i18n.Tf(ctx, "update.available_short", uv.Latest)
 			} else if uv.Latest != "" {
 				up.Kind, up.State = "ok", t("update.up_to_date_short")
