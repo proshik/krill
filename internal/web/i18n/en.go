@@ -193,6 +193,7 @@ var en = map[string]string{
 	"app.stop_hint":                        "stop the app (scale to zero replicas)",
 	"app.open":                             "open:",
 	"app.registry":                         "registry",
+	"app.registry_dockerfile_hint":         "a Dockerfile app pulls no image, so it needs no registry: choose public (no auth) and save to clear it.",
 	"app.registry_public":                  "public (no auth)",
 	"app.registry_save":                    "save registry",
 	"app.load_tags":                        "load tags",

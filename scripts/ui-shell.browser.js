@@ -89,6 +89,14 @@ async (page) => {
   await page.locator('[data-zoom="in"]').click();
   assert(await zoom.textContent() !== before, 'the canvas restored by Back does not zoom');
 
+  // The new-app sheet: choosing Dockerfile disables the image-only fields, so
+  // a registry picked for an image is not sent along with a Dockerfile app.
+  await page.goto(origin + envPath + '?new=app');
+  await page.locator('input[name=source_type][value=dockerfile]').check({ force: true });
+  assert(await page.locator('#na-reg').isDisabled() && await page.locator('#na-image').isDisabled(), 'image-only fields stay enabled for a Dockerfile app');
+  await page.locator('input[name=source_type][value=image]').check({ force: true });
+  assert(!(await page.locator('#na-reg').isDisabled()), 'image fields stay disabled after going back to image');
+
   // A directly loaded server sheet, closed on a narrow screen, shows the list.
   await page.setViewportSize({ width: 800, height: 900 });
   await page.goto(origin + '/orgs/' + envPath.split('/')[2] + '/db-servers');
@@ -129,5 +137,5 @@ async (page) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dark', null, { timeout: 3000 });
   await page.emulateMedia({ colorScheme: 'light' });
-  return 'PASS: dialog after cancel, confirm across refresh, rollback across refresh, a vanished form sends nothing, an old tab reloads, polling, canvas after Back, sheet close on a narrow screen, a worker named constructor, theme follows the system';
+  return 'PASS: dialog after cancel, confirm across refresh, rollback across refresh, a vanished form sends nothing, an old tab reloads, polling, canvas after Back, sheet close on a narrow screen, a worker named constructor, Dockerfile disables image fields, theme follows the system';
 }

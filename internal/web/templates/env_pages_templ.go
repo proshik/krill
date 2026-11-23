@@ -274,7 +274,7 @@ func NewAppSheet(s Shell, registries []db.Registry) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</span></label></fieldset><div class=\"group\" data-when=\"source_type=image\"><div class=\"row\"><div class=\"field\"><label for=\"na-image\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</span></label></fieldset><div class=\"group\" data-when=\"source_type=image\" data-when-disable><div class=\"row\"><div class=\"field\"><label for=\"na-image\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -194,30 +194,44 @@ templ sourceSection(c AppCtx) {
 				{ i18n.T(ctx, "app.manage_git") + " " }
 				<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/git-credentials") }>{ i18n.T(ctx, "gitcred.link") }</a>
 			</p>
+			if c.App.RegistryID != nil {
+				@registryForm(c)
+			}
 			if c.admin() {
 				@buildSection(c)
 			}
 		} else {
-			<form class="add-row" method="post" action={ templ.SafeURL(c.base() + "/registry") }>
-				<div class="field">
-					<label for="s-reg">{ i18n.T(ctx, "app.registry") }</label>
-					<select class="input" id="s-reg" name="registry_id" disabled?={ !c.admin() }>
-						<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
-						for _, reg := range c.Registries {
-							<option value={ itoa(reg.ID) } selected?={ c.App.RegistryID != nil && *c.App.RegistryID == reg.ID }>{ reg.Name + ", " + reg.RegistryUrl }</option>
-						}
-					</select>
-				</div>
-				if c.admin() {
-					<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
-				}
-			</form>
-			<p class="hint">
-				{ i18n.T(ctx, "app.manage_registries") + " " }
-				<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
-			</p>
+			@registryForm(c)
 		}
 	</section>
+}
+
+// registryForm chooses the registry an image is pulled with. A Dockerfile app
+// pulls no image; it is shown one only when it still has a registry set (an
+// earlier image app, or a form that kept it), so an admin can clear it.
+templ registryForm(c AppCtx) {
+	<form class="add-row" method="post" action={ templ.SafeURL(c.base() + "/registry") }>
+		<div class="field">
+			<label for="s-reg">{ i18n.T(ctx, "app.registry") }</label>
+			<select class="input" id="s-reg" name="registry_id" disabled?={ !c.admin() }>
+				<option value="">{ i18n.T(ctx, "app.registry_public") }</option>
+				for _, reg := range c.Registries {
+					<option value={ itoa(reg.ID) } selected?={ c.App.RegistryID != nil && *c.App.RegistryID == reg.ID }>{ reg.Name + ", " + reg.RegistryUrl }</option>
+				}
+			</select>
+		</div>
+		if c.admin() {
+			<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
+		}
+	</form>
+	if c.App.SourceType == "dockerfile" {
+		<p class="hint">{ i18n.T(ctx, "app.registry_dockerfile_hint") }</p>
+	} else {
+		<p class="hint">
+			{ i18n.T(ctx, "app.manage_registries") + " " }
+			<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/registries") }>{ i18n.T(ctx, "reg.link") }</a>
+		</p>
+	}
 }
 
 templ buildSection(c AppCtx) {

@@ -36,6 +36,7 @@ type sheetFixture struct {
 	cookie *http.Cookie
 	base   string
 	app    db.Application
+	orgID  int64
 }
 
 func newSheetFixture(t *testing.T, eng docker.Engine, source string) sheetFixture {
@@ -62,7 +63,7 @@ func newSheetFixture(t *testing.T, eng docker.Engine, source string) sheetFixtur
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", AllowPrivateEgress: true}
 	hub := deploy.NewLogHub()
 	h := server.New(cfg, auth.NewService(q), orgSvc, q, nil, eng, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net")).Router()
-	return sheetFixture{h: h, q: q, cookie: loginAs(t, q, "sheet-owner@k.local"), app: a,
+	return sheetFixture{h: h, q: q, cookie: loginAs(t, q, "sheet-owner@k.local"), app: a, orgID: o.ID,
 		base: "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)}
 }
 
@@ -205,5 +206,27 @@ func TestProjectWithoutEnvironmentsCanBeRenamed(t *testing.T) {
 	}
 	if body := getWithCookie(t, h, path, loginAs(t, q, "noenv-member@k.local")).Body.String(); strings.Contains(body, rename) {
 		t.Fatal("a member is offered the rename")
+	}
+}
+
+// A Dockerfile app that still has a registry set (an earlier image app, or a
+// create form that kept it) shows the registry form, so an admin can clear
+// it; one without a registry does not.
+func TestDockerfileAppRegistryCanBeCleared(t *testing.T) {
+	f := newSheetFixture(t, noopEngine{}, "dockerfile")
+	ctx := context.Background()
+	form := `action="` + f.base + `/registry"`
+	if strings.Contains(f.get(t, f.base+"?tab=settings"), form) {
+		t.Fatal("a Dockerfile app without a registry is shown the registry form")
+	}
+	reg, err := f.q.CreateRegistry(ctx, db.CreateRegistryParams{OrganizationID: f.orgID, Name: "ghcr", RegistryUrl: "ghcr.io", Username: "bot", Password: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetApplicationRegistry(ctx, db.SetApplicationRegistryParams{ID: f.app.ID, RegistryID: &reg.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.get(t, f.base+"?tab=settings"), form) {
+		t.Fatal("an admin cannot clear a Dockerfile app's registry")
 	}
 }

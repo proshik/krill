@@ -40,7 +40,7 @@ templ NewAppSheet(s Shell, registries []db.Registry) {
 				<label class="choice-card"><input type="radio" name="source_type" value="image" checked/><span class="choice-name">{ i18n.T(ctx, "app.source_image") }</span><span class="choice-sub">{ i18n.T(ctx, "app.source_image_sub") }</span></label>
 				<label class="choice-card"><input type="radio" name="source_type" value="dockerfile"/><span class="choice-name">{ i18n.T(ctx, "app.source_dockerfile") }</span><span class="choice-sub">{ i18n.T(ctx, "app.source_dockerfile_sub") }</span></label>
 			</fieldset>
-			<div class="group" data-when="source_type=image">
+			<div class="group" data-when="source_type=image" data-when-disable>
 				<div class="row">
 					<div class="field">
 						<label for="na-image">{ i18n.T(ctx, "app.image") }</label>

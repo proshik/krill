@@ -924,6 +924,11 @@ function krillSyncWhen(form) {
     const el = form.querySelector('[name="' + parts[0] + '"]:checked') || form.querySelector('select[name="' + parts[0] + '"]');
     const values = (parts[1] || "").split("|");
     g.hidden = !el || values.indexOf(el.value) < 0;
+    // A group marked data-when-disable also stops submitting while hidden: a
+    // Dockerfile app must not carry the image group's registry along.
+    if (g.hasAttribute("data-when-disable")) {
+      g.querySelectorAll("input, select, textarea").forEach(function (f) { f.disabled = g.hidden; });
+    }
   });
 }
 
