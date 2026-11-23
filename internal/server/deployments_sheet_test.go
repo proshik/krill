@@ -105,7 +105,7 @@ func (f sheetFixture) get(t *testing.T, path string) string {
 // element stays, its content is swapped), and the app's action forms live
 // outside the polled part, so a refresh cannot drop a confirmed Stop. Of two
 // successful releases only the current one is "active"; the older one is
-// "removed" in the history.
+// "replaced" in the history.
 func TestDeploymentsTabPollingFormsAndHistory(t *testing.T) {
 	f := newSheetFixture(t, noopEngine{}, "image")
 	if err := f.q.UpdateApplicationStatus(context.Background(), db.UpdateApplicationStatusParams{ID: f.app.ID, Status: "running"}); err != nil {
@@ -132,8 +132,8 @@ func TestDeploymentsTabPollingFormsAndHistory(t *testing.T) {
 	if n := strings.Count(frag, `tag--active`); n != 1 {
 		t.Errorf("want one active release, got %d", n)
 	}
-	if !strings.Contains(frag, `tag--removed">removed<`) {
-		t.Error("a replaced release must be labelled removed in the history")
+	if !strings.Contains(frag, `tag--removed">replaced<`) {
+		t.Error("a replaced release must be labelled replaced in the history")
 	}
 }
 

@@ -1396,7 +1396,7 @@ var en = map[string]string{
 	"dblink.unlink_more":               "the variable is no longer injected on the next deploy",
 	"deploy.active":                    "active deployment",
 	"deploy.back":                      "back",
-	"deploy.removed":                   "removed",
+	"deploy.removed":                   "replaced",
 	"deploy.done":                      "active",
 	"deploy.failed":                    "failed",
 	"deploy.history":                   "history",
