@@ -1494,7 +1494,7 @@ var en = map[string]string{
 	"dbi.inside_network":               "inside the organization network",
 	"dbi.conn_hint":                    "apps get these through linked variables, never by copying them",
 	"dbi.conn_hint_pg":                 "this is the server's superuser: apps get their own database's user instead, through linked variables",
-	"dbi.conn_hint_s3":                 "these are the server's root keys: apps get their own bucket's key instead, through linked variables",
+	"dbi.conn_hint_s3":                 "these are the server's root keys: an app linked to the server directly gets them; a bucket link gives that bucket's key",
 	"dbi.port_open":                    "open",
 	"dbi.host_port":                    "host port",
 	"dbi.no_backups_engine":            "backups are available for Postgres servers, %s has none",
