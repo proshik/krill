@@ -109,7 +109,7 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	appItem := func(appID int64) templates.PaletteItem {
 		a := live[appID]
-		it := templates.PaletteItem{Label: i18n.Tf(ctx, "palette.open", a.Name), Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
+		it := templates.PaletteItem{Label: a.Name, Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
 		if kind, text := templates.AppState(ctx, a.Status); kind == "err" || kind == "warn" {
 			it.StateKind, it.StateText = kind, text
 		}

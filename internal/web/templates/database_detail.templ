@@ -41,10 +41,7 @@ templ DatabaseDetail(c LogicalDBCtx) {
 				</div>
 				<p class="run-meta">
 					{ i18n.T(ctx, "ldb.on_server") + " " }
-					<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID)) }>{ c.Inst.Name }</a>
-					if c.Node != "" {
-						{ ", " + c.Node }
-					}
+					<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID)) }>{ c.Inst.Name }</a>{ commaPrefix(c.Node) }
 				</p>
 			</div>
 			<section class="sec" aria-labelledby="cn-h">
@@ -73,7 +70,10 @@ templ DatabaseDetail(c LogicalDBCtx) {
 				<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_ldb", c.LDB.Name) } data-more={ i18n.T(ctx, "db.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="dd-h">
 					<h2 id="dd-h">{ i18n.T(ctx, "db.delete") }</h2>
 					<p class="hint">{ i18n.Tf(ctx, "db.delete_hint", c.Inst.Name) }</p>
-					<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", c.LDB.Name) }</button></div>
+					if len(c.Users) > 0 {
+						<p class="hint">{ i18n.Tf(ctx, "db.delete_linked", usedByNames(c.Users)) }</p>
+					}
+					<div><button type="submit" class="pill pill--danger" disabled?={ len(c.Users) > 0 }>{ i18n.Tf(ctx, "common.delete_named", c.LDB.Name) }</button></div>
 				</form>
 			}
 		</main>

@@ -9,11 +9,12 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 )
 
-// TestDeleteLogicalDatabaseCascadesDBLinks verifies that dropping a logical
-// database removes app_db_links pointing at it via the real FK
-// (logical_database_id ... ON DELETE CASCADE) — deleteLogicalDatabase itself
-// no longer calls any explicit link-cleanup query.
-func TestDeleteLogicalDatabaseCascadesDBLinks(t *testing.T) {
+// TestDeleteLogicalDatabaseLinks: the database page refuses to delete a
+// database an app is linked to (as buckets are refused) and keeps the link;
+// a database row removed another way (an environment delete) still takes its
+// app_db_links with it through the real FK (logical_database_id ... ON
+// DELETE CASCADE).
+func TestDeleteLogicalDatabaseLinks(t *testing.T) {
 	h, q, orgSvc, _ := newDeployServer(t)
 	ctx := context.Background()
 	uid := mkUser(t, q, "dbl-del@k.local")
@@ -45,8 +46,17 @@ func TestDeleteLogicalDatabaseCascadesDBLinks(t *testing.T) {
 	cookie := loginAs(t, q, "dbl-del@k.local")
 	delURL := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) +
 		"/databases/" + i64(ldb.ID) + "/delete"
-	if rec := postForm(t, h, delURL, cookie, url.Values{}); rec.Code != http.StatusSeeOther {
-		t.Fatalf("deleteLogicalDatabase: got %d, want 303", rec.Code)
+	if rec := postForm(t, h, delURL, cookie, url.Values{}); rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
+		t.Fatalf("deleteLogicalDatabase of a linked database: got %d (error flash %v), want a refusal", rec.Code, hasErrFlash(rec))
+	}
+	if _, err := q.GetLogicalDatabase(ctx, ldb.ID); err != nil {
+		t.Fatalf("the linked database must stay: %v", err)
+	}
+	if links, _ := q.ListDBLinksByApplication(ctx, app.ID); len(links) != 1 {
+		t.Fatalf("the link must stay while the delete is refused, have %d", len(links))
+	}
+	if err := q.DeleteLogicalDatabase(ctx, ldb.ID); err != nil {
+		t.Fatal(err)
 	}
 	if links, _ := q.ListDBLinksByApplication(ctx, app.ID); len(links) != 0 {
 		t.Fatalf("db link should cascade-delete with its logical database, have %d", len(links))

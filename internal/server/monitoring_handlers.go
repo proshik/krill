@@ -283,7 +283,7 @@ func (s *Server) metricLabels(r *http.Request, orgID int64) (apps, dbs map[strin
 	}
 	if insts, err := s.q.ListDBInstancesByOrg(r.Context(), orgID); err == nil {
 		for _, in := range insts {
-			dbs[in.AppName] = metrics.Labeled{Name: in.Name, Detail: in.Engine}
+			dbs[in.AppName] = metrics.Labeled{Name: in.Name, Detail: engineLabel(in.Engine)}
 		}
 	}
 	return apps, dbs

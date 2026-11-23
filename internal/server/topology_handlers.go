@@ -455,7 +455,7 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			status = deploy.StatusRunning
 		}
 		services = append(services, topology.ServiceInput{
-			ID: sid, Kind: "db", NodeID: node, Label: in.Name, Sub: titleEngine(in.Engine), Engine: in.Engine, Status: status,
+			ID: sid, Kind: "db", NodeID: node, Label: in.Name, Sub: engineLabel(in.Engine), Engine: in.Engine, Status: status,
 		})
 		envInstances = append(envInstances, topology.EnvInstance{ServiceID: sid, AppName: in.AppName, Engine: in.Engine})
 	}
@@ -530,21 +530,4 @@ func firstCSV(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-func titleEngine(e string) string {
-	switch e {
-	case "postgres":
-		return "Postgres"
-	case "redis":
-		return "Redis"
-	case "valkey":
-		return "Valkey"
-	case "dragonfly":
-		return "DragonFly"
-	case "minio":
-		return "MinIO"
-	default:
-		return e
-	}
 }

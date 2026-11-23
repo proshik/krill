@@ -190,6 +190,7 @@ type EnvResourceRow struct {
 	BackupKind string // "" when the kind has no backups
 	BackupText string
 	BackupHref string
+	BackupNone bool // no backup is set up: the link offers to set one up
 }
 
 // UsedBy is an app that uses a resource, with the variables it gets.
@@ -291,3 +292,12 @@ func nodeRoleLine(ctx context.Context, l NodeLane) string {
 }
 
 func urlQuery(s string) string { return url.QueryEscape(s) }
+
+// usedByNames lists the users' names, comma-separated.
+func usedByNames(users []UsedBy) string {
+	names := make([]string, len(users))
+	for i, u := range users {
+		names[i] = u.Name
+	}
+	return strings.Join(names, ", ")
+}

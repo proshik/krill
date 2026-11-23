@@ -198,6 +198,7 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .sheet-title .glyph { width: 24px; height: 24px; }
 .sheet-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); margin-top: var(--space-sm); }
 .sheet-sub a { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-ink-2); font-size: var(--text-sm); text-decoration: none; }
+.sheet-sub .run-meta { display: inline-flex; align-items: center; gap: var(--space-2xs); }
 .sheet-sub a:hover { text-decoration: underline; text-decoration-color: var(--color-accent); }
 /* A segmented bar stays one line: wrapped, its pill radius no longer fits the
    two-line frame and the first and last items stick out of the curve. Long
@@ -318,7 +319,7 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 /* ---------- database servers ---------- */
 .page.has-sheet .wrap { margin-left: 0; max-width: calc(100% - var(--sheet-w) - 24px); }
 .servers { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-md); margin: 0; padding: 0; list-style: none; }
-.server { display: grid; gap: var(--space-xs); height: 100%; padding: var(--space-md); border-radius: 20px; background: var(--color-card); box-shadow: var(--shadow-card); color: inherit; text-decoration: none; transition: box-shadow var(--dur-micro) var(--ease-out); }
+.server { display: grid; grid-template-rows: auto auto 1fr auto; gap: var(--space-xs); height: 100%; padding: var(--space-md); border-radius: 20px; background: var(--color-card); box-shadow: var(--shadow-card); color: inherit; text-decoration: none; transition: box-shadow var(--dur-micro) var(--ease-out); }
 .server:hover { box-shadow: inset 0 0 0 1.5px var(--color-rule-2); }
 .server[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--color-accent); }
 /* A card never grows past its grid column: the header status wraps under the
@@ -620,9 +621,12 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .res-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
 .res-top h2 { font-size: var(--text-xl); }
 .res-top .state { margin-left: auto; }
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-md); margin: 0; }
+/* Each fact spans two shared rows (subgrid): a label that wraps to two lines
+   no longer pushes its value below the values next to it. */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-2xs) var(--space-md); margin: 0; }
+.facts > div { display: grid; grid-row: span 2; grid-template-rows: subgrid; align-items: end; }
 .facts dt { color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); }
-.facts dd { margin: var(--space-2xs) 0 0; color: var(--color-ink-2); font-size: var(--text-sm); }
+.facts dd { margin: 0 0 var(--space-xs); align-self: start; color: var(--color-ink-2); font-size: var(--text-sm); }
 .sheet .res { background: var(--color-paper); }
 /* systems row, settings rows */
 .sys, .row-item { grid-template-columns: minmax(8em, 12em) minmax(0, 1fr) auto auto; }

@@ -380,9 +380,10 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 		for _, l := range ldbs {
 			href := envURL(o.ID, l.ProjectID, l.EnvironmentID) + "/databases/" + strconv.FormatInt(l.ID, 10)
 			row := templates.EnvResourceRow{Name: l.Name, Href: href, Detail: l.ProjectName + " " + l.EnvName, BackupHref: href + "#backups"}
-			row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
+			row.BackupKind, row.BackupText, row.BackupNone = "idle", i18n.T(ctx, "envdb.no_backups"), true
 			if bks, err := s.q.ListBackupsByLogicalDB(ctx, l.ID); err == nil && len(bks) > 0 {
 				row.BackupKind, row.BackupText = backupSummary(ctx, dbBackupConfigs(bks))
+				row.BackupNone = false
 			}
 			c.Backups = append(c.Backups, row)
 		}

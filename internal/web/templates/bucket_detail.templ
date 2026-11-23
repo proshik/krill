@@ -53,10 +53,7 @@ templ BucketDetail(v BucketView) {
 				</div>
 				<p class="run-meta">
 					{ i18n.T(ctx, "bucket.on_server") + " " }
-					<a href={ templ.SafeURL(orgURL(v.Org.ID) + "/db-servers/" + itoa(v.Instance.ID)) }>{ v.Instance.Name }</a>
-					if v.Node != "" {
-						{ ", " + v.Node }
-					}
+					<a href={ templ.SafeURL(orgURL(v.Org.ID) + "/db-servers/" + itoa(v.Instance.ID)) }>{ v.Instance.Name }</a>{ commaPrefix(v.Node) }
 				</p>
 			</div>
 			<section class="sec" aria-labelledby="bc-h">
@@ -104,13 +101,13 @@ templ BucketDetail(v BucketView) {
 					}
 				</section>
 				@backupBlock(v.Backup)
-				<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(v.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "bucket.confirm_delete", v.Bucket.Name) } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)" aria-labelledby="bd-h">
+				<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(v.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "bucket.confirm_delete", v.Bucket.Name) } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="bd-h">
 					<h2 id="bd-h">{ i18n.T(ctx, "bucket.delete") }</h2>
-					<label class="check"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "bucket.destroy_data") }</label>
+					<label class="check"><input type="checkbox" name="destroy_data" disabled?={ v.Linked }/> { i18n.T(ctx, "bucket.destroy_data") }</label>
 					if v.Linked {
 						<p class="hint">{ i18n.T(ctx, "bucket.delete_linked") }</p>
 					}
-					<div><button type="submit" class="pill pill--danger" disabled?={ v.Linked }>{ i18n.Tf(ctx, "common.remove_named", v.Bucket.Name) }</button></div>
+					<div><button type="submit" class="pill pill--danger" disabled?={ v.Linked }>{ i18n.Tf(ctx, "common.delete_named", v.Bucket.Name) }</button></div>
 				</form>
 			}
 		</main>
