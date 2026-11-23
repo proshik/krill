@@ -448,7 +448,18 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 		}
 	}
 
+	c.Running = -1
 	switch tab {
+	case "terminal":
+		// The terminal needs a running replica, not a status: a first deploy
+		// reads "deploying" before any container exists.
+		if s.engine != nil {
+			if st, err := s.engine.ServiceState(ctx, docker.ServiceName(c.App.ID)); err == nil {
+				c.Running = int(st.Running)
+			} else {
+				logFrom(r).Warn("appDetail: service state", "err", err, "app_id", c.App.ID)
+			}
+		}
 	case "deployments":
 		if s.engine != nil {
 			tasks, err := s.engine.ServiceTasks(ctx, docker.ServiceName(c.App.ID))
@@ -662,6 +673,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := c.App.Status
+	running := -1
 	if s.engine != nil {
 		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
 			status = deploy.DisplayStatus(st, c.App.Status)
@@ -671,7 +683,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		live, nerr := s.engine.Nodes(r.Context())
 		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
 	}
-	render(w, r, http.StatusOK, templates.AppStateBadge(status, appURL(c)+"/status"))
+	render(w, r, http.StatusOK, templates.AppStateBadge(status, appURL(c)+"/status", running))
 }
 
 func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {

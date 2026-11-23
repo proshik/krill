@@ -76,6 +76,9 @@ type AppCtx struct {
 	Deployment *db.Deployment
 	// NodeNames maps a Swarm node id to the name the canvas shows for it.
 	NodeNames map[string]string
+	// Running is the app's running replicas, read for the terminal tab; -1
+	// when unknown (another tab, or Swarm did not answer).
+	Running int
 	// VolumeBlocks are the volumes' backup sections (settings tab).
 	VolumeBlocks map[int64]BackupBlock
 }
@@ -137,7 +140,7 @@ templ AppDetail(c AppCtx, tab string) {
 				<div class="sheet-title">
 					@ui.Glyph("i-app")
 					<h2>{ c.App.Name }</h2>
-					@AppStateBadge(c.App.Status, c.base()+"/status")
+					@AppStateBadge(c.App.Status, c.base()+"/status", c.Running)
 				</div>
 				<a class="pill pill--icon" href={ templ.SafeURL(c.envURL()) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
 					@ui.Icon("i-close")
@@ -190,9 +193,11 @@ templ AppDetail(c AppCtx, tab string) {
 }
 
 // AppStateBadge is the app's live state in the sheet head; it refreshes itself.
-templ AppStateBadge(status, pollURL string) {
+// running (-1 when unknown) lets the terminal tab follow its replicas: see
+// krillTermState in app.js.
+templ AppStateBadge(status, pollURL string, running int) {
 	{{ kind, text := AppState(ctx, status) }}
-	<span class={ "state", "state--" + kind } id="app-state" hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML">
+	<span class={ "state", "state--" + kind } id="app-state" hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML" data-running={ itoa(int64(running)) }>
 		@ui.Sig(kind)
 		{ text }
 	</span>
@@ -412,16 +417,14 @@ templ terminalTab(c AppCtx) {
 	<section class="sec" aria-labelledby="term-h">
 		<div class="sec-head"><h3 id="term-h">{ i18n.T(ctx, "tab.terminal") }</h3></div>
 		<p class="hint">{ i18n.T(ctx, "term.hint") }</p>
-		{{ noReplica := c.App.Status == "idle" || c.App.Status == "not_deployed" }}
-		if noReplica {
-			<p class="callout">{ i18n.T(ctx, "term.no_replica") }</p>
-		}
+		{{ noReplica := c.Running == 0 || (c.Running < 0 && (c.App.Status == "idle" || c.App.Status == "not_deployed")) }}
+		<p class="callout" id="term-noreplica" hidden?={ !noReplica }>{ i18n.T(ctx, "term.no_replica") }</p>
 		<div class="add-row">
 			<div class="field">
 				<label for="term-cmd">{ i18n.T(ctx, "term.command") }</label>
 				<input id="term-cmd" class="input input--mono" value="/bin/sh" autocomplete="off" spellcheck="false"/>
 			</div>
-			<button type="button" class="pill" onclick="krillExecConnect()" disabled?={ noReplica }>
+			<button type="button" class="pill" id="term-connect" onclick="krillExecConnect()" disabled?={ noReplica }>
 				@ui.Icon("i-term")
 				{ i18n.T(ctx, "term.connect") }
 			</button>

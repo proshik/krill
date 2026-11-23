@@ -321,12 +321,27 @@ window.krillEnhance = function () {
   }
   krillMountDBLink();
   document.querySelectorAll(".seg").forEach(krillSegScroll);
+  krillTermState();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
   }
 };
+
+// krillTermState follows the terminal's "no running replica" state from the
+// sheet's status badge, which refreshes every 3 s with the running replica
+// count: a replica started elsewhere enables Connect without a reload.
+function krillTermState() {
+  const btn = document.getElementById("term-connect");
+  const badge = document.getElementById("app-state");
+  if (!btn || !badge || badge.dataset.running == null) return;
+  const running = parseInt(badge.dataset.running, 10);
+  if (isNaN(running) || running < 0) return;
+  btn.disabled = running === 0;
+  const note = document.getElementById("term-noreplica");
+  if (note) note.hidden = running !== 0;
+}
 
 // krillSegScroll keeps a one-line segmented bar usable when its items are wider
 // than the bar: the current item is scrolled into view (sideways only — the
