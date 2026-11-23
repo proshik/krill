@@ -244,3 +244,27 @@ func TestDockerfileAppRegistryCanBeCleared(t *testing.T) {
 		t.Fatal("an admin cannot clear a Dockerfile app's registry")
 	}
 }
+
+// A deployment still in progress is shown apart; the release before it keeps
+// serving until it completes, so it stays active, not removed.
+func TestRunningDeploymentDoesNotRemoveTheServingRelease(t *testing.T) {
+	f := newSheetFixture(t, noopEngine{}, "image")
+	if err := f.q.UpdateApplicationStatus(context.Background(), db.UpdateApplicationStatusParams{ID: f.app.ID, Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	serving := f.deploy(t, "nginx:1.0")
+	next, err := f.q.CreateDeployment(context.Background(), db.CreateDeploymentParams{ApplicationID: f.app.ID, Trigger: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frag := f.get(t, f.base+"/deployments-list")
+	if strings.Contains(frag, "tag--removed") {
+		t.Fatal("the serving release is labelled removed while its replacement is still rolling out")
+	}
+	if strings.Count(frag, "tag--active") != 1 || !strings.Contains(frag, `/deployments/`+i64(serving.ID)+`"`) {
+		t.Fatal("the serving release must stay the active one")
+	}
+	if !strings.Contains(frag, `/deployments/`+i64(next.ID)+`"`) || !strings.Contains(frag, "rolling out") {
+		t.Fatal("the deployment in progress is not shown")
+	}
+}

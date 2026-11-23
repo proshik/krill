@@ -144,7 +144,7 @@ templ AppDetail(c AppCtx, tab string) {
 				</a>
 			</div>
 			<p class="sheet-sub">
-				if u := primaryPublicURL(c.Domains, c.Exposed, c.App.Domain); u != "" {
+				if u := primaryPublicURL(c.Domains, c.Exposed); u != "" {
 					<a href={ templ.SafeURL(u) } target="_blank" rel="noopener">
 						@ui.Icon("i-link")
 						{ trimScheme(u) }
@@ -245,7 +245,20 @@ templ deploymentsTab(c AppCtx) {
 // deploy, the active one with the app's controls, and the history.
 templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	<div id="deployments-list">
-		{{ failed, active, rest := splitDeployments(c.App.Status, deps) }}
+		{{ running, failed, active, rest := splitDeployments(c.App.Status, deps) }}
+		if running != nil {
+			<section class="deploy" aria-label={ i18n.T(ctx, "deploy.running") }>
+				<div class="deploy-top">
+					<span class="tag">{ i18n.T(ctx, "deploy.running") }</span>
+					<code>{ running.ImageTag }</code>
+					<span class="when">{ deployWhen(ctx, *running) }</span>
+				</div>
+				<p class="deploy-msg">{ i18n.T(ctx, "deploy.in_progress") }</p>
+				<div class="deploy-keys">
+					<a class="pill" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(running.ID)) }>{ i18n.T(ctx, "deploy.view_log") }</a>
+				</div>
+			</section>
+		}
 		if failed != nil {
 			<section class="deploy deploy--failed" aria-label={ i18n.T(ctx, "deploy.failed") }>
 				<div class="deploy-top">

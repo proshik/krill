@@ -9,25 +9,35 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// primaryPublicURL is the address the sheet links to: the primary domain
-// when the app is exposed.
-func primaryPublicURL(domains []db.Domain, exposed bool, primary string) string {
+// primaryPublicURL is the address the sheet links to: a domain that is
+// exposed and serves the app (not a redirect), the primary one when it
+// qualifies, with that domain's own scheme. An internal primary is never
+// linked: Traefik does not route it.
+func primaryPublicURL(domains []db.Domain, exposed bool) string {
 	if !exposed {
 		return ""
 	}
-	for _, d := range domains {
-		if d.IsPrimary && d.Exposed && !d.RedirectToPrimary {
-			scheme := "http://"
-			if d.Tls {
-				scheme = "https://"
-			}
-			return scheme + d.Host + firstPath(d.Paths)
+	var pick *db.Domain
+	for i, d := range domains {
+		if !d.Exposed || d.RedirectToPrimary {
+			continue
+		}
+		if d.IsPrimary {
+			pick = &domains[i]
+			break
+		}
+		if pick == nil {
+			pick = &domains[i]
 		}
 	}
-	if primary != "" {
-		return "http://" + primary
+	if pick == nil {
+		return ""
 	}
-	return ""
+	scheme := "http://"
+	if pick.Tls {
+		scheme = "https://"
+	}
+	return scheme + pick.Host + firstPath(pick.Paths)
 }
 
 func firstPath(csv string) string {
@@ -76,10 +86,16 @@ func placementText(ctx context.Context, c AppCtx) string {
 	return i18n.T(ctx, "placement.text_any")
 }
 
-// splitDeployments picks what the deployments tab calls out: the newest
-// deployment when it failed while the app is in error, the deployment that
-// is serving (or the newest one), and the history after it.
-func splitDeployments(appStatus string, deps []db.ListDeploymentSummariesByApplicationRow) (failed, active *db.ListDeploymentSummariesByApplicationRow, rest []db.ListDeploymentSummariesByApplicationRow) {
+// splitDeployments picks what the deployments tab calls out: a deployment
+// still in progress (shown apart: until it completes, the release before it
+// keeps serving), the newest deployment when it failed while the app is in
+// error, the deployment that is serving (or the newest one), and the history
+// after it.
+func splitDeployments(appStatus string, deps []db.ListDeploymentSummariesByApplicationRow) (running, failed, active *db.ListDeploymentSummariesByApplicationRow, rest []db.ListDeploymentSummariesByApplicationRow) {
+	if len(deps) > 0 && deps[0].Status == "running" {
+		running = &deps[0]
+		deps = deps[1:]
+	}
 	i := 0
 	if len(deps) > 0 && deps[0].Status == "error" && appStatus == "error" {
 		failed = &deps[0]
@@ -90,7 +106,7 @@ func splitDeployments(appStatus string, deps []db.ListDeploymentSummariesByAppli
 			active = &deps[j]
 			rest = append(rest, deps[i:j]...)
 			rest = append(rest, deps[j+1:]...)
-			return failed, active, rest
+			return running, failed, active, rest
 		}
 	}
 	if failed == nil && len(deps) > 0 {
@@ -99,7 +115,7 @@ func splitDeployments(appStatus string, deps []db.ListDeploymentSummariesByAppli
 	} else if failed != nil {
 		rest = deps[1:]
 	}
-	return failed, active, rest
+	return running, failed, active, rest
 }
 
 func deployWhen(ctx context.Context, d db.ListDeploymentSummariesByApplicationRow) string {
