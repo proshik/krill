@@ -362,8 +362,11 @@ path.s3 { stroke: var(--color-warn); stroke-dasharray: 6 4; }
 .fig .meter { width: 100%; margin-top: var(--space-2xs); }
 .spark { width: 100%; height: 24px; margin-top: var(--space-2xs); }
 .spark path { fill: none; stroke: var(--color-ink-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.comps { display: grid; margin: 0; padding: 0; list-style: none; }
-.comps li { display: grid; grid-template-columns: minmax(0, 1fr) 3.4em 10.5em; align-items: center; gap: var(--space-sm); min-height: 48px; padding-block: var(--space-2xs); border-top: 1px solid var(--color-rule); font-size: var(--text-sm); }
+/* The rows share one grid (subgrid), so the cpu and memory columns are as wide
+   as their widest value: a fixed memory column let "123 MiB / 1024 MiB" with
+   its meter spill left over the cpu figure. */
+.comps { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; column-gap: var(--space-sm); margin: 0; padding: 0; list-style: none; }
+.comps li { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-height: 48px; padding-block: var(--space-2xs); border-top: 1px solid var(--color-rule); font-size: var(--text-sm); }
 .comp-name { display: grid; min-width: 0; }
 .comp-name span { overflow: hidden; font: 400 var(--text-sm)/1.3 var(--font-outlier); text-overflow: ellipsis; white-space: nowrap; }
 .comp-name em { color: var(--color-muted); font: 400 var(--text-xs)/1.2 var(--font-body); font-style: normal; }
@@ -383,7 +386,6 @@ path.s3 { stroke: var(--color-warn); stroke-dasharray: 6 4; }
 @media (max-width: 40rem) {
   .page .wrap { padding-inline: var(--space-md); }
   .nodecol { padding-inline: var(--space-md); }
-  .comps li { grid-template-columns: minmax(0, 1fr) 3.4em auto; }
   .comp-mem .meter { display: none; }
   .seg--tight { flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .seg--tight a { white-space: nowrap; }
