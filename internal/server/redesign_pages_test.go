@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -205,5 +206,42 @@ func TestOrgSearchLiveStatus(t *testing.T) {
 	}
 	if strings.Contains(body, "state--err") {
 		t.Fatal("the palette shows the stored error of an app Swarm reports running")
+	}
+}
+
+// The API token page and an app's auto-deploy webhook show addresses a remote
+// client can reach: the origin the operator is visiting when no public URL
+// or panel domain is set — never the default KRILL_HOST, localhost.
+func TestShownEndpointsUseTheVisitedOrigin(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	mkUser(t, q, "origin-owner@k.local")
+	u, _ := q.GetUserByEmail(ctx, "origin-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, u.ID, "Origin")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "shop", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	a, err := q.CreateApplication(ctx, db.CreateApplicationParams{EnvironmentID: e.ID, Name: "api", Image: "nginx", Tag: "1", Domain: "origin-api.example.com", Port: 80, SourceType: "image", DockerfilePath: "Dockerfile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.SetApplicationAutoDeploy(ctx, db.SetApplicationAutoDeployParams{ID: a.ID, AutoDeploy: true}); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAs(t, q, "origin-owner@k.local")
+	get := func(path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "203.0.113.10:8080"
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	tokens := get("/orgs/" + i64(o.ID) + "/api-tokens")
+	if !strings.Contains(tokens, "http://203.0.113.10:8080/api/v1") || !strings.Contains(tokens, "http://203.0.113.10:8080/mcp") || strings.Contains(tokens, "localhost") {
+		t.Fatalf("the token page does not show the visited origin:\n%s", excerpt(tokens, "/api/v1"))
+	}
+	app := get("/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID) + "?tab=settings")
+	if !strings.Contains(app, "http://203.0.113.10:8080/webhooks/deploy/"+i64(a.ID)) {
+		t.Fatalf("the auto-deploy webhook does not use the visited origin:\n%s", excerpt(app, "/webhooks/"))
 	}
 }

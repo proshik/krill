@@ -597,7 +597,7 @@ func (s *Server) fillAppSettings(w http.ResponseWriter, r *http.Request, c *temp
 	if c.App.SourceType == "image" {
 		endpoint = "/webhooks/deploy/"
 	}
-	c.WebhookURL = s.baseURL(ctx) + endpoint + strconv.FormatInt(c.App.ID, 10)
+	c.WebhookURL = s.shownBaseURL(r) + endpoint + strconv.FormatInt(c.App.ID, 10)
 	if ports, err := s.q.ListAppPorts(ctx, c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: list app ports", "err", err, "app_id", c.App.ID)
 	} else {
