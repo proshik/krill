@@ -33,6 +33,10 @@ type LaneItem struct {
 	StateKind string
 	StateText string
 	To        []string
+	// Origin says where one of Krill's own services comes from; OriginHref,
+	// when set, links the setting that controls it.
+	Origin     string
+	OriginHref string
 }
 
 func laneWarn(l NodeLane) bool { return l.Mem >= 85 || l.Node.State != "ready" }
@@ -187,6 +191,14 @@ templ laneItemBody(it LaneItem) {
 	}
 	if it.Uses != "" {
 		<span class="uses">{ it.Uses }</span>
+	}
+	if it.Origin != "" {
+		<span class="svc-sub svc-origin">
+			{ it.Origin }
+			if it.OriginHref != "" {
+				<a href={ templ.SafeURL(it.OriginHref) }>{ i18n.T(ctx, "nodes.sys_obs_link") }</a>
+			}
+		</span>
 	}
 }
 
