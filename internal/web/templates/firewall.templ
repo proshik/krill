@@ -146,7 +146,7 @@ templ Firewall(org db.Organization, role string, nodes []FirewallNode, cp Contro
 						<button type="submit" class="pill" disabled?={ len(noNft) > 0 }>{ i18n.T(ctx, "firewall.lockdown") }</button>
 					</form>
 					<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/firewall/open") } data-confirm={ i18n.T(ctx, "firewall.confirm.open") } data-more={ i18n.T(ctx, "firewall.open_more") } data-ok={ i18n.T(ctx, "firewall.open_action") } onsubmit="return krillConfirm(this)">
-						<button type="submit" class="pill pill--danger" disabled?={ !fwAnyLocked(nodes) }>{ i18n.T(ctx, "firewall.open_action") }</button>
+						<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "firewall.open_action") }</button>
 					</form>
 				</div>
 				<p class="hint">{ i18n.T(ctx, "firewall.revert_hint") }</p>

@@ -270,13 +270,6 @@ func fwNoNft(nodes []FirewallNode) []string {
 	return out
 }
 
-// fwAnyLocked reports whether opening the cluster has anything to undo: a
-// node locked, pending, missing its table, or one that could not be read.
-func fwAnyLocked(nodes []FirewallNode) bool {
-	for _, n := range nodes {
-		if n.State != "open" && n.State != "nft_missing" {
-			return true
-		}
-	}
-	return false
-}
+// Opening the cluster stays available whatever the nodes report: it also
+// clears what a probe cannot see (a ruleset persisted on a node that has lost
+// nft, the panel's direct-port flags), so it is never disabled.
