@@ -16,7 +16,10 @@ Deploy apps and managed databases to your own servers from a single Go binary.
 
 </div>
 
-![A Krill environment: five running apps and two Postgres databases](docs/images/overview.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/overview-dark.png">
+  <img src="docs/images/overview-light.png" alt="A Krill environment canvas: apps grouped into systems, wired to the Postgres databases, Redis server and S3 bucket they use">
+</picture>
 
 ## Why Krill
 
@@ -83,9 +86,26 @@ Postgres and uninstalling are covered in [Installing Krill](docs/install.md).
 
 ## Screenshots
 
-| Topology | App |
-|:---:|:---:|
-| ![Topology: ingress, apps and databases on a node, and which app uses which database](docs/images/topology.png) | ![An app's page: status, source, deploy controls and access](docs/images/app.png) |
+<table>
+  <tr>
+    <th>Topology</th>
+    <th>App</th>
+  </tr>
+  <tr>
+    <td>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/topology-dark.png">
+        <img src="docs/images/topology-light.png" alt="Topology: the ingress lane and a node with its apps and database servers, linked to the databases they use">
+      </picture>
+    </td>
+    <td>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/app-dark.png">
+        <img src="docs/images/app-light.png" alt="An app's panel over the canvas: the databases, Redis server and bucket linked into its environment variables">
+      </picture>
+    </td>
+  </tr>
+</table>
 
 ## Status
 
