@@ -361,11 +361,17 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		}
 	}
 	var idleStates map[string]docker.ServiceState
+	var deployed map[int64]bool
 	if s.engine != nil && len(idle) > 0 {
 		if st, err := s.engine.ServiceStates(ctx, idle); err != nil {
 			slog.Warn("topology: service states", "err", err)
 		} else {
 			idleStates = st
+			ids := make([]int64, 0, len(apps))
+			for _, a := range apps {
+				ids = append(ids, a.ID)
+			}
+			deployed = s.deployedApps(ctx, ids)
 		}
 	}
 	for _, a := range apps {
@@ -389,7 +395,7 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		if len(running[svcName]) > 0 {
 			status = deploy.StatusRunning
 		} else if idleStates != nil {
-			status = deploy.DisplayStatus(idleStates[svcName], a.Status)
+			status = deploy.DisplayStatus(idleStates[svcName], a.Status, deployed[a.ID])
 		}
 		m := envMeta[a.EnvironmentID]
 		services = append(services, topology.ServiceInput{

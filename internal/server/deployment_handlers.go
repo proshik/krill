@@ -32,7 +32,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	// every few seconds, so it asks for this one service only.
 	if s.engine != nil {
 		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
-			c.App.Status = deploy.DisplayStatus(st, c.App.Status)
+			c.App.Status = deploy.DisplayStatus(st, c.App.Status, len(deps) > 0)
 		} else {
 			logFrom(r).Warn("listDeployments: service state", "err", err, "app_id", c.App.ID)
 		}

@@ -184,6 +184,33 @@ func (q *Queries) GetDeploymentVersion(ctx context.Context, id int64) (string, e
 	return version, err
 }
 
+const listDeployedApplicationIDs = `-- name: ListDeployedApplicationIDs :many
+SELECT DISTINCT application_id FROM deployments WHERE application_id = ANY($1::bigint[])
+`
+
+// The apps that have been deployed at least once: an app with no Swarm service
+// is "not deployed" in the UI only when it has none (a stopped global app has
+// no service either, see docker ServiceScale).
+func (q *Queries) ListDeployedApplicationIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDeployedApplicationIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var application_id int64
+		if err := rows.Scan(&application_id); err != nil {
+			return nil, err
+		}
+		items = append(items, application_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDeploymentStatuses = `-- name: ListDeploymentStatuses :many
 SELECT id, status FROM deployments WHERE id = ANY($1::bigint[])
 `

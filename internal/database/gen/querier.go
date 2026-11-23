@@ -241,6 +241,10 @@ type Querier interface {
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
 	// Batched form for the topology view (one query instead of one per app).
 	ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error)
+	// The apps that have been deployed at least once: an app with no Swarm service
+	// is "not deployed" in the UI only when it has none (a stopped global app has
+	// no service either, see docker ServiceScale).
+	ListDeployedApplicationIDs(ctx context.Context, ids []int64) ([]int64, error)
 	// Status of each listed deployment, without the log column. The startup
 	// network migration polls this until every app redeploy it submitted is
 	// terminal: submitting a deploy proves nothing about whether it moved the app.
