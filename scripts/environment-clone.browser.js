@@ -1,56 +1,86 @@
-// Run with Playwright's code runner after opening CLONE_LIVE_URL printed by
-// TestEnvironmentCloneLive. This fixture account exists only in its disposable DB.
+// Run with Playwright's code runner (a function of `page`) while signed in as
+// an organization admin, on the Settings page of a production environment
+// with at least one image app and no "staging" environment next to it, e.g.
+// http://localhost:18090/orgs/1/projects/2/environments/3/settings on the
+// local dev stand. It seeds the first app's variables, clones the
+// environment, checks the clone and the untouched source, starts a deploy of
+// the clone's app and deletes the clone again. Use a disposable dev stand,
+// never a real install.
 async (page) => {
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const origin = new URL(page.url()).origin;
-  const source = origin + '/orgs/1/projects/1/environments/1';
-  if (new URL(page.url()).pathname === '/login') {
-    await page.locator('[name=email]').fill('clone-live@fixture.test');
-    await page.locator('[name=password]').fill('pw');
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  }
-  await page.goto(source);
-  await page.getByRole('button', { name: 'Clone environment', exact: true }).click();
-  const modal = page.locator('#clone-env');
-  const name = modal.locator('[name=name]');
-  if (await name.inputValue() !== 'staging') throw Error('Wrong default name');
+  const sourceBase = new URL(page.url()).pathname.replace(/\/settings$/, '');
+  const post = async (path, form) => {
+    const r = await page.request.post(origin + path, { form, headers: { Origin: origin }, maxRedirects: 0 });
+    assert(r.status() === 303, path + ' answered ' + r.status());
+  };
+  const appPath = async () => {
+    const href = await page.locator('a.svc[href*="/apps/"]').first().getAttribute('href');
+    assert(href, 'no app on the canvas');
+    return href;
+  };
+
+  // Seed the source app: one ordinary variable, one secret.
+  await page.goto(origin + sourceBase);
+  const sourceApp = await appPath();
+  const sourceEnv = '# fixture\nPUBLIC=source-public\nTOKEN=source-secret\n';
+  await post(sourceApp + '/env', { env: sourceEnv, env_public_keys: 'PUBLIC' });
+
+  // The clone form on the source's settings: a default name, and a name is required.
+  await page.goto(origin + sourceBase + '/settings');
+  const form = page.locator('form[action$="/clone"]');
+  const name = form.locator('[name=name]');
+  assert(await name.inputValue() === 'staging', 'wrong default name: ' + await name.inputValue());
   await name.fill('');
-  if (await modal.locator('form').evaluate(f => f.checkValidity())) throw Error('Missing required name');
+  assert(!(await form.evaluate(f => f.checkValidity())), 'an empty name was accepted');
   await name.fill('staging');
-  await modal.getByRole('button', { name: 'Create', exact: true }).click();
-  await page.waitForURL('**/environments/2');
-  const checked = await page.request.post(origin + '/_test/check-created');
-  if (!checked.ok()) throw Error(await checked.text());
-  const info = await checked.json();
-  await page.request.post(origin + info.app_url + '/env', { form: {
-    env: '# fixture\nPUBLIC=source-public\nTOKEN=staging-secret\nDATABASE_URL=',
-    env_public_keys: 'PUBLIC\nDATABASE_URL'
-  }});
-  await page.goto(origin + info.app_url + '?tab=domains');
-  const exposure = page.locator(`form[action$="/domains/${info.domain_id}/exposure"]`);
-  await exposure.locator('[name=exposed]').check();
-  await exposure.getByRole('button', { name: 'Save', exact: true }).click();
-  await page.getByRole('link', { name: 'General', exact: true }).click();
-  await page.locator('button[form=deploy-form]').click();
-  const deadline = Date.now() + 600000;
-  for (;;) {
-    const status = await (await page.request.get(origin + '/_test/deployment')).json();
-    if (status.status === 'done') break;
-    if (status.status === 'error' || Date.now() > deadline) throw Error('Real deployment failed: ' + status.error);
-    await page.waitForTimeout(1000);
-  }
-  const headers = { Host: info.host };
-  const app = await (await page.request.get(info.gateway + '/', { headers })).json();
-  if (app.public !== 'source-public' || !app.secret_set || !app.metrics_set) throw Error('Runtime config mismatch');
-  if (await (await page.request.get(info.gateway + '/count', { headers })).text() !== '0') throw Error('Clone is not empty');
-  const write = await page.request.post(info.gateway + '/write', { headers, form: { value: 'staging-write' } });
-  if (write.status() !== 204) throw Error('HTTP write failed');
-  await page.goto(origin + '/orgs/1/projects/1/environments/2');
+  await form.locator('button[type=submit]').click();
+  await page.waitForURL(u => u.pathname !== sourceBase && /\/environments\/\d+$/.test(u.pathname));
+  const cloneBase = new URL(page.url()).pathname;
+
+  // The clone says it needs a review, and keeps saying so after a reload.
+  assert(await page.locator('[data-clone-notice]').isVisible(), 'clone notice missing');
   await page.reload();
-  await page.request.post(origin + '/_test/reopen');
+  assert(await page.locator('[data-clone-notice]').isVisible(), 'clone notice gone after a reload');
+  await page.goto(origin + cloneBase + '/settings');
+  assert(await page.locator('[data-clone-notice]').isVisible(), 'clone notice missing on its settings');
+
+  // Ordinary values are copied, secret values are cleared.
+  await page.goto(origin + cloneBase);
+  const cloneApp = await appPath();
+  assert(cloneApp !== sourceApp, 'the clone shows the source app');
+  await page.goto(origin + cloneApp + '?tab=variables');
+  const cloned = await page.locator('#env-textarea').inputValue();
+  assert(cloned.includes('PUBLIC=source-public'), 'ordinary value not copied: ' + cloned);
+  assert(!cloned.includes('source-secret'), 'a secret value was copied');
+
+  // Editing the clone leaves the source alone.
+  await post(cloneApp + '/env', { env: 'PUBLIC=staging-public\nTOKEN=staging-secret\n', env_public_keys: 'PUBLIC' });
+  await page.goto(origin + sourceApp + '?tab=variables');
+  assert(await page.locator('#env-textarea').inputValue() === sourceEnv, 'the source changed with its clone');
+
+  // Exposing the clone's domain sticks.
+  await page.goto(origin + cloneApp + '?tab=domains');
+  const exposure = page.locator('form[action$="/exposure"]').first();
+  await exposure.locator('label:has([name=exposed])').click(); // the switch's track covers the input
+  assert(await exposure.locator('[name=exposed]').isChecked(), 'the exposure switch did not turn on');
+  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/exposure')), exposure.locator('button[type=submit]').click()]);
   await page.reload();
-  if (!(await page.locator('main').innerText()).includes('Review')) throw Error('Clone notice missing');
-  if (await (await page.request.get(info.gateway + '/count', { headers })).text() !== '1') throw Error('Write did not persist');
-  const finished = await page.request.post(origin + '/_test/finish');
-  if (!finished.ok()) throw Error(await finished.text());
-  return await finished.json();
+  assert(await page.locator('form[action$="/exposure"]').first().locator('[name=exposed]').isChecked(), 'exposure not saved');
+
+  // Starting the clone's app queues a deployment.
+  await page.goto(origin + cloneApp);
+  const start = page.locator('button[form="deploy-again"]').first();
+  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/deploy')), start.click()]);
+  await page.goto(origin + cloneApp);
+  await page.waitForSelector('#deployments-list a[href*="/deployments/"]');
+
+  // Delete the clone through its settings, with the confirmation dialog.
+  await page.goto(origin + cloneBase + '/settings');
+  await page.locator('form[action="' + cloneBase + '/delete"] button[type=submit]').click();
+  await page.locator('#confirm-ok').click();
+  await page.waitForURL(u => !u.pathname.startsWith(cloneBase));
+  const gone = await page.request.get(origin + cloneBase, { maxRedirects: 0 });
+  assert(gone.status() === 404, 'the clone was not deleted: ' + gone.status());
+  return 'PASS: clone form, notice after reload, ordinary copied and secrets cleared, source isolation, exposure saved, deploy queued, clone deleted';
 }

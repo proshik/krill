@@ -5,33 +5,14 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
-// BackupObjects renders the list of stored backup objects for one backup config.
-// base is the logical-DB detail URL (e.g. .../databases/42); backupID scopes the
-// restore/download actions to this config.
+// BackupObjects lists a database backup schedule's stored backups. base is
+// the logical database's URL; backupID scopes the restore/download actions.
 templ BackupObjects(base string, backupID int64, objs []backup.Object) {
-	<div id="backup-objects">
-		if len(objs) == 0 {
-			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
-		} else {
-			<table class="k-table">
-				<thead><tr><th>{ i18n.T(ctx, "backup.col.file") }</th><th>{ i18n.T(ctx, "backup.col.size") }</th><th>{ i18n.T(ctx, "backup.col.date") }</th><th></th></tr></thead>
-				<tbody>
-					for _, o := range objs {
-						<tr>
-							<td class="k-mono">{ o.Key }</td>
-							<td>{ humanSize(o.Size) }</td>
-							<td>{ o.LastModified.UTC().Format("2006-01-02 15:04:05 UTC") }</td>
-							<td>
-								<a class="k-btn" href={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/download?key=" + o.Key) }>{ i18n.T(ctx, "backup.download") }</a>
-								<form method="post" hx-boost="false" action={ templ.SafeURL(base + "/backups/" + itoa(backupID) + "/restore") } data-confirm={ i18n.T(ctx, "backup.restore_warn") } onsubmit="return krillConfirm(this, this.dataset.confirm)" style="display:inline">
-									<input type="hidden" name="key" value={ o.Key }/>
-									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.restore") }</button>
-								</form>
-							</td>
-						</tr>
-					}
-				</tbody>
-			</table>
-		}
-	</div>
+	@backupObjectList(objs, base+"/backups/"+itoa(backupID)+"/download", base+"/backups/"+itoa(backupID)+"/restore", i18n.T(ctx, "backup.restore_warn"))
+}
+
+// VolumeBackupObjects lists a volume backup schedule's stored backups. base is
+// the app's URL; vbID scopes the restore/download actions.
+templ VolumeBackupObjects(base string, vbID int64, objs []backup.Object) {
+	@backupObjectList(objs, base+"/volumes/backups/"+itoa(vbID)+"/download", base+"/volumes/backups/"+itoa(vbID)+"/restore", i18n.T(ctx, "volumes.backup.restore_warn"))
 }

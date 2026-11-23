@@ -50,11 +50,16 @@ func TestSystemsGroupAppsWithoutOwningThem(t *testing.T) {
 		t.Fatalf("membership: %v", got)
 	}
 
-	// The environment page renders each system with its apps.
+	// The canvas draws each system as a group holding its apps' cards, and
+	// the settings page manages them.
 	page := getPage(t, f.h, f.envBase, f.cookie, nil)
 	body := page.Body.String()
-	if page.Code != http.StatusOK || !strings.Contains(body, "data-sys") || !strings.Contains(body, `data-sys-app="`+i64(f.app.ID)+`"`) {
+	if page.Code != http.StatusOK || !strings.Contains(body, `<h2 class="grp-name">Penpot</h2>`) || !strings.Contains(body, `id="s-app-`+i64(f.app.ID)+`"`) {
 		t.Fatalf("environment page: %d", page.Code)
+	}
+	page = getPage(t, f.h, f.envBase+"/settings", f.cookie, nil)
+	if body := page.Body.String(); page.Code != http.StatusOK || !strings.Contains(body, sysURL(penpot)+"/delete") {
+		t.Fatalf("environment settings: %d", page.Code)
 	}
 
 	postForm(t, f.h, sysURL(other)+"/rename", f.cookie, url.Values{"name": {"Frontends"}})
@@ -117,10 +122,40 @@ func TestSystemTenancyAndRBAC(t *testing.T) {
 			t.Fatalf("member POST %s: %d", path, rec.Code)
 		}
 	}
-	// Members see the systems view, without its management controls.
+	// Members see the systems on the canvas, without their management.
 	f.q.SetAppSystem(ctx, db.SetAppSystemParams{ApplicationID: f.app.ID, SystemID: sy.ID})
 	page := getPage(t, f.h, f.envBase, member, nil)
-	if body := page.Body.String(); !strings.Contains(body, "data-sys") || strings.Contains(body, "/systems/"+i64(sy.ID)+"/delete") {
+	if body := page.Body.String(); !strings.Contains(body, `<h2 class="grp-name">Penpot</h2>`) || strings.Contains(body, "/systems/"+i64(sy.ID)+"/delete") {
 		t.Fatal("members see systems but not their management")
+	}
+	if rec := getPage(t, f.h, f.envBase+"/settings", member, nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("member environment settings: %d", rec.Code)
+	}
+}
+
+// A resource whose server also hosts something the system does not use is
+// marked shared on the canvas.
+func TestCanvasMarksSharedResources(t *testing.T) {
+	f := newBucketFixture(t, "sys-shared@k.local")
+	ctx := context.Background()
+	sy, err := f.q.CreateSystem(ctx, db.CreateSystemParams{EnvironmentID: f.env.ID, Name: "Penpot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetAppSystem(ctx, db.SetAppSystemParams{ApplicationID: f.app.ID, SystemID: sy.ID}); err != nil {
+		t.Fatal(err)
+	}
+	used, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "krill-penpot-aaaaaa", SecretKey: "x", CreatedByKrill: true})
+	f.q.CreateBucketLink(ctx, db.CreateBucketLinkParams{ApplicationID: f.app.ID, BucketID: used.ID, VarName: "S3_BUCKET", Field: "bucket"})
+	f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "elsewhere", AccessKey: "krill-elsewhere-bbbbbb", SecretKey: "x", CreatedByKrill: true})
+	body := getPage(t, f.h, f.envBase, f.cookie, nil).Body.String()
+	i := strings.Index(body, `id="s-bucket-`+i64(used.ID)+`"`)
+	if i < 0 {
+		t.Fatal("the used bucket's card is missing")
+	}
+	card := body[i:]
+	card = card[:strings.Index(card, "</a>")]
+	if !strings.Contains(card, ">shared<") {
+		t.Fatalf("a bucket on a server hosting more is not marked shared:\n%s", card)
 	}
 }

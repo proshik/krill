@@ -1,9 +1,11 @@
 package templates
 
 import (
+	"strconv"
+
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
-	"strconv"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
 // NotifyView is the data the notifications page needs. HasToken is true when a
@@ -34,136 +36,194 @@ type NotifyView struct {
 	ProxySet    bool
 	ProxyVia    string
 	ProxyErrKey string
+	// Preview is today's digest as the channel would get it now; nil when
+	// there is no channel or it could not be built.
+	Preview     []DigestLine
+	PreviewErr  bool
+	PreviewTime string
 }
 
 // notifyGuideProxy is the guide section on the Telegram proxy.
 const notifyGuideProxy = "https://github.com/proshik/krill/blob/master/docs/guides/notifications.md#7-telegram-through-a-proxy"
 
 templ notifyProxy(v NotifyView) {
-	if v.ProxyErrKey != "" {
-		<p id="notif-proxy" role="alert" style="color:var(--color-err);font-size:13px;max-width:680px">
-			{ i18n.Tf(ctx, "notif.proxy_bad", i18n.T(ctx, v.ProxyErrKey)) }
-			<a class="underline" href={ templ.SafeURL(notifyGuideProxy) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "notif.proxy_guide") }</a>
-		</p>
-	} else if v.ProxySet {
-		<p id="notif-proxy" style="color:var(--color-muted);font-size:13px;max-width:680px">
-			if v.ProxyVia != "" {
-				{ i18n.Tf(ctx, "notif.proxy_via", v.ProxyVia) }
+	<div class="field">
+		<span class="field-label">{ i18n.T(ctx, "notif.proxy") }</span>
+		<p class="field-note">
+			if v.ProxyErrKey != "" {
+				@ui.State("err", i18n.Tf(ctx, "notif.proxy_bad", i18n.T(ctx, v.ProxyErrKey)))
+			} else if v.ProxySet && v.ProxyVia != "" {
+				@ui.State("ok", i18n.Tf(ctx, "notif.proxy_via", v.ProxyVia))
+			} else if v.ProxySet {
+				@ui.State("ok", i18n.T(ctx, "notif.proxy_on"))
 			} else {
-				{ i18n.T(ctx, "notif.proxy_on") }
+				@ui.State("idle", i18n.T(ctx, "notif.proxy_none"))
 			}
-			<a class="underline" href={ templ.SafeURL(notifyGuideProxy) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "notif.proxy_guide") }</a>
 		</p>
-	}
+		<p class="field-hint">
+			{ i18n.T(ctx, "notif.proxy_hint") + " " }
+			<a href={ templ.SafeURL(notifyGuideProxy) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "notif.proxy_guide") }</a>
+		</p>
+	</div>
 }
 
 // notifyZones are suggestions for the time-zone field; any IANA name works.
 var notifyZones = []string{"Europe/Moscow", "Europe/Amsterdam", "Europe/Berlin", "Europe/London", "UTC", "Asia/Tbilisi", "Asia/Yerevan", "Asia/Almaty", "America/New_York"}
 
-templ notifyCheck(name, label string, checked bool) {
-	<label class="flex items-center gap-2">
-		<input type="checkbox" class="k-check" name={ name } checked?={ checked }/>
-		<span>{ label }</span>
+templ notifySwitch(name, label string, checked, disabled bool) {
+	<label class="switch">
+		if name == "" {
+			<input type="checkbox" checked?={ checked } disabled?={ disabled }/>
+		} else {
+			<input type="checkbox" name={ name } checked?={ checked } disabled?={ disabled }/>
+		}
+		<span class="switch-track" aria-hidden="true"></span>
+		{ label }
 	</label>
 }
 
-templ notifyHint(text string) {
-	<p style="color:var(--color-muted);font-size:13px;max-width:680px">{ text }</p>
-}
-
 templ Notifications(org db.Organization, role string, v NotifyView) {
-	@Layout(i18n.T(ctx, "notif.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "notif.desc") }</p>
-		<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications") } class="flex flex-col gap-4">
-			<div class="k-card flex flex-col gap-3">
-				@notifyCheck("enabled", i18n.T(ctx, "notif.enabled"), v.Enabled)
-				<div>
-					<label class="k-label" for="notif-token">{ i18n.T(ctx, "notif.bot_token") }</label>
-					<div class="flex items-center gap-2">
-						if v.HasToken {
-							<input class="k-input" id="notif-token" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
-						} else {
-							<input class="k-input" id="notif-token" name="bot_token" type="password" autocomplete="off"/>
-						}
-						<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
-					</div>
+	@SettingsPage(org, role, "notifications", i18n.T(ctx, "notif.title")) {
+		<form id="notif-test" method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/notifications/test") }></form>
+		<form id="notif-digest" method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/notifications/digest") }></form>
+		<form class="setbody" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/notifications") }>
+			<section class="sec" aria-labelledby="ch-h">
+				<div class="sec-head">
+					<h3 id="ch-h">Telegram</h3>
+					@notifySwitch("enabled", i18n.T(ctx, "common.on"), v.Enabled, false)
 				</div>
-				<div>
-					<label class="k-label k-label-required" for="notif-chat">{ i18n.T(ctx, "notif.chat_id") }</label>
-					<input class="k-input" id="notif-chat" name="chat_id" value={ v.ChatID } required/>
-				</div>
-				@notifyProxy(v)
-				<div style="max-width:240px">
-					<label class="k-label" for="notif-lang">{ i18n.T(ctx, "notif.lang") }</label>
-					<select class="k-select" id="notif-lang" name="lang">
-						for _, l := range i18n.Locales {
-							<option value={ l.Code } selected?={ l.Code == v.Lang }>{ l.Name }</option>
-						}
-					</select>
-				</div>
-			</div>
-			<div class="k-card flex flex-col gap-3">
-				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_events") }</h3>
-				@notifyCheck("notify_deploy", i18n.T(ctx, "notif.ev_deploy"), v.NotifyDeploy)
-				@notifyCheck("notify_deploy_success", i18n.T(ctx, "notif.ev_deploy_success"), v.NotifyDeploySuccess)
-				@notifyCheck("notify_backup", i18n.T(ctx, "notif.ev_backup"), v.NotifyBackup)
-				@notifyCheck("notify_health", i18n.T(ctx, "notif.ev_health"), v.NotifyHealth)
-			</div>
-			<div class="k-card flex flex-col gap-3">
-				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_digest") }</h3>
-				@notifyCheck("digest_enabled", i18n.T(ctx, "notif.digest_enabled"), v.DigestEnabled)
-				@notifyHint(i18n.T(ctx, "notif.digest_hint"))
-				<div class="flex flex-wrap gap-3">
-					<div style="width:140px">
-						<label class="k-label" for="notif-digest-time">{ i18n.T(ctx, "notif.digest_time") }</label>
-						<input class="k-input" id="notif-digest-time" name="digest_time" type="time" required value={ v.DigestTime }/>
-					</div>
-					<div style="flex:1;min-width:200px;max-width:320px">
-						<label class="k-label" for="notif-digest-tz">{ i18n.T(ctx, "notif.digest_tz") }</label>
-						<input class="k-input" id="notif-digest-tz" name="digest_tz" list="notif-zones" required value={ v.DigestTZ } autocomplete="off" spellcheck="false"/>
-						<datalist id="notif-zones">
-							for _, z := range notifyZones {
-								<option value={ z }></option>
+				<p class="hint">{ i18n.T(ctx, "notif.desc") }</p>
+				<div class="row row--even">
+					<div class="field">
+						<label for="notif-token">{ i18n.T(ctx, "notif.bot_token") }</label>
+						<div class="input-group">
+							if v.HasToken {
+								<input class="input input--mono" id="notif-token" name="bot_token" type="password" autocomplete="off" placeholder={ i18n.T(ctx, "notif.token_set") }/>
+							} else {
+								<input class="input input--mono" id="notif-token" name="bot_token" type="password" autocomplete="off"/>
 							}
-						</datalist>
+							<button type="button" class="pill pill--icon" data-reveal="notif-token" aria-label={ i18n.T(ctx, "common.reveal") } title={ i18n.T(ctx, "common.reveal") }>
+								@ui.Icon("i-eye")
+							</button>
+						</div>
+					</div>
+					<div class="field">
+						<label for="notif-chat">{ i18n.T(ctx, "notif.chat_id") }</label>
+						<input class="input input--mono" id="notif-chat" name="chat_id" value={ v.ChatID } required autocomplete="off"/>
 					</div>
 				</div>
-			</div>
-			<div class="k-card flex flex-col gap-3">
-				<h3 class="text-lg">{ i18n.T(ctx, "notif.sec_infra") }</h3>
-				if v.CanInfra {
-					@notifyCheck("notify_infra", i18n.T(ctx, "notif.infra_enabled"), v.NotifyInfra)
-				} else {
-					<label class="flex items-center gap-2" style="color:var(--color-muted)">
-						<input type="checkbox" class="k-check" checked?={ v.NotifyInfra } disabled/>
-						<span>{ i18n.T(ctx, "notif.infra_enabled") }</span>
-					</label>
-				}
-				@notifyHint(i18n.T(ctx, "notif.infra_hint"))
-				<div class="flex flex-wrap gap-3">
-					<div style="width:220px">
-						<label class="k-label" for="notif-disk">{ i18n.T(ctx, "notif.disk_threshold") }</label>
-						<input class="k-input" id="notif-disk" name="disk_threshold" type="number" min="50" max="99" step="1" required value={ strconv.Itoa(v.DiskThresholdPct) } disabled?={ !v.CanInfra }/>
+				<div class="row row--even">
+					<div class="field">
+						<label for="notif-lang">{ i18n.T(ctx, "notif.lang") }</label>
+						<select class="input" id="notif-lang" name="lang">
+							for _, l := range i18n.Locales {
+								<option value={ l.Code } selected?={ l.Code == v.Lang }>{ l.Name }</option>
+							}
+						</select>
 					</div>
-					<div style="width:300px">
-						<label class="k-label" for="notif-mem">{ i18n.T(ctx, "notif.mem_threshold") }</label>
-						<input class="k-input" id="notif-mem" name="mem_threshold" type="number" min="50" max="200" step="1" required value={ strconv.Itoa(v.MemThresholdPct) } disabled?={ !v.CanInfra }/>
+					@notifyProxy(v)
+				</div>
+				<div><button type="submit" form="notif-test" class="pill">{ i18n.T(ctx, "notif.test") }</button></div>
+			</section>
+			<section class="sec" aria-labelledby="ev-h">
+				<h3 id="ev-h">{ i18n.T(ctx, "notif.sec_events") }</h3>
+				<div class="switch-list">
+					@notifySwitch("notify_deploy", i18n.T(ctx, "notif.ev_deploy"), v.NotifyDeploy, false)
+					@notifySwitch("notify_backup", i18n.T(ctx, "notif.ev_backup"), v.NotifyBackup, false)
+					@notifySwitch("notify_health", i18n.T(ctx, "notif.ev_health"), v.NotifyHealth, false)
+					@notifySwitch("notify_deploy_success", i18n.T(ctx, "notif.ev_deploy_success"), v.NotifyDeploySuccess, false)
+				</div>
+			</section>
+			<section class="sec" aria-labelledby="dg-h">
+				<div class="sec-head">
+					<h3 id="dg-h">{ i18n.T(ctx, "notif.sec_digest") }</h3>
+					@notifySwitch("digest_enabled", i18n.T(ctx, "common.on"), v.DigestEnabled, false)
+				</div>
+				<div class="digest">
+					<div class="stack">
+						<div class="row row--even">
+							<div class="field">
+								<label for="notif-digest-time">{ i18n.T(ctx, "notif.digest_time") }</label>
+								<input class="input input--mono" id="notif-digest-time" name="digest_time" type="time" required value={ v.DigestTime }/>
+							</div>
+							<div class="field">
+								<label for="notif-digest-tz">{ i18n.T(ctx, "notif.digest_tz") }</label>
+								<input class="input input--mono" id="notif-digest-tz" name="digest_tz" list="notif-zones" required value={ v.DigestTZ } autocomplete="off" spellcheck="false"/>
+								<datalist id="notif-zones">
+									for _, z := range notifyZones {
+										<option value={ z }></option>
+									}
+								</datalist>
+							</div>
+						</div>
+						<p class="hint">{ i18n.T(ctx, "notif.digest_hint") }</p>
+						<div><button type="submit" form="notif-digest" class="pill">{ i18n.T(ctx, "notif.digest_now") }</button></div>
+					</div>
+					<figure class="tg" aria-label={ i18n.T(ctx, "notif.preview") }>
+						<figcaption>{ i18n.T(ctx, "notif.preview") }</figcaption>
+						if v.Preview != nil {
+							<div class="tg-bubble">
+								for _, line := range v.Preview {
+									if line.Break {
+										<hr class="tg-break"/>
+									} else {
+										<p class={ templ.KV("tg-quote", line.Quote) }>
+											for _, run := range line.Runs {
+												if run.Href != "" {
+													<a href={ templ.SafeURL(run.Href) }>
+														if run.Bold {
+															<b>{ run.Text }</b>
+														} else {
+															{ run.Text }
+														}
+													</a>
+												} else if run.Bold {
+													<b>{ run.Text }</b>
+												} else {
+													{ run.Text }
+												}
+											}
+										</p>
+									}
+								}
+							</div>
+						} else if v.PreviewErr {
+							<p class="empty">{ i18n.T(ctx, "notif.preview_failed") }</p>
+						} else {
+							<p class="empty">{ i18n.T(ctx, "notif.preview_none") }</p>
+						}
+					</figure>
+				</div>
+			</section>
+			<section class="sec" aria-labelledby="in-h">
+				<div class="sec-head">
+					<h3 id="in-h">{ i18n.T(ctx, "notif.sec_infra") }</h3>
+					if v.CanInfra {
+						@notifySwitch("notify_infra", i18n.T(ctx, "common.on"), v.NotifyInfra, false)
+					} else {
+						// Not a form field for anyone else: the server keeps the stored value.
+						@notifySwitch("", i18n.T(ctx, "common.on"), v.NotifyInfra, true)
+					}
+				</div>
+				<p class="hint">{ i18n.T(ctx, "notif.infra_hint") }</p>
+				<div class="row row--even">
+					<div class="field">
+						<label for="notif-disk">{ i18n.T(ctx, "notif.disk_threshold") }</label>
+						<input class="input input--mono" id="notif-disk" name="disk_threshold" type="number" min="50" max="99" step="1" required value={ strconv.Itoa(v.DiskThresholdPct) } disabled?={ !v.CanInfra }/>
+					</div>
+					<div class="field">
+						<label for="notif-mem">{ i18n.T(ctx, "notif.mem_threshold") }</label>
+						<input class="input input--mono" id="notif-mem" name="mem_threshold" type="number" min="50" max="200" step="1" required value={ strconv.Itoa(v.MemThresholdPct) } disabled?={ !v.CanInfra }/>
 					</div>
 				</div>
 				if !v.CanInfra {
-					@notifyHint(i18n.T(ctx, "notif.infra_operator_only"))
+					<p class="hint">{ i18n.T(ctx, "notif.infra_operator_only") }</p>
 				}
+			</section>
+			<div class="form-keys form-keys--sticky">
+				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "notif.save") }</button>
+				<a class="pill" href={ templ.SafeURL(orgURL(org.ID) + "/settings") }>{ i18n.T(ctx, "common.cancel") }</a>
 			</div>
-			<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "notif.save") }</button></div>
 		</form>
-		<div class="flex flex-wrap gap-2 mt-3">
-			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/test") }>
-				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "notif.test") }</button>
-			</form>
-			<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/notifications/digest") }>
-				<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "notif.digest_now") }</button>
-			</form>
-		</div>
 	}
 }

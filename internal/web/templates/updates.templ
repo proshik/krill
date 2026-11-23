@@ -6,6 +6,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
 // UpdatesView is the state of Krill's self-update, as the Updates page shows it.
@@ -58,13 +59,10 @@ func updateStatusURL(orgID int64, current string) string {
 // Updates renders the running and latest versions, the update and rollback
 // actions, the status of a running job and the outcome of the last one.
 templ Updates(org db.Organization, role string, v UpdatesView) {
-	@Layout(i18n.T(ctx, "update.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.desc") }</p>
+	@SettingsPage(org, role, "updates", i18n.T(ctx, "update.title")) {
+		<p class="hint">{ i18n.T(ctx, "update.desc") }</p>
 		if !v.Wired {
-			<div class="k-card mb-4">
-				<p style="max-width:720px">{ i18n.T(ctx, "update.unwired") }</p>
-			</div>
+			<div class="callout callout--warn"><p>{ i18n.T(ctx, "update.unwired") }</p></div>
 		} else {
 			if v.HasLast {
 				switch v.LastReason {
@@ -80,61 +78,72 @@ templ Updates(org db.Organization, role string, v UpdatesView) {
 						}
 				}
 			}
-			<div class="k-card mb-4">
-				<div class="flex items-center gap-2 mb-2">
-					<span class="k-label" style="margin:0">{ i18n.T(ctx, "update.current") }</span>
-					<span class="k-mono">{ v.Current }</span>
-				</div>
-				<div class="flex items-center gap-2 mb-2">
-					<span class="k-label" style="margin:0">{ i18n.T(ctx, "update.latest") }</span>
-					if v.Latest != "" {
-						<span class="k-mono">{ v.Latest }</span>
-						<a href={ templ.URL(v.LatestURL) } target="_blank" rel="noopener noreferrer" style="color:var(--color-accent);font-size:13px">{ i18n.T(ctx, "update.release_notes") }</a>
-					} else {
-						<span style="color:var(--color-muted);font-size:13px">{ i18n.T(ctx, "update.latest.none") }</span>
-					}
-				</div>
+			<section class="sec" aria-labelledby="ver-h">
+				<h3 id="ver-h">{ i18n.T(ctx, "update.versions") }</h3>
+				<ul class="links">
+					<li class="row-item">
+						<span class="link-var">{ i18n.T(ctx, "update.current") }</span>
+						<code class="link-src">{ v.Current }</code>
+						if v.Available {
+							@ui.State("warn", i18n.Tf(ctx, "update.available_short", v.Latest))
+						} else if v.Latest != "" && v.IsRelease {
+							@ui.State("ok", i18n.T(ctx, "update.up_to_date_short"))
+						} else {
+							<span></span>
+						}
+					</li>
+					<li class="row-item">
+						<span class="link-var">{ i18n.T(ctx, "update.latest") }</span>
+						if v.Latest != "" {
+							<code class="link-src">{ v.Latest }</code>
+							<a class="pill pill--small" href={ templ.URL(v.LatestURL) } target="_blank" rel="noopener noreferrer">{ i18n.T(ctx, "update.release_notes") }</a>
+						} else {
+							<span class="link-src">{ i18n.T(ctx, "update.latest.none") }</span>
+							<span></span>
+						}
+					</li>
+				</ul>
 				if !v.CheckedAt.IsZero() {
-					<p style="color:var(--color-muted);font-size:13px">{ i18n.Tf(ctx, "update.checked_at", v.CheckedAt.UTC().Format("2006-01-02 15:04 UTC")) }</p>
+					<p class="hint">{ i18n.Tf(ctx, "update.checked_at", v.CheckedAt.UTC().Format("2006-01-02 15:04 UTC")) }</p>
 				}
 				if v.CheckErr != "" {
-					<p style="color:var(--color-err);font-size:13px;max-width:720px">{ i18n.Tf(ctx, "update.check_failed", v.CheckErr) }</p>
+					<div class="callout callout--err"><p>{ i18n.Tf(ctx, "update.check_failed", v.CheckErr) }</p></div>
 				}
-				<form method="post" action={ templ.SafeURL(updatesPath(org.ID) + "/check") } class="mt-3">
-					<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "update.check_now") }</button>
+				<form method="post" action={ templ.SafeURL(updatesPath(org.ID) + "/check") }>
+					<button type="submit" class="pill">{ i18n.T(ctx, "update.check_now") }</button>
 				</form>
-			</div>
+			</section>
 			if !v.IsRelease {
-				<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "update.dev_build", v.Current) }</p>
+				<p class="hint">{ i18n.Tf(ctx, "update.dev_build", v.Current) }</p>
 			} else if v.Available {
-				<div class="k-card mb-4">
-					<p class="mb-3" style="max-width:720px">{ i18n.Tf(ctx, "update.available", v.Latest) }</p>
+				<section class="sec" aria-labelledby="inst-h">
+					<h3 id="inst-h">{ i18n.Tf(ctx, "update.available", v.Latest) }</h3>
 					@updateBlockedReason(v)
 					if v.StateLine != "" {
 						@updateStateLine(org.ID, v.StateLine)
 					}
-					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/install") } data-confirm={ i18n.Tf(ctx, "update.confirm.install", v.Latest) } data-confirm-label={ i18n.T(ctx, "update.install") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel, 'primary')">
+					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/install") } data-confirm={ i18n.Tf(ctx, "update.confirm.install", v.Latest) } data-ok={ i18n.T(ctx, "update.install") } data-kind="primary" onsubmit="return krillConfirm(this)">
 						<input type="hidden" name="tag" value={ v.Latest }/>
-						<button class="k-btn k-btn-primary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.install_to", v.Latest) }</button>
+						<button type="submit" class="btn btn--primary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.install_to", v.Latest) }</button>
 					</form>
-				</div>
+				</section>
 			} else if v.Latest != "" {
-				<p class="mb-4" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.up_to_date") }</p>
+				<p class="hint">{ i18n.T(ctx, "update.up_to_date") }</p>
 			}
 			if v.Phase != "idle" {
 				@UpdateStatus(org.ID, v.Current, v.Phase, v.PhaseActive, v.JobTag, v.JobErr)
 			}
 			if v.Previous != "" {
-				<div class="k-card mb-4">
-					<p class="mb-2">{ i18n.Tf(ctx, "update.previous", v.Previous) }</p>
-					<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.rollback.desc") }</p>
+				<section class="sec" aria-labelledby="rb-h">
+					<h3 id="rb-h">{ i18n.Tf(ctx, "update.previous", v.Previous) }</h3>
+					<p class="hint">{ i18n.T(ctx, "update.rollback.desc") }</p>
 					if !v.Available {
 						@updateBlockedReason(v)
 					}
-					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/rollback") } data-confirm={ i18n.Tf(ctx, "update.confirm.rollback", v.Previous) } data-confirm-label={ i18n.T(ctx, "update.rollback") } onsubmit="return krillConfirm(this, this.dataset.confirm, this.dataset.confirmLabel)">
-						<button class="k-btn k-btn-secondary" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.rollback_to", v.Previous) }</button>
+					<form method="post" hx-boost="false" action={ templ.SafeURL(updatesPath(org.ID) + "/rollback") } data-confirm={ i18n.Tf(ctx, "update.confirm.rollback", v.Previous) } data-ok={ i18n.T(ctx, "update.rollback") } onsubmit="return krillConfirm(this)">
+						<button type="submit" class="pill pill--danger" disabled?={ v.blocked() }>{ i18n.Tf(ctx, "update.rollback_to", v.Previous) }</button>
 					</form>
-				</div>
+				</section>
 			}
 		}
 	}
@@ -142,15 +151,12 @@ templ Updates(org db.Organization, role string, v UpdatesView) {
 
 // updateResult is the outcome of the previous process's update or rollback.
 templ updateResult(ok bool, text string) {
-	<div class="k-card mb-4">
-		<div class="flex items-center gap-2">
-			if ok {
-				<span class="k-badge k-badge-running"><span class="k-dot"></span></span>
-			} else {
-				<span class="k-badge k-badge-error"><span class="k-dot"></span></span>
-			}
-			<span style="max-width:720px">{ text }</span>
-		</div>
+	<div class={ "callout", templ.KV("callout--ok", ok), templ.KV("callout--err", !ok) }>
+		if ok {
+			@ui.State("ok", text)
+		} else {
+			@ui.State("err", text)
+		}
 	</div>
 }
 
@@ -158,9 +164,9 @@ templ updateResult(ok bool, text string) {
 // the host cannot update itself, or other work must finish first.
 templ updateBlockedReason(v UpdatesView) {
 	if !v.Supported {
-		<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.T(ctx, "update.unsupported.intro") } { i18n.T(ctx, v.UnsupportedKey) }</p>
+		<p class="hint">{ i18n.T(ctx, "update.unsupported.intro") + " " + i18n.T(ctx, v.UnsupportedKey) }</p>
 	} else if v.BusyKey != "" {
-		<p class="mb-3" style="color:var(--color-muted);max-width:720px">{ i18n.Tf(ctx, "update.busy_intro", i18n.T(ctx, v.BusyKey)) }</p>
+		<p class="hint">{ i18n.Tf(ctx, "update.busy_intro", i18n.T(ctx, v.BusyKey)) }</p>
 	}
 }
 
@@ -170,42 +176,44 @@ templ updateBlockedReason(v UpdatesView) {
 // refresh as soon as the job is no longer active, so the failed card only ever
 // comes from a page render. errText is the whole, translated failure sentence.
 templ UpdateStatus(orgID int64, current, phase string, active bool, tag, errText string) {
-	<div
+	<section
 		id="k-update-status"
-		class="k-card mb-4"
+		class="sec"
+		aria-live="polite"
 		if active {
 			hx-get={ updateStatusURL(orgID, current) }
 			hx-trigger="every 2s"
 			hx-swap="outerHTML"
 		}
 	>
-		<div class="flex items-center gap-2">
+		<div class="bk-top">
 			if active {
-				<span class="k-badge k-badge-deploying"><span class="k-dot"></span>{ i18n.T(ctx, "update.phase." + phase) }</span>
+				<span class="state state--warn"><span class="spin" aria-hidden="true"></span>{ i18n.T(ctx, "update.phase." + phase) }</span>
 			} else {
-				<span class="k-badge k-badge-error"><span class="k-dot"></span>{ i18n.T(ctx, "update.phase." + phase) }</span>
+				@ui.State("err", i18n.T(ctx, "update.phase." + phase))
 			}
 			if tag != "" {
-				<span class="k-mono">{ i18n.Tf(ctx, "update.job_tag", tag) }</span>
+				<code>{ i18n.Tf(ctx, "update.job_tag", tag) }</code>
 			}
 		</div>
 		if phase == "restarting" {
-			<p class="mt-3" style="max-width:720px">{ i18n.T(ctx, "update.restarting_hint") }</p>
+			<p class="hint">{ i18n.T(ctx, "update.restarting_hint") }</p>
 		}
 		if phase == "failed" {
-			<p class="mt-3" style="color:var(--color-err);max-width:720px">{ errText }</p>
+			<p class="deploy-msg deploy-msg--err">{ errText }</p>
 		}
-	</div>
+	</section>
 }
 
 // updateStateLine says whether Krill's state is backed up before the update:
 // key is "update.state.on", "update.state.off" (with a link to set the
 // backup up) or "update.state.paused".
 templ updateStateLine(orgID int64, key string) {
-	<p class="mb-3" style="color:var(--color-muted);max-width:720px">
+	<p class="hint">
 		{ i18n.T(ctx, key) }
 		if key == "update.state.off" {
-			<a href={ templ.SafeURL(krillBackupsPath(orgID)) } style="color:var(--color-accent)">{ i18n.T(ctx, "update.state.off_link") }</a>
+			{ " " }
+			<a href={ templ.SafeURL(krillBackupsPath(orgID)) }>{ i18n.T(ctx, "update.state.off_link") }</a>
 		}
 	</p>
 }

@@ -1,0 +1,210 @@
+package templates
+
+import (
+	"strings"
+
+	"github.com/proshik/krill/internal/traefik"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// domainsTab lists the app's domains as cards: exposure and paths, HTTPS,
+// redirect, primary, deletion, sharing and the access protection of each
+// exposed domain. Every card is one unsaved-changes scope.
+templ domainsTab(c AppCtx) {
+	if !c.Exposed {
+		<div class="callout">
+			@ui.State("idle", i18n.T(ctx, "domains.not_exposed"))
+			<span>{ i18n.Tf(ctx, "domains.not_exposed_hint", c.App.Name) }</span>
+		</div>
+	}
+	if len(c.Domains) > 0 {
+		<ul class="domains">
+			for _, d := range c.Domains {
+				<li class="domain is-open" data-unsaved-scope data-unsaved-msg={ i18n.Tf(ctx, "domains.unsaved", d.Host) } data-unsaved-label={ i18n.T(ctx, "domains.unsaved_continue") }>
+					<div class="domain-top">
+						<code class="domain-host">{ d.Host }</code>
+						if d.IsPrimary {
+							<span class="tag tag--active">{ i18n.T(ctx, "domains.primary") }</span>
+						}
+						<span class="domain-states">
+							if d.RedirectToPrimary {
+								@ui.State("idle", i18n.Tf(ctx, "domains.redirects_to", trimScheme(primaryURL(c.Domains))))
+							} else if d.Exposed {
+								@ui.State("ok", i18n.T(ctx, "domains.exposed"))
+							} else {
+								@ui.State("idle", i18n.T(ctx, "domains.internal"))
+							}
+							if d.Tls {
+								@ui.State("ok", i18n.T(ctx, "domains.https"))
+							} else {
+								@ui.State("idle", i18n.T(ctx, "domains.http_only"))
+							}
+						</span>
+						if c.admin() {
+							if shares := c.HostShares[d.ID]; len(shares) > 0 {
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") } data-confirm={ i18n.Tf(ctx, "confirm.toggle_tls_shared", d.Host, c.App.Name+", "+shareNames(shares)) } data-ok={ i18n.T(ctx, "domains.toggle_tls") } data-kind="primary" onsubmit="return krillConfirm(this)">
+									<input type="hidden" name="tls" value={ onOff(!d.Tls) }/>
+									<button type="submit" class="pill">{ tlsButton(ctx, d.Tls) }</button>
+								</form>
+							} else {
+								<form method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/tls") }>
+									<input type="hidden" name="tls" value={ onOff(!d.Tls) }/>
+									<button type="submit" class="pill">{ tlsButton(ctx, d.Tls) }</button>
+								</form>
+							}
+							if !d.IsPrimary && !d.RedirectToPrimary {
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/primary") } data-confirm={ i18n.Tf(ctx, "confirm.make_primary", d.Host) } data-ok={ i18n.T(ctx, "domains.make_primary") } data-kind="primary" onsubmit="return krillConfirm(this)">
+									<button type="submit" class="pill">{ i18n.T(ctx, "domains.make_primary") }</button>
+								</form>
+							}
+							if !d.IsPrimary {
+								<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_domain", d.Host) } data-more={ i18n.T(ctx, "domains.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+									<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "common.delete_named", d.Host) } title={ i18n.T(ctx, "common.delete") }>
+										@ui.Icon("i-trash")
+									</button>
+								</form>
+							}
+						}
+					</div>
+					<div class="domain-edit">
+						if shares := c.HostShares[d.ID]; len(shares) > 0 {
+							<p class="hint">
+								{ i18n.T(ctx, "domains.shared_with") + " " }
+								for i, sh := range shares {
+									if i > 0 {
+										{ ", " }
+									}
+									<a href={ templ.SafeURL(c.siblingURL(sh.AppID) + "?tab=domains") }>{ sh.AppName }</a>
+									if paths := traefik.NormalizePaths(traefik.SplitPaths(sh.Paths)); len(paths) == 0 {
+										{ " (" + i18n.T(ctx, "domains.share_catchall") + ")" }
+									} else {
+										{ " (" + strings.Join(paths, ", ") + ")" }
+									}
+								}
+							</p>
+						}
+						if c.admin() && !d.IsPrimary {
+							<form class="stack" method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/redirect") }>
+								<label class="switch">
+									<input type="checkbox" name="redirect" checked?={ d.RedirectToPrimary }/>
+									<span class="switch-track" aria-hidden="true"></span>
+									{ i18n.T(ctx, "domains.redirect") }
+								</label>
+								<p class="field-hint">{ i18n.Tf(ctx, "domains.redirect_hint", primaryURL(c.Domains)) }</p>
+								<div><button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button></div>
+							</form>
+						}
+						if d.RedirectToPrimary {
+							<p class="hint">{ i18n.T(ctx, "domains.redirect_note") }</p>
+						} else if c.admin() {
+							<form class="stack" method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(d.ID) + "/exposure") }>
+								<div class="switches">
+									<label class="switch">
+										<input type="checkbox" name="exposed" checked?={ d.Exposed }/>
+										<span class="switch-track" aria-hidden="true"></span>
+										{ i18n.T(ctx, "domains.expose") }
+									</label>
+								</div>
+								<div class="field">
+									<label for={ "paths-" + itoa(d.ID) }>{ i18n.T(ctx, "domains.paths") }</label>
+									<textarea class="input input--mono textarea" id={ "paths-" + itoa(d.ID) } name="paths" rows="2" spellcheck="false" placeholder={ i18n.T(ctx, "domains.every_path") } aria-describedby={ "paths-hint-" + itoa(d.ID) }>{ d.Paths }</textarea>
+									<p class="field-hint" id={ "paths-hint-" + itoa(d.ID) }>{ i18n.T(ctx, "domains.paths_hint") }</p>
+								</div>
+								<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "common.save") }</button></div>
+							</form>
+						} else if d.Paths != "" {
+							<p class="hint">{ i18n.T(ctx, "domains.paths") + ": " }<code>{ d.Paths }</code></p>
+						}
+						if d.Exposed && !d.RedirectToPrimary {
+							@domainProtection(c, d.ID, d.BasicAuthUsers, d.AllowedIps)
+						}
+					</div>
+				</li>
+			}
+		</ul>
+	}
+	if c.admin() {
+		<form class="sec stack" method="post" action={ templ.SafeURL(c.base() + "/domains") } aria-labelledby="dadd-h">
+			<h3 id="dadd-h">{ i18n.T(ctx, "domains.add_title") }</h3>
+			<div class="field">
+				<label for="host">{ i18n.T(ctx, "domains.host") }</label>
+				<input class="input input--mono" id="host" name="host" placeholder={ c.App.Name + ".example.com" } autocomplete="off" spellcheck="false" required aria-describedby="host-hint"/>
+				<p class="field-hint" id="host-hint">{ i18n.T(ctx, "domains.dns_help") }</p>
+			</div>
+			<div class="switches">
+				<label class="switch"><input type="checkbox" name="exposed" checked/><span class="switch-track" aria-hidden="true"></span>{ i18n.T(ctx, "domains.expose") }</label>
+				<label class="switch"><input type="checkbox" name="tls"/><span class="switch-track" aria-hidden="true"></span>{ i18n.T(ctx, "domains.enable_https") }</label>
+			</div>
+			<p class="field-hint">{ i18n.T(ctx, "domains.tls_host_hint") }</p>
+			<div class="field">
+				<label for="dadd-paths">{ i18n.T(ctx, "domains.paths") }</label>
+				<textarea class="input input--mono textarea" id="dadd-paths" name="paths" rows="1" spellcheck="false" placeholder={ i18n.T(ctx, "domains.every_path") }></textarea>
+				<p class="field-hint">{ i18n.T(ctx, "domains.paths_hint") }</p>
+			</div>
+			<div><button type="submit" class="pill">
+				@ui.Icon("i-plus")
+				{ i18n.T(ctx, "domains.add") }
+			</button></div>
+		</form>
+	}
+}
+
+// domainProtection is a domain's access protection: basic auth users and
+// an IP allowlist, both must pass.
+templ domainProtection(c AppCtx, domainID int64, users, ips string) {
+	<section class="sec prot-sec" aria-labelledby={ "prot-h-" + itoa(domainID) }>
+		<div class="sec-head"><h4 id={ "prot-h-" + itoa(domainID) }>{ i18n.T(ctx, "domains.protection") }</h4></div>
+		<p class="hint">{ i18n.T(ctx, "domains.protection_note") }</p>
+		<div class="prot">
+			<div class="prot-col">
+				<h4>{ i18n.T(ctx, "domains.basicauth") }</h4>
+				if names := basicAuthUsernames(users); len(names) == 0 {
+					<p class="empty">{ i18n.T(ctx, "domains.ba_none") }</p>
+				} else {
+					<ul class="users">
+						for _, u := range names {
+							<li>
+								<code>{ u }</code>
+								if c.admin() {
+									<form method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/domains/" + itoa(domainID) + "/basic-auth/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_basicauth", u) } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
+										<input type="hidden" name="username" value={ u }/>
+										<button type="submit" class="pill pill--icon" aria-label={ i18n.Tf(ctx, "common.remove_named", u) } title={ i18n.T(ctx, "common.remove") }>
+											@ui.Icon("i-close")
+										</button>
+									</form>
+								}
+							</li>
+						}
+					</ul>
+				}
+				if c.admin() {
+					<form class="stack" method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(domainID) + "/basic-auth") }>
+						<div class="field">
+							<label for={ "bau-" + itoa(domainID) }>{ i18n.T(ctx, "domains.ba_user") }</label>
+							<input class="input input--mono" id={ "bau-" + itoa(domainID) } name="username" autocomplete="off" spellcheck="false" required/>
+						</div>
+						<div class="field">
+							<label for={ "bap-" + itoa(domainID) }>{ i18n.T(ctx, "domains.ba_pass") }</label>
+							<input class="input" id={ "bap-" + itoa(domainID) } type="password" name="password" autocomplete="new-password" required/>
+						</div>
+						<div><button type="submit" class="pill">
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "domains.ba_add") }
+						</button></div>
+					</form>
+				}
+			</div>
+			<form class="prot-col stack" method="post" action={ templ.SafeURL(c.base() + "/domains/" + itoa(domainID) + "/allowed-ips") }>
+				<div class="field">
+					<label for={ "ips-" + itoa(domainID) }>{ i18n.T(ctx, "domains.allowed_ips") }</label>
+					<textarea class="input input--mono textarea" id={ "ips-" + itoa(domainID) } name="ips" rows="4" spellcheck="false" placeholder="203.0.113.4" disabled?={ !c.admin() } aria-describedby={ "ips-hint-" + itoa(domainID) }>{ ips }</textarea>
+					<p class="field-hint" id={ "ips-hint-" + itoa(domainID) }>{ i18n.T(ctx, "domains.allowed_ips_hint") }</p>
+				</div>
+				if c.admin() {
+					<div><button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button></div>
+				}
+			</form>
+		</div>
+	</section>
+}

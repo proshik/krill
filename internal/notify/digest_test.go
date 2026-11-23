@@ -697,3 +697,73 @@ func TestScheduledDigestWithALongReplySendsOnce(t *testing.T) {
 		t.Fatalf("sent %d times, released %d claims; want once, none", sent, st.released)
 	}
 }
+
+// componentMetrics records how the digest read its samples.
+type componentMetrics struct {
+	fakeMetrics
+	all  *int
+	only *[]string
+}
+
+func (c componentMetrics) Since(ctx context.Context, since time.Time) ([]metrics.Sample, error) {
+	*c.all++
+	return c.fakeMetrics.Since(ctx, since)
+}
+
+func (c componentMetrics) SinceFor(_ context.Context, _ time.Time, components []string) ([]metrics.Sample, error) {
+	*c.only = append([]string(nil), components...)
+	keep := map[string]bool{}
+	for _, n := range components {
+		keep[n] = true
+	}
+	var out []metrics.Sample
+	for _, s := range c.samples {
+		if keep[s.Component] {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// A digest without the node part reads only the organization's apps'
+// samples, not the whole cluster's day — and says exactly what a digest reading
+// every sample says; one with the node part still reads everything, because
+// the node rows sum every component.
+func TestDigestReadsOnlyTheOrgSamplesWithoutInfra(t *testing.T) {
+	now := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
+	st, m := digestFixture(now)
+	var all int
+	var only []string
+	cm := componentMetrics{fakeMetrics: m, all: &all, only: &only}
+	ch := Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC", DiskThresholdPct: 85, MemThresholdPct: 100}
+
+	scoped, err := NewDigest(New(st), st, cm, nil).Build(context.Background(), ch, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all != 0 {
+		t.Fatalf("an app-only digest read the whole cluster (%d times)", all)
+	}
+	want := []string{"krill-5", "krill-6", "krill-8", "krill-10", "krill-11"} // every app of org 7
+	if strings.Join(only, " ") != strings.Join(want, " ") {
+		t.Fatalf("components asked for: %v, want %v", only, want)
+	}
+	full, err := NewDigest(New(st), st, m, nil).Build(context.Background(), ch, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(scoped, "\n") != strings.Join(full, "\n") {
+		t.Fatalf("the scoped read changed the digest:\nscoped:\n%s\nfull:\n%s", strings.Join(scoped, "\n"), strings.Join(full, "\n"))
+	}
+	if !strings.Contains(strings.Join(scoped, "\n"), "MiB") {
+		t.Fatal("the apps' memory figures are missing")
+	}
+
+	ch.NotifyInfra = true
+	if _, err := NewDigest(New(st), st, cm, nil).Build(context.Background(), ch, now); err != nil {
+		t.Fatal(err)
+	}
+	if all != 1 {
+		t.Fatalf("an infrastructure digest must read every component (Since calls %d)", all)
+	}
+}

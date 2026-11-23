@@ -1,7 +1,7 @@
 # Clone an environment
 
-An organization admin or owner can open a project, select an environment and
-choose **Clone environment**. Enter a new name: the suggested name is `staging`
+An organization admin or owner opens the source environment's **Settings** page
+and uses its **Clone environment** section. Enter a new name: the suggested name is `staging`
 for `production`, or `<source>-copy` otherwise. An existing name produces an
 error; Krill does not silently rename the clone.
 

@@ -27,6 +27,16 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// The same live status the sheet shows: the stored one can lag behind
+	// Swarm (an app stopped through the API still reads running). This polls
+	// every few seconds, so it asks for this one service only.
+	if s.engine != nil {
+		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
+			c.App.Status = deploy.DeriveStatus(st, c.App.Status)
+		} else {
+			logFrom(r).Warn("listDeployments: service state", "err", err, "app_id", c.App.ID)
+		}
+	}
 	render(w, r, http.StatusOK, templates.DeploymentsList(c, deps))
 }
 
@@ -36,7 +46,11 @@ func (s *Server) deploymentLogPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	render(w, r, http.StatusOK, templates.DeploymentLog(c, dep))
+	c.Deployment = &dep
+	if !s.fillAppSheet(w, r, &c, "deployments") {
+		return
+	}
+	render(w, r, http.StatusOK, templates.AppDetail(c, "deployments"))
 }
 
 // deploymentLogWS — WS stream of the deployment log (live for running / saved for finished).

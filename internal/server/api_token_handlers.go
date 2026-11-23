@@ -84,7 +84,7 @@ func (s *Server) listAPITokens(w http.ResponseWriter, r *http.Request) {
 	}
 	// One-shot reveal: read-and-clear, so this plaintext is rendered at most once.
 	plain := s.takeFlashToken(w, r)
-	render(w, r, http.StatusOK, templates.APITokens(o, role, tokens, plain))
+	render(w, r, http.StatusOK, templates.APITokens(o, role, tokens, plain, s.shownBaseURL(r)))
 }
 
 // createAPIToken mints a new personal access token for the signed-in user

@@ -1,0 +1,234 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/web"
+	"github.com/proshik/krill/internal/web/flash"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/nav"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// themeScript picks the theme before the first paint: the stored choice, or
+// the system's while there is none. It follows the system's changes whenever
+// no choice is stored, also after the toggle has gone back to "system".
+const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode')}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
+
+// docHead is the shared <head>: metadata, the theme script, styles and scripts.
+templ docHead(title string) {
+	<meta charset="utf-8"/>
+	<meta name="viewport" content="width=device-width, initial-scale=1"/>
+	<meta name="color-scheme" content="light dark"/>
+	<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+	<title>{ title } · Krill</title>
+	@templ.Raw("<script>" + themeScript + "</script>")
+	<link rel="stylesheet" href="/static/xterm.css"/>
+	<link rel="stylesheet" href={ "/static/app.css?v=" + web.AssetVersion }/>
+	<script src="/static/htmx.min.js"></script>
+	<script defer src={ "/static/app.js?v=" + web.AssetVersion }></script>
+}
+
+// Page is the frame of every signed-in page: the bar, the page body, the
+// confirm dialog and the toasts (the flash message, if any).
+templ Page(s Shell) {
+	<!DOCTYPE html>
+	<html lang={ i18n.Current(ctx) } translate="no">
+		<head>
+			@docHead(s.Title)
+		</head>
+		<body class={ bodyClass(s) } hx-boost="true" hx-headers={ assetHeaders() }>
+			// A boosted navigation swaps the body's content, not its attributes,
+			// and htmx's history cache keeps only the content: this marker
+			// carries the page's body classes through both (see app.js).
+			<div id="k-frame" hidden data-body={ bodyClass(s) }></div>
+			@ui.Sprite()
+			@bar(s)
+			{ children... }
+			@confirmDialog()
+			@toasts()
+			@palette(s)
+		</body>
+	</html>
+}
+
+// AuthPage is the frame of the pages shown before (or instead of) the app: sign
+// in and the forced password change.
+templ AuthPage(title string) {
+	<!DOCTYPE html>
+	<html lang={ i18n.Current(ctx) } translate="no">
+		<head>
+			@docHead(i18n.Sentence(title))
+		</head>
+		<body class="auth-page" hx-boost="true" hx-headers={ assetHeaders() }>
+			@ui.Sprite()
+			<main class="auth-wrap">
+				<div class="auth">
+					<span class="auth-mark">
+						@ui.Mark()
+					</span>
+					{ children... }
+				</div>
+			</main>
+			@confirmDialog()
+			@toasts()
+		</body>
+	</html>
+}
+
+templ toasts() {
+	<div class="toasts" id="toasts" aria-live="polite">
+		if f := flash.From(ctx); f != nil {
+			<div class={ "toast", "toast--" + toastKind(f.Kind) } role="status" data-toast-auto>
+				@ui.Sig(toastKind(f.Kind))
+				<span>{ f.Msg }</span>
+			</div>
+		}
+	</div>
+}
+
+// confirmDialog is the one confirmation every destructive action goes
+// through (krillConfirm in app.js fills it).
+templ confirmDialog() {
+	<dialog class="confirm" id="confirm" aria-labelledby="confirm-q" data-gone={ i18n.T(ctx, "confirm.gone") }>
+		<form method="dialog">
+			<p class="confirm-q" id="confirm-q"></p>
+			<p class="hint confirm-more"></p>
+			<div class="form-keys">
+				<button type="submit" class="pill" value="cancel">{ i18n.T(ctx, "common.cancel") }</button>
+				<button type="submit" class="btn btn--danger" value="ok" id="confirm-ok">{ i18n.T(ctx, "confirm.ok") }</button>
+			</div>
+		</form>
+	</dialog>
+}
+
+templ bar(s Shell) {
+	<header class="bar">
+		<a class="brand" href={ templ.SafeURL(orgURL(s.Org.ID)) } aria-label={ i18n.T(ctx, "nav.home") }>
+			@ui.Mark()
+		</a>
+		<nav class="path" aria-label={ i18n.T(ctx, "nav.where") }>
+			@orgCrumb(s)
+			if s.Env != nil {
+				<span class="sep" aria-hidden="true">/</span>
+				<a class="crumb" href={ templ.SafeURL(projectURL(s.Org.ID, s.Env.Project.ID)) }>{ s.Env.Project.Name }</a>
+				@envPicker(s)
+			}
+		</nav>
+		<nav class="tabs" aria-label={ barTabsLabel(ctx, s) }>
+			if s.Env != nil {
+				for _, t := range envTabs(ctx, s) {
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == s.Tab, "page")... }>{ t.Label }</a>
+				}
+				<span class="tabs-sep">{ s.Org.Name }</span>
+				for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
+					<a class="tab--org" href={ templ.SafeURL(t.Href) }>{ t.Label }</a>
+				}
+			} else {
+				for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == currentOrgTab(ctx, s), "page")... }>
+						{ t.Label }
+						if t.Key == "settings" && auth.IsInstanceAdmin(ctx) && nav.UpdateAvailable(ctx) != "" {
+							<span class="tab-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", nav.UpdateAvailable(ctx)) }>{ i18n.T(ctx, "nav.update_badge") }</span>
+						}
+					</a>
+				}
+			}
+		</nav>
+		<div class="bar-end">
+			<button type="button" class="pill pill--search" data-palette-open aria-haspopup="dialog">
+				@ui.Icon("i-search")
+				<span>{ i18n.T(ctx, "palette.search") }</span>
+				<kbd>⌘K</kbd>
+			</button>
+			<button type="button" class="pill pill--mode" id="mode">
+				<span class="visually-hidden">{ i18n.T(ctx, "mode.theme") }</span>
+				<span data-choice="system">{ i18n.T(ctx, "mode.system") }</span>
+				<span data-choice="light">{ i18n.T(ctx, "mode.light") }</span>
+				<span data-choice="dark">{ i18n.T(ctx, "mode.dark") }</span>
+			</button>
+			if isAdmin(s.Role) {
+				if s.Env != nil {
+					<a class="btn btn--primary" href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "?new=app") } aria-label={ i18n.T(ctx, "project.new_app") }>
+						@ui.Icon("i-plus")
+						<span class="btn-label">{ i18n.T(ctx, "project.new_app") }</span>
+					</a>
+				} else {
+					<a class="btn btn--primary" href={ templ.SafeURL(orgURL(s.Org.ID) + "?new=project") } aria-label={ i18n.T(ctx, "projects.new") }>
+						@ui.Icon("i-plus")
+						<span class="btn-label">{ i18n.T(ctx, "projects.new") }</span>
+					</a>
+				}
+			}
+			<button type="button" class="pill pill--menu" aria-label={ i18n.T(ctx, "nav.menu") } aria-expanded="false">
+				@ui.Icon("i-menu")
+			</button>
+		</div>
+	</header>
+}
+
+// orgCrumb is the organization crumb; it opens the organization switcher,
+// loaded on first open.
+templ orgCrumb(s Shell) {
+	<details class="envpick envpick--org">
+		<summary class={ "crumb", templ.KV("crumb--quiet", s.Env != nil) } aria-label={ i18n.Tf(ctx, "nav.org_menu", s.Org.Name) }>
+			{ s.Org.Name }
+			@ui.Icon("i-chev")
+		</summary>
+		<div class="envmenu" hx-get={ "/orgs/switcher?current=" + itoa(s.Org.ID) } hx-trigger="toggle from:closest details once" hx-swap="innerHTML">
+			<a href={ templ.SafeURL(orgURL(s.Org.ID)) } aria-current="page">{ s.Org.Name }</a>
+			<a class="envmenu-add" href="/orgs">{ i18n.T(ctx, "orgs.all") }</a>
+		</div>
+	</details>
+}
+
+templ envPicker(s Shell) {
+	<details class="envpick">
+		<summary class="envpill" aria-label={ i18n.Tf(ctx, "nav.env_menu", s.Env.Env.Name) }>
+			@ui.Sig(envHealthOf(s.Env, s.Env.Env.ID))
+			{ s.Env.Env.Name }
+			@ui.Icon("i-chev")
+		</summary>
+		<div class="envmenu">
+			for _, e := range s.Env.Envs {
+				<a href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, e.ID)) } { ariaCurrent(e.ID == s.Env.Env.ID, "page")... }>
+					@ui.Sig(e.Health)
+					{ e.Name }
+				</a>
+			}
+			if isAdmin(s.Role) {
+				<a class="envmenu-add" href={ templ.SafeURL(envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID) + "/settings#new-env") }>
+					@ui.Icon("i-plus")
+					{ i18n.T(ctx, "project.add_env") }
+				</a>
+			}
+		</div>
+	</details>
+}
+
+// palette is the command palette shell; its results come from the search
+// route as the person types.
+templ palette(s Shell) {
+	<div class="scrim" id="palette-scrim" hidden></div>
+	<div class="palette" id="palette" role="dialog" aria-modal="true" aria-label={ i18n.T(ctx, "palette.label") } hidden>
+		<label class="palette-input">
+			@ui.Icon("i-search")
+			<input
+				type="text"
+				name="q"
+				autocomplete="off"
+				spellcheck="false"
+				placeholder={ i18n.T(ctx, "palette.placeholder") }
+				aria-label={ i18n.T(ctx, "palette.search") }
+				aria-controls="palette-results"
+				hx-get={ orgURL(s.Org.ID) + "/search" }
+				hx-trigger="input changed delay:120ms, palette-open"
+				hx-target="#palette-results"
+				hx-swap="innerHTML"
+				hx-sync="this:replace"
+				hx-vals={ paletteVals(s) }
+			/>
+			<kbd class="palette-esc">esc</kbd>
+		</label>
+		<div class="palette-groups" id="palette-results" role="listbox"></div>
+	</div>
+}

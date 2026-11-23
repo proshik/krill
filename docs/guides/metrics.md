@@ -17,7 +17,7 @@ Collection can be disabled without deleting its endpoints or token. Up to ten en
 
 Serve Prometheus text format and accept `Authorization: Bearer <token>`. Krill supplies the token through `KRILL_METRICS_TOKEN`; the variable can be renamed on the Metrics tab. Krill always sends this header. An application may choose not to check it, but then hiding the path on the domain (below) is its only protection, and that is best effort: check the token wherever you can.
 
-The variable name cannot conflict with the Environment tab or an injected database link. The token is encrypted using the existing `KRILL_SECRET_KEY` mechanism. Only organization administrators can reveal it; members can inspect endpoints and collection status.
+The variable name cannot conflict with a variable on the Variables tab or an injected database link. The token is encrypted using the existing `KRILL_SECRET_KEY` mechanism. Only organization administrators can reveal it; members can inspect endpoints and collection status.
 
 ### Examples
 

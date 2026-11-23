@@ -1,0 +1,129 @@
+package templates
+
+import (
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// SettingsPage is the frame of every settings page: the heading and the
+// sub-navigation grouped into organization, you and this Krill.
+templ SettingsPage(org db.Organization, role, current, title string) {
+	@Page(Shell{Title: i18n.Sentence(title), Org: org, Role: role, Tab: "settings"}) {
+		<main class="wrap wrap--wide">
+			<div class="page-head"><h1>{ title }</h1></div>
+			<div class="setpage">
+				@settingsSubnav(org.ID, role, current)
+				<div class="setbody">
+					{ children... }
+				</div>
+			</div>
+		</main>
+	}
+}
+
+templ settingsSubnav(orgID int64, role, current string) {
+	<nav class="subnav" aria-label={ i18n.T(ctx, "nav.settings") }>
+		for _, g := range settingsGroups(ctx, orgID, role) {
+			<h2>{ g.Title }</h2>
+			for _, it := range g.Items {
+				<a href={ templ.SafeURL(it.Href) } { ariaCurrent(it.Key == current, "page")... }>{ it.Label }</a>
+			}
+			if g.You {
+				<form method="post" action="/logout" hx-boost="false">
+					<button type="submit" class="subnav-out">{ i18n.T(ctx, "nav.logout") }</button>
+				</form>
+			}
+		}
+	</nav>
+}
+
+// SettingsRow is one summary row of the settings start page.
+type SettingsRow struct {
+	Title string
+	Text  string
+	Note  string // a third, quieter cell
+	Href  string // the page to edit it on, "" for none
+	Kind  string // a state signal for the row ("" for none)
+	State string
+}
+
+// SettingsSection is one section of the settings start page.
+type SettingsSection struct {
+	ID    string
+	Title string
+	Rows  []SettingsRow
+}
+
+// SettingsOverviewView is the settings start page.
+type SettingsOverviewView struct {
+	Org   []SettingsSection
+	Krill []SettingsSection
+	Email string
+}
+
+// SettingsOverview is the settings start page: a summary of every section
+// with the way into it, and the person's own account.
+templ SettingsOverview(org db.Organization, role string, v SettingsOverviewView) {
+	@SettingsPage(org, role, "overview", i18n.T(ctx, "nav.settings")) {
+		for _, sec := range v.Org {
+			@settingsSection(sec)
+		}
+		<section class="sec setsec" id="you" aria-labelledby="you-h">
+			<h3 id="you-h">{ i18n.T(ctx, "settings.group_you") }</h3>
+			<ul class="links">
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "settings.password") }</span>
+					<span class="link-src">{ i18n.T(ctx, "settings.password_note") }</span>
+					<a class="pill" href={ templ.SafeURL(orgURL(org.ID) + "/account/password") }>{ i18n.T(ctx, "settings.change") }</a>
+				</li>
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "settings.session") }</span>
+					<span class="link-src">{ v.Email }</span>
+					<form method="post" action="/logout" hx-boost="false">
+						<button type="submit" class="pill">{ i18n.T(ctx, "nav.logout") }</button>
+					</form>
+				</li>
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "settings.language") }</span>
+					<form class="lang-form" method="post" hx-boost="false" action="/lang">
+						<label class="visually-hidden" for="lang-pick">{ i18n.T(ctx, "settings.language") }</label>
+						<select class="input input--compact" id="lang-pick" name="lang" data-autosubmit>
+							for _, l := range i18n.Locales {
+								<option value={ l.Code } selected?={ l.Code == i18n.Current(ctx) }>{ l.Name }</option>
+							}
+						</select>
+						<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
+					</form>
+				</li>
+			</ul>
+		</section>
+		for _, sec := range v.Krill {
+			@settingsSection(sec)
+		}
+	}
+}
+
+templ settingsSection(sec SettingsSection) {
+	<section class="sec setsec" id={ sec.ID } aria-labelledby={ sec.ID + "-h" }>
+		<h3 id={ sec.ID + "-h" }>{ sec.Title }</h3>
+		<ul class="links">
+			for _, r := range sec.Rows {
+				<li class="row-item">
+					<span class="link-var">{ r.Title }</span>
+					<span class="link-src">{ r.Text }</span>
+					if r.Kind != "" {
+						@ui.State(r.Kind, r.State)
+					} else {
+						<span class="link-src">{ r.Note }</span>
+					}
+					if r.Href != "" {
+						<a class="pill" href={ templ.SafeURL(r.Href) }>{ i18n.T(ctx, "common.open") }</a>
+					} else {
+						<span></span>
+					}
+				</li>
+			}
+		</ul>
+	</section>
+}

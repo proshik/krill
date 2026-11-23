@@ -119,12 +119,20 @@ func TestChangePasswordIsReachableFromTheLayout(t *testing.T) {
 		return rec
 	}
 
+	// The layout links to settings, and settings to the change-password page.
 	rec := get(orgURL)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dashboard: want 200, got %d", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), `href="`+orgURL+`/settings"`) {
+		t.Fatal("the layout must link to settings")
+	}
+	rec = get(orgURL + "/settings")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings: want 200, got %d", rec.Code)
+	}
 	if !strings.Contains(rec.Body.String(), `href="`+pageURL+`"`) {
-		t.Fatal("the layout must link to the change-password page")
+		t.Fatal("settings must link to the change-password page")
 	}
 
 	rec = get(pageURL)

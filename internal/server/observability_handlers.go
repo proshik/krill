@@ -233,7 +233,11 @@ func checkMessage(ctx context.Context, rep observability.Report) (string, bool) 
 				text = i18n.T(ctx, res.Key)
 			}
 		}
-		parts = append(parts, i18n.T(ctx, labelKey)+": "+text)
+		part := i18n.T(ctx, labelKey) + ": " + text
+		if len(parts) > 0 {
+			part = i18n.Sentence(part) // a new sentence after the previous one
+		}
+		parts = append(parts, part)
 	}
 	add("obs.check.metrics", rep.Metrics)
 	add("obs.check.logs", rep.Logs)

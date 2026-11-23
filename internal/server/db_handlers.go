@@ -13,6 +13,7 @@ import (
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -100,7 +101,7 @@ func (s *Server) createLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	logFrom(r).Info("logical database created", "ldb_id", ld.ID, "environment_id", e.ID, "instance_id", inst.ID, "db_name", dbName)
 	s.flashOK(w, r, "flash.ok.db_created")
-	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
+	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"/databases", http.StatusSeeOther)
 }
 
 // loadLogicalDB parses {dbID} and verifies the logical database belongs to the
@@ -183,11 +184,66 @@ func (s *Server) logicalDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if backups, err := s.q.ListBackupsByLogicalDB(r.Context(), ld.ID); err == nil {
-		c.Backups = backups
+	ctx := r.Context()
+	envs, err := s.q.ListEnvironments(ctx, p.ID)
+	if err != nil {
+		logFrom(r).Error("logicalDatabaseDetail: list environments", "err", err, "project_id", p.ID)
 	}
-	if dests, err := s.q.ListDestinationsByOrg(r.Context(), o.ID); err == nil {
-		c.Destinations = dests
+	c.Shell = s.envShell(ctx, o, role, p, e, envs, ld.Name+", "+p.Name+" "+e.Name, "databases", "page")
+	running, _, _, _ := s.placement(ctx)
+	if n := running[inst.AppName]; len(n) > 0 {
+		c.Node = strings.Join(n, ", ")
+	} else {
+		c.Node = inst.NodeHostname
+	}
+	// The apps of the environment that link this database.
+	if apps, err := s.q.ListApplicationsByEnvironment(ctx, e.ID); err == nil && len(apps) > 0 {
+		ids := make([]int64, 0, len(apps))
+		name := map[int64]string{}
+		for _, a := range apps {
+			ids = append(ids, a.ID)
+			name[a.ID] = a.Name
+		}
+		vars := map[int64][]string{}
+		var order []int64
+		if links, err := s.q.ListDBLinksByApplicationIDs(ctx, ids); err == nil {
+			for _, l := range links {
+				if l.LogicalDatabaseID == nil || *l.LogicalDatabaseID != ld.ID {
+					continue
+				}
+				if _, seen := vars[l.ApplicationID]; !seen {
+					order = append(order, l.ApplicationID)
+				}
+				vars[l.ApplicationID] = append(vars[l.ApplicationID], l.VarName)
+			}
+		} else {
+			logFrom(r).Warn("logicalDatabaseDetail: list links", "err", err)
+		}
+		for _, id := range order {
+			c.Users = append(c.Users, templates.UsedBy{Name: name[id], Href: envURL(o.ID, p.ID, e.ID) + "/apps/" + strconv.FormatInt(id, 10) + "?tab=variables", Note: strings.Join(vars[id], ", ")})
+		}
+	}
+	if role == "owner" || role == "admin" {
+		dests, err := s.q.ListDestinationsByOrg(ctx, o.ID)
+		if err != nil {
+			logFrom(r).Error("logicalDatabaseDetail: list destinations", "err", err, "org_id", o.ID)
+		}
+		c.Backup = templates.BackupBlock{
+			ID: "backups", Title: i18n.T(ctx, "backup.section"), Destinations: dests, AddURL: base + "/backups",
+			OrgID: o.ID, ReturnURL: base + "#backups", Admin: true, Big: true,
+		}
+		backups, err := s.q.ListBackupsByLogicalDB(ctx, ld.ID)
+		if err != nil {
+			logFrom(r).Error("logicalDatabaseDetail: list backups", "err", err, "ldb_id", ld.ID)
+		}
+		for _, b := range backups {
+			id := base + "/backups/" + strconv.FormatInt(b.ID, 10)
+			c.Backup.Configs = append(c.Backup.Configs, templates.BackupConfig{
+				ID: b.ID, Storage: destNameOf(dests, b.DestinationID), Schedule: b.Schedule, Retention: b.Retention, Enabled: b.Enabled,
+				LastRun: b.LastRunAt.Time, Ran: b.LastRunAt.Valid, LastStatus: b.LastStatus, LastError: b.LastError,
+				RunURL: id + "/run", ToggleURL: id + "/toggle", DeleteURL: id + "/delete", ObjectsURL: id + "/objects",
+			})
+		}
 	}
 	render(w, r, http.StatusOK, templates.DatabaseDetail(c))
 }
@@ -246,7 +302,7 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	s.reloadBackupSchedules() // its backups cascade-deleted with the row
 	logFrom(r).Info("logical database deleted", "ldb_id", ld.ID, "db_name", ld.DbName)
 	s.flashOK(w, r, "flash.ok.db_deleted")
-	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"?tab=databases", http.StatusSeeOther)
+	http.Redirect(w, r, envURL(o.ID, p.ID, e.ID)+"/databases", http.StatusSeeOther)
 }
 
 func genPassword() (string, error) {

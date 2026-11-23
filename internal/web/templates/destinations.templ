@@ -3,41 +3,53 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
+// Destinations lists the S3 storages backups go to.
 templ Destinations(org db.Organization, role string, dests []db.Destination) {
-	@Layout(i18n.T(ctx, "dest.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "dest.desc") }</p>
-		<div class="k-card">
-			<table class="k-table">
-				<thead>
-					<tr>
-						<th>{ i18n.T(ctx, "dest.name") }</th>
-						<th>{ i18n.T(ctx, "dest.endpoint") }</th>
-						<th>{ i18n.T(ctx, "dest.bucket") }</th>
-						<th>{ i18n.T(ctx, "dest.region") }</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody>
+	@SettingsPage(org, role, "storage", i18n.T(ctx, "dest.title")) {
+		<section class="sec" aria-labelledby="st-h">
+			<div class="sec-head"><h3 id="st-h">{ i18n.Tf(ctx, "dest.n", len(dests)) }</h3></div>
+			if len(dests) == 0 {
+				<div class="empty-card">
+					<p class="empty-title">{ i18n.T(ctx, "backup.no_storage_title") }</p>
+					<p class="hint">{ i18n.T(ctx, "backup.no_storage_hint") }</p>
+				</div>
+			} else {
+				<ul class="links">
 					for _, d := range dests {
-						<tr>
-							<td>{ d.Name }</td><td class="k-mono">{ d.Endpoint }</td><td class="k-mono">{ d.Bucket }</td><td>{ d.Region }</td>
-							<td>
-								if role == "owner" || role == "admin" {
-									<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/destinations/" + itoa(d.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_destination", d.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
-										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "dest.delete") }</button>
-									</form>
-								}
-							</td>
-						</tr>
+						<li class="row-item">
+							<span class="link-var">{ d.Name }</span>
+							<span class="link-src"><code>{ destWhere(d) }</code></span>
+							<span class="run-meta">{ d.Region }</span>
+							if isAdmin(role) {
+								<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/destinations/" + itoa(d.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_destination", d.Name) } data-more={ i18n.T(ctx, "dest.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)">
+									<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "common.delete_named", d.Name) } title={ i18n.T(ctx, "common.delete") }>
+										@ui.Icon("i-trash")
+									</button>
+								</form>
+							} else {
+								<span></span>
+							}
+						</li>
 					}
-				</tbody>
-			</table>
-			if role == "owner" || role == "admin" {
-				@inlineDestinationForm(org.ID, "")
+				</ul>
 			}
-		</div>
+			<p class="hint">{ i18n.T(ctx, "dest.desc") }</p>
+		</section>
+		if isAdmin(role) {
+			<section class="sec" aria-labelledby="ad-h">
+				<h3 id="ad-h">{ i18n.T(ctx, "dest.add_title") }</h3>
+				@inlineDestinationForm(org.ID, "")
+			</section>
+		}
 	}
+}
+
+func destWhere(d db.Destination) string {
+	if d.Endpoint == "" {
+		return "s3://" + d.Bucket
+	}
+	return trimScheme(d.Endpoint) + "/" + d.Bucket
 }

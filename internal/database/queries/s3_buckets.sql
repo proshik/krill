@@ -11,6 +11,17 @@ FROM s3_buckets b
 JOIN db_instances di ON di.id = b.instance_id
 WHERE b.environment_id = $1 ORDER BY b.created_at;
 
+-- name: SearchS3BucketsByOrg :many
+-- The command palette's bucket search, as SearchLogicalDatabasesByOrg.
+SELECT b.id, b.name, b.environment_id
+FROM s3_buckets b
+JOIN environments e ON e.id = b.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = @organization_id
+  AND b.name ILIKE @pattern
+ORDER BY b.name, b.id
+LIMIT @max_rows;
+
 -- name: ListS3BucketsByInstance :many
 SELECT * FROM s3_buckets WHERE instance_id = $1 ORDER BY created_at;
 

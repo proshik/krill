@@ -2,8 +2,8 @@
 
 ## Run a command before deployment
 
-Organization admins can set **Advanced → Pre-deploy command**, for example
-`./migrate up`. Leave it empty to disable it. Save the form, then deploy.
+Organization admins can set the app's **Settings** tab → **Resources** → **pre-deploy command**,
+for example `./migrate up`. Leave it empty to disable it. Save the form, then deploy.
 
 Krill runs the command once in a disposable container using the **new image**,
 the application's resolved environment and its current organization network.

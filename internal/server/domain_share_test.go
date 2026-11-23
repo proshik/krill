@@ -200,7 +200,7 @@ func TestDomainsTabShowsSharers(t *testing.T) {
 	if !strings.Contains(body, "HTTPS will switch for every app on m.example.com: web, api") {
 		t.Fatal("host-wide HTTPS confirmation missing")
 	}
-	if !strings.Contains(body, "Shared host with") || !strings.Contains(body, s.apiURL) || !strings.Contains(body, "/api") {
+	if !strings.Contains(body, "shared host with") || !strings.Contains(body, s.apiURL) || !strings.Contains(body, "/api") {
 		t.Fatalf("web's domains tab does not show api on the shared host")
 	}
 }

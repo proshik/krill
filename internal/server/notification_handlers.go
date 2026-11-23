@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -74,7 +75,37 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err == nil {
+		s.digestPreview(r, ch, &v)
+	}
 	render(w, r, http.StatusOK, templates.Notifications(o, role, v))
+}
+
+// digestPreview builds the organization's digest as it would go out now,
+// through the same Digest.Build the scheduler uses, without sending it. Node
+// data is for instance operators only, so for anyone else the preview leaves
+// the infrastructure part out even when the channel has it.
+func (s *Server) digestPreview(r *http.Request, row db.NotificationChannel, v *templates.NotifyView) {
+	if s.digest == nil {
+		return
+	}
+	ch, err := notify.ChannelFromRow(row)
+	if err != nil {
+		v.PreviewErr = true
+		return
+	}
+	if !auth.IsInstanceAdmin(r.Context()) {
+		ch.NotifyInfra = false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	parts, err := s.digest.Build(ctx, ch, time.Now())
+	if err != nil {
+		logFrom(r).Warn("listNotifications: digest preview", "err", err)
+		v.PreviewErr = true
+		return
+	}
+	v.Preview = templates.ParseDigest(parts)
 }
 
 // digestTime renders minutes after midnight as "HH:MM".
@@ -246,7 +277,7 @@ func (s *Server) saveNotifications(w http.ResponseWriter, r *http.Request) {
 	logFrom(r).Info("notifications saved", "org_id", o.ID, "infra", infra, "infra_reset", infraReset)
 	msg := i18n.T(r.Context(), "notif.saved")
 	if infraReset {
-		msg += ". " + i18n.T(r.Context(), "notif.infra_reset")
+		msg += ". " + i18n.Sentence(i18n.T(r.Context(), "notif.infra_reset"))
 	}
 	s.setFlash(w, r, "ok", msg)
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/notifications", http.StatusSeeOther)

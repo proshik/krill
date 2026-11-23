@@ -3,64 +3,43 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
+// Orgs is the organization list: where a person lands with no organization
+// to go to, and where they create another one.
 templ Orgs(orgs []db.Organization) {
 	@Bare(i18n.T(ctx, "orgs.page_title")) {
-		<div class="k-card w-[420px] max-w-full">
-			<h2 class="text-2xl mb-4">{ i18n.T(ctx, "orgs.title") }</h2>
-			if len(orgs) == 0 {
-				<p class="k-mono mb-3">{ i18n.T(ctx, "orgs.empty") }</p>
-			} else {
-				<ul class="list-none p-0 m-0 mb-3">
-					for _, o := range orgs {
-						<li class="py-2 border-b border-[color:var(--color-border)]">
-							<a class="text-[color:var(--color-accent)]" href={ templ.SafeURL("/orgs/" + itoa(o.ID)) }>{ o.Name }</a>
-						</li>
-					}
-				</ul>
-			}
-			<form method="post" action="/orgs" class="mt-4">
-				<label class="k-label">{ i18n.T(ctx, "orgs.new_label") }</label>
-				<input class="k-input" name="name" required placeholder="My Company"/>
-				<div class="mt-2"><button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button></div>
-			</form>
-		</div>
-	}
-}
-
-// OrgSwitcher is the modal body lazily loaded into the sidebar #org-switcher
-// dialog: the user's organizations (current one highlighted) plus a create form.
-templ OrgSwitcher(orgs []db.Organization, currentID int64) {
-	<div class="k-modal-head">
-		<div class="k-modal-title">{ i18n.T(ctx, "orgs.switch_title") }</div>
-	</div>
-	<div class="k-modal-body">
+		<h1>{ i18n.T(ctx, "orgs.title") }</h1>
 		if len(orgs) == 0 {
-			<p class="k-mono">{ i18n.T(ctx, "orgs.empty") }</p>
+			<p class="hint">{ i18n.T(ctx, "orgs.empty") }</p>
 		} else {
-			<ul class="list-none p-0 m-0 flex flex-col gap-1">
+			<ul class="links">
 				for _, o := range orgs {
-					<li>
-						<a class={ "k-org-item", templ.KV("k-org-item-active", o.ID == currentID) } href={ templ.SafeURL("/orgs/" + itoa(o.ID)) }>
-							<span>{ o.Name }</span>
-							if o.ID == currentID {
-								<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "orgs.current") }</span>
-							}
-						</a>
+					<li class="row-item row-item--link">
+						<a class="link-var" href={ templ.SafeURL(orgURL(o.ID)) }>{ o.Name }</a>
 					</li>
 				}
 			</ul>
 		}
-		<form method="post" action="/orgs" class="mt-1">
-			<label class="k-label k-label-required">{ i18n.T(ctx, "orgs.new_label") }</label>
-			<div class="flex items-center gap-2">
-				<input class="k-input" name="name" required placeholder="My Company"/>
-				<button type="submit" class="k-btn k-btn-primary">{ i18n.T(ctx, "common.create") }</button>
+		<form method="post" action="/orgs" class="stack">
+			<div class="field">
+				<label for="org-new">{ i18n.T(ctx, "orgs.new_label") }</label>
+				<input class="input" id="org-new" name="name" required placeholder="harbor" autocomplete="off"/>
 			</div>
+			<button type="submit" class="btn btn--primary btn--wide">{ i18n.T(ctx, "orgs.create") }</button>
 		</form>
-	</div>
-	<div class="k-modal-foot">
-		<button type="button" class="k-btn k-btn-secondary" onclick="krillCloseModal('org-switcher')">{ i18n.T(ctx, "common.close") }</button>
-	</div>
+	}
+}
+
+// OrgSwitcher fills the organization crumb's menu: the person's organizations
+// (the current one marked) and the way to the full list.
+templ OrgSwitcher(orgs []db.Organization, currentID int64) {
+	for _, o := range orgs {
+		<a href={ templ.SafeURL(orgURL(o.ID)) } { ariaCurrent(o.ID == currentID, "page")... }>{ o.Name }</a>
+	}
+	<a class="envmenu-add" href="/orgs">
+		@ui.Icon("i-plus")
+		{ i18n.T(ctx, "orgs.all") }
+	</a>
 }

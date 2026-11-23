@@ -233,6 +233,49 @@ func (q *Queries) GetApplicationPlacement(ctx context.Context, id int64) (GetApp
 	return i, err
 }
 
+const listAppIndexByEnvironmentIDs = `-- name: ListAppIndexByEnvironmentIDs :many
+SELECT id, name, environment_id, status, registry_id, git_credential_id
+FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
+`
+
+type ListAppIndexByEnvironmentIDsRow struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	EnvironmentID   int64  `json:"environment_id"`
+	Status          string `json:"status"`
+	RegistryID      *int64 `json:"registry_id"`
+	GitCredentialID *int64 `json:"git_credential_id"`
+}
+
+// What the organization-wide index (palette, used-by lists, nodes,
+// monitoring links) needs of each app; never its env or build values.
+func (q *Queries) ListAppIndexByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]ListAppIndexByEnvironmentIDsRow, error) {
+	rows, err := q.db.Query(ctx, listAppIndexByEnvironmentIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAppIndexByEnvironmentIDsRow
+	for rows.Next() {
+		var i ListAppIndexByEnvironmentIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.EnvironmentID,
+			&i.Status,
+			&i.RegistryID,
+			&i.GitCredentialID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApplicationIDsByOrg = `-- name: ListApplicationIDsByOrg :many
 SELECT a.id
 FROM applications a

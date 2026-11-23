@@ -284,7 +284,7 @@ func TestObservabilitySaveValidationErrors(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatal("an empty submit over a configured target was accepted")
 	}
-	if msg := flashText(rec); !strings.Contains(msg, `tick "Remove these settings"`) {
+	if msg := flashText(rec); !strings.Contains(msg, `tick "remove these settings"`) {
 		t.Errorf("flash = %q", msg)
 	}
 
@@ -295,7 +295,7 @@ func TestObservabilitySaveValidationErrors(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatal("clearing both addresses while enabled was accepted")
 	}
-	if msg := flashText(rec); !strings.Contains(msg, "Set a metrics or a logs address") {
+	if msg := flashText(rec); !strings.Contains(msg, "set a metrics or a logs address") {
 		t.Errorf("flash = %q", msg)
 	}
 }
@@ -320,7 +320,7 @@ func TestObservabilitySaveClearRequiresConfirmation(t *testing.T) {
 	if !hasErrFlash(rec) {
 		t.Fatal("a blank URL without confirmation was accepted")
 	}
-	if msg := flashText(rec); !strings.Contains(msg, `tick "Remove these settings"`) {
+	if msg := flashText(rec); !strings.Contains(msg, `tick "remove these settings"`) {
 		t.Errorf("flash = %q", msg)
 	}
 	s, err := observability.Load(context.Background(), env.q)
@@ -413,7 +413,7 @@ func TestObservabilityCheck(t *testing.T) {
 		t.Error("a failed logs check flashed success")
 	}
 	msg := flashText(rec)
-	if !strings.Contains(msg, "Metrics: the address and credentials are fine") || !strings.Contains(msg, "Logs: wrong user or password (HTTP 401)") {
+	if !strings.Contains(msg, "metrics: the address and credentials are fine") || !strings.Contains(msg, "Logs: wrong user or password (HTTP 401)") {
 		t.Errorf("flash = %q", msg)
 	}
 
@@ -432,7 +432,7 @@ func TestObservabilityStatusOnPage(t *testing.T) {
 		Service: docker.ServiceState{Found: true, Running: 1, Desired: 2, Failed: 1},
 	}
 	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
-	for _, want := range []string{"Agents running: 1 of 2", "Failed tasks: 1", "Applying the settings", "not running on every node", "256 MiB"} {
+	for _, want := range []string{"agents running: 1 of 2", "failed tasks: 1", "applying the settings", "not running on every node", "256 MiB"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}
@@ -450,7 +450,7 @@ func TestObservabilityStatusShowsPartialCoverage(t *testing.T) {
 		Coverage: observability.Coverage{Expected: 2, Deployed: 1, Missing: []string{"worker-1"}},
 	}
 	page := env.do(t, http.MethodGet, env.base, nil, env.cookie).Body.String()
-	for _, want := range []string{"Deployed on 1 of 2 nodes", "worker-1", "previous settings", "next reconcile pass"} {
+	for _, want := range []string{"deployed on 1 of 2 nodes", "worker-1", "previous settings", "next reconcile pass"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}

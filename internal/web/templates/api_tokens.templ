@@ -3,94 +3,98 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
 // APITokens renders the signed-in user's personal access tokens. plainToken
 // is non-empty exactly once, right after creation — it comes from a one-shot
 // flash cookie (see Server.takeFlashToken) and is never persisted, so it can
 // never appear here on a later page load.
-templ APITokens(org db.Organization, role string, tokens []db.ApiToken, plainToken string) {
-	@Layout(i18n.T(ctx, "api_tokens.title"), org, role) {
-		@settingsNav(org.ID)
-		<p class="mb-4" style="color:var(--color-muted);max-width:680px">{ i18n.T(ctx, "api_tokens.desc") }</p>
+templ APITokens(org db.Organization, role string, tokens []db.ApiToken, plainToken, baseURL string) {
+	@SettingsPage(org, role, "tokens", i18n.T(ctx, "api_tokens.title")) {
 		if plainToken != "" {
-			<div class="k-toast k-toast-ok mb-3 flex items-center gap-3">
-				<span>{ i18n.T(ctx, "api_tokens.created_once") } <b class="k-mono">{ plainToken }</b></span>
-				<button type="button" class="k-copy" data-copy={ plainToken } onclick="krillCopyToClip(this.dataset.copy, 'Token')">{ i18n.T(ctx, "common.copy") }</button>
+			<div class="callout callout--ok" role="status">
+				<div class="callout-body">
+					@ui.State("ok", i18n.T(ctx, "api_tokens.created"))
+					<p class="hint">{ i18n.T(ctx, "api_tokens.created_once") }</p>
+					<div class="input-group">
+						<input class="input input--mono" value={ plainToken } readonly aria-label={ i18n.T(ctx, "api_tokens.new_token") }/>
+						@ui.CopyButton(plainToken, i18n.T(ctx, "common.copy"))
+					</div>
+				</div>
 			</div>
 		}
-		<div class="k-card">
-			<table class="k-table">
-				<thead>
-					<tr>
-						<th>{ i18n.T(ctx, "api_tokens.name") }</th>
-						<th>{ i18n.T(ctx, "api_tokens.prefix") }</th>
-						<th>{ i18n.T(ctx, "api_tokens.level") }</th>
-						<th>{ i18n.T(ctx, "api_tokens.expires") }</th>
-						<th>{ i18n.T(ctx, "api_tokens.last_used") }</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody>
-					if len(tokens) == 0 {
-						<tr><td colspan="6" style="color:var(--color-muted)">{ i18n.T(ctx, "api_tokens.empty") }</td></tr>
-					}
+		<section class="sec" aria-labelledby="ep-h">
+			<h3 id="ep-h">{ i18n.T(ctx, "api_tokens.endpoints") }</h3>
+			<div class="row row--even">
+				@ui.CopyField("rest", "REST", baseURL+"/api/v1", false, i18n.T(ctx, "common.copy"), "")
+				@ui.CopyField("mcp", "MCP", baseURL+"/mcp", false, i18n.T(ctx, "common.copy"), "")
+			</div>
+			<p class="hint">{ i18n.T(ctx, "api_tokens.header_hint") }</p>
+		</section>
+		<section class="sec" aria-labelledby="tk-h">
+			<div class="sec-head"><h3 id="tk-h">{ i18n.T(ctx, "api_tokens.yours") }</h3></div>
+			if len(tokens) == 0 {
+				<p class="empty">{ i18n.T(ctx, "api_tokens.empty") }</p>
+			} else {
+				<ul class="tokens">
 					for _, t := range tokens {
-						<tr>
-							<td>{ t.Name }</td>
-							<td class="k-mono">{ tokenPrefixDisplay(t.Prefix) }</td>
-							<td>
-								if t.Level == "provision" {
-									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "api_tokens.level_provision") }</span>
-								} else if t.Level == "write" {
-									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "api_tokens.level_write") }</span>
-								} else {
-									<span class="k-badge k-badge-idle"><span class="k-dot"></span>{ i18n.T(ctx, "api_tokens.level_read") }</span>
-								}
-							</td>
-							<td>
+						<li class="token">
+							<span class="token-who">
+								<span class="token-name">{ t.Name }</span>
+								<span class={ "tag", templ.KV("tag--level", t.Level != "read") }>{ i18n.T(ctx, "api_tokens.level_"+t.Level) }</span>
+							</span>
+							<code class="token-prefix">{ tokenPrefixDisplay(t.Prefix) }</code>
+							<span class="run-meta">
 								if t.ExpiresAt.Valid {
-									{ tsStr(t.ExpiresAt) }
+									{ i18n.Tf(ctx, "api_tokens.expires_at", t.ExpiresAt.Time.Local().Format("2006-01-02")) }
 								} else {
-									{ i18n.T(ctx, "api_tokens.never") }
+									{ i18n.T(ctx, "api_tokens.expires_never") }
 								}
-							</td>
-							<td>{ tsStr(t.LastUsedAt) }</td>
-							<td>
-								<form method="post" hx-boost="false" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/api-tokens/" + itoa(t.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "api_tokens.revoke_confirm", t.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
-									<button class="k-btn k-btn-danger">{ i18n.T(ctx, "api_tokens.revoke") }</button>
-								</form>
-							</td>
-						</tr>
+							</span>
+							<span class="run-meta">
+								if t.LastUsedAt.Valid {
+									{ i18n.Tf(ctx, "api_tokens.used_ago", ago(ctx, t.LastUsedAt.Time)) }
+								} else {
+									{ i18n.T(ctx, "api_tokens.never_used") }
+								}
+							</span>
+							<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/api-tokens/" + itoa(t.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "api_tokens.revoke_confirm", t.Name) } data-more={ i18n.T(ctx, "api_tokens.revoke_more") } data-ok={ i18n.T(ctx, "api_tokens.revoke") } onsubmit="return krillConfirm(this)">
+								<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "api_tokens.revoke_named", t.Name) } title={ i18n.T(ctx, "api_tokens.revoke") }>
+									@ui.Icon("i-trash")
+								</button>
+							</form>
+						</li>
 					}
-				</tbody>
-			</table>
-			if role == "owner" || role == "admin" {
-				<form method="post" action={ templ.SafeURL("/orgs/" + itoa(org.ID) + "/api-tokens") } class="mt-4 flex flex-col gap-2">
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.name") }</label>
-						<input class="k-input" name="name" required/>
-					</div>
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.level") }</label>
-						<select class="k-select" name="level">
-							<option value="read">{ i18n.T(ctx, "api_tokens.level_read") }</option>
-							<option value="write">{ i18n.T(ctx, "api_tokens.level_write") }</option>
-							<option value="provision">{ i18n.T(ctx, "api_tokens.level_provision") }</option>
-						</select>
-						<p class="k-mono text-xs" style="color:var(--color-faint)">{ i18n.T(ctx, "api_tokens.level_hint") }</p>
-					</div>
-					<div>
-						<label class="k-label k-label-required">{ i18n.T(ctx, "api_tokens.expires") }</label>
-						<select class="k-select" name="expires">
-							<option value="never">{ i18n.T(ctx, "api_tokens.never") }</option>
-							<option value="30d">{ i18n.T(ctx, "api_tokens.expires_30d") }</option>
-							<option value="90d">{ i18n.T(ctx, "api_tokens.expires_90d") }</option>
-						</select>
-					</div>
-					<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "api_tokens.create") }</button></div>
-				</form>
+				</ul>
 			}
-		</div>
+			<p class="hint">{ i18n.T(ctx, "api_tokens.desc") }</p>
+		</section>
+		if isAdmin(role) {
+			<form class="sec" method="post" action={ templ.SafeURL(orgURL(org.ID) + "/api-tokens") } aria-labelledby="ct-h">
+				<h3 id="ct-h">{ i18n.T(ctx, "api_tokens.create_title") }</h3>
+				<div class="row row--even">
+					<div class="field">
+						<label for="tname">{ i18n.T(ctx, "api_tokens.name") }</label>
+						<input class="input input--mono" id="tname" name="name" required placeholder="release-bot" autocomplete="off" spellcheck="false"/>
+					</div>
+					<div class="field">
+						<label for="texp">{ i18n.T(ctx, "api_tokens.expires") }</label>
+						<select class="input" id="texp" name="expires">
+							<option value="30d">{ i18n.T(ctx, "api_tokens.expires_30d") }</option>
+							<option value="90d" selected>{ i18n.T(ctx, "api_tokens.expires_90d") }</option>
+							<option value="never">{ i18n.T(ctx, "api_tokens.never") }</option>
+						</select>
+					</div>
+				</div>
+				<fieldset class="choice choice--three">
+					<legend>{ i18n.T(ctx, "api_tokens.level") }</legend>
+					<label class="choice-card"><input type="radio" name="level" value="read" checked/><span class="choice-name">{ i18n.T(ctx, "api_tokens.level_read") }</span><span class="choice-sub">{ i18n.T(ctx, "api_tokens.level_read_sub") }</span></label>
+					<label class="choice-card"><input type="radio" name="level" value="write"/><span class="choice-name">{ i18n.T(ctx, "api_tokens.level_write") }</span><span class="choice-sub">{ i18n.T(ctx, "api_tokens.level_write_sub") }</span></label>
+					<label class="choice-card"><input type="radio" name="level" value="provision"/><span class="choice-name">{ i18n.T(ctx, "api_tokens.level_provision") }</span><span class="choice-sub">{ i18n.T(ctx, "api_tokens.level_provision_sub") }</span></label>
+				</fieldset>
+				<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "api_tokens.create") }</button></div>
+			</form>
+		}
 	}
 }

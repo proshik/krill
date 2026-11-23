@@ -16,9 +16,9 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/dbservice/drivers"
-	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -56,38 +56,118 @@ func (s *Server) listDBInstances(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	insts, err := s.q.ListDBInstancesByOrg(r.Context(), o.ID)
+	v, ok := s.dbServersView(w, r, o)
+	if !ok {
+		return
+	}
+	v.New = r.URL.Query().Get("new") == "server" && isAdminRole(role)
+	render(w, r, http.StatusOK, templates.DBServers(o, role, v))
+}
+
+// dbServersView builds the servers page: every server of the organization
+// with its live status, the node it runs on and what it holds.
+func (s *Server) dbServersView(w http.ResponseWriter, r *http.Request, o db.Organization) (templates.DBServersView, bool) {
+	ctx := r.Context()
+	var v templates.DBServersView
+	insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
 	if err != nil {
 		logFrom(r).Error("listDBInstances: list failed", "err", err, "org_id", o.ID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return v, false
 	}
-	var nodes []docker.SwarmNode
 	statuses := map[int64]string{}
+	running := map[string][]string{}
 	if s.engine != nil {
-		// Fetched for every viewer (not just admin/owner): the honest status badge
-		// needs the live node list to detect node_down/node_removed regardless of
-		// role. The node-picker in the template still only renders for admin/owner.
-		var nerr error
-		nodes, nerr = s.engine.Nodes(r.Context())
+		// Fetched for every viewer: the honest status needs the live node list
+		// to detect node_down/node_removed regardless of role.
+		nodes, nerr := s.engine.Nodes(ctx)
 		nodesOK := nerr == nil
 		if nerr != nil {
 			logFrom(r).Error("listDBInstances: node list unavailable, node badges fall back to stored status", "err", nerr)
 		}
+		v.Nodes = nodes
 		names := make([]string, 0, len(insts))
 		for _, in := range insts {
 			names = append(names, in.AppName)
 		}
-		states, _ := s.engine.ServiceStates(r.Context(), names)
+		states, serr := s.engine.ServiceStates(ctx, names)
+		if serr != nil {
+			logFrom(r).Warn("listDBInstances: service states", "err", serr)
+		}
 		for _, in := range insts {
-			running := false
+			up := false
 			if st, ok := states[in.AppName]; ok {
-				running = st.Found && st.Desired > 0 && st.Running >= st.Desired
+				up = st.Found && st.Desired > 0 && st.Running >= st.Desired
 			}
-			statuses[in.ID] = displayInstanceStatus(running, in.NodeHostname, nodes, nodesOK, in.Status)
+			statuses[in.ID] = displayInstanceStatus(up, in.NodeHostname, nodes, nodesOK, in.Status)
+		}
+		running, _, _, _ = s.placement(ctx)
+	}
+	ix, err := s.loadOrgIndex(ctx, o.ID)
+	if err != nil {
+		logFrom(r).Warn("listDBInstances: org index", "err", err)
+	}
+	// Apps linked to a whole server (Redis and the like).
+	linked := map[int64][]templates.ServerHold{}
+	if ids := ix.appIDs(); len(ids) > 0 {
+		if links, err := s.q.ListDBLinksByApplicationIDs(ctx, ids); err == nil {
+			seen := map[[2]int64]bool{}
+			for _, l := range links {
+				if l.InstanceID == nil || seen[[2]int64{*l.InstanceID, l.ApplicationID}] {
+					continue
+				}
+				seen[[2]int64{*l.InstanceID, l.ApplicationID}] = true
+				a := ix.appByID[l.ApplicationID]
+				linked[*l.InstanceID] = append(linked[*l.InstanceID], templates.ServerHold{Name: a.Name, Where: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a) + "?tab=variables"})
+			}
+		} else {
+			logFrom(r).Warn("listDBInstances: list links", "err", err)
 		}
 	}
-	render(w, r, http.StatusOK, templates.DBServers(o, role, insts, nodes, statuses))
+	usage := map[string][2]int64{}
+	if auth.IsInstanceAdmin(ctx) && s.metrics != nil {
+		if latest, err := s.metrics.Latest(ctx, time.Now().Add(-3*time.Minute)); err == nil {
+			for _, sm := range latest {
+				usage[sm.Component] = [2]int64{sm.MemBytes, sm.MemLimitBytes}
+			}
+		}
+	}
+	for _, in := range insts {
+		c := templates.ServerCard{Inst: in, Status: statuses[in.ID]}
+		if c.Status == "" {
+			c.Status = in.Status
+		}
+		if n := running[in.AppName]; len(n) > 0 {
+			c.Node = strings.Join(n, ", ")
+		} else if in.NodeHostname != "" {
+			c.Node = in.NodeHostname
+		} else {
+			c.Node = "control-plane"
+		}
+		if u, ok := usage[in.AppName]; ok && u[1] > 0 {
+			c.MemUsed, c.MemLimit = u[0], u[1]
+		}
+		switch in.Engine {
+		case "postgres":
+			if ldbs, err := s.q.ListLogicalDatabasesByInstance(ctx, in.ID); err == nil {
+				for _, l := range ldbs {
+					c.Holds = append(c.Holds, templates.ServerHold{Name: l.Name, Where: l.ProjectName + " " + l.EnvName,
+						Href: envURL(o.ID, l.ProjectID, l.EnvironmentID) + "/databases/" + strconv.FormatInt(l.ID, 10)})
+				}
+			}
+		case "minio":
+			if bs, err := s.q.ListS3BucketsByInstance(ctx, in.ID); err == nil {
+				for _, b := range bs {
+					c.Holds = append(c.Holds, templates.ServerHold{Name: b.Name, Where: ix.envLabel(b.EnvironmentID),
+						Href: ix.envURL(b.EnvironmentID) + "/buckets/" + strconv.FormatInt(b.ID, 10)})
+				}
+			}
+		default:
+			c.Holds = linked[in.ID]
+		}
+		v.Cards = append(v.Cards, c)
+	}
+	return v, true
 }
 
 // parseInstancePort parses an optional host-port form value: empty input is
@@ -253,15 +333,30 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ldbs, err := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
-	if err != nil {
-		logFrom(r).Error("dbInstanceDetail: list dbs failed", "err", err, "instance_id", inst.ID)
+	ctx := r.Context()
+	v, ok := s.dbServersView(w, r, o)
+	if !ok {
+		return
 	}
-	c := templates.DBServerCtx{Org: o, Role: role, Inst: inst, DBs: ldbs, Base: instBase(o.ID, inst.ID), Host: s.cfg.Host}
-	if role == "owner" || role == "admin" {
-		if s.engine != nil {
-			c.Nodes, _ = s.engine.Nodes(r.Context())
+	admin := isAdminRole(role)
+	tab := r.URL.Query().Get("tab")
+	switch tab {
+	case "backups", "logs":
+	case "connection", "settings":
+		if !admin {
+			tab = "main"
 		}
+	default:
+		tab = "main"
+	}
+	c := templates.DBServerCtx{Org: o, Role: role, Inst: inst, Status: inst.Status, Tab: tab, Base: instBase(o.ID, inst.ID), Host: s.cfg.Host}
+	for _, card := range v.Cards {
+		if card.Inst.ID == inst.ID {
+			c.Card, c.Status = card, card.Status
+		}
+	}
+	if admin {
+		c.Nodes = v.Nodes
 		instPW, derr := secret.Dec(inst.SuperuserPassword)
 		if derr != nil {
 			// Leave c.Conn empty rather than render a connection string with a
@@ -277,7 +372,23 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 			c.Conn = drv.ConnDisplay(di, s.cfg.Host)
 		}
 	}
-	render(w, r, http.StatusOK, templates.DBServerDetail(c))
+	if tab == "backups" && inst.Engine == "postgres" {
+		ldbs, err := s.q.ListLogicalDatabasesByInstance(ctx, inst.ID)
+		if err != nil {
+			logFrom(r).Error("dbInstanceDetail: list dbs failed", "err", err, "instance_id", inst.ID)
+		}
+		for _, l := range ldbs {
+			href := envURL(o.ID, l.ProjectID, l.EnvironmentID) + "/databases/" + strconv.FormatInt(l.ID, 10)
+			row := templates.EnvResourceRow{Name: l.Name, Href: href, Detail: l.ProjectName + " " + l.EnvName, BackupHref: href + "#backups"}
+			row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
+			if bks, err := s.q.ListBackupsByLogicalDB(ctx, l.ID); err == nil && len(bks) > 0 {
+				row.BackupKind, row.BackupText = backupSummary(ctx, dbBackupConfigs(bks))
+			}
+			c.Backups = append(c.Backups, row)
+		}
+	}
+	v.Sheet = &c
+	render(w, r, http.StatusOK, templates.DBServers(o, role, v))
 }
 
 func (s *Server) deployDBInstance(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +743,7 @@ func (s *Server) dbInstanceStatus(w http.ResponseWriter, r *http.Request) {
 		live, nerr := s.engine.Nodes(r.Context())
 		status = displayInstanceStatus(running, inst.NodeHostname, live, nerr == nil, inst.Status)
 	}
-	render(w, r, http.StatusOK, templates.StatusBadge(status))
+	render(w, r, http.StatusOK, templates.ServerStateBadge(status, r.URL.Path))
 }
 
 // dbInstanceLogs streams live container logs over a WebSocket. Adapted from

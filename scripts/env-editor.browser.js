@@ -1,11 +1,41 @@
-// Run with Playwright's browser_run_code_unsafe filename after signing into the
-// opt-in TestEnvEditorBrowser fixture and opening its first application's env tab.
-// Uses only disposable fixture data; no npm dependencies are needed by Krill.
+// Run with Playwright's code runner (a function of `page`) while signed in as
+// an organization admin, on the Variables tab of an app in an environment that
+// has a second app: http://localhost:18090/orgs/1/projects/1/environments/1/apps/2?tab=variables
+// on the local dev stand. It overwrites both apps' variables with disposable
+// fixture values first; use a disposable dev stand, never a real install.
 async (page) => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   await page.bringToFront();
   const appURL = page.url();
+  const appPath = new URL(appURL).pathname;
   const original = "# Keep comment=unchanged\n PUBLIC =  ordinary  \nTOKEN=private=one\nOTHER=private-two\n";
+  // The second app of this environment, from the canvas behind the sheet.
+  const secondPath = await page.locator('a.svc[href*="/apps/"]').evaluateAll(
+    (as, self) => as.map(a => new URL(a.href).pathname).find(p => p !== self), appPath);
+  assert(secondPath, 'the environment needs a second app');
+  const secondURL = new URL(secondPath + '?tab=variables', appURL).href;
+  const post = async (path, form) => {
+    const r = await page.request.post(new URL(path, appURL).href, { form, headers: { Origin: new URL(appURL).origin }, maxRedirects: 0 });
+    assert(r.status() === 303, 'seeding ' + path + ' answered ' + r.status());
+  };
+  await post(appPath + '/env', { env: original, env_public_keys: 'PUBLIC' });
+  await post(secondPath + '/env', { env: 'LEGACY=private-legacy', env_public_keys: '' });
+  await page.goto(appURL);
+  await page.waitForSelector('#env-form');
+  // Saving redirects to the app's variables (?tab=env): wait for the submitted
+  // editor to be replaced by the fresh one, whatever URL htmx then shows.
+  async function saveEditor() {
+    const old = await page.locator('#env-form').elementHandle();
+    await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
+    await page.waitForFunction(el => !el.isConnected, old);
+    await page.waitForSelector('#env-form');
+  }
+  // Every secret input is masked, and the secrets are exactly these keys.
+  async function secretsMasked(keys, message) {
+    const rows = await page.locator('#env-secret-rows .env-row').evaluateAll(rs => rs.map(r => ({ key: r.querySelector('.env-key').value, type: r.querySelector('.env-val').type })));
+    assert(rows.map(r => r.key).sort().join(',') === keys.slice().sort().join(','), message + ': secrets are ' + rows.map(r => r.key).join(','));
+    assert(rows.every(r => r.type === 'password'), message);
+  }
   // Input values are properties, not attributes, so resolve row indices from DOM.
   async function keyRow(key) {
     const keys = await page.locator('.env-row .env-key').evaluateAll(es => es.map(e => e.value));
@@ -28,7 +58,7 @@ async (page) => {
   await (await keyRow('PUBLIC')).locator('.env-val').fill('ordinary-history');
   await (await keyRow('OTHER')).locator('.env-val').fill('secret-history');
   const historyText = await page.locator('#env-textarea').inputValue();
-  await page.locator('a[href="' + new URL(appURL).pathname + '"]').click();
+  await page.locator('.sheet nav.seg a[href="' + appPath + '"]').click();
   await page.waitForFunction(() => !document.getElementById('env-form'));
   await page.goBack();
   await page.waitForSelector('#env-form');
@@ -60,8 +90,7 @@ async (page) => {
   await (await keyRow('PUBLIC')).locator('.env-move').click();
   await (await keyRow('TOKEN')).locator('.env-move').click();
   assert(await page.locator('#env-textarea').inputValue() === original, 'transfer changed text');
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#env-form')?.dataset.mode === 'kv');
   assert(await page.locator('#env-public-keys').inputValue() === 'PUBLIC\nTOKEN', 'classification not persisted');
@@ -96,18 +125,18 @@ async (page) => {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile horizontal overflow');
   // Exercise HTMX's HTML history cache, which does not preserve JS properties.
   await (await keyRow('OTHER')).locator('.env-eye').click();
-  await page.locator('a[href="' + new URL(appURL).pathname + '"]').click();
+  await page.locator('.sheet nav.seg a[href="' + appPath + '"]').click();
   await page.waitForFunction(() => !document.getElementById('env-form'));
   await page.goBack();
   await page.waitForSelector('#env-form');
   assert(await page.locator('#env-secret-rows .env-val').evaluateAll(es => es.every(e => e.type === 'password')), 'HTMX history kept reveal');
-  await page.goto(appURL.replace('/apps/1?', '/apps/2?'));
+  await page.goto(secondURL);
   await page.locator('[data-env-mode=kv]').click();
   assert(await page.locator('#env-variable-rows .env-row').count() === 0, 'legacy key became ordinary');
-  assert(await page.locator('#env-secret-rows .env-val').getAttribute('type') === 'password', 'next app revealed');
+  await secretsMasked(['LEGACY'], 'next app revealed');
   await page.goto(appURL);
   await page.locator('[data-env-mode=kv]').click();
-  assert(await page.locator('#env-secret-rows .env-val').getAttribute('type') === 'password', 'navigation kept reveal');
+  await secretsMasked(['OTHER'], 'navigation kept reveal');
   // Keyboard transfer preserves the row and focuses its replacement action.
   const other = await keyRow('OTHER');
   await other.locator('.env-move').focus();
@@ -120,8 +149,7 @@ async (page) => {
   await page.locator('#env-raw-reveal').click();
   await page.locator('#env-secrets-raw').fill('# Keep comment=unchanged\nOTHER=raw-secret\n');
   const savedText = await page.locator('#env-textarea').inputValue();
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   assert(await page.locator('#env-textarea').inputValue() === savedText, 'raw save changed values/comments');
   assert(await page.locator('#env-secrets-raw').isHidden(), 'save retained raw reveal');
@@ -134,8 +162,7 @@ async (page) => {
   await page.locator('#env-variables-raw').fill('');
   await page.locator('#env-raw-reveal').click();
   await page.locator('#env-secrets-raw').fill('');
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   assert(await page.locator('#env-textarea').inputValue() === '', 'empty editor did not persist');
   assert(await page.locator('#env-public-keys').inputValue() === '', 'empty editor retained classification');

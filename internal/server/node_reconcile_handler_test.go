@@ -27,8 +27,16 @@ import (
 // it defaults to noopEngine's empty ServiceTasks, matching prior behavior.
 type nodesEngine struct {
 	noopEngine
-	live  []docker.SwarmNode
-	tasks []docker.TaskPlacement
+	live      []docker.SwarmNode
+	tasks     []docker.TaskPlacement
+	taskInfos *[]docker.TaskInfo // what Tasks reports (nil: none); a pointer, so a test can fill it after the server is built
+}
+
+func (e nodesEngine) Tasks(context.Context) ([]docker.TaskInfo, error) {
+	if e.taskInfos == nil {
+		return nil, nil
+	}
+	return *e.taskInfos, nil
 }
 
 func (e nodesEngine) Nodes(context.Context) ([]docker.SwarmNode, error) { return e.live, nil }

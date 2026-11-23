@@ -3,25 +3,156 @@ package templates
 import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
-templ Topology(org db.Organization, role string) {
-	@Layout(i18n.T(ctx, "topo.title"), org, role) {
-		<h2 class="text-2xl mb-1">{ i18n.T(ctx, "topo.title") }</h2>
-		<p class="mb-3" style="color:var(--color-muted)">{ i18n.T(ctx, "topo.desc") }</p>
-		<div class="k-topo-bar">
-			<button type="button" class="k-btn k-btn-secondary k-topo-refresh">{ i18n.T(ctx, "topo.refresh") }</button>
-			<div class="k-topo-legend">
-				<span><span class="k-topo-sw" style="border-top-color:var(--color-postgres)"></span>{ i18n.T(ctx, "topo.legend.postgres") }</span>
-				<span><span class="k-topo-sw" style="border-top-color:var(--color-redis)"></span>{ i18n.T(ctx, "topo.legend.redis") }</span>
-				<span><span class="k-topo-sw" style="border-top-color:var(--color-faint)"></span>{ i18n.T(ctx, "topo.legend.ingress") }</span>
-				<span><span class="k-topo-sw k-topo-sw-dash" style="border-top-color:var(--color-muted)"></span>{ i18n.T(ctx, "topo.legend.crossnode") }</span>
-				<span><span class="k-topo-sw k-topo-sw-dash" style="border-top-color:var(--color-faint)"></span>{ i18n.T(ctx, "topo.legend.detected") }</span>
-				<span><span class="k-topo-sw-arrow">→</span>{ i18n.T(ctx, "topo.legend.direction") }</span>
+// TopoView is the topology page: an ingress lane and one lane per node.
+type TopoView struct {
+	Lanes    []TopoLane
+	Projects []TopoProject
+	Project  string // the project filter: a project ID, "" for all
+}
+
+// TopoProject is a project in the topology's filter.
+type TopoProject struct {
+	ID, Name string
+}
+
+// TopoLane is a lane of the topology.
+type TopoLane struct {
+	ID        string // the graph node ID (a Swarm node ID, or ingress/unplaced)
+	Name      string
+	Href      string // the node on the nodes page ("" for ingress)
+	Ingress   bool
+	StateKind string
+	StateText string
+	Apps      []TopoCard
+	Servers   []TopoCard
+}
+
+// TopoCard is a card of the topology.
+type TopoCard struct {
+	ElemID    string
+	Name      string
+	Sub       string
+	Line      string // the app's public address
+	Href      string
+	Glyph     string
+	StateKind string
+	StateText string
+	To        []string
+	Detected  []string
+	Projects  string // the app's project ID
+	Holds     []TopoHold
+	Gateway   bool
+	System    bool
+}
+
+// TopoHold is a database inside a server card.
+type TopoHold struct {
+	ElemID    string // what a wire to this database ends at
+	Name, Env string
+}
+
+templ Topology(org db.Organization, role string, v TopoView) {
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "topo.title")), Org: org, Role: role, Tab: "topology"}) {
+		<main class="wrap wrap--wide">
+			<div class="page-head">
+				<h1>{ i18n.T(ctx, "topo.title") }</h1>
+				if len(v.Projects) > 1 {
+					<nav class="seg seg--tight" aria-label={ i18n.T(ctx, "topo.project") }>
+						<a href={ templ.SafeURL(orgURL(org.ID) + "/topology") } { ariaCurrent(v.Project == "", "page")... }>{ i18n.T(ctx, "topo.all_projects") }</a>
+						for _, p := range v.Projects {
+							<a href={ templ.SafeURL(orgURL(org.ID) + "/topology?project=" + urlQuery(p.ID)) } { ariaCurrent(v.Project == p.ID, "page")... }>{ p.Name }</a>
+						}
+					</nav>
+				}
 			</div>
+			<ul class="legend">
+				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-ingress" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.ingress") }</li>
+				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-link" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.link") }</li>
+				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-cross" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.crossnode") }</li>
+				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-detected" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.detected") }</li>
+			</ul>
+			<div class="topomap" style={ templ.SafeCSS(laneCols(len(v.Lanes) - 1)) }>
+				<svg class="wires" aria-hidden="true"></svg>
+				for _, l := range v.Lanes {
+					<section class={ "lane", templ.KV("lane--ingress", l.Ingress) } aria-label={ l.Name }>
+						<header class="lane-head lane-head--slim">
+							<div class="lane-title">
+								<h2>
+									if l.Href != "" {
+										<a href={ templ.SafeURL(l.Href) }>{ l.Name }</a>
+									} else {
+										{ l.Name }
+									}
+								</h2>
+								if l.StateText != "" {
+									@ui.State(l.StateKind, l.StateText)
+								}
+							</div>
+						</header>
+						if l.Ingress {
+							for _, c := range l.Apps {
+								@topoCard(c)
+							}
+						} else {
+							if len(l.Apps) > 0 {
+								<div class="lane-group">
+									<h3>{ i18n.T(ctx, "nodes.group_apps") }</h3>
+									for _, c := range l.Apps {
+										@topoCard(c)
+									}
+								</div>
+							}
+							if len(l.Servers) > 0 {
+								<div class="lane-group">
+									<h3>{ i18n.T(ctx, "dbi.title") }</h3>
+									for _, c := range l.Servers {
+										@topoCard(c)
+									}
+								</div>
+							}
+							if len(l.Apps)+len(l.Servers) == 0 {
+								<p class="empty lane-empty">{ i18n.T(ctx, "topo.lane_empty") }</p>
+							}
+						}
+					</section>
+				}
+			</div>
+		</main>
+	}
+}
+
+templ topoCard(c TopoCard) {
+	if c.Href != "" {
+		<a class="svc" id={ c.ElemID } href={ templ.SafeURL(c.Href) } data-to={ joinSpace(c.To) } data-detected={ joinSpace(c.Detected) } data-project={ c.Projects } data-gateway?={ c.Gateway } data-nodes="">
+			@topoCardBody(c)
+		</a>
+	} else {
+		<div class={ "svc", templ.KV("svc--sys", c.System) } id={ c.ElemID } data-to={ joinSpace(c.To) } data-gateway?={ c.Gateway } data-nodes="">
+			@topoCardBody(c)
 		</div>
-		<div id="topo" class="k-topo" data-url={ "/orgs/" + itoa(org.ID) + "/topology/data" } data-i18n-empty={ i18n.T(ctx, "topo.empty") } data-i18n-crossnode={ i18n.T(ctx, "topo.crossnode") }>
-			<div class="k-topo-scroll"><div class="k-topo-canvas"></div></div>
-		</div>
+	}
+}
+
+templ topoCardBody(c TopoCard) {
+	<span class="svc-head">
+		@ui.Glyph(c.Glyph)
+		<span class="svc-name">{ c.Name }</span>
+		if c.StateText != "" {
+			@ui.State(c.StateKind, c.StateText)
+		}
+	</span>
+	<span class="svc-sub">{ c.Sub }</span>
+	if c.Line != "" {
+		<span class="uses">{ c.Line }</span>
+	}
+	if len(c.Holds) > 0 {
+		<span class="holds">
+			for _, h := range c.Holds {
+				<span class="hold" id={ h.ElemID }>{ h.Name }<em>{ h.Env }</em></span>
+			}
+		</span>
 	}
 }

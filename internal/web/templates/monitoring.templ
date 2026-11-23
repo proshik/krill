@@ -5,29 +5,51 @@ import (
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
+// Monitoring is the cluster's CPU and memory: charts by node and a column per
+// node with its containers. The data comes from /monitoring/data.
 templ Monitoring(org db.Organization, role string) {
-	@Layout(i18n.T(ctx, "mon.title"), org, role) {
-		<link rel="stylesheet" href="/static/uPlot.min.css"/>
-		<h2 class="text-2xl mb-1">{ i18n.T(ctx, "mon.title") }</h2>
-		<p class="mb-3" style="color:var(--color-muted)">{ i18n.T(ctx, "mon.desc") }</p>
-		<div id="mon" class="k-mon" data-url={ "/orgs/" + itoa(org.ID) + "/monitoring/data" } data-i18n-stale={ i18n.T(ctx, "mon.stale") } data-i18n-allnodes={ i18n.T(ctx, "mon.all_nodes") }>
-			<div class="k-mon-bar">
-				<div class="k-mon-nodes" id="mon-nodes"></div>
-				<div class="k-mon-controls">
-					<select id="mon-node-sel" class="k-select" aria-label={ i18n.T(ctx, "mon.node") }></select>
-					<div class="k-seg" id="mon-range">
-						<button type="button" class="k-seg-btn" data-range="1h">1h</button>
-						<button type="button" class="k-seg-btn" data-range="6h">6h</button>
-						<button type="button" class="k-seg-btn k-seg-active" data-range="24h">24h</button>
+	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "mon.title")), Org: org, Role: role, Tab: "monitoring"}) {
+		<main class="wrap wrap--wide">
+			<div
+				class="mon"
+				data-url={ orgURL(org.ID) + "/monitoring/data" }
+				data-i18n-stale={ i18n.T(ctx, "mon.stale") }
+				data-i18n-cores={ i18n.T(ctx, "mon.cpu_of_cores") }
+				data-i18n-memory={ i18n.T(ctx, "mon.memory") }
+				data-i18n-containers={ i18n.T(ctx, "mon.containers") }
+				data-i18n-healthy={ i18n.T(ctx, "nodes.state_ready") }
+				data-i18n-pressure={ i18n.T(ctx, "canvas.memory_pct") }
+				data-i18n-error={ i18n.T(ctx, "mon.error") }
+				data-i18n-of={ i18n.T(ctx, "mon.of") }
+			>
+				<div class="page-head">
+					<h1>{ i18n.T(ctx, "mon.title") }</h1>
+					<div class="page-keys">
+						<div class="seg seg--tight" role="group" aria-label={ i18n.T(ctx, "mon.node") } data-mon-nodes>
+							<button type="button" aria-pressed="true" data-node="">{ i18n.T(ctx, "mon.all_nodes") }</button>
+						</div>
+						<div class="seg seg--tight" role="group" aria-label={ i18n.T(ctx, "mon.range") }>
+							<button type="button" aria-pressed="false" data-range="1h">1h</button>
+							<button type="button" aria-pressed="false" data-range="6h">6h</button>
+							<button type="button" aria-pressed="true" data-range="24h">24h</button>
+						</div>
 					</div>
 				</div>
+				<p class="hint mon-status" aria-live="polite"></p>
+				<div class="charts">
+					<section class="chart" data-chart="cpu" aria-label={ i18n.T(ctx, "mon.cpu") }>
+						<div class="chart-head"><h2>{ i18n.T(ctx, "mon.cpu") }</h2><span class="run-meta">{ i18n.T(ctx, "mon.pct_of_node") }</span></div>
+						<div class="plot"><svg viewBox="0 0 600 200" preserveAspectRatio="none" role="img" aria-label={ i18n.T(ctx, "mon.cpu") }></svg><span class="axis axis--top">100%</span><span class="axis axis--mid">50%</span></div>
+						<ul class="ends"></ul>
+					</section>
+					<section class="chart" data-chart="mem" aria-label={ i18n.T(ctx, "mon.memory") }>
+						<div class="chart-head"><h2>{ i18n.T(ctx, "mon.memory") }</h2><span class="run-meta">{ i18n.T(ctx, "mon.pct_of_node") }</span></div>
+						<div class="plot"><svg viewBox="0 0 600 200" preserveAspectRatio="none" role="img" aria-label={ i18n.T(ctx, "mon.memory") }></svg><span class="axis axis--top">100%</span><span class="axis axis--mid">50%</span></div>
+						<ul class="ends"></ul>
+					</section>
+				</div>
+				<div class="nodecols"></div>
 			</div>
-			<div class="k-mon-charts">
-				<div class="k-card"><div class="k-section">{ i18n.T(ctx, "mon.cpu") }</div><div id="mon-cpu"></div></div>
-				<div class="k-card"><div class="k-section">{ i18n.T(ctx, "mon.memory") }</div><div id="mon-mem"></div></div>
-			</div>
-			<div class="k-card mt-3"><div id="mon-table"></div></div>
-		</div>
-		<script src="/static/uPlot.iife.min.js"></script>
+		</main>
 	}
 }

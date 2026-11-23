@@ -151,7 +151,7 @@ func TestMigrateDBInstanceNodeSameNode(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
 		t.Fatalf("same node want 303+err, got %d body %s", rec.Code, rec.Body.String())
 	}
-	if want := "The instance is already on that node."; flashText(rec) != want {
+	if want := "the instance is already on that node."; flashText(rec) != want {
 		t.Errorf("flash text = %q, want %q", flashText(rec), want)
 	}
 	// No migration was dispatched: node_hostname and status must be untouched.
@@ -191,7 +191,7 @@ func TestMigrateDBInstanceNodeBusy(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
 		t.Fatalf("busy instance want 303+err, got %d body %s", rec.Code, rec.Body.String())
 	}
-	if want := "A migration is already in progress for this instance."; flashText(rec) != want {
+	if want := "a migration is already in progress for this instance."; flashText(rec) != want {
 		t.Errorf("flash text = %q, want %q", flashText(rec), want)
 	}
 	got, err := q.GetDBInstance(ctx, inst.ID)
@@ -235,7 +235,7 @@ func TestMigrateDBInstanceNodeSameTargetButDrifted(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || hasErrFlash(rec) {
 		t.Fatalf("drifted same-node target want 303+ok (dispatch), got %d body %s", rec.Code, rec.Body.String())
 	}
-	if want := "Migration started — follow the progress in the instance log."; flashText(rec) != want {
+	if want := "migration started. Follow the progress in the instance log."; flashText(rec) != want {
 		t.Errorf("flash text = %q, want %q", flashText(rec), want)
 	}
 }

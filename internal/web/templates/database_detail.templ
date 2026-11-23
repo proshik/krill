@@ -4,187 +4,126 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice"
 	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
 )
 
-// LogicalDBCtx holds the logical-database detail-page data (the row + its
-// instance + connection strings + base URL). Lifecycle (deploy/start/stop/
-// version/node/logs) lives on the instance detail page, not here.
+// LogicalDBCtx holds the logical-database page data. Lifecycle (deploy/start/
+// stop/version/node/logs) lives on the server's page, not here.
 type LogicalDBCtx struct {
+	Shell   Shell
 	Org     db.Organization
 	Role    string
 	Project db.Project
 	Env     db.Environment
 	LDB     db.LogicalDatabase
 	Inst    db.DbInstance
+	Node    string // where the server runs
 
 	Internal string
 	External string
 	Base     string // path to /databases/{id}
 
-	Backups      []db.ListBackupsByLogicalDBRow // configured backups
-	Destinations []db.Destination               // org S3 destinations
+	Users  []UsedBy
+	Backup BackupBlock
 
 	Conn    *dbservice.ConnStats // connection budget (admins; nil when not read)
 	ConnErr bool                 // the stats could not be read
 }
 
 templ DatabaseDetail(c LogicalDBCtx) {
-	@Layout(c.LDB.Name, c.Org, c.Role) {
-		<p class="k-crumbs mb-3">
-			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID)) }>{ c.Project.Name }</a> /
-			<a href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/projects/" + itoa(c.Project.ID) + "/environments/" + itoa(c.Env.ID)) }>{ c.Env.Name }</a> / { c.LDB.Name }
-		</p>
-		<div class="k-frame"><div class="k-panel">
-			<div class="k-panel-head">
-				<div><div class="k-panel-title">{ c.LDB.Name }</div><div class="k-panel-desc k-mono">{ c.LDB.DbName + " @ " + c.Inst.Name }</div></div>
-				<div class="flex items-center gap-2">
-					<span hx-get={ "/orgs/" + itoa(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID) + "/status" } hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">@StatusBadge(c.Inst.Status)</span>
+	@Page(c.Shell) {
+		<main class="wrap wrap--narrow">
+			<div class="page-head page-head--obj">
+				<div class="sheet-title">
+					@ui.Glyph("i-pg")
+					<h1>{ c.LDB.Name }</h1>
+					@ServerStateBadge(c.Inst.Status, "/orgs/"+itoa(c.Org.ID)+"/db-servers/"+itoa(c.Inst.ID)+"/status")
 				</div>
-			</div>
-			<div class="k-panel-body flex flex-col gap-4">
-				<p class="k-mono text-xs">
-					<a class="underline" href={ templ.SafeURL("/orgs/" + itoa(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID)) }>{ i18n.T(ctx, "ldb.view_instance") }</a>
+				<p class="run-meta">
+					{ i18n.T(ctx, "ldb.on_server") + " " }
+					<a href={ templ.SafeURL(orgURL(c.Org.ID) + "/db-servers/" + itoa(c.Inst.ID)) }>{ c.Inst.Name }</a>
+					if c.Node != "" {
+						{ ", " + c.Node }
+					}
 				</p>
-				if c.Role == "owner" || c.Role == "admin" {
-					<div>
-						<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.internal") }</div>
-						<div class="flex items-center gap-2">
-							<input class="k-input k-mono" type="password" readonly value={ c.Internal }/>
-							<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
-							<button type="button" class="k-copy" data-copy={ c.Internal } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
-						</div>
-						if c.External != "" {
-							<div class="k-label">{ i18n.T(ctx, "db.connection") } — { i18n.T(ctx, "db.external") }</div>
-							<div class="flex items-center gap-2">
-								<input class="k-input k-mono" type="password" readonly value={ c.External }/>
-								<button type="button" class="k-copy" onclick="krillReveal(this)" aria-label={ i18n.T(ctx, "common.reveal") }>👁</button>
-								<button type="button" class="k-copy" data-copy={ c.External } onclick="krillCopyToClip(this.dataset.copy, 'Connection string')">{ i18n.T(ctx, "common.copy") }</button>
-							</div>
-						}
-					</div>
-					@connSection(c)
-					@backupsSection(c)
-					<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_ldb", c.LDB.Name) } onsubmit="return krillConfirm(this, this.dataset.confirm)">
-						<button class="k-btn k-btn-danger">{ i18n.T(ctx, "db.delete") }</button>
-					</form>
-				}
 			</div>
-		</div></div>
+			<section class="sec" aria-labelledby="cn-h">
+				<h2 id="cn-h">{ i18n.T(ctx, "db.connection") }</h2>
+				if isAdmin(c.Role) && c.Internal != "" {
+					@ui.CopyField("dburl", i18n.T(ctx, "db.url_internal"), c.Internal, true, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
+					if c.External != "" {
+						@ui.CopyField("dburl-ext", i18n.T(ctx, "db.url_external"), c.External, true, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
+					}
+				} else if isAdmin(c.Role) {
+					<p class="field-err">{ i18n.T(ctx, "db.password_unreadable") }</p>
+				}
+				<div class="row row--even">
+					@ui.CopyField("dbuser", i18n.T(ctx, "db.user"), c.LDB.Username, false, i18n.T(ctx, "common.copy"), "")
+					@ui.CopyField("dbname", i18n.T(ctx, "db.database"), c.LDB.DbName, false, i18n.T(ctx, "common.copy"), "")
+				</div>
+				<p class="hint">{ i18n.T(ctx, "db.links_hint") }</p>
+			</section>
+			<section class="sec" aria-labelledby="ub-h">
+				<h2 id="ub-h">{ i18n.T(ctx, "envdb.used_by") }</h2>
+				@usedByList(c.Users, i18n.T(ctx, "db.no_users"))
+			</section>
+			if isAdmin(c.Role) {
+				@connSection(c)
+				@backupBlock(c.Backup)
+				<form class="sec sec--danger" method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_ldb", c.LDB.Name) } data-more={ i18n.T(ctx, "db.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="dd-h">
+					<h2 id="dd-h">{ i18n.T(ctx, "db.delete") }</h2>
+					<p class="hint">{ i18n.Tf(ctx, "db.delete_hint", c.Inst.Name) }</p>
+					<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", c.LDB.Name) }</button></div>
+				</form>
+			}
+		</main>
 	}
 }
 
-templ backupsSection(c LogicalDBCtx) {
-	<div>
-		<div class="k-label">{ i18n.T(ctx, "backup.section") }</div>
-		if len(c.Backups) == 0 {
-			<p class="k-muted">{ i18n.T(ctx, "backup.none") }</p>
-		} else {
-			<table class="k-table">
-				<thead>
-					<tr>
-						<th>{ i18n.T(ctx, "backup.destination") }</th>
-						<th>{ i18n.T(ctx, "backup.schedule") }</th>
-						<th>{ i18n.T(ctx, "backup.retention") }</th>
-						<th>{ i18n.T(ctx, "backup.enabled") }</th>
-						<th>{ i18n.T(ctx, "backup.last_run") }</th>
-						<th></th>
-					</tr>
-				</thead>
-				<tbody>
-					for _, b := range c.Backups {
-						<tr>
-							<td>{ destName(c.Destinations, b.DestinationID) }</td>
-							<td>{ scheduleLabel(ctx, b.Schedule) }</td>
-							<td>{ itoa(int64(b.Retention)) }</td>
-							<td>
-								if b.Enabled {
-									<span class="k-badge k-badge-running"><span class="k-dot"></span>{ i18n.T(ctx, "backup.enabled") }</span>
-								} else {
-									<span class="k-badge k-badge-idle"><span class="k-dot"></span>—</span>
-								}
-							</td>
-							<td>
-								<div>{ tsStr(b.LastRunAt) } { b.LastStatus }</div>
-								if b.LastError != "" {
-									<div class="text-xs" style="color:var(--color-err)">{ b.LastError }</div>
-								}
-							</td>
-							<td>
-								<div class="flex items-center gap-2 flex-wrap">
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/run") } data-busy={ i18n.T(ctx, "backup.running") } onsubmit="krillBusy(this.querySelector('button'), this.dataset.busy)" class="inline">
-										<button type="submit" class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.run_now") }</button>
-									</form>
-									<form method="post" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/toggle") } class="inline">
-										<input type="hidden" name="enabled" value={ onOff(!b.Enabled) }/>
-										if b.Enabled {
-											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.pause") }</button>
-										} else {
-											<button class="k-btn k-btn-secondary">{ i18n.T(ctx, "backup.resume") }</button>
-										}
-									</form>
-									<form method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/backups/" + itoa(b.ID) + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_backup", destName(c.Destinations, b.DestinationID)) } onsubmit="return krillConfirm(this, this.dataset.confirm)" class="inline">
-										<button class="k-btn k-btn-danger">{ i18n.T(ctx, "backup.delete") }</button>
-									</form>
-								</div>
-							</td>
-						</tr>
-						<tr>
-							<td colspan="6">
-								<div class="k-label">{ i18n.T(ctx, "backup.objects") }</div>
-								<div hx-get={ c.Base + "/backups/" + itoa(b.ID) + "/objects" } hx-trigger="load" hx-swap="innerHTML"></div>
-							</td>
-						</tr>
+// usedByList is the cross-link list of the apps that use something.
+templ usedByList(users []UsedBy, empty string) {
+	if len(users) == 0 {
+		<p class="empty">{ empty }</p>
+	} else {
+		<span class="reg-apps">
+			for _, u := range users {
+				<a href={ templ.SafeURL(u.Href) }>
+					{ u.Name }
+					if u.Note != "" {
+						<em>{ u.Note }</em>
 					}
-				</tbody>
-			</table>
-		}
-		if len(c.Destinations) == 0 {
-			<p class="k-muted">{ i18n.T(ctx, "backup.no_destinations") }</p>
-			@inlineDestinationForm(c.Org.ID, c.Base)
-		} else {
-			<form method="post" action={ templ.SafeURL(c.Base + "/backups") } class="mt-4 flex flex-col gap-2">
-				<div>
-					<label class="k-label">{ i18n.T(ctx, "backup.destination") }</label>
-					<select class="k-select" name="destination_id">
-						for _, d := range c.Destinations {
-							<option value={ itoa(d.ID) }>{ d.Name }</option>
-						}
-					</select>
-				</div>
-				@scheduleSelect()
-				<div>
-					<label class="k-label">{ i18n.T(ctx, "backup.retention") }</label>
-					<input class="k-input" name="retention" type="number" value="7" min="1"/>
-				</div>
-				@backupAdvanced()
-				<div><button class="k-btn k-btn-primary">{ i18n.T(ctx, "backup.add") }</button></div>
-			</form>
-		}
-	</div>
+				</a>
+			}
+		</span>
+	}
+}
+
+// ServerStateBadge is a server's live state, refreshing itself.
+templ ServerStateBadge(status, pollURL string) {
+	{{ kind, text := ServerState(ctx, status) }}
+	<span class={ "state", "state--" + kind } hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML">
+		@ui.Sig(kind)
+		{ text }
+	</span>
 }
 
 templ connSection(c LogicalDBCtx) {
-	<div>
-		<div class="k-label">{ i18n.T(ctx, "conn.section") }</div>
+	<section class="sec" aria-labelledby="conn-h">
+		<h2 id="conn-h">{ i18n.T(ctx, "conn.section") }</h2>
 		if c.ConnErr {
-			<p class="k-muted">{ i18n.T(ctx, "conn.unavailable") }</p>
+			<p class="empty">{ i18n.T(ctx, "conn.unavailable") }</p>
 		} else if c.Conn != nil {
-			<dl class="k-mono text-sm" style="display:grid;grid-template-columns:max-content 1fr;gap:4px 16px">
-				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.server") }</dt>
-				<dd>{ i18n.Tf(ctx, "conn.of_max", c.Conn.Total, c.Conn.Max) }</dd>
-				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.database") }</dt>
-				<dd>{ itoa(int64(c.Conn.Database)) }</dd>
-				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.role") }</dt>
-				<dd>{ itoa(int64(c.Conn.Role)) }</dd>
-				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.idle_tx") }</dt>
-				<dd>{ itoa(int64(c.Conn.IdleInTx)) }</dd>
-				<dt style="color:var(--color-muted)">{ i18n.T(ctx, "conn.advisory") }</dt>
-				<dd>{ itoa(int64(c.Conn.AdvisoryLocks)) }</dd>
+			<dl class="facts">
+				<div><dt>{ i18n.T(ctx, "conn.server") }</dt><dd>{ i18n.Tf(ctx, "conn.of_max", c.Conn.Total, c.Conn.Max) }</dd></div>
+				<div><dt>{ i18n.T(ctx, "conn.database") }</dt><dd>{ itoa(int64(c.Conn.Database)) }</dd></div>
+				<div><dt>{ i18n.T(ctx, "conn.role") }</dt><dd>{ itoa(int64(c.Conn.Role)) }</dd></div>
+				<div><dt>{ i18n.T(ctx, "conn.idle_tx") }</dt><dd>{ itoa(int64(c.Conn.IdleInTx)) }</dd></div>
+				<div><dt>{ i18n.T(ctx, "conn.advisory") }</dt><dd>{ itoa(int64(c.Conn.AdvisoryLocks)) }</dd></div>
 			</dl>
 			for _, w := range connWarnings(ctx, *c.Conn) {
-				<p class="text-sm mt-1" style="color:var(--color-warn);max-width:720px">{ w }</p>
+				<p class="callout callout--warn">{ w }</p>
 			}
-			<p class="k-mono text-xs mt-1" style="color:var(--color-faint);max-width:720px">{ i18n.T(ctx, "conn.note") }</p>
+			<p class="hint">{ i18n.T(ctx, "conn.note") }</p>
 		}
-	</div>
+	</section>
 }

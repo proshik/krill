@@ -296,7 +296,7 @@ func TestDBInstanceLifecycleGuardedDuringMigration(t *testing.T) {
 			if rec.Code != http.StatusSeeOther || !hasErrFlash(rec) {
 				t.Fatalf("%s: want 303+err, got %d body %s", rt.name, rec.Code, rec.Body.String())
 			}
-			if want := "A migration is already in progress for this instance."; flashText(rec) != want {
+			if want := "a migration is already in progress for this instance."; flashText(rec) != want {
 				t.Errorf("%s: flash text = %q, want %q", rt.name, flashText(rec), want)
 			}
 			got, err := q.GetDBInstance(ctx, inst.ID)

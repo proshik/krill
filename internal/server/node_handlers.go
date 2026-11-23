@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/observability"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/topology"
+	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -44,17 +48,206 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx := r.Context()
 	var live []docker.SwarmNode
+	var tasks []docker.TaskInfo
 	if s.engine != nil {
-		live, _ = s.engine.Nodes(r.Context())
+		var err error
+		if live, err = s.engine.Nodes(ctx); err != nil {
+			logFrom(r).Warn("listNodes: list nodes", "err", err)
+		}
+		if tasks, err = s.engine.Tasks(ctx); err != nil {
+			logFrom(r).Warn("listNodes: list tasks", "err", err)
+		}
 	}
-	rows, err := s.q.ListClusterNodes(r.Context())
+	rows, err := s.q.ListClusterNodes(ctx)
 	if err != nil {
 		logFrom(r).Error("listNodes: list cluster nodes failed", "err", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	render(w, r, http.StatusOK, templates.Nodes(o, role, live, rows, s.nodeLabelMap(r.Context())))
+	lanes := s.nodeLanes(r, o, live, tasks, rows)
+	newNode := r.URL.Query().Get("new") == "node" && isAdminRole(role)
+	render(w, r, http.StatusOK, templates.Nodes(o, role, lanes, newNode))
+}
+
+// nodeLanes puts the organization's apps and servers, and Krill's own
+// services, on the nodes their tasks run on; an app's card links to the
+// servers it uses.
+func (s *Server) nodeLanes(r *http.Request, o db.Organization, live []docker.SwarmNode, tasks []docker.TaskInfo, rows []db.ClusterNode) []templates.NodeLane {
+	ctx := r.Context()
+	labels := s.nodeLabelMap(ctx)
+	managed := map[string]bool{}
+	for _, row := range rows {
+		if row.SwarmNodeID != "" {
+			managed[row.SwarmNodeID] = true
+		}
+	}
+	summary := map[string]monNode{}
+	for _, n := range s.nodeSummaries(ctx) {
+		summary[n.Node] = n
+	}
+	ref := make([]topology.Task, 0, len(tasks))
+	for _, t := range tasks {
+		ref = append(ref, topology.Task{Service: t.ServiceName, Node: t.NodeID, Running: t.State == "running"})
+	}
+	on := topology.ResolveNodes(ref) // service -> node ids
+	ix, err := s.loadOrgIndex(ctx, o.ID)
+	if err != nil {
+		logFrom(r).Warn("nodeLanes: org index", "err", err)
+	}
+	s.liveIndexStatuses(ctx, ix.apps)
+	insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
+	if err != nil {
+		logFrom(r).Warn("nodeLanes: list servers", "err", err)
+	}
+	instByID := map[int64]db.DbInstance{}
+	for _, in := range insts {
+		instByID[in.ID] = in
+	}
+	// Which servers each app uses.
+	uses := map[int64]map[int64]bool{}
+	use := func(app, inst int64) {
+		if uses[app] == nil {
+			uses[app] = map[int64]bool{}
+		}
+		uses[app][inst] = true
+	}
+	if ids := ix.appIDs(); len(ids) > 0 {
+		if links, err := s.q.ListDBLinksByApplicationIDs(ctx, ids); err == nil {
+			ldbInst := map[int64]int64{}
+			for envID := range ix.envs {
+				if ldbs, err := s.q.ListLogicalDatabasesByEnvironment(ctx, envID); err == nil {
+					for _, l := range ldbs {
+						ldbInst[l.ID] = l.InstanceID
+					}
+				}
+			}
+			for _, l := range links {
+				switch {
+				case l.InstanceID != nil:
+					use(l.ApplicationID, *l.InstanceID)
+				case l.LogicalDatabaseID != nil:
+					if id, ok := ldbInst[*l.LogicalDatabaseID]; ok {
+						use(l.ApplicationID, id)
+					}
+				}
+			}
+		}
+		if links, err := s.q.ListBucketLinksByApplicationIDs(ctx, ids); err == nil {
+			bucketInst := map[int64]int64{}
+			for _, in := range insts {
+				if in.Engine != "minio" {
+					continue
+				}
+				if bs, err := s.q.ListS3BucketsByInstance(ctx, in.ID); err == nil {
+					for _, b := range bs {
+						bucketInst[b.ID] = in.ID
+					}
+				}
+			}
+			for _, l := range links {
+				if id, ok := bucketInst[l.BucketID]; ok {
+					use(l.ApplicationID, id)
+				}
+			}
+		}
+	}
+	metricKeys := s.metricsNodeKeys(ctx, live)
+	lanes := make([]templates.NodeLane, 0, len(live))
+	idx := map[string]int{}
+	for _, n := range live {
+		name := nodeDisplayName(n, labels)
+		l := templates.NodeLane{Node: n, Name: name, Label: labels[n.ID], Managed: managed[n.ID], CPU: -1, Mem: -1}
+		if sm, ok := summary[metricKeys[n.ID]]; ok && !sm.Stale && sm.MemTotal > 0 {
+			l.CPU, l.Cores = int(sm.CPUPct+0.5), sm.NCPU
+			l.Mem, l.MemUsed, l.MemTotal = int(sm.MemUsed*100/sm.MemTotal), sm.MemUsed, sm.MemTotal
+		}
+		idx[n.ID] = len(lanes)
+		lanes = append(lanes, l)
+	}
+	sort.SliceStable(lanes, func(i, j int) bool {
+		li, lj := lanes[i].Node.Role == "manager", lanes[j].Node.Role == "manager"
+		if li != lj {
+			return li
+		}
+		return lanes[i].Name < lanes[j].Name
+	})
+	for i, l := range lanes {
+		idx[l.Node.ID] = i
+	}
+	base := "/orgs/" + strconv.FormatInt(o.ID, 10)
+	for _, a := range ix.apps {
+		nodes := on[dockerName(a.ID)]
+		var to []string
+		var usesNames []string
+		for id := range uses[a.ID] {
+			if in, ok := instByID[id]; ok {
+				to = append(to, "n-inst-"+strconv.FormatInt(id, 10))
+				usesNames = append(usesNames, in.Name)
+			}
+		}
+		sort.Strings(to)
+		sort.Strings(usesNames)
+		kind, text := templates.AppState(ctx, a.Status)
+		for i, nid := range nodes {
+			li, ok := idx[nid]
+			if !ok {
+				continue
+			}
+			sub := ix.envLabel(a.EnvironmentID)
+			if len(nodes) > 1 {
+				sub = i18n.Tf(ctx, "nodes.replica_of", sub, i+1, len(nodes))
+			}
+			it := templates.LaneItem{
+				ElemID: "n-app-" + strconv.FormatInt(a.ID, 10) + "-" + nid, Name: a.Name, Sub: sub, Href: ix.appURL(a),
+				Glyph: "i-app", StateKind: kind, StateText: text, To: to,
+			}
+			if len(usesNames) > 0 {
+				it.Uses = i18n.Tf(ctx, "nodes.uses", strings.Join(usesNames, ", "))
+			}
+			lanes[li].Apps = append(lanes[li].Apps, it)
+		}
+	}
+	for _, in := range insts {
+		nodes := on[in.AppName]
+		kind, text := templates.ServerState(ctx, in.Status)
+		if len(nodes) > 0 {
+			kind, text = templates.ServerState(ctx, "running")
+		}
+		for _, nid := range nodes {
+			li, ok := idx[nid]
+			if !ok {
+				continue
+			}
+			lanes[li].Servers = append(lanes[li].Servers, templates.LaneItem{
+				ElemID: "n-inst-" + strconv.FormatInt(in.ID, 10), Name: in.Name, Sub: engineLabel(in.Engine),
+				Href: base + "/db-servers/" + strconv.FormatInt(in.ID, 10), Glyph: engineGlyph(in.Engine), StateKind: kind, StateText: text,
+			})
+		}
+	}
+	// Krill's own services.
+	system := map[string]string{
+		traefik.ServiceName: i18n.T(ctx, "nodes.sys_gateway"),
+		"krill-alloy-node":  i18n.T(ctx, "nodes.sys_agent"),
+		"krill-alloy-apps":  i18n.T(ctx, "nodes.sys_collector"),
+	}
+	names := make([]string, 0, len(system))
+	for n := range system {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, svc := range names {
+		for _, nid := range on[svc] {
+			if li, ok := idx[nid]; ok {
+				lanes[li].System = append(lanes[li].System, templates.LaneItem{
+					ElemID: "n-sys-" + svc + "-" + nid, Name: svc, Sub: system[svc], Glyph: "i-app",
+					StateKind: "ok", StateText: i18n.T(ctx, "state.online"),
+				})
+			}
+		}
+	}
+	return lanes
 }
 
 // nodeLabelMap returns swarm_node_id -> display label. Best-effort: on error it
@@ -386,4 +579,32 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.flashOK(w, r, "flash.ok.node_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
+}
+
+// metricsNodeKeys maps each Swarm node ID to the name the metrics sampler
+// files its samples under: "control-plane" for the manager Krill runs on, a
+// worker's cluster_nodes name otherwise (none for a worker Krill did not add,
+// which is not sampled). The display label must not be used for this: it can
+// differ, or match another worker's registered name.
+func (s *Server) metricsNodeKeys(ctx context.Context, live []docker.SwarmNode) map[string]string {
+	keys := map[string]string{}
+	workers := map[string]string{}
+	if rows, err := s.q.ListClusterNodes(ctx); err == nil {
+		for _, r := range rows {
+			if r.SwarmNodeID != "" {
+				workers[r.SwarmNodeID] = r.Name
+			}
+		}
+	} else {
+		slog.Warn("metricsNodeKeys: list cluster nodes", "err", err)
+	}
+	for _, n := range live {
+		switch {
+		case n.Leader || n.Role == "manager":
+			keys[n.ID] = "control-plane"
+		case workers[n.ID] != "":
+			keys[n.ID] = workers[n.ID]
+		}
+	}
+	return keys
 }

@@ -8,7 +8,7 @@ SELECT * FROM members WHERE organization_id = $1 AND user_id = $2;
 SELECT * FROM members WHERE id = $1;
 
 -- name: ListMembers :many
-SELECT m.id, m.organization_id, m.user_id, m.role, m.created_at, u.email
+SELECT m.id, m.organization_id, m.user_id, m.role, m.created_at, u.email, u.must_change_password
 FROM members m JOIN users u ON u.id = m.user_id
 WHERE m.organization_id = $1
 ORDER BY m.created_at;

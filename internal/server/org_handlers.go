@@ -2,11 +2,13 @@ package server
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/orgnet"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -113,29 +115,117 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10), http.StatusSeeOther)
 }
 
+// orgDashboard renders the projects page: every project with its
+// environments' health and, for instance operators, the cluster strip.
+// ?new=project opens the create sheet (admins).
 func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 	o, role, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
-	rows, err := s.q.ListProjectsWithCounts(r.Context(), o.ID)
+	ctx := r.Context()
+	rows, err := s.q.ListProjectsWithCounts(ctx, o.ID)
 	if err != nil {
 		logFrom(r).Error("orgDashboard: failed to list projects", "err", err, "org_id", o.ID)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
+	}
+	projIDs := make([]int64, 0, len(rows))
+	for _, p := range rows {
+		projIDs = append(projIDs, p.ID)
+	}
+	var envs []db.Environment
+	if len(projIDs) > 0 {
+		if envs, err = s.q.ListEnvironmentsByProjectIDs(ctx, projIDs); err != nil {
+			logFrom(r).Error("orgDashboard: list environments", "err", err, "org_id", o.ID)
+		}
+	}
+	envIDs := make([]int64, 0, len(envs))
+	for _, e := range envs {
+		envIDs = append(envIDs, e.ID)
+	}
+	var apps []db.Application
+	if len(envIDs) > 0 {
+		if apps, err = s.q.ListApplicationsByEnvironmentIDs(ctx, envIDs); err != nil {
+			logFrom(r).Error("orgDashboard: list applications", "err", err, "org_id", o.ID)
+		}
+	}
+	s.deriveCardStatuses(ctx, apps, nil)
+	type tally struct{ apps, failed, stopped, deploying int }
+	byEnv := map[int64]*tally{}
+	mini := map[int64][]string{}
+	for _, a := range apps {
+		t := byEnv[a.EnvironmentID]
+		if t == nil {
+			t = &tally{}
+			byEnv[a.EnvironmentID] = t
+		}
+		t.apps++
+		kind, _ := templates.AppState(ctx, a.Status)
+		switch kind {
+		case "err":
+			t.failed++
+		case "warn":
+			t.deploying++
+		case "idle":
+			t.stopped++
+		}
+		mini[a.EnvironmentID] = append(mini[a.EnvironmentID], kind)
+	}
+	envsByProject := map[int64][]db.Environment{}
+	for _, e := range envs {
+		envsByProject[e.ProjectID] = append(envsByProject[e.ProjectID], e)
 	}
 	cards := make([]templates.ProjectCard, 0, len(rows))
 	for _, p := range rows {
-		cards = append(cards, templates.ProjectCard{
-			Project: db.Project{
-				ID: p.ID, OrganizationID: p.OrganizationID, Name: p.Name,
-				Slug: p.Slug, Description: p.Description, CreatedAt: p.CreatedAt,
-			},
-			EnvCount: p.EnvCount,
-			AppCount: p.AppCount,
-		})
+		pc := templates.ProjectCard{Project: db.Project{
+			ID: p.ID, OrganizationID: p.OrganizationID, Name: p.Name,
+			Slug: p.Slug, Description: p.Description, CreatedAt: p.CreatedAt,
+		}}
+		pe := envsByProject[p.ID]
+		sort.SliceStable(pe, func(i, j int) bool { return pe[i].CreatedAt.Before(pe[j].CreatedAt) })
+		for i, e := range pe {
+			row := templates.ProjectEnv{ID: e.ID, Name: e.Name}
+			t := byEnv[e.ID]
+			switch {
+			case t == nil:
+				row.StateKind, row.StateText = "idle", i18n.T(ctx, "projects.no_apps")
+			case t.failed > 0:
+				row.StateKind, row.StateText = "err", i18n.Tf(ctx, "projects.n_failed", t.failed)
+			case t.deploying > 0:
+				row.StateKind, row.StateText = "warn", i18n.Tf(ctx, "projects.n_deploying", t.deploying)
+			case t.stopped > 0:
+				row.StateKind, row.StateText = "idle", i18n.Tf(ctx, "projects.n_stopped", t.stopped)
+			default:
+				row.StateKind, row.StateText = "ok", i18n.T(ctx, "projects.all_online")
+			}
+			pc.Envs = append(pc.Envs, row)
+			if i == 0 {
+				pc.Mini = mini[e.ID]
+			}
+		}
+		cards = append(cards, pc)
 	}
-	render(w, r, http.StatusOK, templates.OrgDashboard(o, role, cards))
+	var cluster []templates.ClusterNode
+	if auth.IsInstanceAdmin(ctx) {
+		for _, n := range s.nodeSummaries(ctx) {
+			cn := templates.ClusterNode{Name: n.Node, CPU: int(n.CPUPct + 0.5)}
+			if n.MemTotal > 0 {
+				cn.Mem = int(n.MemUsed * 100 / n.MemTotal)
+			}
+			switch {
+			case n.Stale:
+				cn.StateKind, cn.StateText = "idle", i18n.T(ctx, "projects.node_stale")
+			case cn.Mem >= 85:
+				cn.StateKind, cn.StateText = "warn", i18n.Tf(ctx, "canvas.memory_pct", cn.Mem)
+			default:
+				cn.StateKind, cn.StateText = "ok", i18n.T(ctx, "projects.node_healthy")
+			}
+			cluster = append(cluster, cn)
+		}
+	}
+	newProject := r.URL.Query().Get("new") == "project" && isAdminRole(role)
+	render(w, r, http.StatusOK, templates.OrgDashboard(o, role, cards, cluster, newProject))
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {

@@ -328,6 +328,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(csrfGuard)
+	r.Use(assetGate)
 	r.Use(s.panelHSTS)
 
 	// locale middleware (see requestLocale).
@@ -419,6 +420,8 @@ func (s *Server) Router() http.Handler {
 			// Every member may change their own password; the page lives under
 			// the organization only so it renders inside the normal layout.
 			r.Get("/account/password", s.orgAccountPasswordPage)
+			r.Get("/settings", s.settingsOverview)
+			r.Get("/search", s.orgSearch)
 			r.Post("/account/password", s.orgAccountPasswordSubmit)
 			r.Get("/members", s.listMembers)
 			r.Get("/destinations", s.listDestinations)
@@ -511,6 +514,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/projects/{projID}/delete", s.deleteProject)
 				r.Post("/projects/{projID}/rename", s.renameProject)
 				r.Post("/projects/{projID}/environments", s.createEnvironment)
+				r.Get("/projects/{projID}/environments/{envID}/settings", s.envSettingsPage)
 				r.Post("/projects/{projID}/environments/{envID}/clone", s.cloneEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/delete", s.deleteEnvironment)
 				r.Post("/projects/{projID}/environments/{envID}/apps", s.createApp)
@@ -556,6 +560,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/projects/{projID}", s.projectPage)
 			r.Get("/projects/{projID}/environments/{envID}", s.projectPage)
 			r.Get("/projects/{projID}/environments/{envID}/statuses", s.envStatuses)
+			r.Get("/projects/{projID}/environments/{envID}/databases", s.envDatabasesPage)
 
 			r.Route("/projects/{projID}/environments/{envID}/apps/{appID}", func(r chi.Router) {
 				r.Get("/", s.appDetail)

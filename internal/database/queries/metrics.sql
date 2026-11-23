@@ -8,6 +8,12 @@ FROM metric_samples
 WHERE ts >= $1
 ORDER BY node, component, ts;
 
+-- name: MetricSamplesSinceForComponents :many
+SELECT node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
+FROM metric_samples
+WHERE ts >= $1 AND component = ANY(@components::text[])
+ORDER BY node, component, ts;
+
 -- name: LatestMetricSamples :many
 SELECT DISTINCT ON (node, component) node, component, ts, cpu_pct, mem_bytes, mem_limit_bytes
 FROM metric_samples

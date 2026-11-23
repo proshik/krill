@@ -25,10 +25,10 @@ func TestStartupGateServesStartingPage(t *testing.T) {
 		phase StartupPhase
 		want  string
 	}{
-		{name: "zero value", want: "Applying database migrations…"},
-		{name: "migrating", set: true, phase: PhaseMigrating, want: "Applying database migrations…"},
-		{name: "starting", set: true, phase: PhaseStarting, want: "Starting services…"},
-		{name: "gateway", set: true, phase: PhaseGateway, want: "Preparing the gateway…"},
+		{name: "zero value", want: "applying database migrations…"},
+		{name: "migrating", set: true, phase: PhaseMigrating, want: "applying database migrations…"},
+		{name: "starting", set: true, phase: PhaseStarting, want: "starting services…"},
+		{name: "gateway", set: true, phase: PhaseGateway, want: "preparing the gateway…"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestStartupGateServesStartingPage(t *testing.T) {
 				tc.want,
 				"<title>Krill is starting</title>",
 				"<h1>Krill is starting</h1>",
-				"This page refreshes by itself.",
+				"this page refreshes by itself.",
 				`fetch(location.href, {cache: "no-store"})`,
 				// Through the panel domain Traefik answers 502/504 while Krill
 				// is down; reloading onto its error page would end the polling.

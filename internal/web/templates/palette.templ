@@ -1,0 +1,57 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// PaletteGroup is one group of palette results.
+type PaletteGroup struct {
+	Title string
+	Items []PaletteItem
+}
+
+// PaletteItem is one palette result: a link, or (Logout) the sign-out form.
+type PaletteItem struct {
+	Label     string
+	Sub       string
+	Href      string
+	Glyph     string // sprite id, "" for none
+	StateKind string
+	StateText string
+	Logout    bool
+}
+
+// PaletteResults is the palette's result list for a query.
+templ PaletteResults(groups []PaletteGroup) {
+	if len(groups) == 0 {
+		<p class="palette-empty">{ i18n.T(ctx, "palette.nothing") }</p>
+	}
+	for _, g := range groups {
+		<h3>{ g.Title }</h3>
+		<ul>
+			for _, it := range g.Items {
+				<li>
+					if it.Logout {
+						<form method="post" action="/logout" hx-boost="false">
+							<button type="submit" class="palette-item" role="option">{ it.Label }</button>
+						</form>
+					} else {
+						<a href={ templ.SafeURL(it.Href) } role="option">
+							if it.Glyph != "" {
+								@ui.Icon(it.Glyph)
+							}
+							<span class="palette-label">{ it.Label }</span>
+							if it.Sub != "" {
+								<span class="palette-sub">{ it.Sub }</span>
+							}
+							if it.StateText != "" {
+								@ui.State(it.StateKind, it.StateText)
+							}
+						</a>
+					}
+				</li>
+			}
+		</ul>
+	}
+}

@@ -108,6 +108,25 @@ func (s *Server) baseURL(ctx context.Context) string {
 	return s.cfg.BaseURL()
 }
 
+// shownBaseURL is the base of the addresses a page shows the operator to copy
+// (API endpoints, webhook URLs): KRILL_PUBLIC_URL or the active panel domain
+// when one is set, else the origin the operator is visiting right now. The
+// KRILL_HOST derivation is not used for these: its default, localhost with no
+// port, is an address a remote client cannot reach.
+func (s *Server) shownBaseURL(r *http.Request) string {
+	if s.cfg.PublicURL != "" {
+		return s.cfg.PublicURL
+	}
+	if row, err := s.panelRow(r.Context()); err == nil && row.State == panel.StateActive && row.Host != "" {
+		return "https://" + row.Host
+	}
+	scheme := "http"
+	if r.TLS != nil || s.secureViaGateway(r) {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
 // NotifyLinkBase is where notifications link to: KRILL_PUBLIC_URL when it is
 // https, else the active panel domain; "" when the installation has no
 // public https address (KRILL_HOST alone is not one), so messages carry no

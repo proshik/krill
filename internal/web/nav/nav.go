@@ -81,3 +81,20 @@ func sectionOf(path string) string {
 		return "projects"
 	}
 }
+
+// OrgTab maps the current path onto the organization bar's tab: "projects",
+// "db-servers", "nodes", "topology", "monitoring" or "settings". Every
+// settings-like page (members, registries, the instance pages, the account
+// page) belongs to "settings".
+func OrgTab(ctx context.Context) string {
+	path := Path(ctx)
+	if strings.Contains(path, "/settings") {
+		return "settings"
+	}
+	switch s := sectionOf(path); s {
+	case "projects", "db-servers", "nodes", "topology", "monitoring":
+		return s
+	default:
+		return "settings"
+	}
+}

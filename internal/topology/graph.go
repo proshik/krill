@@ -23,13 +23,17 @@ type GNode struct {
 }
 
 type GService struct {
-	ID     string `json:"id"`     // "app-<appID>" | "db-<instanceID>"
-	Kind   string `json:"kind"`   // "app" | "db" | "gateway" | "internet"
-	NodeID string `json:"node"`   // FK -> GNode.ID
-	Label  string `json:"label"`  // display name
-	Sub    string `json:"sub"`    // "project / env" (app) or "Postgres"/"Redis" (db)
-	Engine string `json:"engine"` // "" | "postgres" | "redis"
-	Status string `json:"status"` // "running" | stored status (greys the box when not running)
+	ID     string `json:"id"`             // "app-<appID>" | "db-<instanceID>"
+	Kind   string `json:"kind"`           // "app" | "db" | "gateway" | "internet"
+	NodeID string `json:"node"`           // FK -> GNode.ID
+	Label  string `json:"label"`          // display name
+	Sub    string `json:"sub"`            // "project / env" (app) or "Postgres"/"Redis" (db)
+	Engine string `json:"engine"`         // "" | "postgres" | "redis"
+	Status string `json:"status"`         // "running" | stored status (greys the box when not running)
+	Href   string `json:"href,omitempty"` // the service's page in the panel
+	// ProjectID and Project identify an app's project (0 and "" otherwise).
+	ProjectID int64  `json:"project_id,omitempty"`
+	Project   string `json:"project,omitempty"`
 }
 
 type GDB struct {
@@ -77,6 +81,10 @@ type ServiceInput struct {
 	Sub    string
 	Engine string
 	Status string
+	Href   string
+	// ProjectID and Project identify an app's project.
+	ProjectID int64
+	Project   string
 }
 
 type DBInput struct {
@@ -290,7 +298,7 @@ func Build(in Inputs) Graph {
 	}
 	svcNode := make(map[string]string, len(in.Services))
 	for _, s := range in.Services {
-		g.Services = append(g.Services, GService{ID: s.ID, Kind: s.Kind, NodeID: s.NodeID, Label: s.Label, Sub: s.Sub, Engine: s.Engine, Status: s.Status})
+		g.Services = append(g.Services, GService{ID: s.ID, Kind: s.Kind, NodeID: s.NodeID, Label: s.Label, Sub: s.Sub, Engine: s.Engine, Status: s.Status, Href: s.Href, ProjectID: s.ProjectID, Project: s.Project})
 		svcNode[s.ID] = s.NodeID
 	}
 	dbNode := make(map[int64]string, len(in.Dbs))

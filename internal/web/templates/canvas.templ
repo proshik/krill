@@ -1,0 +1,197 @@
+package templates
+
+import (
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// EnvCanvas is the environment page: the canvas with, as children, an
+// optional sheet over it (an app, a new app).
+templ EnvCanvas(s Shell, v CanvasView) {
+	@Page(s) {
+		@canvasView(v)
+		{ children... }
+	}
+}
+
+// EnvCanvasWith is EnvCanvas with a sheet component over the canvas.
+templ EnvCanvasWith(s Shell, v CanvasView, sheet templ.Component) {
+	@Page(s) {
+		@canvasView(v)
+		@sheet
+	}
+}
+
+templ canvasView(v CanvasView) {
+	<main class="canvas" aria-label={ v.Title } data-canvas>
+		<h1 class="visually-hidden">{ v.Title }</h1>
+		if v.StatusURL != "" {
+			<div hidden hx-get={ v.StatusURL } hx-trigger="every 10s" hx-swap="none"></div>
+		}
+		if len(v.Nodes) > 0 {
+			<div class="float float--nodes" role="group" aria-label={ i18n.T(ctx, "canvas.nodes") }>
+				<span class="float-label">{ i18n.T(ctx, "canvas.nodes") }</span>
+				for _, n := range v.Nodes {
+					<button type="button" class="chip" data-node={ n.ID } aria-pressed="false">
+						{ n.Name }
+						@canvasNodeCount(n, false)
+						if n.Warn != "" {
+							@ui.State("warn", n.Warn)
+						}
+					</button>
+				}
+			</div>
+		}
+		if v.Empty && !v.Ghost {
+			<div class="canvas-empty">
+				<div class="empty-card">
+					<p class="empty-title">{ i18n.T(ctx, "canvas.empty_title") }</p>
+					<p class="hint">{ i18n.T(ctx, "canvas.empty_hint") }</p>
+					if v.NewAppURL != "" {
+						<a class="btn btn--primary" href={ templ.SafeURL(v.NewAppURL) }>
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "project.new_app") }
+						</a>
+					}
+				</div>
+			</div>
+		} else {
+			<div class="plane" style={ templ.SafeCSS(planeStyle(v.Plane)) }>
+				<svg class="wires" aria-hidden="true"></svg>
+				for _, g := range v.Plane.Groups {
+					if g.Loose && v.Ghost {
+						<section class="grp grp--loose" style={ templ.SafeCSS(ghostGroupStyle(g)) }>
+							<h2 class="grp-name grp-name--quiet">{ i18n.T(ctx, "canvas.not_in_system") }</h2>
+							for _, it := range g.Items {
+								@canvasCard(v, it.Key, it.X, it.Y)
+							}
+							@ghostCard(ghostY(g))
+						</section>
+					} else {
+						<section class={ "grp", templ.KV("grp--loose", g.Loose) } style={ templ.SafeCSS(groupStyle(g)) }>
+							if g.Loose {
+								<h2 class="grp-name grp-name--quiet">{ i18n.T(ctx, "canvas.not_in_system") }</h2>
+							} else {
+								<h2 class="grp-name">{ g.Name }</h2>
+							}
+							for _, it := range g.Items {
+								@canvasCard(v, it.Key, it.X, it.Y)
+							}
+						</section>
+					}
+				}
+				if _, ok := looseGroup(v.Plane); !ok && v.Ghost {
+					<section class="grp grp--loose" style={ templ.SafeCSS(ghostOnlyStyle(v.Plane)) }>
+						<h2 class="grp-name grp-name--quiet">{ i18n.T(ctx, "canvas.not_in_system") }</h2>
+						@ghostCard(64)
+					</section>
+				}
+			</div>
+			<div class="float float--zoom" role="group" aria-label={ i18n.T(ctx, "canvas.zoom") }>
+				<button type="button" class="pill pill--icon" data-zoom="out" aria-label={ i18n.T(ctx, "canvas.zoom_out") }>
+					@ui.Icon("i-minus")
+				</button>
+				<span class="zoom" data-zoom-label>100%</span>
+				<button type="button" class="pill pill--icon" data-zoom="in" aria-label={ i18n.T(ctx, "canvas.zoom_in") }>
+					@ui.Icon("i-plus")
+				</button>
+				<button type="button" class="pill pill--icon" data-zoom="fit" aria-label={ i18n.T(ctx, "canvas.fit") }>
+					@ui.Icon("i-fit")
+				</button>
+			</div>
+		}
+		if v.Cloned || v.ClonePending {
+			<a class="float float--toast float--clone" href={ templ.SafeURL(v.SettingsURL) } data-clone-notice>
+				@ui.State("warn", i18n.T(ctx, "canvas.cloned"))
+				<span>
+					if v.ClonePending {
+						{ i18n.T(ctx, "clone.pending") }
+					} else {
+						{ i18n.T(ctx, "canvas.cloned_note") }
+					}
+				</span>
+				<span class="toast-go">{ i18n.T(ctx, "common.open") }</span>
+			</a>
+		} else if v.Failing != nil {
+			<a class="float float--toast" href={ templ.SafeURL(v.Failing.Href) }>
+				@ui.State("err", v.Failing.Name)
+				<span>{ i18n.Tf(ctx, "canvas.failed_note", ago(ctx, v.Failing.When)) }</span>
+				<span class="toast-go">{ i18n.T(ctx, "common.open") }</span>
+			</a>
+		}
+	</main>
+}
+
+templ canvasCard(v CanvasView, key string, x, y int) {
+	if c, ok := v.Cards[key]; ok {
+		<a
+			class="svc"
+			id={ c.ElemID }
+			href={ templ.SafeURL(c.Href) }
+			style={ templ.SafeCSS(canvasStyle(x, y)) }
+			data-to={ joinSpace(c.To) }
+			data-detected={ joinSpace(c.Detected) }
+			{ ariaCurrent(key == v.Current, "true")... }
+		>
+			<span class="svc-head">
+				@ui.Glyph(c.Glyph)
+				<span class="svc-name">{ c.Name }</span>
+				if c.Shared {
+					<span class="tag tag--small" title={ i18n.T(ctx, "canvas.shared_hint") }>{ i18n.T(ctx, "system.shared") }</span>
+				}
+			</span>
+			<span class={ "svc-sub", templ.KV("svc-sub--link", c.SubLink) }>{ c.Sub }</span>
+			<span class="svc-foot">
+				@ui.StateID(c.StateID, c.StateKind, c.StateText, false)
+				@canvasWhere(c, false)
+			</span>
+		</a>
+	}
+}
+
+// canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
+// what the node filter matches; the status poll replaces it (oob) with the
+// placement of the same snapshot as the badges.
+templ canvasWhere(c CanvasCard, oob bool) {
+	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } hx-swap-oob?={ oob }>
+		if len(c.Nodes) > 0 {
+			@ui.Icon("i-node")
+			{ joinComma(c.Nodes) }
+		} else {
+			{ i18n.T(ctx, "canvas.not_running") }
+		}
+	</span>
+}
+
+// canvasNodeCount is a node chip's count of cards, refreshed by the poll.
+templ canvasNodeCount(n CanvasNode, oob bool) {
+	<span class="chip-count" id={ "cn-" + n.ID } hx-swap-oob?={ oob }>{ nodeCountLabel(n) }</span>
+}
+
+// CanvasRefresh is the canvas's status poll: every card's state badge and
+// placement, and the node chips' counts, from one snapshot.
+templ CanvasRefresh(v CanvasView) {
+	for _, c := range v.Cards {
+		if c.StateID != "" {
+			@ui.StateID(c.StateID, c.StateKind, c.StateText, true)
+		}
+		@canvasWhere(c, true)
+	}
+	for _, n := range v.Nodes {
+		@canvasNodeCount(n, true)
+	}
+}
+
+templ ghostCard(y int) {
+	<div class="svc svc--ghost" id="s-ghost" style={ templ.SafeCSS(canvasStyle(24, y)) } aria-hidden="true">
+		<span class="svc-head">
+			@ui.Glyph("i-app")
+			<span class="svc-name" data-ghost-name>{ i18n.T(ctx, "canvas.new_app") }</span>
+		</span>
+		<span class="svc-sub">{ i18n.T(ctx, "canvas.new_app") }</span>
+		<span class="svc-foot"><span class="state state--idle">
+			@ui.Sig("idle")
+			{ i18n.T(ctx, "canvas.not_created") }
+		</span></span>
+	</div>
+}

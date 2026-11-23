@@ -1,10 +1,11 @@
-// Mounts an xterm log viewer into a `.k-term[data-ws]` element and streams logs
+// Mounts an xterm log viewer into a `.term[data-term-log]` element and streams logs
 // over WebSocket. Mounting is driven by krillEnhance (DOMContentLoaded +
 // htmx:afterSettle), so any log view added by a page swap mounts automatically;
 // the data-mounted guard makes it idempotent and the singleton id is gone.
+const KRILL_TERM_THEME = { background: "#1c1d20", foreground: "#d6d7da", cursor: "#a9a6d8", selectionBackground: "#3a3950" };
 function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
-  const wsPath = el.dataset.ws;
+  const wsPath = el.dataset.termLog;
   if (!wsPath) return;
   // After an hx-boost swap the external xterm.js / addon-fit.js scripts may
   // still be loading; wait for them before building, and only mark mounted on
@@ -15,7 +16,7 @@ function mountTerminalEl(el) {
   }
   el.dataset.mounted = "1";
 
-  const term = new Terminal({ convertEol: true, fontSize: 12, theme: { background: "#0f1115" } });
+  const term = new Terminal({ convertEol: true, fontSize: 12, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -31,13 +32,15 @@ function mountTerminalEl(el) {
   const ws = new WebSocket(`${proto}://${location.host}${wsPath}`);
   let gotData = false;
   ws.onmessage = (e) => { gotData = true; term.writeln(e.data); };
+  // The messages come from the page (data-i18n-*), in the panel's language.
+  const t = el.dataset;
   ws.onclose = () => term.writeln(gotData
-    ? "\x1b[90m[log stream closed]\x1b[0m"
-    : "\x1b[90m[no logs yet — start or redeploy the service to stream logs]\x1b[0m");
-  ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
+    ? "\x1b[90m[" + (t.i18nClosed || "log stream closed") + "]\x1b[0m"
+    : "\x1b[90m[" + (t.i18nEmpty || "no logs yet") + "]\x1b[0m");
+  ws.onerror = () => term.writeln("\x1b[31m[" + (t.i18nError || "log stream error") + "]\x1b[0m");
 }
 
-// Mounts an INTERACTIVE exec terminal into `.k-term[data-term-ws]`: xterm with
+// Mounts an INTERACTIVE exec terminal into `.term[data-term-ws]`: xterm with
 // stdin (binary frames), resize (text JSON frames), and binary output. Status
 // text is hardcoded English to match the log viewer.
 function mountExecTerminal(el) {
@@ -47,7 +50,7 @@ function mountExecTerminal(el) {
     return;
   }
   el.dataset.mounted = "1";
-  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: { background: "#0f1115" } });
+  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -56,6 +59,7 @@ function mountExecTerminal(el) {
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
+  const t = el.dataset; // messages in the panel's language (data-i18n-*)
   const statusEl = document.getElementById("term-status");
   const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
   let ws = null;
@@ -68,48 +72,46 @@ function mountExecTerminal(el) {
     term.reset();
     const cmd = (document.getElementById("term-cmd") || {}).value || "/bin/sh";
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    setStatus("connecting…");
+    setStatus(t.i18nConnecting || "connecting…");
     ws = new WebSocket(`${proto}://${location.host}${el.dataset.termWs}?cmd=${encodeURIComponent(cmd)}`);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => { setStatus(""); refit(); sendResize(); term.focus(); };
     ws.onmessage = (e) => term.write(new Uint8Array(e.data));
-    ws.onclose = () => setStatus("session ended — press Connect to start a new one");
-    ws.onerror = () => setStatus("connection error");
+    ws.onclose = () => setStatus(t.i18nEnded || "session ended");
+    ws.onerror = () => setStatus(t.i18nError || "connection error");
   }
   el._krillConnect = connect;
   connect();
 }
 
-// Mounts the structured log viewer into `.k-logs[data-ws]`: streams JSON frames
+// Mounts the structured log viewer into `[data-logs]`: streams JSON frames
 // {t,lvl,msg}, renders time|level|message rows with per-level colors, and does
 // client-side text search + level filtering. Status text is hardcoded English.
 function mountLogViewer(el) {
   if (!el || el.dataset.mounted) return;
   el.dataset.mounted = "1";
   const MAX_ROWS = 2000;
-  const body = el.querySelector(".k-logs-body");
-  const searchEl = el.querySelector(".k-logs-search");
-  const FILTERABLE = ["debug", "info", "warn", "error"];
-  const enabled = { debug: true, info: true, warn: true, error: true };
+  const body = el.querySelector("[data-logs-body]");
+  const searchEl = el.querySelector("[data-logs-search]");
+  let level = "all";
   let query = "";
 
   function rowVisible(row) {
-    const lvl = row.dataset.level;
-    const lvlOK = FILTERABLE.indexOf(lvl) === -1 || enabled[lvl];
+    const lvlOK = level === "all" || row.dataset.level === level;
     const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
     return lvlOK && txtOK;
   }
   function applyFilter() {
-    body.querySelectorAll(".k-log-row").forEach((r) => { r.style.display = rowVisible(r) ? "" : "none"; });
+    body.querySelectorAll("li").forEach((r) => { r.hidden = !rowVisible(r); });
   }
   if (searchEl) {
     searchEl.addEventListener("input", () => { query = searchEl.value.toLowerCase(); applyFilter(); });
   }
-  el.querySelectorAll(".k-logs-lvlchip").forEach((chip) => {
+  const chips = el.querySelectorAll("[data-level]");
+  chips.forEach((chip) => {
     chip.addEventListener("click", () => {
-      const lvl = chip.dataset.level;
-      enabled[lvl] = !enabled[lvl];
-      chip.classList.toggle("k-logs-lvlchip-off", !enabled[lvl]);
+      level = chip.dataset.level;
+      chips.forEach((c) => c.setAttribute("aria-pressed", String(c === chip)));
       applyFilter();
     });
   });
@@ -119,24 +121,25 @@ function mountLogViewer(el) {
     const d = new Date(t);
     if (isNaN(d.getTime())) return "";
     const p = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const today = new Date();
+    const clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    return d.toDateString() === today.toDateString() ? clock : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${clock}`;
   }
   function addRow(line) {
-    const row = document.createElement("div");
-    row.className = "k-log-row";
-    row.dataset.level = line.lvl || "";
+    const row = document.createElement("li");
+    const lv = (line.lvl || "").toLowerCase();
+    row.dataset.level = lv;
     row.dataset.text = (line.msg || "").toLowerCase();
-    const t = document.createElement("span");
-    t.className = "k-log-time";
+    const t = document.createElement("time");
     t.textContent = fmtTime(line.t);
+    if (line.t) t.dateTime = line.t;
     const lvl = document.createElement("span");
-    lvl.className = "k-log-lvl";
-    if (line.lvl) lvl.textContent = line.lvl.toUpperCase();
-    const msg = document.createElement("span");
-    msg.className = "k-log-msg";
+    lvl.className = "lvl" + (lv ? " lvl--" + lv : "");
+    lvl.textContent = lv;
+    const msg = document.createElement("code");
     msg.textContent = line.msg || "";
-    row.appendChild(t); row.appendChild(lvl); row.appendChild(msg);
-    if (!rowVisible(row)) row.style.display = "none";
+    row.append(t, lvl, msg);
+    row.hidden = !rowVisible(row);
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
     body.appendChild(row);
     while (body.childElementCount > MAX_ROWS) body.removeChild(body.firstElementChild);
@@ -144,300 +147,167 @@ function mountLogViewer(el) {
   }
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}${el.dataset.ws}`);
+  const ws = new WebSocket(`${proto}://${location.host}${el.dataset.logs}`);
   let got = false;
   ws.onmessage = (e) => { got = true; try { addRow(JSON.parse(e.data)); } catch (_) { /* ignore */ } };
-  ws.onclose = () => { if (!got) addRow({ msg: "no logs yet — start or redeploy the service to stream logs" }); };
-  ws.onerror = () => addRow({ lvl: "error", msg: "log stream error" });
+  ws.onclose = () => { if (!got) addRow({ msg: el.dataset.empty || "no logs yet" }); };
+  ws.onerror = () => addRow({ lvl: "error", msg: el.dataset.error || "log stream error" });
+  // A boosted navigation away replaces the body: close the stream with it.
+  const stop = () => { try { ws.close(); } catch (_) { /* closed */ } document.removeEventListener("htmx:beforeSwap", onSwap); };
+  const onSwap = (e) => { if (e.detail && e.detail.target === document.body) stop(); };
+  document.addEventListener("htmx:beforeSwap", onSwap);
 }
 
 // krillExecConnect (re)connects the terminal using the current command field.
 window.krillExecConnect = function () {
-  const el = document.querySelector(".k-term[data-term-ws]");
+  const el = document.querySelector(".term[data-term-ws]");
   if (el && el._krillConnect) el._krillConnect();
 };
 
+// The monitoring page: CPU and memory per node as SVG lines (% of the node),
+// and a column per node with its containers. Polls every 10 s; the timer is
+// cleared by krillEnhance when the page is left.
 function mountMonitoring(el) {
   if (!el || el.dataset.mounted) return;
-  if (typeof uPlot === "undefined") { setTimeout(() => mountMonitoring(el), 50); return; }
   el.dataset.mounted = "1";
   const base = el.dataset.url;
-  let range = "24h", cpuU = null, memU = null, nodeFilter = "", lastData = null;
-  const I18N = { stale: el.dataset.i18nStale || "stale", allNodes: el.dataset.i18nAllnodes || "All nodes" };
-  const ACTIVE = "k-seg-active"; // must match the template + CSS active class
-
-  el.querySelectorAll("#mon-range .k-seg-btn").forEach((b) => b.addEventListener("click", () => {
-    el.querySelectorAll("#mon-range .k-seg-btn").forEach((x) => x.classList.remove(ACTIVE));
-    b.classList.add(ACTIVE); range = b.dataset.range; load();
+  const t = el.dataset;
+  let range = "24h", nodeFilter = "", last = null;
+  const status = el.querySelector(".mon-status");
+  const nodeSeg = el.querySelector("[data-mon-nodes]");
+  el.querySelectorAll("[data-range]").forEach((b) => b.addEventListener("click", () => {
+    range = b.dataset.range;
+    el.querySelectorAll("[data-range]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    load();
   }));
-
-  // Node filter (charts only): re-render from the last fetched data, no re-fetch.
-  const nodeSel = el.querySelector("#mon-node-sel");
-  if (nodeSel) nodeSel.addEventListener("change", () => { nodeFilter = nodeSel.value; if (lastData) build(lastData); });
-
-  function fmtMB(mb){ return mb >= 1024 ? (mb/1024).toFixed(1)+" GB" : Math.round(mb)+" MB"; }
-  function mkChart(node, data, series){
-    return new uPlot({ width: node.clientWidth || 520, height: 190, padding:[6,8,0,2], legend:{show:false},
-      cursor:{points:{size:5}}, scales:{x:{time:true}},
-      axes:[{stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:30},
-            {stroke:"#8b8b93",grid:{stroke:"#1b1b20"},font:"10px ui-monospace",size:42}], series }, data, node);
-  }
-  function build(d){
-    lastData = d;
-    const xs = d.x || [];
-    // Refresh the node filter options, preserving the current selection (fall back to All if that node vanished).
-    if (nodeSel) {
-      const want = nodeFilter;
-      nodeSel.innerHTML = [`<option value="">${escapeHtml(I18N.allNodes)}</option>`]
-        .concat((d.nodes||[]).map((n) => `<option value="${escapeHtml(n.node)}">${escapeHtml(n.node)}</option>`)).join("");
-      nodeSel.value = want;
-      nodeFilter = nodeSel.value;
-    }
-    const cpuData=[xs], memData=[xs], cpuSer=[{}], memSer=[{}];
-    for (const s of (d.series||[])) {
-      if (nodeFilter && s.node !== nodeFilter) continue; // charts: show only the selected node (All = no filter)
-      cpuData.push(s.cpu); memData.push(s.mem);
-      cpuSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
-      memSer.push({label:s.name,stroke:s.color||"#888",width:1.5,points:{show:false},spanGaps:false});
-    }
-    const cpuNode=el.querySelector("#mon-cpu"), memNode=el.querySelector("#mon-mem");
-    if (cpuU) cpuU.destroy(); if (memU) memU.destroy();
-    cpuNode.innerHTML=""; memNode.innerHTML="";
-    cpuU=mkChart(cpuNode,cpuData,cpuSer); memU=mkChart(memNode,memData,memSer);
-
-    const nodes = d.nodes || [];
-    el.querySelector("#mon-nodes").innerHTML = nodes.map(function(n){
-      const memPct = n.mem_total ? Math.round(n.mem_used/n.mem_total*100) : 0;
-      const stale = n.stale ? ` <span class='k-badge k-badge-warn'>${escapeHtml(I18N.stale)}</span>` : "";
-      return `<span class='k-mon-node'><b>${escapeHtml(n.node)}</b>${stale} cpu ${(n.cpu_pct||0).toFixed(0)}% · mem ${fmtMB((n.mem_used||0)/1048576)} / ${fmtMB((n.mem_total||0)/1048576)} (${memPct}%) · ${n.containers||0}c</span>`;
-    }).join("");
-
-    // Group by node: a node header, then that node's components ordered by class (control/infra/app/db) then name.
-    const ord = function(g){ return g==="control"?0:g==="infra"?1:g==="app"?2:g==="db"?3:9; };
-    const rows = (d.rows||[]).slice().sort(function(a,b){
-      const an=a.node||"", bn=b.node||"";
-      if (an!==bn) return an<bn?-1:1;
-      const go=ord(a.group)-ord(b.group);
-      return go!==0 ? go : (a.name||"").localeCompare(b.name||"");
+  nodeSeg.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-node]");
+    if (!b) return;
+    nodeFilter = b.dataset.node;
+    nodeSeg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (last) build(last);
+  });
+  // Escapes for text and for double- or single-quoted attribute values: names
+  // such as a worker's come from operators and go into aria-label="…".
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const gib = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GiB" : Math.round(b / 1048576) + " MiB";
+  const mib = (b) => Math.round(b / 1048576) + " MiB";
+  const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
+  function nodeSeries(d) {
+    // Per node, per bucket: sum of the containers' values, as % of the node.
+    // Maps, not plain objects: node names are operators' words, and a worker
+    // named "constructor" would find Object.prototype's.
+    const cap = new Map();
+    (d.nodes || []).forEach((n) => { cap.set(n.node, n); });
+    const out = new Map();
+    const len = (d.x || []).length;
+    (d.series || []).forEach((s) => {
+      const n = cap.get(s.node) || {};
+      if (!out.has(s.node)) out.set(s.node, { cpu: new Array(len).fill(null), mem: new Array(len).fill(null) });
+      const acc = out.get(s.node);
+      for (let i = 0; i < len; i++) {
+        const c = s.cpu[i], m = s.mem[i];
+        if (c != null && n.ncpu) acc.cpu[i] = (acc.cpu[i] || 0) + c / n.ncpu;
+        if (m != null && n.mem_total) acc.mem[i] = (acc.mem[i] || 0) + m * 1048576 * 100 / n.mem_total;
+      }
     });
-    let html="<table class='k-table'><thead><tr><th>Component</th><th>CPU</th><th>Memory</th></tr></thead><tbody>", curNode=null;
-    for (const r of rows) {
-      if (nodeFilter && r.node !== nodeFilter) continue; // node selector also filters the table (All = no filter)
-      if (r.node!==curNode){ curNode=r.node; html+=`<tr class='k-mon-grp'><td colspan='3'>${escapeHtml(curNode||"—")}</td></tr>`; }
-      html+=`<tr><td><span style='display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:8px;background:${r.color||"#555"}'></span>${escapeHtml(r.name)}</td><td>${(r.cpu||0).toFixed(1)} %</td><td>${fmtMB(r.mem/1048576)}</td></tr>`;
-    }
-    el.querySelector("#mon-table").innerHTML = html+"</tbody></table>";
+    return out;
   }
-  function escapeHtml(s){ const d=document.createElement("div"); d.textContent=s==null?"":String(s); return d.innerHTML; }
-  function load(){ fetch(`${base}?range=${range}`).then(r=>r.json()).then(build).catch(()=>{}); }
+  function path(pts) {
+    let d = "", pen = false;
+    const n = pts.length;
+    pts.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      const x = (n > 1 ? i * 600 / (n - 1) : 0).toFixed(1);
+      const y = (200 - Math.max(0, Math.min(100, v)) * 2).toFixed(1);
+      d += (pen ? "L" : "M") + x + " " + y;
+      pen = true;
+    });
+    return d;
+  }
+  function lastVal(pts) { for (let i = pts.length - 1; i >= 0; i--) if (pts[i] != null) return pts[i]; return null; }
+  function chart(kind, series, names) {
+    const sec = el.querySelector('[data-chart="' + kind + '"]');
+    const svg = sec.querySelector("svg");
+    let html = '<line x1="0" y1="0.5" x2="600" y2="0.5"/><line x1="0" y1="100" x2="600" y2="100"/><line x1="0" y1="199.5" x2="600" y2="199.5"/>';
+    let ends = "";
+    names.forEach((n, i) => {
+      if (nodeFilter && n !== nodeFilter) return;
+      const pts = (series.get(n) || {})[kind] || [];
+      html += '<path class="' + CLS[i % CLS.length] + '" d="' + path(pts) + '"/>';
+      const v = lastVal(pts);
+      ends += '<li class="' + CLS[i % CLS.length] + '"><span class="swatch"></span>' + esc(n) + "<b>" + (v == null ? "—" : Math.round(v) + "%") + "</b></li>";
+    });
+    svg.innerHTML = html;
+    sec.querySelector(".ends").innerHTML = ends;
+  }
+  function spark(pts) {
+    return '<svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true"><path d="' +
+      path(pts).replace(/([ML])([\d.]+) ([\d.]+)/g, (m, c, x, y) => c + (x / 5).toFixed(1) + " " + (y * 0.16).toFixed(1)) + '"/></svg>';
+  }
+  function meter(pct, warn) {
+    return '<span class="meter' + (warn ? " meter--warn" : "") + '" aria-hidden="true"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%"></span></span>';
+  }
+  function build(d) {
+    last = d;
+    status.textContent = "";
+    const nodes = (d.nodes || []).map((n) => n.node);
+    // The node switch keeps the current choice when the node still exists.
+    if (nodeFilter && nodes.indexOf(nodeFilter) < 0) nodeFilter = "";
+    const all = nodeSeg.querySelector('[data-node=""]');
+    nodeSeg.querySelectorAll("button:not([data-node=''])").forEach((b) => b.remove());
+    nodes.forEach((n) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.node = n; b.textContent = n;
+      b.setAttribute("aria-pressed", String(n === nodeFilter));
+      nodeSeg.appendChild(b);
+    });
+    all.setAttribute("aria-pressed", String(nodeFilter === ""));
+    const series = nodeSeries(d);
+    chart("cpu", series, nodes);
+    chart("mem", series, nodes);
+    const rows = d.rows || [];
+    const ord = (g) => g === "control" ? 0 : g === "infra" ? 1 : g === "app" ? 2 : g === "db" ? 3 : 9;
+    let cols = "";
+    (d.nodes || []).forEach((n) => {
+      if (nodeFilter && n.node !== nodeFilter) return;
+      const memPct = n.mem_total ? Math.round(n.mem_used * 100 / n.mem_total) : 0;
+      const warn = memPct >= 85;
+      const st = n.stale ? '<span class="state state--idle"><svg class="sig sig--idle" aria-hidden="true"><use href="#s-idle"></use></svg>' + esc(t.i18nStale) + "</span>"
+        : warn ? '<span class="state state--warn"><svg class="sig sig--warn" aria-hidden="true"><use href="#s-warn"></use></svg>' + esc((t.i18nPressure || "%d").replace("%d", memPct).replace("%%", "%")) + "</span>"
+        : '<span class="state state--ok"><svg class="sig sig--ok" aria-hidden="true"><use href="#s-ok"></use></svg>' + esc(t.i18nHealthy) + "</span>";
+      const comps = rows.filter((r) => r.node === n.node).sort((a, b) => ord(a.group) - ord(b.group) || (a.name || "").localeCompare(b.name || ""));
+      const cpuPts = (series.get(n.node) || {}).cpu || [];
+      cols += '<section class="nodecol' + (warn ? " nodecol--warn" : "") + '" aria-label="' + esc(n.node) + '">' +
+        '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
+        '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc((t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
+        '<div class="fig"><b>' + gib(n.mem_used || 0) + "<small> " + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
+        '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", comps.length)) + "</h3><ul class=\"comps\">" +
+        comps.map((r) => {
+          const name = r.href ? '<a href="' + esc(r.href) + '">' + esc(r.name) + "</a>" : "<span>" + esc(r.name) + "</span>";
+          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + mib(r.mem) + " / " + mib(r.mem_limit) : mib(r.mem);
+          return '<li><span class="comp-name">' + name + "<em>" + esc(r.detail || r.group || "") + '</em></span><span class="comp-cpu">' + (r.cpu || 0).toFixed(1) + '%</span><span class="comp-mem">' + lim + "</span></li>";
+        }).join("") + "</ul></section>";
+    });
+    el.querySelector(".nodecols").innerHTML = cols;
+  }
+  function load() {
+    fetch(base + "?range=" + range).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(build).catch(() => { status.textContent = t.i18nError || "metrics unavailable"; });
+  }
   load();
-  // Store the poll timer globally so krillEnhance clears it on the next nav/swap
-  // (otherwise an extra fetch loop would stack on every visit to this page).
   if (window.__krillMonTimer) clearInterval(window.__krillMonTimer);
   window.__krillMonTimer = setInterval(load, 10000);
-  // A single resize handler, stored globally and removed on the next nav/swap by
-  // krillEnhance (otherwise a new listener pinning a detached chart leaks per visit).
-  if (window.__krillMonResize) window.removeEventListener("resize", window.__krillMonResize);
-  window.__krillMonResize = function(){
-    if (cpuU) cpuU.setSize({width:el.querySelector("#mon-cpu").clientWidth,height:190});
-    if (memU) memU.setSize({width:el.querySelector("#mon-mem").clientWidth,height:190});
-  };
-  window.addEventListener("resize", window.__krillMonResize);
-}
-
-function mountTopology(el) {
-  if (!el || el.dataset.mounted) return;
-  el.dataset.mounted = "1";
-  const base = el.dataset.url;
-  const I18N = {
-    empty: el.dataset.i18nEmpty || "No services yet",
-    cross: el.dataset.i18nCrossnode || "cross-node",
-  };
-  const NS = "http://www.w3.org/2000/svg";
-  const canvas = el.querySelector(".k-topo-canvas");
-  const btn = el.querySelector(".k-topo-refresh");
-  let data = null;
-
-  function mk(tag, attrs, text) {
-    const n = document.createElementNS(NS, tag);
-    for (const k in attrs) n.setAttribute(k, attrs[k]);
-    if (text != null) n.textContent = text;
-    return n;
-  }
-
-  function draw() {
-    canvas.innerHTML = "";
-    const realSvcs = (data && data.services || []).filter((s) => s.kind === "app" || s.kind === "db");
-    if (!realSvcs.length) {
-      const p = document.createElement("p");
-      p.className = "k-muted";
-      p.style.padding = "1rem";
-      p.textContent = I18N.empty;
-      canvas.appendChild(p);
-      return;
-    }
-    const LANE_W = 240, LANE_GAP = 56, PAD = 16, HEAD_H = 34,
-      BOX_H = 46, BOX_GAP = 12, CHIP_H = 20, CHIP_GAP = 4, BOX_W = LANE_W - PAD * 2;
-
-    // Order lanes: control-plane/manager first, workers by name, unplaced last.
-    const rank = (n) => (n.id === "ingress" ? -1 : n.id === "unplaced" ? 2 : (n.leader || n.role === "manager") ? 0 : 1);
-    const nodes = (data.nodes || []).slice().sort((a, b) => {
-      const r = rank(a) - rank(b);
-      return r !== 0 ? r : (a.name || "").localeCompare(b.name || "");
-    });
-
-    const byNode = {};
-    for (const s of data.services) (byNode[s.node] = byNode[s.node] || []).push(s);
-    const dbsByInst = {};
-    for (const d of (data.dbs || [])) (dbsByInst[d.service] = dbsByInst[d.service] || []).push(d);
-
-    // Geometry, keyed by service id and "L"+dbId.
-    const anchor = {};
-    let maxH = 0;
-    nodes.forEach((n, ci) => {
-      const laneX = PAD + ci * (LANE_W + LANE_GAP);
-      let y = HEAD_H + PAD;
-      for (const s of (byNode[n.id] || [])) {
-        const chips = s.kind === "db" ? (dbsByInst[s.id] || []) : [];
-        s.__x = laneX + PAD; s.__y = y; s.__w = BOX_W;
-        anchor[s.id] = {
-          left: { x: laneX + PAD, y: y + BOX_H / 2 },
-          right: { x: laneX + PAD + BOX_W, y: y + BOX_H / 2 },
-        };
-        let cy = y + BOX_H + CHIP_GAP;
-        for (const d of chips) {
-          d.__x = laneX + PAD + 8; d.__y = cy; d.__w = BOX_W - 16;
-          anchor["L" + d.id] = {
-            left: { x: laneX + PAD + 8, y: cy + CHIP_H / 2 },
-            right: { x: laneX + PAD + BOX_W - 8, y: cy + CHIP_H / 2 },
-          };
-          cy += CHIP_H + CHIP_GAP;
-        }
-        const h = BOX_H + (chips.length ? chips.length * (CHIP_H + CHIP_GAP) + CHIP_GAP : 0);
-        y += h + BOX_GAP;
-      }
-      n.__x = laneX;
-      if (y > maxH) maxH = y;
-    });
-
-    const totalW = PAD * 2 + nodes.length * LANE_W + Math.max(0, nodes.length - 1) * LANE_GAP;
-    const totalH = Math.max(maxH + PAD, 160);
-    const svg = mk("svg", { width: totalW, height: totalH, viewBox: `0 0 ${totalW} ${totalH}`, class: "k-topo-svg" });
-
-    const defs = mk("defs", {});
-    const marker = mk("marker", { id: "k-topo-arrow", viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse" });
-    marker.appendChild(mk("path", { d: "M 0 0 L 10 5 L 0 10 z", class: "k-topo-arrowhead" }));
-    defs.appendChild(marker);
-    svg.appendChild(defs);
-
-    // Lanes.
-    for (const n of nodes) {
-      svg.appendChild(mk("rect", { x: n.__x, y: 0, width: LANE_W, height: totalH, rx: 10, class: "k-topo-lane" }));
-      svg.appendChild(mk("text", { x: n.__x + PAD, y: 22, class: "k-topo-lanehead" }, n.name));
-      if (n.role) svg.appendChild(mk("text", { x: n.__x + LANE_W - PAD, y: 22, "text-anchor": "end", class: "k-topo-lanerole" }, n.role));
-    }
-
-    // Boxes/chips are drawn first; links and their domain labels layer ABOVE
-    // them, so a cross-lane link (or its label) is never hidden behind an
-    // intervening box.
-    const linkEls = [];
-    function focusOn(key) {
-      svg.classList.add("k-topo-focused");
-      for (const p of linkEls) {
-        const on = p.getAttribute("data-from") === key || p.getAttribute("data-to") === key;
-        p.classList.toggle("k-topo-lit", on);
-      }
-    }
-    function focusOff() {
-      svg.classList.remove("k-topo-focused");
-      for (const p of linkEls) p.classList.remove("k-topo-lit");
-    }
-
-    // Service boxes + chips (chips are siblings, not nested, so hover is independent).
-    for (const n of nodes) {
-      for (const s of (byNode[n.id] || [])) {
-        const g = mk("g", { class: "k-topo-svc k-topo-" + s.kind + (s.status && s.status !== "running" ? " k-topo-off" : ""), "data-id": s.id });
-        g.appendChild(mk("rect", { x: s.__x, y: s.__y, width: s.__w, height: BOX_H, rx: 8, class: "k-topo-box" }));
-        g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 20, class: "k-topo-name" }, s.label));
-        if (s.sub) g.appendChild(mk("text", { x: s.__x + 12, y: s.__y + 36, class: "k-topo-sub" }, s.sub));
-        g.addEventListener("mouseenter", () => focusOn(s.id));
-        g.addEventListener("mouseleave", focusOff);
-        svg.appendChild(g);
-        for (const d of (dbsByInst[s.id] || [])) {
-          const cg = mk("g", { class: "k-topo-chip", "data-id": "L" + d.id });
-          cg.appendChild(mk("rect", { x: d.__x, y: d.__y, width: d.__w, height: CHIP_H, rx: 5, class: "k-topo-chipbox" }));
-          cg.appendChild(mk("text", { x: d.__x + 8, y: d.__y + 14, class: "k-topo-chiptext" }, d.name + (d.env ? " · " + d.env : "")));
-          cg.addEventListener("mouseenter", () => focusOn("L" + d.id));
-          cg.addEventListener("mouseleave", focusOff);
-          svg.appendChild(cg);
-        }
-      }
-    }
-
-    // Links above the boxes. Directed: arrowhead at the `to` end.
-    const edgeLabels = [];
-    for (const l of (data.links || [])) {
-      const from = anchor[l.from];
-      const to = l.to_kind === "logical" ? anchor["L" + l.to_id] : anchor[l.to_id];
-      if (!from || !to) continue;
-      const rightward = from.right.x <= to.left.x;
-      const a = rightward ? from.right : from.left;
-      const b = rightward ? to.left : to.right;
-      const dx = Math.abs(b.x - a.x) / 2 + 24;
-      const c1 = a.x + (b.x >= a.x ? dx : -dx);
-      const c2 = b.x + (b.x >= a.x ? -dx : dx);
-      const d = `M ${a.x} ${a.y} C ${c1} ${a.y}, ${c2} ${b.y}, ${b.x} ${b.y}`;
-      let cls = "k-topo-link";
-      if (l.kind === "ingress") cls += " k-topo-link-ingress";
-      else cls += " k-topo-link-" + (l.engine || "postgres");
-      if (l.detected) cls += " k-topo-link-detected";
-      if (l.cross_node) cls += " k-topo-cross";
-      const toKey = l.to_kind === "logical" ? "L" + l.to_id : l.to_id;
-      const path = mk("path", { d: d, class: cls, "marker-end": "url(#k-topo-arrow)", "data-from": l.from, "data-to": toKey });
-      let tip;
-      if (l.kind === "ingress") tip = l.label || "";
-      else {
-        const base = l.label || (l.field ? l.var + " → " + l.field : l.var);
-        tip = base + (l.detected ? " (env)" : "") + (l.cross_node ? " (" + I18N.cross + ")" : "");
-      }
-      path.appendChild(mk("title", {}, tip));
-      linkEls.push(path);
-      svg.appendChild(path);
-      if (l.kind === "ingress" && l.label) {
-        edgeLabels.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - 4, t: l.label });
-      }
-    }
-
-    // Domain labels on the very top; the CSS halo keeps them readable over anything.
-    for (const el2 of edgeLabels) {
-      svg.appendChild(mk("text", { x: el2.x, y: el2.y, "text-anchor": "middle", class: "k-topo-edgelabel" }, el2.t));
-    }
-
-    canvas.appendChild(svg);
-  }
-
-  function load() {
-    fetch(base).then((r) => r.json()).then((d) => { data = d; draw(); }).catch(() => {});
-  }
-  if (btn) btn.addEventListener("click", load);
-  load();
-
-  // Redraw on resize (layout is width-independent here, but keep the same
-  // single-global-handler discipline as monitoring so it is cleaned up on nav).
-  if (window.__krillTopoResize) window.removeEventListener("resize", window.__krillTopoResize);
-  window.__krillTopoResize = function () { if (data) draw(); };
-  window.addEventListener("resize", window.__krillTopoResize);
 }
 
 // krillEnhance wires up content present on the page or just swapped in: it mounts
 // any unmounted log terminals and initializes the env editor. Idempotent.
 window.krillEnhance = function () {
   krillGuardForms();
-  document.querySelectorAll(".k-term[data-ws]:not([data-mounted])").forEach(mountTerminalEl);
-  document.querySelectorAll(".k-term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
-  document.querySelectorAll(".k-logs[data-ws]:not([data-mounted])").forEach(mountLogViewer);
-  document.querySelectorAll(".k-mon:not([data-mounted])").forEach(mountMonitoring);
-  document.querySelectorAll(".k-topo:not([data-mounted])").forEach(mountTopology);
+  document.querySelectorAll(".term[data-term-log]:not([data-mounted])").forEach(mountTerminalEl);
+  document.querySelectorAll(".term[data-term-ws]:not([data-mounted])").forEach(mountExecTerminal);
+  document.querySelectorAll("[data-logs]:not([data-mounted])").forEach(mountLogViewer);
+  document.querySelectorAll(".mon:not([data-mounted])").forEach(mountMonitoring);
   const envForm = document.getElementById("env-form");
   if (envForm && !envForm.envLines) {
     let mode = "kv";
@@ -445,24 +315,10 @@ window.krillEnhance = function () {
     krillEnvMode(mode);
   }
   krillMountDBLink();
-  krillMountSchedulePresets();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
-  if (!document.querySelector(".k-mon")) {
+  if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
-    if (window.__krillMonResize) { window.removeEventListener("resize", window.__krillMonResize); window.__krillMonResize = null; }
-  }
-  if (!document.querySelector(".k-topo")) {
-    if (window.__krillTopoResize) { window.removeEventListener("resize", window.__krillTopoResize); window.__krillTopoResize = null; }
-  }
-  // Stop any previous status-refresh timer (the page/element may have swapped),
-  // then restore the toggle from localStorage on the current page.
-  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
-  const arcb = document.querySelector('input[data-target="status-refresh"]');
-  if (arcb) {
-    let on = "0";
-    try { on = localStorage.getItem("krillAutoRefresh") || "0"; } catch (_) { /* private mode */ }
-    if (on === "1") { arcb.checked = true; krillAutoRefresh(arcb); }
   }
 };
 
@@ -523,120 +379,72 @@ function krillMountDBLink() {
   apply();
 }
 
-// Reveals the custom-cron input when a backup "Schedule" select is set to
-// "custom". Idempotent (guarded per-select by data-mounted); works for the DB
-// form and every per-volume form on the page.
-function krillMountSchedulePresets() {
-  document.querySelectorAll(".k-sched-preset:not([data-mounted])").forEach((sel) => {
-    sel.dataset.mounted = "1";
-    const wrap = sel.parentElement && sel.parentElement.querySelector(".k-sched-custom");
-    if (!wrap) return;
-    const apply = () => { wrap.style.display = sel.value === "custom" ? "" : "none"; };
-    sel.addEventListener("change", apply);
-    apply();
-  });
+// The confirmation dialog (#confirm, in the page frame). Used from a form's
+// onsubmit: `return krillConfirm(this, 'Delete the app api?')`, optionally
+// with the confirm button's verb, its kind ("primary" for a non-destructive
+// action) and a second line saying what is lost; the form's data-ok, data-kind
+// and data-more attributes supply them when the arguments are left out.
+// Returns false to block the triggering submit and submits the form natively
+// once confirmed. The form must carry hx-boost="false" so htmx does not fire
+// its own request on the submit event.
+// krillFormIdentity names the exact operation a form performs: its action and
+// every hidden field (an archive's object key, say). Two forms with the same
+// identity do the same thing; forms that share an action do not.
+function krillFormIdentity(form) {
+  const parts = [form.getAttribute("action") || ""];
+  form.querySelectorAll('input[type="hidden"]').forEach(function (i) { parts.push(i.name + "=" + i.value); });
+  return parts.join("\n");
+}
+// krillLiveForm returns the form a confirmation was given for: the form
+// itself while it is on the page, else a replacement with the same identity
+// (a polled list re-rendered it), else null — never another operation.
+function krillLiveForm(form, identity) {
+  if (form.isConnected) return form;
+  return Array.from(document.querySelectorAll("form")).find(function (f) { return krillFormIdentity(f) === identity; }) || null;
+}
+// krillFormGone tells the operator that what they confirmed is no longer on
+// the page, so nothing was sent.
+function krillFormGone() {
+  const dlg = document.getElementById("confirm");
+  krillShowToast((dlg && dlg.dataset.gone) || "The list changed; choose again.", "warn");
 }
 
-// Toggle periodic status refresh: when checked, click the refresh button every
-// 5s (it hx-get's the OOB status fragment). A single global timer, cleared by
-// krillEnhance on navigation so it never leaks across page swaps.
-window.krillAutoRefresh = function (cb) {
-  if (window.__krillAutoTimer) { clearInterval(window.__krillAutoTimer); window.__krillAutoTimer = null; }
-  try { localStorage.setItem("krillAutoRefresh", cb.checked ? "1" : "0"); } catch (_) { /* private mode */ }
-  if (cb.checked) {
-    window.__krillAutoTimer = setInterval(function () {
-      const b = document.getElementById(cb.dataset.target);
-      if (b) b.click();
-    }, 5000);
-  }
-};
-
-// Toggles the source fields in the application creation form.
-window.krillToggleSource = function (val) {
-  document.querySelectorAll('[data-src]').forEach(function (el) {
-    el.style.display = (el.getAttribute('data-src') === val) ? '' : 'none';
-  });
-};
-
-// Toggles engine-only fields in the DB-server creation form (e.g. MinIO's
-// root user + console port) and refreshes the version field's placeholder
-// from the selected option's data-default-image.
-window.krillToggleEngine = function (sel) {
-  const val = sel.value;
-  document.querySelectorAll('[data-engine-only]').forEach(function (el) {
-    el.style.display = (el.getAttribute('data-engine-only') === val) ? '' : 'none';
-  });
-  const opt = sel.selectedOptions && sel.selectedOptions[0];
-  const img = opt && opt.dataset ? opt.dataset.defaultImage : '';
-  const form = sel.closest('form');
-  const verInput = form && form.querySelector('[name="version"]');
-  if (verInput && img) verInput.placeholder = img;
-};
-
-// Open/close the native <dialog> modal by id.
-window.krillOpenModal = function (id) {
-  const d = document.getElementById(id);
-  if (d && typeof d.showModal === "function") {
-    d.showModal();
-    const f = d.querySelector("input, select, textarea");
-    if (f) { try { f.focus(); } catch (_) { /* not focusable yet */ } }
-  }
-};
-window.krillCloseModal = function (id) {
-  const d = document.getElementById(id);
-  if (d && typeof d.close === "function") d.close();
-};
-// Clicking the backdrop (outside the content) closes the modal.
-// Guarded so hx-boost re-running this script does not stack duplicate listeners.
-if (!window.__krillClickInit) {
-  window.__krillClickInit = true;
-  document.addEventListener("click", function (e) {
-    if (e.target && e.target.tagName === "DIALOG" && e.target.classList.contains("k-modal")) {
-      e.target.close();
-    }
-  });
-}
-
-// Styled confirmation dialog (replaces the native confirm()). Used from a
-// form's onsubmit: `return krillConfirm(this, 'message', 'Delete')`. Returns
-// false to block the triggering submit, opens #k-confirm, and only submits the
-// form natively when the user clicks the confirm button. The form must carry
-// hx-boost="false" so HTMX does not fire its own request on the submit event.
-window.krillConfirm = function (form, message, confirmLabel, kind) {
-  const dlg = document.getElementById("k-confirm");
-  if (!dlg || typeof dlg.showModal !== "function") return confirm(message);
-  const msgEl = dlg.querySelector("#k-confirm-msg");
-  const okEl = dlg.querySelector("#k-confirm-ok");
-  if (msgEl) msgEl.textContent = message;
-  if (okEl) {
-    okEl.textContent = confirmLabel || "Delete";
-    okEl.className = "k-btn " + (kind === "primary" ? "k-btn-primary" : "k-btn-danger");
-  }
+window.krillConfirm = function (form, message, confirmLabel, kind, more) {
+  const d = (form && form.dataset) || {};
+  const dlg = document.getElementById("confirm");
+  // Without the dialog the native prompt still names the action.
+  if (!dlg || typeof dlg.showModal !== "function") return confirm([message || d.confirm || "", more || d.more || ""].filter(Boolean).join("\n\n"));
+  dlg.querySelector(".confirm-q").textContent = message || d.confirm || "";
+  dlg.querySelector(".confirm-more").textContent = more || d.more || "";
+  const okEl = dlg.querySelector("#confirm-ok");
+  okEl.textContent = confirmLabel || d.ok || d.label || okEl.dataset.default || okEl.textContent;
+  if (!okEl.dataset.default) okEl.dataset.default = okEl.textContent;
+  okEl.className = (kind || d.kind) === "primary" ? "btn btn--primary" : "btn btn--danger";
+  const identity = krillFormIdentity(form);
   window.__krillConfirmAction = function () {
+    // A polled list may have replaced the form while the dialog was open:
+    // only the same operation may go out, never a neighbour sharing its action.
+    const target = krillLiveForm(form, identity);
+    if (!target) { krillFormGone(); return; }
     // form.submit() fires no submit event, so the double-submit guard below
     // would not see it: mark the form busy here, and refuse a second run.
-    if (krillFormBusy(form)) form.submit();
+    if (krillFormBusy(target)) target.submit();
   };
+  dlg.returnValue = "";
   dlg.showModal();
+  okEl.focus();
   return false;
 };
-// Invoked by the confirm dialog's confirm button.
-window.krillConfirmRun = function () {
-  const action = window.__krillConfirmAction;
-  window.__krillConfirmAction = null;
-  krillCloseModal("k-confirm");
-  if (action) action();
-};
-// Clear the pending action when the dialog is dismissed (Esc/backdrop), so a
-// cancel never runs it. 'close' does not bubble, so listen in the capture phase.
+// The dialog's own form (method="dialog") closes it with the button's value:
+// run the pending action on "ok" only. 'close' does not bubble, so listen in
+// the capture phase.
 if (!window.__krillConfirmInit) {
   window.__krillConfirmInit = true;
   document.addEventListener("close", function (e) {
-    // The close event is queued: when a confirmed action opens the dialog
-    // again right away (an unsaved-changes prompt followed by a delete
-    // confirmation), the first close arrives after the second prompt set its
-    // action and must not clear it.
-    if (e.target && e.target.id === "k-confirm" && !e.target.open) window.__krillConfirmAction = null;
+    if (!e.target || e.target.id !== "confirm" || e.target.open) return;
+    const action = window.__krillConfirmAction;
+    window.__krillConfirmAction = null;
+    if (e.target.returnValue === "ok" && action) action();
   }, true);
 }
 
@@ -681,11 +489,15 @@ if (!window.__krillUnsavedInit) {
     const msg = scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?";
     // Re-dispatch through the normal path (htmx, the form's own confirm),
     // skipping this check once.
+    const identity = krillFormIdentity(form);
     const resubmit = function () {
-      form.__krillUnsavedOK = true;
-      form.requestSubmit(submitter);
+      const target = krillLiveForm(form, identity);
+      if (!target) { krillFormGone(); return; }
+      const button = submitter && target.contains(submitter) ? submitter : null;
+      target.__krillUnsavedOK = true;
+      target.requestSubmit(button);
     };
-    const dlg = document.getElementById("k-confirm");
+    const dlg = document.getElementById("confirm");
     if (!dlg || typeof dlg.showModal !== "function") {
       if (confirm(msg)) resubmit();
       return;
@@ -762,6 +574,9 @@ if (!window.__krillSubmitGuardInit) {
   // already called preventDefault on the submits they take over.
   document.addEventListener("submit", function (e) {
     if (e.defaultPrevented) return;
+    // A dialog's own form (the confirm dialog's cancel/ok) only closes it:
+    // marking it busy would leave its buttons disabled for the next prompt.
+    if ((e.target.getAttribute("method") || "").toLowerCase() === "dialog") return;
     if (!krillFormBusy(e.target)) e.preventDefault();
   });
   window.addEventListener("pageshow", function (e) {
@@ -792,44 +607,36 @@ function krillFallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 
-// Show a transient toast. kind: "ok" | "err".
+// Show a transient toast. kind: "ok" | "err" | "warn" | "idle".
 window.krillShowToast = function (msg, kind) {
-  let host = document.getElementById("k-toast-host");
-  if (!host) {
-    host = document.createElement("div");
-    host.id = "k-toast-host";
-    host.className = "k-toast-host";
-    document.body.appendChild(host);
-  }
+  const host = document.getElementById("toasts");
+  if (!host) return;
+  const k = ["ok", "err", "warn", "idle"].indexOf(kind) >= 0 ? kind : "ok";
   const el = document.createElement("div");
-  el.className = "k-toast k-toast-" + (kind === "err" ? "err" : "ok") + " k-toast-pop";
-  el.textContent = msg;
-  el.addEventListener("click", function () { krillDismissToast(el); });
+  el.className = "toast toast--" + k;
+  el.setAttribute("role", "status");
+  el.innerHTML = '<svg class="sig sig--' + k + '" aria-hidden="true"><use href="#s-' + k + '"></use></svg><span></span>';
+  el.querySelector("span").textContent = msg;
   host.appendChild(el);
-  setTimeout(function () { krillDismissToast(el); }, 4000);
+  krillToastLater(el);
 };
+function krillToastLater(el) {
+  el.addEventListener("click", function () { krillDismissToast(el); });
+  setTimeout(function () { krillDismissToast(el); }, el.classList.contains("toast--err") ? 8000 : 4000);
+}
 window.krillDismissToast = function (el) {
   if (!el || el.dataset.gone) return;
   el.dataset.gone = "1";
-  el.classList.add("k-toast-out");
-  setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
-};
-
-// Disable a submit button on form submit to prevent double-submits and signal activity.
-window.krillBusy = function (btn, label) {
-  if (!btn) return;
-  btn.disabled = true;
-  btn.dataset.label = btn.textContent;
-  btn.textContent = label || "Working…";
+  if (el.parentNode) el.parentNode.removeChild(el);
 };
 
 // Toggle masking of a single input (e.g. a connection string) between password
 // and text; flips the eye icon on the button that triggered it.
 window.krillReveal = function (btn) {
-  const inp = btn.parentElement.querySelector("input");
+  const inp = btn.dataset.reveal ? document.getElementById(btn.dataset.reveal) : btn.parentElement.querySelector("input");
   if (!inp) return;
   inp.type = inp.type === "password" ? "text" : "password";
-  btn.textContent = inp.type === "password" ? "👁" : "🙈";
+  btn.setAttribute("aria-pressed", inp.type === "text" ? "true" : "false");
 };
 
 // Environment editor state belongs to this form, never to the previous app.
@@ -868,26 +675,29 @@ window.krillApplyEnvReveal = function () {
   // the live value and the hidden classification input's reflected attribute.
   const source = document.getElementById("env-textarea");
   source.defaultValue = source.value;
-  form.querySelectorAll("#env-secret-rows .env-val").forEach(i => { i.type = "password"; });
-  form.querySelectorAll(".env-eye").forEach(function (b) {
-    b.textContent = "👁";
-    b.setAttribute("aria-label", form.dataset.show);
-    b.setAttribute("aria-pressed", "false");
-  });
-  document.getElementById("env-secrets-raw").hidden = true;
-  document.getElementById("env-secrets-hidden").hidden = false;
-  const button = document.getElementById("env-raw-reveal");
-  button.textContent = form.dataset.show;
-  button.setAttribute("aria-expanded", "false");
+  krillEnvReveal(form, false);
 };
-window.krillEnvRevealToggle = function (btn) {
+// krillEnvReveal shows or hides every secret value, in both editors.
+function krillEnvReveal(form, on) {
+  form.dataset.revealed = on ? "1" : "";
+  form.querySelectorAll("#env-secret-rows .env-row").forEach(function (row) {
+    row.querySelector(".env-val").type = on ? "text" : "password";
+    const eye = row.querySelector(".env-eye");
+    if (!eye) return;
+    const label = on ? form.dataset.hideOne : form.dataset.showOne;
+    eye.setAttribute("aria-label", label); eye.title = label;
+    eye.setAttribute("aria-pressed", String(on));
+  });
+  document.getElementById("env-secrets-raw").hidden = !on;
+  document.getElementById("env-secrets-hidden").hidden = on;
+  const button = document.getElementById("env-raw-reveal");
+  button.setAttribute("aria-pressed", String(on));
+  button.querySelector("span").textContent = on ? form.dataset.hide : form.dataset.show;
+}
+window.krillEnvRevealToggle = function () {
   const form = envEditor();
   if (!form) return;
-  const ta = document.getElementById("env-secrets-raw");
-  ta.hidden = !ta.hidden;
-  document.getElementById("env-secrets-hidden").hidden = !ta.hidden;
-  btn.textContent = ta.hidden ? form.dataset.show : form.dataset.hide;
-  btn.setAttribute("aria-expanded", String(!ta.hidden));
+  krillEnvReveal(form, form.dataset.revealed !== "1");
 };
 window.krillEnvAddRow = function (ordinary) {
   const form = envEditor();
@@ -897,35 +707,28 @@ window.krillEnvAddRow = function (ordinary) {
   const row = envRenderRow(form, line);
   row.querySelector(".env-key").focus();
 };
+function envIcon(id) {
+  return '<svg class="ico" aria-hidden="true"><use href="#' + id + '"></use></svg>';
+}
 function envRenderRow(form, line) {
-  const row = document.createElement("div");
-  row.className = "env-row k-env-row mb-2";
+  const row = document.createElement("li");
+  row.className = "kv env-row";
   const k = document.createElement("input");
-  k.className = "k-input env-key"; k.placeholder = form.dataset.key;
+  k.className = "input input--mono env-key"; k.placeholder = form.dataset.key;
   k.setAttribute("aria-label", form.dataset.key);
   k.value = envLineKey(line.text);
   const v = document.createElement("input");
-  v.className = "k-input env-val"; v.placeholder = form.dataset.value;
+  v.className = "input input--mono env-val"; v.placeholder = form.dataset.value;
   v.setAttribute("aria-label", form.dataset.value);
   v.value = line.text.includes("=") ? line.text.slice(line.text.indexOf("=") + 1) : "";
-  v.type = line.ordinary ? "text" : "password";
+  v.type = line.ordinary || form.dataset.revealed === "1" ? "text" : "password";
   k.autocomplete = "off"; v.autocomplete = "off";
   k.spellcheck = false; v.spellcheck = false;
-  const eye = document.createElement("button");
-  eye.type = "button"; eye.className = "k-copy env-eye"; eye.textContent = "👁";
-  eye.hidden = line.ordinary;
-  eye.setAttribute("aria-label", form.dataset.show);
-  eye.setAttribute("aria-pressed", "false");
-  eye.addEventListener("click", function () {
-    const reveal = v.type === "password";
-    v.type = reveal ? "text" : "password";
-    eye.textContent = reveal ? "🙈" : "👁";
-    eye.setAttribute("aria-label", reveal ? form.dataset.hide : form.dataset.show);
-    eye.setAttribute("aria-pressed", String(reveal));
-  });
   const move = document.createElement("button");
-  move.type = "button"; move.className = "k-btn k-btn-secondary env-move";
-  move.textContent = line.ordinary ? form.dataset.toSecret : form.dataset.toVariable;
+  move.type = "button"; move.className = "pill pill--icon env-move";
+  move.innerHTML = envIcon(line.ordinary ? "i-lock" : "i-unlock");
+  const moveLabel = line.ordinary ? form.dataset.toSecret : form.dataset.toVariable;
+  move.setAttribute("aria-label", moveLabel); move.title = moveLabel;
   move.addEventListener("click", function () {
     line.ordinary = !line.ordinary;
     row.remove();
@@ -934,8 +737,8 @@ function envRenderRow(form, line) {
     replacement.querySelector(".env-move").focus();
   });
   const del = document.createElement("button");
-  del.type = "button"; del.className = "k-btn k-btn-secondary"; del.textContent = "✕";
-  del.setAttribute("aria-label", form.dataset.remove);
+  del.type = "button"; del.className = "pill pill--icon"; del.innerHTML = envIcon("i-trash");
+  del.setAttribute("aria-label", form.dataset.remove); del.title = form.dataset.remove;
   del.addEventListener("click", function () {
     form.envLines.splice(form.envLines.indexOf(line), 1);
     row.remove();
@@ -951,10 +754,25 @@ function envRenderRow(form, line) {
     krillEnvSyncToTextarea();
   }
   k.addEventListener("input", edit); v.addEventListener("input", edit);
-  const actions = document.createElement("div");
-  actions.className = "k-env-actions";
-  actions.append(eye, move, del);
-  row.append(k, v, actions);
+  if (line.ordinary) {
+    row.append(k, v, move, del);
+  } else {
+    // A secret row can be shown on its own, without revealing its neighbours.
+    const eye = document.createElement("button");
+    eye.type = "button"; eye.className = "pill pill--icon env-eye"; eye.innerHTML = envIcon("i-eye");
+    const sync = function () {
+      const shown = v.type === "text";
+      const label = shown ? form.dataset.hideOne : form.dataset.showOne;
+      eye.setAttribute("aria-label", label); eye.title = label;
+      eye.setAttribute("aria-pressed", String(shown));
+    };
+    eye.addEventListener("click", function () {
+      v.type = v.type === "password" ? "text" : "password";
+      sync();
+    });
+    sync();
+    row.append(k, v, eye, move, del);
+  }
   document.getElementById(line.ordinary ? "env-variable-rows" : "env-secret-rows").appendChild(row);
   return row;
 }
@@ -995,7 +813,7 @@ window.krillEnvMode = function (mode) {
   form.dataset.mode = mode;
   try { localStorage.setItem("krillEnvMode", mode); } catch (_) { /* private mode */ }
   document.querySelectorAll("#env-seg [data-env-mode]").forEach(function (b) {
-    b.classList.toggle("k-seg-active", b.dataset.envMode === mode);
+    b.setAttribute("aria-pressed", String(b.dataset.envMode === mode));
   });
   krillApplyEnvReveal();
 };
@@ -1011,65 +829,431 @@ if (!window.__krillEnhanceInit) {
 }
 window.krillEnhance();
 
-// Environment systems: pointing at or focusing a component highlights the
-// resources it uses; a resource chip highlights the components using it.
-// Delegated on document so boosted swaps need no re-binding.
-(function () {
-  function clear(root) {
-    root.classList.remove("k-sys-active");
-    root.querySelectorAll(".k-sys-hit").forEach(function (n) { n.classList.remove("k-sys-hit"); });
-  }
-  function mark(root, attr, values) {
-    values.split(" ").forEach(function (v) {
-      if (!v) return;
-      root.querySelectorAll("[" + attr + '="' + v + '"]').forEach(function (n) { n.classList.add("k-sys-hit"); });
-    });
-  }
-  function show(e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (!root) return;
-    var el = e.target.closest("[data-sys-app],[data-sys-res]");
-    clear(root);
-    if (!el) return;
-    root.classList.add("k-sys-active");
-    el.classList.add("k-sys-hit");
-    if (el.hasAttribute("data-sys-app")) mark(root, "data-sys-res", el.getAttribute("data-uses") || "");
-    else mark(root, "data-sys-app", el.getAttribute("data-users") || "");
-  }
-  document.addEventListener("pointerover", show);
-  document.addEventListener("focusin", show);
-  document.addEventListener("pointerout", function (e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (root && !root.contains(e.relatedTarget)) clear(root);
-  });
-  document.addEventListener("focusout", function (e) {
-    var root = e.target.closest && e.target.closest("[data-sys]");
-    if (root && !root.contains(e.relatedTarget)) clear(root);
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") document.querySelectorAll("[data-sys].k-sys-active").forEach(clear);
-  });
-})();
+// ── The page frame: theme, bar menu, pickers, copy, reveal, conditional fields ──
+// Delegated on document, so boosted swaps need no re-binding. Guarded so a
+// re-executed app.js does not stack listeners.
+if (!window.__krillShellInit) {
+  window.__krillShellInit = true;
+  const root = document.documentElement;
 
-// Mobile navigation: the sidebar opens over the page below 768px. Opening
-// moves focus into it, closing (button, backdrop, Escape) returns focus to
-// the menu button. A boosted navigation replaces the body and so closes it.
-window.krillToggleNav = function (force) {
-  var open = typeof force === "boolean" ? force : !document.body.classList.contains("k-nav-open");
-  document.body.classList.toggle("k-nav-open", open);
-  var btn = document.querySelector(".k-menu-btn");
-  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-  if (open) {
-    // The panel is visibility:hidden until its style recalculates; an element
-    // under it cannot take focus yet.
-    requestAnimationFrame(function () {
-      var first = document.querySelector("#k-side a, #k-side button");
-      if (first) first.focus();
+  document.addEventListener("click", function (e) {
+    const t = e.target;
+    // Theme: system -> the opposite of what the system shows -> the other
+    // one -> system again, so the first click always changes the page and
+    // the last one hands it back to the system (the stored value is removed
+    // and the head script's listener follows prefers-color-scheme again).
+    const mode = t.closest && t.closest("#mode");
+    if (mode) {
+      const choice = root.dataset.choice || "system";
+      const sys = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      const other = function (m) { return m === "dark" ? "light" : "dark"; };
+      let next;
+      if (choice === "system") next = other(sys);
+      else if (choice === other(sys)) next = sys;
+      else next = "system";
+      try {
+        if (next === "system") localStorage.removeItem("krill-mode");
+        else localStorage.setItem("krill-mode", next);
+      } catch (_) { /* private mode: the choice lasts for this page only */ }
+      root.dataset.choice = next;
+      root.dataset.mode = next === "system" ? sys : next;
+      krillModeName();
+      return;
+    }
+    // The bar's menu on narrow screens.
+    const menu = t.closest && t.closest(".pill--menu");
+    if (menu) {
+      const open = document.querySelector(".bar").classList.toggle("is-open");
+      menu.setAttribute("aria-expanded", String(open));
+      return;
+    }
+    const copy = t.closest && t.closest("[data-copy]");
+    if (copy) {
+      const src = copy.dataset.copyFrom && document.getElementById(copy.dataset.copyFrom);
+      krillCopyToClip(src ? src.value : copy.dataset.copy, copy.dataset.copyLabel || copy.getAttribute("aria-label") || "");
+      return;
+    }
+    const reveal = t.closest && t.closest("[data-reveal]");
+    if (reveal) { krillReveal(reveal); return; }
+    const open = t.closest && t.closest("[data-palette-open]");
+    if (open) { krillPalette(true); return; }
+    if (t.id === "palette-scrim") { krillPalette(false); return; }
+    // An open picker closes on a click outside it.
+    document.querySelectorAll("details.envpick[open]").forEach(function (d) {
+      if (!d.contains(t)) d.open = false;
     });
-  } else if (btn && document.getElementById("k-side").contains(document.activeElement)) {
-    btn.focus();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && document.getElementById("palette")) {
+      e.preventDefault();
+      krillPalette(document.getElementById("palette").hidden);
+      return;
+    }
+    if (e.key !== "Escape") return;
+    const pal = document.getElementById("palette");
+    if (pal && !pal.hidden) { krillPalette(false); return; }
+    const picker = document.querySelector("details.envpick[open]");
+    if (picker) { picker.open = false; picker.querySelector("summary").focus(); return; }
+    const bar = document.querySelector(".bar.is-open");
+    if (bar) { bar.classList.remove("is-open"); bar.querySelector(".pill--menu").setAttribute("aria-expanded", "false"); return; }
+    // A sheet over the canvas closes with Escape unless focus is in a field.
+    const close = document.querySelector(".sheet [data-sheet-close]");
+    const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable], .xterm");
+    if (close && !typing && !document.querySelector("dialog[open]")) close.click();
+  });
+
+  // Fields shown only for one value of a radio group or select: data-when="name=value".
+  document.addEventListener("change", function (e) {
+    const form = e.target.form;
+    if (form) krillSyncWhen(form);
+  });
+}
+
+// krillModeName names the theme button by its current choice ("theme
+// system"); CSS shows the matching word, so only the name needs script.
+function krillModeName() {
+  const b = document.getElementById("mode");
+  if (!b) return;
+  const choice = document.documentElement.dataset.choice || "system";
+  const word = b.querySelector('[data-choice="' + choice + '"]');
+  const lead = b.querySelector(".visually-hidden");
+  if (word && lead) b.setAttribute("aria-label", lead.textContent + " " + word.textContent);
+}
+
+function krillSyncWhen(form) {
+  form.querySelectorAll("[data-when]").forEach(function (g) {
+    const parts = g.dataset.when.split("=");
+    const el = form.querySelector('[name="' + parts[0] + '"]:checked') || form.querySelector('select[name="' + parts[0] + '"]');
+    const values = (parts[1] || "").split("|");
+    g.hidden = !el || values.indexOf(el.value) < 0;
+    // A group marked data-when-disable also stops submitting while hidden: a
+    // Dockerfile app must not carry the image group's registry along.
+    if (g.hasAttribute("data-when-disable")) {
+      g.querySelectorAll("input, select, textarea").forEach(function (f) { f.disabled = g.hidden; });
+    }
+  });
+}
+
+// The command palette: an overlay whose results come from the search route.
+window.krillPalette = function (open) {
+  const pal = document.getElementById("palette");
+  const scrim = document.getElementById("palette-scrim");
+  if (!pal) return;
+  pal.hidden = !open;
+  if (scrim) scrim.hidden = !open;
+  document.body.classList.toggle("has-palette", open);
+  const input = pal.querySelector("input");
+  if (open) {
+    input.value = "";
+    input.focus();
+    if (window.htmx) htmx.trigger(input, "palette-open");
+  } else if (window.__krillPaletteFrom) {
+    try { window.__krillPaletteFrom.focus(); } catch (_) { /* gone */ }
   }
+  window.__krillPaletteFrom = open ? document.activeElement : null;
 };
+// Arrow keys move through the results, Enter opens the selected one.
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && document.body.classList.contains("k-nav-open")) window.krillToggleNav(false);
+  const pal = document.getElementById("palette");
+  if (!pal || pal.hidden || (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Enter")) return;
+  const items = Array.from(pal.querySelectorAll(".palette-groups a, .palette-groups .palette-item"));
+  if (!items.length) return;
+  let i = items.findIndex(function (a) { return a.getAttribute("aria-selected") === "true"; });
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const a = items[i < 0 ? 0 : i];
+    krillPalette(false);
+    a.click();
+    return;
+  }
+  e.preventDefault();
+  i = e.key === "ArrowDown" ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1);
+  items.forEach(function (a, j) { a.setAttribute("aria-selected", String(j === i)); });
+  items[i].scrollIntoView({ block: "nearest" });
 });
+document.addEventListener("htmx:afterSwap", function (e) {
+  if (e.target && e.target.id === "palette-results") {
+    const first = e.target.querySelector("a, .palette-item");
+    if (first) first.setAttribute("aria-selected", "true");
+  }
+});
+
+// The page's layout classes (page, has-sheet, is-canvas) sit on <body>, which
+// a boosted navigation and a history restore keep from the previous page; the
+// #k-frame marker inside the swapped content says what this page needs.
+function krillSyncBodyClass() {
+  const m = document.getElementById("k-frame");
+  if (!m) return;
+  const want = (m.dataset.body || "").split(" ").filter(Boolean);
+  ["page", "has-sheet", "is-canvas"].forEach(function (c) {
+    document.body.classList.toggle(c, want.indexOf(c) >= 0);
+  });
+}
+document.addEventListener("htmx:afterSwap", krillSyncBodyClass);
+document.addEventListener("htmx:historyRestore", krillSyncBodyClass);
+
+// Per page: the theme button's name, server toasts' timers, conditional fields.
+function krillShellEnhance() {
+  krillSyncBodyClass();
+  krillModeName();
+  document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
+    el.removeAttribute("data-toast-auto");
+    krillToastLater(el);
+  });
+  document.querySelectorAll("form").forEach(function (f) { if (f.querySelector("[data-when]")) krillSyncWhen(f); });
+  const pal = document.getElementById("palette");
+  if (pal && pal.hidden) document.body.classList.remove("has-palette");
+}
+document.addEventListener("DOMContentLoaded", krillShellEnhance);
+document.addEventListener("htmx:afterSettle", krillShellEnhance);
+krillShellEnhance();
+
+// ── Wired maps: the environment canvas, the nodes lanes and the topology ──
+// Cards carry data-to (and data-detected) with the element ids they link to;
+// the map draws a curve per link into its .wires svg. Pointing at a card
+// lights it and its links; a node chip (data-node) lights every card placed
+// on that node and pins the filter when clicked. The canvas also zooms
+// (buttons, ctrl+wheel) and pans (drag on the background).
+// krillCardNodes is the Swarm node IDs a card runs on: its placement line's
+// data-nodes, which the canvas's status poll replaces, else the card's own.
+function krillCardNodes(c) {
+  const where = c.querySelector(".where[data-nodes]");
+  return ((where || c).dataset.nodes || "").split(" ").filter(Boolean);
+}
+
+function mountWiredMap(map) {
+  // A JS property, not an attribute: htmx's history cache restores a page from
+  // its serialized HTML, which would carry an attribute but not the listeners.
+  map.__krillMounted = true;
+  const svg = map.querySelector(".wires");
+  const cards = Array.from(map.querySelectorAll(".svc"));
+  const links = [];
+  cards.forEach(function (c) {
+    (c.dataset.to || "").split(" ").filter(Boolean).forEach(function (id) {
+      const to = document.getElementById(id);
+      if (to && map.contains(to)) links.push({ from: c, to: to });
+    });
+    (c.dataset.detected || "").split(" ").filter(Boolean).forEach(function (id) {
+      const to = document.getElementById(id);
+      if (!to) return;
+      links.forEach(function (l) { if (l.from === c && l.to === to) l.detected = true; });
+    });
+  });
+  const draw = function () {
+    if (!svg) return;
+    svg.replaceChildren();
+    if (getComputedStyle(svg).display === "none") return;
+    const host = map.getBoundingClientRect();
+    const k = host.width / map.offsetWidth || 1;
+    links.forEach(function (l) {
+      l.path = null;
+      if (!l.from.offsetParent || !l.to.offsetParent || l.from.hidden || l.to.hidden) return;
+      const a = l.from.getBoundingClientRect(), b = l.to.getBoundingClientRect();
+      const dir = b.left >= a.right ? 1 : b.right <= a.left ? -1 : 0;
+      const ya = (a.top + a.height / 2 - host.top) / k, yb = (b.top + b.height / 2 - host.top) / k;
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      if (dir === 0) {
+        const x = (Math.max(a.right, b.right) - host.left) / k;
+        const xa = (a.right - host.left) / k, xb = (b.right - host.left) / k;
+        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + 48) + " " + ya + " " + (x + 48) + " " + yb + " " + xb + " " + yb);
+      } else {
+        const x1 = ((dir > 0 ? a.right : a.left) - host.left) / k;
+        const x2 = ((dir > 0 ? b.left : b.right) - host.left) / k;
+        const dx = Math.max(40, Math.abs(x2 - x1) / 2) * dir;
+        p.setAttribute("d", "M" + x1 + " " + ya + "C" + (x1 + dx) + " " + ya + " " + (x2 - dx) + " " + yb + " " + x2 + " " + yb);
+      }
+      if (l.from.hasAttribute("data-gateway")) p.classList.add("w-ingress");
+      else if (l.detected) p.classList.add("w-detected");
+      else if (l.from.closest(".lane") && l.from.closest(".lane") !== l.to.closest(".lane")) p.classList.add("w-cross");
+      else p.classList.add("w-link");
+      l.path = p;
+      svg.append(p);
+    });
+  };
+  const scope = map.closest("main") || document;
+  const chips = Array.from(scope.querySelectorAll(".chip[data-node]"));
+  let pinned = null;
+  const light = function (hovered) {
+    const node = hovered && hovered.dataset.node ? hovered.dataset.node : (!hovered && pinned) || null;
+    chips.forEach(function (c) {
+      c.classList.toggle("is-lit", c.dataset.node === node);
+      c.setAttribute("aria-pressed", String(c.dataset.node === pinned));
+    });
+    if (node) {
+      map.classList.add("is-focus");
+      links.forEach(function (l) { if (l.path) l.path.classList.remove("is-lit"); });
+      cards.forEach(function (c) { c.classList.toggle("is-lit", krillCardNodes(c).indexOf(node) >= 0); });
+      return;
+    }
+    const card = hovered && hovered.classList.contains("svc") ? hovered : map.querySelector('.svc[aria-current="true"]');
+    map.classList.toggle("is-focus", !!card);
+    cards.forEach(function (c) { c.classList.remove("is-lit"); });
+    links.forEach(function (l) {
+      // A wire may end at a database chip inside a server's card: the card
+      // lights it, and the chip's card lights up with it.
+      const end = l.to.closest(".svc") || l.to;
+      const hit = card && (l.from === card || l.to === card || end === card);
+      if (l.path) l.path.classList.toggle("is-lit", !!hit);
+      if (hit) { l.from.classList.add("is-lit"); l.to.classList.add("is-lit"); end.classList.add("is-lit"); }
+    });
+    if (card) card.classList.add("is-lit");
+  };
+  cards.forEach(function (c) {
+    c.addEventListener("pointerenter", function () { light(c); });
+    c.addEventListener("pointerleave", function () { light(null); });
+    c.addEventListener("focus", function () { light(c); });
+    c.addEventListener("blur", function () { light(null); });
+  });
+  chips.forEach(function (c) {
+    c.addEventListener("pointerenter", function () { light(c); });
+    c.addEventListener("pointerleave", function () { light(null); });
+    c.addEventListener("click", function () { pinned = pinned === c.dataset.node ? null : c.dataset.node; light(null); });
+  });
+  map.__krillRedraw = function () { draw(); light(null); };
+
+  // Zoom and pan: the canvas only.
+  const canvas = map.closest(".canvas");
+  if (canvas && map.classList.contains("plane")) {
+    const label = canvas.querySelector("[data-zoom-label]");
+    let zoom = 1, px = 0, py = 0;
+    const apply = function () {
+      map.style.setProperty("--zoom", String(zoom));
+      map.style.setProperty("--pan-x", px + "px");
+      map.style.setProperty("--pan-y", py + "px");
+      if (label) label.textContent = Math.round(zoom * 100) + "%";
+      requestAnimationFrame(map.__krillRedraw);
+    };
+    const fit = function () {
+      if (getComputedStyle(svg).display === "none") return;
+      map.setAttribute("data-zoomed", "");
+      const sheet = document.querySelector(".sheet");
+      const cw = canvas.clientWidth - (sheet ? sheet.offsetWidth + 24 : 0);
+      const top = 84, ch = canvas.clientHeight - top - 24;
+      zoom = Math.max(0.3, Math.min(1, (cw - 48) / map.offsetWidth, ch / map.offsetHeight));
+      px = Math.max(24, (cw - map.offsetWidth * zoom) / 2);
+      py = top;
+      apply();
+    };
+    map.__krillFit = fit;
+    canvas.querySelectorAll("[data-zoom]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const z = b.dataset.zoom;
+        if (z === "fit") { fit(); return; }
+        const before = zoom;
+        zoom = Math.max(0.3, Math.min(2, Math.round((zoom + (z === "in" ? 0.1 : -0.1)) * 10) / 10));
+        const cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
+        px = cx - (cx - px) * zoom / before;
+        py = cy - (cy - py) * zoom / before;
+        apply();
+      });
+    });
+    canvas.addEventListener("wheel", function (e) {
+      if (!map.hasAttribute("data-zoomed")) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const before = zoom;
+        zoom = Math.max(0.3, Math.min(2, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+        const r = canvas.getBoundingClientRect();
+        const mx = e.clientX - r.left, my = e.clientY - r.top;
+        px = mx - (mx - px) * zoom / before;
+        py = my - (my - py) * zoom / before;
+      } else {
+        px -= e.deltaX;
+        py -= e.deltaY;
+      }
+      apply();
+    }, { passive: false });
+    let drag = null;
+    canvas.addEventListener("pointerdown", function (e) {
+      if (!map.hasAttribute("data-zoomed") || e.button !== 0 || e.target.closest(".svc, .float, a, button")) return;
+      drag = { x: e.clientX, y: e.clientY, px: px, py: py, id: e.pointerId };
+    });
+    canvas.addEventListener("pointermove", function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!canvas.classList.contains("is-panning") && Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) < 4) return;
+      canvas.classList.add("is-panning");
+      px = drag.px + e.clientX - drag.x;
+      py = drag.py + e.clientY - drag.y;
+      apply();
+    });
+    const end = function () { drag = null; canvas.classList.remove("is-panning"); };
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
+    fit();
+  }
+  map.__krillRedraw();
+  if (document.fonts) document.fonts.ready.then(function () { if (map.isConnected) map.__krillRedraw(); });
+}
+function krillMountMaps() {
+  document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
+    if (!m.__krillMounted) mountWiredMap(m);
+  });
+}
+document.addEventListener("DOMContentLoaded", krillMountMaps);
+document.addEventListener("htmx:afterSettle", krillMountMaps);
+document.addEventListener("htmx:historyRestore", krillMountMaps);
+krillMountMaps();
+window.addEventListener("resize", function () {
+  document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
+    if (!m.__krillMounted) return;
+    if (m.__krillFit) m.__krillFit(); else if (m.__krillRedraw) m.__krillRedraw();
+  });
+});
+// The new-app sheet names its ghost card as the name is typed.
+document.addEventListener("input", function (e) {
+  if (!e.target.matches || !e.target.matches("[data-ghost-input]")) return;
+  const g = document.querySelector("[data-ghost-name]");
+  if (g) g.textContent = e.target.value.trim() || g.dataset.empty || g.textContent;
+});
+
+// A button with data-toggle shows or hides the element it names (link forms).
+document.addEventListener("click", function (e) {
+  const b = e.target.closest && e.target.closest("[data-toggle]");
+  if (b) {
+    const el = document.getElementById(b.dataset.toggle);
+    if (!el) return;
+    el.hidden = !el.hidden;
+    b.setAttribute("aria-expanded", String(!el.hidden));
+    if (!el.hidden) { const f = el.querySelector("input, select, textarea"); if (f) f.focus(); }
+    return;
+  }
+  const u = e.target.closest && e.target.closest("[data-unmask]");
+  if (u) {
+    const t = document.getElementById(u.dataset.unmask);
+    if (!t) return;
+    t.classList.toggle("masked");
+    u.setAttribute("aria-pressed", String(!t.classList.contains("masked")));
+  }
+});
+// Placement: the node picker only matters when the app is pinned or global.
+function krillSyncPlacement() {
+  document.querySelectorAll(".nodepick").forEach(function (pick) {
+    const form = pick.closest("form");
+    const on = form && form.querySelector('input[name="placement_mode"]:checked');
+    const ro = pick.closest("fieldset.bare[disabled]");
+    if (on && !ro) pick.disabled = on.value === "any";
+  });
+}
+document.addEventListener("change", function (e) { if (e.target.name === "placement_mode") krillSyncPlacement(); });
+document.addEventListener("htmx:afterSettle", krillSyncPlacement);
+document.addEventListener("DOMContentLoaded", krillSyncPlacement);
+krillSyncPlacement();
+
+// Small page behaviours: a select that submits its form on change, a
+// member's role save shown only on change,
+// and the new-server form's image placeholder following the engine.
+document.addEventListener("change", function (e) {
+  const t = e.target;
+  if (t.matches && t.matches("select[data-autosubmit]") && t.form) { t.form.requestSubmit(); return; }
+  if (t.matches && t.matches("select[data-was]")) {
+    const b = t.form && t.form.querySelector("[data-role-save]");
+    if (b) b.hidden = t.value === t.dataset.was;
+    return;
+  }
+  if (t.name === "engine" && t.dataset.defaultImage !== undefined) {
+    const v = t.form && t.form.querySelector('[name="version"]');
+    if (v) v.placeholder = t.dataset.defaultImage;
+  }
+});
+

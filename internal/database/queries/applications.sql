@@ -23,6 +23,12 @@ UPDATE applications SET git_url = $2, git_branch = $3, dockerfile_path = $4, upd
 -- name: ListApplicationsByEnvironmentIDs :many
 SELECT * FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC;
 
+-- name: ListAppIndexByEnvironmentIDs :many
+-- What the organization-wide index (palette, used-by lists, nodes,
+-- monitoring links) needs of each app; never its env or build values.
+SELECT id, name, environment_id, status, registry_id, git_credential_id
+FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC;
+
 -- name: GetApplicationChain :one
 SELECT a.id AS app_id, e.id AS env_id, p.id AS project_id, o.id AS org_id
 FROM applications a

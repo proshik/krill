@@ -215,6 +215,9 @@ type Querier interface {
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
+	// What the organization-wide index (palette, used-by lists, nodes,
+	// monitoring links) needs of each app; never its env or build values.
+	ListAppIndexByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]ListAppIndexByEnvironmentIDsRow, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
@@ -302,6 +305,7 @@ type Querier interface {
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
+	MetricSamplesSinceForComponents(ctx context.Context, arg MetricSamplesSinceForComponentsParams) ([]MetricSamplesSinceForComponentsRow, error)
 	PruneBackupRuns(ctx context.Context, finishedAt time.Time) error
 	PruneMetricSamples(ctx context.Context, ts time.Time) error
 	PruneNodeCapacity(ctx context.Context, sampledAt time.Time) error
@@ -335,6 +339,12 @@ type Querier interface {
 	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error)
 	SaveDeploymentRelease(ctx context.Context, arg SaveDeploymentReleaseParams) error
 	SaveObservabilitySettings(ctx context.Context, arg SaveObservabilitySettingsParams) error
+	// The command palette's database search: an organization's logical
+	// databases whose name or database name contains the pattern (an ILIKE
+	// pattern, % and _ escaped by the caller with a backslash).
+	SearchLogicalDatabasesByOrg(ctx context.Context, arg SearchLogicalDatabasesByOrgParams) ([]SearchLogicalDatabasesByOrgRow, error)
+	// The command palette's bucket search, as SearchLogicalDatabasesByOrg.
+	SearchS3BucketsByOrg(ctx context.Context, arg SearchS3BucketsByOrgParams) ([]SearchS3BucketsByOrgRow, error)
 	SetAlertState(ctx context.Context, arg SetAlertStateParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error

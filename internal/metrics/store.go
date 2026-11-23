@@ -86,6 +86,31 @@ func (s *DBStore) Since(ctx context.Context, since time.Time) ([]Sample, error) 
 	return out, nil
 }
 
+// SinceFor is Since limited to the given components: a reader that needs
+// only some services' samples (an organization's apps) need not load the
+// whole cluster's day.
+func (s *DBStore) SinceFor(ctx context.Context, since time.Time, components []string) ([]Sample, error) {
+	if len(components) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q.MetricSamplesSinceForComponents(ctx, db.MetricSamplesSinceForComponentsParams{Ts: since, Components: components})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Sample, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Sample{
+			Node:          r.Node,
+			Component:     r.Component,
+			TS:            r.Ts,
+			CPUPct:        float64(r.CpuPct),
+			MemBytes:      r.MemBytes,
+			MemLimitBytes: r.MemLimitBytes,
+		})
+	}
+	return out, nil
+}
+
 func (s *DBStore) Latest(ctx context.Context, since time.Time) ([]Sample, error) {
 	rows, err := s.q.LatestMetricSamples(ctx, since)
 	if err != nil {
