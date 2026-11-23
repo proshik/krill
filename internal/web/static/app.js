@@ -357,8 +357,14 @@ function krillSegScroll(seg) {
     seg.addEventListener("scroll", edges, { passive: true });
     if (window.ResizeObserver) new ResizeObserver(edges).observe(seg);
   }
+  // Only when the bar appears or its current item changes: krillEnhance also
+  // runs on unrelated swaps (the status badge every 3 s), and must not undo
+  // the user's own scrolling of the bar.
   const cur = seg.querySelector('[aria-current="page"], [aria-pressed="true"]');
-  if (cur && seg.scrollWidth > seg.clientWidth) {
+  const curKey = cur ? (cur.getAttribute("href") || cur.dataset.node || cur.dataset.range || cur.textContent) : "";
+  const moved = seg.dataset.segCurrent !== curKey;
+  seg.dataset.segCurrent = curKey;
+  if (moved && cur && seg.scrollWidth > seg.clientWidth) {
     const left = cur.getBoundingClientRect().left - seg.getBoundingClientRect().left + seg.scrollLeft, right = left + cur.offsetWidth;
     if (left < seg.scrollLeft || right > seg.scrollLeft + seg.clientWidth) {
       seg.scrollLeft = Math.max(0, left - (seg.clientWidth - cur.offsetWidth) / 2);
