@@ -22,6 +22,20 @@ async (page) => {
   await post(secondPath + '/env', { env: 'LEGACY=private-legacy', env_public_keys: '' });
   await page.goto(appURL);
   await page.waitForSelector('#env-form');
+  // Saving redirects to the app's variables (?tab=env): wait for the submitted
+  // editor to be replaced by the fresh one, whatever URL htmx then shows.
+  async function saveEditor() {
+    const old = await page.locator('#env-form').elementHandle();
+    await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
+    await page.waitForFunction(el => !el.isConnected, old);
+    await page.waitForSelector('#env-form');
+  }
+  // Every secret input is masked, and the secrets are exactly these keys.
+  async function secretsMasked(keys, message) {
+    const rows = await page.locator('#env-secret-rows .env-row').evaluateAll(rs => rs.map(r => ({ key: r.querySelector('.env-key').value, type: r.querySelector('.env-val').type })));
+    assert(rows.map(r => r.key).sort().join(',') === keys.slice().sort().join(','), message + ': secrets are ' + rows.map(r => r.key).join(','));
+    assert(rows.every(r => r.type === 'password'), message);
+  }
   // Input values are properties, not attributes, so resolve row indices from DOM.
   async function keyRow(key) {
     const keys = await page.locator('.env-row .env-key').evaluateAll(es => es.map(e => e.value));
@@ -76,8 +90,7 @@ async (page) => {
   await (await keyRow('PUBLIC')).locator('.env-move').click();
   await (await keyRow('TOKEN')).locator('.env-move').click();
   assert(await page.locator('#env-textarea').inputValue() === original, 'transfer changed text');
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#env-form')?.dataset.mode === 'kv');
   assert(await page.locator('#env-public-keys').inputValue() === 'PUBLIC\nTOKEN', 'classification not persisted');
@@ -120,10 +133,10 @@ async (page) => {
   await page.goto(secondURL);
   await page.locator('[data-env-mode=kv]').click();
   assert(await page.locator('#env-variable-rows .env-row').count() === 0, 'legacy key became ordinary');
-  assert(await page.locator('#env-secret-rows .env-val').getAttribute('type') === 'password', 'next app revealed');
+  await secretsMasked(['LEGACY'], 'next app revealed');
   await page.goto(appURL);
   await page.locator('[data-env-mode=kv]').click();
-  assert(await page.locator('#env-secret-rows .env-val').getAttribute('type') === 'password', 'navigation kept reveal');
+  await secretsMasked(['OTHER'], 'navigation kept reveal');
   // Keyboard transfer preserves the row and focuses its replacement action.
   const other = await keyRow('OTHER');
   await other.locator('.env-move').focus();
@@ -136,8 +149,7 @@ async (page) => {
   await page.locator('#env-raw-reveal').click();
   await page.locator('#env-secrets-raw').fill('# Keep comment=unchanged\nOTHER=raw-secret\n');
   const savedText = await page.locator('#env-textarea').inputValue();
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   assert(await page.locator('#env-textarea').inputValue() === savedText, 'raw save changed values/comments');
   assert(await page.locator('#env-secrets-raw').isHidden(), 'save retained raw reveal');
@@ -150,8 +162,7 @@ async (page) => {
   await page.locator('#env-variables-raw').fill('');
   await page.locator('#env-raw-reveal').click();
   await page.locator('#env-secrets-raw').fill('');
-  await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/env')), page.locator('#env-form button[type=submit]').click()]);
-  await page.waitForURL(appURL);
+  await saveEditor();
   await page.reload();
   assert(await page.locator('#env-textarea').inputValue() === '', 'empty editor did not persist');
   assert(await page.locator('#env-public-keys').inputValue() === '', 'empty editor retained classification');

@@ -92,8 +92,10 @@ func main(){
 }`
 
 // Opt-in browser acceptance. No main startup, shared gateway, host ports 80/443,
-// source user services or global reconcilers are invoked. Drive the printed URL
-// with scripts/environment-clone.browser.js, then POST /_test/finish.
+// source user services or global reconcilers are invoked. Drive the printed
+// CLONE_LIVE_URL with scripts/environment-clone-live.browser.js, which ends
+// with POST /_test/finish. (scripts/environment-clone.browser.js is the
+// dev-stand check of the same UI and does not complete this fixture.)
 func TestEnvironmentCloneLive(t *testing.T) {
 	if os.Getenv("KRILL_CLONE_LIVE") != "1" {
 		t.Skip("opt-in real HTTP clone acceptance")

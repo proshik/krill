@@ -726,29 +726,41 @@ func (c componentMetrics) SinceFor(_ context.Context, _ time.Time, components []
 }
 
 // A digest without the node part reads only the organization's apps'
-// samples, not the whole cluster's day; one with it still reads everything,
-// because the node rows sum every component.
+// samples, not the whole cluster's day — and says exactly what a digest reading
+// every sample says; one with the node part still reads everything, because
+// the node rows sum every component.
 func TestDigestReadsOnlyTheOrgSamplesWithoutInfra(t *testing.T) {
 	now := time.Date(2026, 11, 18, 8, 0, 0, 0, time.UTC)
 	st, m := digestFixture(now)
 	var all int
 	var only []string
 	cm := componentMetrics{fakeMetrics: m, all: &all, only: &only}
-	d := NewDigest(New(st), st, cm, nil)
 	ch := Channel{OrgID: 7, Lang: "en", DigestTZ: "UTC", DiskThresholdPct: 85, MemThresholdPct: 100}
-	if _, err := d.Build(context.Background(), ch, now); err != nil {
+
+	scoped, err := NewDigest(New(st), st, cm, nil).Build(context.Background(), ch, now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if all != 0 || len(only) == 0 {
-		t.Fatalf("an app-only digest read the whole cluster (Since calls %d, components %v)", all, only)
+	if all != 0 {
+		t.Fatalf("an app-only digest read the whole cluster (%d times)", all)
 	}
-	for _, n := range only {
-		if !strings.HasPrefix(n, "krill-") {
-			t.Errorf("component %q is not one of the organization's apps", n)
-		}
+	want := []string{"krill-5", "krill-6", "krill-8", "krill-10", "krill-11"} // every app of org 7
+	if strings.Join(only, " ") != strings.Join(want, " ") {
+		t.Fatalf("components asked for: %v, want %v", only, want)
 	}
+	full, err := NewDigest(New(st), st, m, nil).Build(context.Background(), ch, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(scoped, "\n") != strings.Join(full, "\n") {
+		t.Fatalf("the scoped read changed the digest:\nscoped:\n%s\nfull:\n%s", strings.Join(scoped, "\n"), strings.Join(full, "\n"))
+	}
+	if !strings.Contains(strings.Join(scoped, "\n"), "MiB") {
+		t.Fatal("the apps' memory figures are missing")
+	}
+
 	ch.NotifyInfra = true
-	if _, err := d.Build(context.Background(), ch, now); err != nil {
+	if _, err := NewDigest(New(st), st, cm, nil).Build(context.Background(), ch, now); err != nil {
 		t.Fatal(err)
 	}
 	if all != 1 {
