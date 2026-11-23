@@ -53,7 +53,7 @@ func TestServiceLogsStreamNewestLast(t *testing.T) {
 			return
 		}
 		defer conn.CloseNow()
-		if err := s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1"); err != nil {
+		if err := s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", "GAP"); err != nil {
 			t.Errorf("stream: %v", err)
 		}
 	}))
@@ -87,5 +87,45 @@ func TestServiceLogsStreamNewestLast(t *testing.T) {
 	}
 	if len(eng.tails) != 2 || eng.tails[0] != logWindow || eng.tails[1] != liveOverlap {
 		t.Fatalf("tails = %v, want [%d %d]", eng.tails, logWindow, liveOverlap)
+	}
+}
+
+// A task that wrote more than the overlap between the backlog and the live
+// stream: its first following line is already new, and the viewer is told
+// that lines may be missing before it.
+func TestServiceLogsStreamReportsGap(t *testing.T) {
+	eng := &taskLogsEngine{
+		backlog: "2026-11-23T10:00:01Z com.docker.swarm.task.id=a a1\n",
+		live:    "2026-11-23T10:00:09Z com.docker.swarm.task.id=a a9\n2026-11-23T10:00:10Z com.docker.swarm.task.id=a a10\n",
+	}
+	s := &Server{engine: eng}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		_ = s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", "GAP")
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	var got []string
+	for {
+		_, b, err := conn.Read(ctx)
+		if err != nil {
+			break
+		}
+		var l logparse.LogLine
+		_ = json.Unmarshal(b, &l)
+		got = append(got, l.Msg)
+	}
+	if strings.Join(got, "|") != "a1|GAP|a9|a10" {
+		t.Fatalf("lines = %q, want the gap notice once, before the first new line", strings.Join(got, "|"))
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -18,32 +17,41 @@ const (
 	// logWindow is how many of the newest lines the viewer starts with,
 	// across all of the service's tasks.
 	logWindow = 200
-	// liveOverlap is the per-task tail of the following stream, opened right
-	// after the backlog was read: it covers lines written between the two
-	// reads, and the cursor drops the ones the backlog already showed.
+	// liveOverlap is the per-task tail of the following stream, opened as
+	// soon as the backlog is read: it covers lines written between the two
+	// reads, and the cursor drops the ones the backlog already read.
 	liveOverlap = 50
 )
 
 // streamServiceLogsToWS sends a service's runtime log over conn: first its
 // newest lines merged across tasks by time (see logparse.Backlog), then the
-// live stream. An error opening the backlog is returned before anything is
-// sent, so the caller can log it and close the connection; later failures
-// close the connection here.
-func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn, service string) error {
+// live stream. The live stream is opened right after the backlog is read and
+// before any of it is sent, so a slow browser does not widen the gap between
+// the two; should a task still write more than liveOverlap lines in between,
+// gapNotice is sent before its first new line. An error opening the backlog
+// is returned before anything is sent, so the caller can log it and close the
+// connection; later failures close the connection here.
+func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn, service, gapNotice string) error {
 	rc, err := s.engine.ServiceLogs(ctx, service, false, logWindow)
 	if err != nil {
 		return err
 	}
 	var backlog []logparse.LogLine
 	var scanErr error
+	cursor := &logparse.Cursor{}
 	if rc != nil {
-		backlog, scanErr = logparse.Backlog(rc, logWindow)
+		backlog, cursor, scanErr = logparse.Backlog(rc, logWindow)
 		rc.Close()
 	}
-	for _, l := range backlog {
-		if blankLine(l) {
-			continue
+	var live io.ReadCloser
+	var liveErr error
+	if scanErr == nil {
+		live, liveErr = s.engine.ServiceLogs(ctx, service, true, liveOverlap)
+		if live != nil {
+			defer live.Close()
 		}
+	}
+	for _, l := range backlog {
 		if !writeLogLine(ctx, conn, l) {
 			return nil
 		}
@@ -51,11 +59,9 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 	if endWithNotice(ctx, conn, scanErr) {
 		return nil
 	}
-
-	live, err := s.engine.ServiceLogs(ctx, service, true, liveOverlap)
-	if err != nil {
+	if liveErr != nil {
 		if ctx.Err() == nil {
-			slog.Error("log stream: follow failed", "err", err, "service", service)
+			slog.Error("log stream: follow failed", "err", liveErr, "service", service)
 		}
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
 		return nil
@@ -64,8 +70,15 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 		conn.Close(websocket.StatusNormalClosure, "")
 		return nil
 	}
-	defer live.Close()
-	streamParsedLogsToWS(ctx, conn, live, logparse.NewCursor(backlog).Fresh)
+	streamParsedLogsToWS(ctx, conn, live, func(l logparse.LogLine) bool {
+		if !cursor.Fresh(l) {
+			return false
+		}
+		if cursor.Gap() && !writeLogLine(ctx, conn, logparse.LogLine{Level: "warn", Msg: gapNotice}) {
+			return false
+		}
+		return true
+	})
 	return nil
 }
 
@@ -77,7 +90,7 @@ func streamParsedLogsToWS(ctx context.Context, conn *websocket.Conn, rc io.Reade
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
 	for sc.Scan() {
 		l := logparse.ParseLogLine(sc.Text())
-		if blankLine(l) || (keep != nil && !keep(l)) {
+		if logparse.Blank(l) || (keep != nil && !keep(l)) {
 			continue
 		}
 		if !writeLogLine(ctx, conn, l) {
@@ -114,7 +127,3 @@ func endWithNotice(ctx context.Context, conn *websocket.Conn, scanErr error) boo
 	conn.Close(websocket.StatusInternalError, "log stream broken")
 	return true
 }
-
-// blankLine is a line with nothing to read (Postgres writes empty ones): the
-// viewer would show it as a row holding only a timestamp.
-func blankLine(l logparse.LogLine) bool { return strings.TrimSpace(l.Msg) == "" }

@@ -19,6 +19,9 @@ type LogLine struct {
 	Time  string `json:"t"`   // docker RFC3339 timestamp, or "" if absent
 	Level string `json:"lvl"` // normalized level, or "" if unknown
 	Msg   string `json:"msg"` // the application's line, verbatim
+	// Task is the Swarm task the line came from, when the stream carries
+	// docker's log details (see docker.Engine.ServiceLogs); not sent on.
+	Task string `json:"-"`
 }
 
 var (
@@ -30,7 +33,8 @@ var (
 // log level heuristically, and returns the remainder as the message.
 func ParseLogLine(raw string) LogLine {
 	ts, rest := splitDockerTimestamp(raw)
-	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest}
+	task, rest := splitDockerDetails(rest)
+	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest, Task: task}
 }
 
 // splitDockerTimestamp peels a leading "2026-06-07T19:31:52.307218Z " token
@@ -104,4 +108,28 @@ func ScanEndNotice(err error) (LogLine, bool) {
 	// underlying error can name a docker socket path or a host. Callers log the
 	// real cause.
 	return LogLine{Level: "error", Msg: "log stream stopped unexpectedly"}, true
+}
+
+// splitDockerDetails strips the attributes docker puts before a line when a
+// service's logs are read with details ("com.docker.swarm.node.id=…,
+// com.docker.swarm.service.id=…,com.docker.swarm.task.id=… message") and
+// returns the task ID. A line without them is returned as it is.
+func splitDockerDetails(s string) (task, rest string) {
+	if !strings.HasPrefix(s, "com.docker.swarm.") {
+		return "", s
+	}
+	attrs, rest, ok := strings.Cut(s, " ")
+	if !ok {
+		attrs, rest = s, ""
+	}
+	for _, kv := range strings.Split(attrs, ",") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return "", s // not docker's attribute list after all
+		}
+		if k == "com.docker.swarm.task.id" {
+			task = v
+		}
+	}
+	return task, rest
 }

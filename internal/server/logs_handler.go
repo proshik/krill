@@ -6,6 +6,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/proshik/krill/internal/auth"
+	"github.com/proshik/krill/internal/web/i18n"
 )
 
 func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +28,7 @@ func (s *Server) appLogs(w http.ResponseWriter, r *http.Request) {
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
 
-	if err := s.streamServiceLogsToWS(ctx, conn, dockerName(c.App.ID)); err != nil {
+	if err := s.streamServiceLogsToWS(ctx, conn, dockerName(c.App.ID), i18n.T(r.Context(), "log.gap")); err != nil {
 		logFrom(r).Error("appLogs: service logs unavailable", "err", err, "app_id", c.App.ID)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
 	}
