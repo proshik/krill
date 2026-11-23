@@ -98,7 +98,7 @@ button, input, select, textarea { font: inherit; }
 /* ---------- controls ---------- */
 .ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .sprite { position: absolute; width: 0; height: 0; }
-.btn, .pill { display: inline-flex; align-items: center; gap: var(--space-xs); border: 0; border-radius: var(--radius-pill); font: 500 var(--text-md)/1 var(--font-display); text-transform: lowercase; text-decoration: none; white-space: nowrap; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out); }
+.btn, .pill { display: inline-flex; align-items: center; gap: var(--space-xs); border: 0; border-radius: var(--radius-pill); font: 500 var(--text-md)/1 var(--font-display); text-decoration: none; white-space: nowrap; cursor: pointer; transition: background-color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out); }
 .btn { min-height: 44px; padding: 0 var(--space-lg) 0 var(--space-md); }
 .btn--primary { background: var(--color-accent); color: var(--color-accent-ink); }
 .btn--primary:hover { background: var(--color-accent-deep); }
@@ -409,7 +409,7 @@ path.s3 { stroke: var(--color-warn); stroke-dasharray: 6 4; }
 /* ---------- new app form ---------- */
 .form { display: grid; gap: var(--space-lg); margin-top: var(--space-lg); }
 .field { display: grid; gap: var(--space-xs); min-width: 0; }
-.field label, .choice legend { color: var(--color-muted); font: 500 var(--text-md)/1.2 var(--font-display); text-transform: lowercase; }
+.field label, .choice legend { color: var(--color-muted); font: 500 var(--text-md)/1.2 var(--font-display); }
 .input { width: 100%; min-height: 44px; padding: 0 var(--space-md); border: 0; border-radius: var(--radius-pill); background: var(--color-paper); box-shadow: inset 0 0 0 1.5px var(--color-rule-2); color: var(--color-ink); font: 400 var(--text-md)/1.2 var(--font-body); transition: box-shadow var(--dur-micro) var(--ease-out); }
 .input--mono { font: 400 var(--text-md)/1.2 var(--font-outlier); }
 .input::placeholder { color: var(--color-muted); }
@@ -440,7 +440,7 @@ select.input { appearance: none; padding-right: var(--space-2xl); background-ima
 .sec { display: grid; gap: var(--space-sm); margin-top: var(--space-xl); }
 .seg + .sec { margin-top: 0; }
 .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-sm); }
-.sec-head h3, .sec > h3, .sec-head h2, .sec > h2 { font-size: var(--text-lg); max-width: none; }
+.sec-head h3, .sec > h3, .sec > fieldset.bare > h3:not(.sub-h), .sec-head h2, .sec > h2 { font-size: var(--text-lg); max-width: none; }
 .sec > h2 + .reg-apps, .sec > h2 + p { margin-top: 0; }
 .sec-keys, .sec-add { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 .sub-h { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-md); color: var(--color-muted); font-size: var(--text-md); }
@@ -594,6 +594,7 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .state-link:hover .state { text-decoration: underline; }
 .seg button { padding: var(--space-sm) var(--space-md); border: 0; border-radius: var(--radius-pill); background: none; color: var(--color-muted); font: 500 var(--text-sm)/1 var(--font-display); cursor: pointer; text-box: trim-both ex alphabetic; }
 .seg button[aria-pressed="true"] { background: var(--color-paper-3); color: var(--color-ink); }
+.callout + .domains { margin-top: var(--space-md); }
 .callout { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--space-md); border-radius: var(--radius-card); background: var(--color-paper); color: var(--color-ink-2); font-size: var(--text-sm); }
 .deploy--failed { margin-top: var(--space-lg); box-shadow: inset 0 0 0 1px var(--color-rule-2); }
 .deploy--failed + .deploy--active { margin-top: var(--space-sm); }
@@ -934,7 +935,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .logs { max-height: min(62vh, 640px); overflow-y: auto; }
   .logs:empty::before { content: ""; display: block; height: var(--space-lg); }
   .link-form-hint { grid-column: 1 / -1; }
-  .link-form { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 0.9fr) minmax(0, 0.9fr) auto; }
+  /* The link forms' five columns: not the ports/volumes/endpoints forms
+     (.link-form--ep has its own), and not on narrow screens. */
+  @media (width > 60rem) { .link-form:not(.link-form--ep) { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 0.9fr) minmax(0, 0.9fr) auto; } }
   .vols { display: grid; gap: var(--space-sm); margin: 0; padding: 0; list-style: none; }
   .vol-card { display: grid; gap: var(--space-sm); padding: var(--space-md); border-radius: var(--radius-card); box-shadow: inset 0 0 0 1px var(--color-rule); }
   .vol-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md); }
@@ -948,7 +951,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .build-form { margin-top: var(--space-md); padding: var(--space-md); border-radius: var(--radius-card); box-shadow: inset 0 0 0 1px var(--color-rule); }
   .sheet-title .state { margin-left: var(--space-xs); }
   .deploy-keys .pill--small, .snap-keys .pill--small { min-height: 32px; }
-  .seg button { text-transform: lowercase; }
   .sheet .seg a { padding: var(--space-sm) var(--space-md); }
   .lanemap { grid-template-columns: repeat(var(--lanes, 3), minmax(0, 1fr)); }
   .topomap { grid-template-columns: minmax(250px, 0.85fr) repeat(var(--lanes, 3), minmax(0, 1fr)); }

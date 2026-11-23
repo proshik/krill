@@ -201,3 +201,49 @@ func engineLabel(engine string) string {
 func archiveName(key string) string {
 	return path.Base(key)
 }
+
+// shortImageRef shortens a digest-pinned image reference for a card:
+// "repo@sha256:<64 hex>" becomes "repo@sha256:<12 hex>…" (the full reference
+// goes into the title). A 64-character hash otherwise breaks mid-way onto a
+// second line. Anything else is returned unchanged.
+func shortImageRef(ref string) string {
+	const marker = "@sha256:"
+	i := strings.Index(ref, marker)
+	if i < 0 || len(ref)-(i+len(marker)) <= 12 {
+		return ref
+	}
+	return ref[:i+len(marker)+12] + "…"
+}
+
+// nodeName is the name the canvas and the nodes page give a node:
+// "control-plane" for the manager, a label, or the hostname.
+func (c AppCtx) nodeName(id, hostname string) string {
+	if n := c.NodeNames[id]; n != "" {
+		return n
+	}
+	return nodeDisplay(c.NodeLabels, id, hostname)
+}
+
+// nodeNameByHost is nodeName for a record that carries only the hostname
+// (a task from the history).
+func (c AppCtx) nodeNameByHost(hostname string) string {
+	for _, n := range c.Nodes {
+		if n.Hostname == hostname {
+			return c.nodeName(n.ID, n.Hostname)
+		}
+	}
+	return hostname
+}
+
+// connHintKey says how apps get a server's connection: a Redis-like server's
+// details are what a link injects, but a Postgres link injects its logical
+// database's own user and an S3 link its bucket's key — never these.
+func connHintKey(engine string) string {
+	switch engine {
+	case "postgres":
+		return "dbi.conn_hint_pg"
+	case "minio":
+		return "dbi.conn_hint_s3"
+	}
+	return "dbi.conn_hint"
+}

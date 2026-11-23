@@ -35,11 +35,11 @@ templ settingsTab(c AppCtx) {
 			<div class="row row--four">
 				<div class="field">
 					<label for="s-mem">{ i18n.T(ctx, "app.memory_limit") }</label>
-					<input class="input input--mono" id="s-mem" name="memory_limit" placeholder={ limitPlaceholder(ctx, "512m", c.Runtime.MemDefault) } value={ strv(c.App.MemoryLimit) } autocomplete="off"/>
+					<input class="input input--mono" id="s-mem" name="memory_limit" placeholder={ limitPlaceholder(ctx, c.Runtime.MemDefault) } value={ strv(c.App.MemoryLimit) } autocomplete="off"/>
 				</div>
 				<div class="field">
 					<label for="s-cpu">{ i18n.T(ctx, "app.cpu_limit") }</label>
-					<input class="input input--mono" id="s-cpu" name="cpu_limit" placeholder={ limitPlaceholder(ctx, "1.0", c.Runtime.CPUDefault) } value={ strv(c.App.CpuLimit) } autocomplete="off"/>
+					<input class="input input--mono" id="s-cpu" name="cpu_limit" placeholder={ limitPlaceholder(ctx, c.Runtime.CPUDefault) } value={ strv(c.App.CpuLimit) } autocomplete="off"/>
 				</div>
 				<div class="field">
 					<label for="s-rep">{ i18n.T(ctx, "app.replicas") }</label>
@@ -100,7 +100,7 @@ templ settingsTab(c AppCtx) {
 				<fieldset class="nodepick">
 					<legend>{ i18n.T(ctx, "placement.nodes") }</legend>
 					for _, n := range c.Nodes {
-						<label class="nodebox"><input type="checkbox" name="placement_nodes" value={ n.ID } checked?={ placementHas(c.App.PlacementNodes, n.ID) }/><span>{ nodeDisplay(c.NodeLabels, n.ID, n.Hostname) }</span></label>
+						<label class="nodebox"><input type="checkbox" name="placement_nodes" value={ n.ID } checked?={ placementHas(c.App.PlacementNodes, n.ID) }/><span>{ c.nodeName(n.ID, n.Hostname) }</span></label>
 					}
 					for _, id := range orphanedPlacementNodes(c.App.PlacementNodes, c.Nodes) {
 						<label class="nodebox"><input type="checkbox" checked disabled/><span>{ id + " (" + i18n.T(ctx, "placement.node_removed") + ")" }</span></label>
@@ -123,7 +123,9 @@ templ settingsTab(c AppCtx) {
 	if c.admin() {
 		<form class="sec sec--danger" id="s-del" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/delete") } data-confirm={ i18n.Tf(ctx, "confirm.delete_app", c.App.Name) } data-more={ i18n.T(ctx, "app.delete_more") } data-ok={ i18n.T(ctx, "common.delete") } onsubmit="return krillConfirm(this)" aria-labelledby="del-h">
 			<h3 id="del-h">{ i18n.T(ctx, "app.delete") }</h3>
-			<label class="check"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "app.delete.destroy_data") }</label>
+			if len(c.Volumes) > 0 {
+				<label class="check"><input type="checkbox" name="destroy_data"/> { i18n.T(ctx, "app.delete.destroy_data") }</label>
+			}
 			<div><button type="submit" class="pill pill--danger">{ i18n.Tf(ctx, "common.delete_named", c.App.Name) }</button></div>
 		</form>
 	}
@@ -390,8 +392,8 @@ templ runtimeTasks(c AppCtx) {
 				for _, t := range c.Runtime.Tasks {
 					<li class="deploy">
 						<div class="deploy-top">
-							@ui.State(taskKind(t.State), t.State)
-							<code>{ t.NodeName }</code>
+							@ui.State(taskKind(t.State), taskLabel(ctx, t.State))
+							<code>{ c.nodeNameByHost(t.NodeName) }</code>
 							<span class="when">{ t.Updated.Local().Format("2006-01-02 15:04:05") }</span>
 						</div>
 						if d := taskDetail(t); d != "" {

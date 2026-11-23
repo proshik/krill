@@ -219,7 +219,7 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 			case cn.Mem >= 85:
 				cn.StateKind, cn.StateText = "warn", i18n.Tf(ctx, "canvas.memory_pct", cn.Mem)
 			default:
-				cn.StateKind, cn.StateText = "ok", i18n.T(ctx, "projects.node_healthy")
+				cn.StateKind, cn.StateText = "ok", i18n.T(ctx, "nodes.state_ready")
 			}
 			cluster = append(cluster, cn)
 		}

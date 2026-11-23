@@ -3,6 +3,9 @@
 // htmx:afterSettle), so any log view added by a page swap mounts automatically;
 // the data-mounted guard makes it idempotent and the singleton id is gone.
 const KRILL_TERM_THEME = { background: "#1c1d20", foreground: "#d6d7da", cursor: "#a9a6d8", selectionBackground: "#3a3950" };
+// The same mono font as the rest of the UI (--font-outlier); xterm measures
+// its cells on open, so the terminals refit once the web fonts are loaded.
+const KRILL_TERM_FONT = '"JetBrains Mono", ui-monospace, monospace';
 function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
   const wsPath = el.dataset.termLog;
@@ -16,7 +19,7 @@ function mountTerminalEl(el) {
   }
   el.dataset.mounted = "1";
 
-  const term = new Terminal({ convertEol: true, fontSize: 12, theme: KRILL_TERM_THEME });
+  const term = new Terminal({ convertEol: true, fontSize: 12, fontFamily: KRILL_TERM_FONT, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -25,6 +28,7 @@ function mountTerminalEl(el) {
   // ResizeObserver re-fit once height exists.
   const refit = () => { try { fit.fit(); } catch (_) { /* not laid out yet */ } };
   requestAnimationFrame(refit);
+  if (document.fonts) document.fonts.ready.then(() => { term.options.fontFamily = KRILL_TERM_FONT; refit(); });
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
@@ -50,12 +54,13 @@ function mountExecTerminal(el) {
     return;
   }
   el.dataset.mounted = "1";
-  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: KRILL_TERM_THEME });
+  const term = new Terminal({ fontSize: 12, fontFamily: KRILL_TERM_FONT, cursorBlink: true, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
   const refit = () => { try { fit.fit(); } catch (_) { /* not laid out */ } };
   requestAnimationFrame(refit);
+  if (document.fonts) document.fonts.ready.then(() => { term.options.fontFamily = KRILL_TERM_FONT; refit(); });
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
@@ -80,8 +85,9 @@ function mountExecTerminal(el) {
     ws.onclose = () => setStatus(t.i18nEnded || "session ended");
     ws.onerror = () => setStatus(t.i18nError || "connection error");
   }
+  // Connects only on the button: opening the tab must not start a shell in a
+  // container (or report a raw daemon error for an app that has none).
   el._krillConnect = connect;
-  connect();
 }
 
 // Mounts the structured log viewer into `[data-logs]`: streams JSON frames
