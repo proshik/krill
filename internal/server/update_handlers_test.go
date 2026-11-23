@@ -21,6 +21,7 @@ import (
 	"github.com/proshik/krill/internal/selfupdate"
 	"github.com/proshik/krill/internal/server"
 	"github.com/proshik/krill/internal/testutil"
+	"github.com/proshik/krill/internal/web"
 )
 
 // fakeUpdateChecker stands in for *selfupdate.Checker. Every method counts
@@ -642,7 +643,9 @@ func TestUpdateActions(t *testing.T) {
 func TestUpdateStatus(t *testing.T) {
 	f := newUpdateFixture(t)
 	base, cookie, _ := nodesOrg(t, f.q, f.orgSvc, "upd-status@k.local", "OrgUpdStatus")
-	htmx := http.Header{"Hx-Request": {"true"}}
+	// A poll from a page of this release carries its asset version, as every
+	// page does (server.assetGate reloads pages of another release).
+	htmx := http.Header{"Hx-Request": {"true"}, server.AssetHeader: {web.AssetVersion}}
 
 	t.Run("another version answers with a refresh", func(t *testing.T) {
 		c, i := newUpdateFakes()
