@@ -32,10 +32,12 @@ function mountTerminalEl(el) {
   const ws = new WebSocket(`${proto}://${location.host}${wsPath}`);
   let gotData = false;
   ws.onmessage = (e) => { gotData = true; term.writeln(e.data); };
+  // The messages come from the page (data-i18n-*), in the panel's language.
+  const t = el.dataset;
   ws.onclose = () => term.writeln(gotData
-    ? "\x1b[90m[log stream closed]\x1b[0m"
-    : "\x1b[90m[no logs yet: start or redeploy the service to stream logs]\x1b[0m");
-  ws.onerror = () => term.writeln("\x1b[31m[log stream error]\x1b[0m");
+    ? "\x1b[90m[" + (t.i18nClosed || "log stream closed") + "]\x1b[0m"
+    : "\x1b[90m[" + (t.i18nEmpty || "no logs yet") + "]\x1b[0m");
+  ws.onerror = () => term.writeln("\x1b[31m[" + (t.i18nError || "log stream error") + "]\x1b[0m");
 }
 
 // Mounts an INTERACTIVE exec terminal into `.term[data-term-ws]`: xterm with
@@ -57,6 +59,7 @@ function mountExecTerminal(el) {
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
+  const t = el.dataset; // messages in the panel's language (data-i18n-*)
   const statusEl = document.getElementById("term-status");
   const setStatus = (s) => { if (statusEl) statusEl.textContent = s; };
   let ws = null;
@@ -69,13 +72,13 @@ function mountExecTerminal(el) {
     term.reset();
     const cmd = (document.getElementById("term-cmd") || {}).value || "/bin/sh";
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    setStatus("connecting…");
+    setStatus(t.i18nConnecting || "connecting…");
     ws = new WebSocket(`${proto}://${location.host}${el.dataset.termWs}?cmd=${encodeURIComponent(cmd)}`);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => { setStatus(""); refit(); sendResize(); term.focus(); };
     ws.onmessage = (e) => term.write(new Uint8Array(e.data));
-    ws.onclose = () => setStatus("session ended. Press connect to start a new one");
-    ws.onerror = () => setStatus("connection error");
+    ws.onclose = () => setStatus(t.i18nEnded || "session ended");
+    ws.onerror = () => setStatus(t.i18nError || "connection error");
   }
   el._krillConnect = connect;
   connect();

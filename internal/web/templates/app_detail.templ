@@ -368,7 +368,13 @@ templ deploymentLog(c AppCtx, dep db.Deployment) {
 			<code>{ dep.ImageTag }</code>
 			<span class="when">{ dep.StartedAt.Local().Format("2006-01-02 15:04:05") + ", " + dep.Trigger }</span>
 		</div>
-		<div class="term" data-term-log={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }></div>
+		<div
+			class="term"
+			data-term-log={ c.base() + "/deployments/" + itoa(dep.ID) + "/logs" }
+			data-i18n-closed={ i18n.T(ctx, "term.log_closed") }
+			data-i18n-empty={ i18n.T(ctx, "term.log_empty") }
+			data-i18n-error={ i18n.T(ctx, "term.log_error") }
+		></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 	</section>
@@ -412,7 +418,13 @@ templ terminalTab(c AppCtx) {
 			</button>
 		</div>
 		<p id="term-status" class="hint" aria-live="polite"></p>
-		<div class="term" data-term-ws={ c.base() + "/terminal/ws" }></div>
+		<div
+			class="term"
+			data-term-ws={ c.base() + "/terminal/ws" }
+			data-i18n-connecting={ i18n.T(ctx, "term.connecting") }
+			data-i18n-ended={ i18n.T(ctx, "term.ended") }
+			data-i18n-error={ i18n.T(ctx, "term.conn_error") }
+		></div>
 		<script src="/static/xterm.js"></script>
 		<script src="/static/addon-fit.js"></script>
 	</section>
