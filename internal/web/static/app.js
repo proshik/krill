@@ -197,7 +197,6 @@ function mountMonitoring(el) {
   // such as a worker's come from operators and go into aria-label="…".
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const gib = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GiB" : Math.round(b / 1048576) + " MiB";
-  const mib = (b) => Math.round(b / 1048576) + " MiB";
   const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
   function nodeSeries(d) {
     // Per node, per bucket: sum of the containers' values, as % of the node.
@@ -291,7 +290,7 @@ function mountMonitoring(el) {
         '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", comps.length)) + "</h3><ul class=\"comps\">" +
         comps.map((r) => {
           const name = r.href ? '<a href="' + esc(r.href) + '">' + esc(r.name) + "</a>" : "<span>" + esc(r.name) + "</span>";
-          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + mib(r.mem) + " / " + mib(r.mem_limit) : mib(r.mem);
+          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + gib(r.mem) + " / " + gib(r.mem_limit) : gib(r.mem);
           return '<li><span class="comp-name">' + name + "<em>" + esc(r.detail || r.group || "") + '</em></span><span class="comp-cpu">' + (r.cpu || 0).toFixed(1) + '%</span><span class="comp-mem">' + lim + "</span></li>";
         }).join("") + "</ul></section>";
     });
@@ -1085,9 +1084,15 @@ function mountWiredMap(map) {
       const ya = (a.top + a.height / 2 - host.top) / k, yb = (b.top + b.height / 2 - host.top) / k;
       const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
       if (dir === 0) {
+        // Two cards in one column: the loop bulges right, but only as far as
+        // the lane's own padding — 48px used to cross the gutter into the
+        // next lane (and the ingress arc left its card).
         const x = (Math.max(a.right, b.right) - host.left) / k;
         const xa = (a.right - host.left) / k, xb = (b.right - host.left) / k;
-        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + 48) + " " + ya + " " + (x + 48) + " " + yb + " " + xb + " " + yb);
+        const lane = l.from.closest(".lane");
+        const room = lane && lane === l.to.closest(".lane") ? (lane.getBoundingClientRect().right - host.left) / k - x - 3 : 48;
+        const bulge = Math.max(6, Math.min(48, room));
+        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + bulge) + " " + ya + " " + (x + bulge) + " " + yb + " " + xb + " " + yb);
       } else {
         const x1 = ((dir > 0 ? a.right : a.left) - host.left) / k;
         const x2 = ((dir > 0 ? b.left : b.right) - host.left) / k;

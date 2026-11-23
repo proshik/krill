@@ -348,6 +348,8 @@ type Querier interface {
 	SearchLogicalDatabasesByOrg(ctx context.Context, arg SearchLogicalDatabasesByOrgParams) ([]SearchLogicalDatabasesByOrgRow, error)
 	// The command palette's bucket search, as SearchLogicalDatabasesByOrg.
 	SearchS3BucketsByOrg(ctx context.Context, arg SearchS3BucketsByOrgParams) ([]SearchS3BucketsByOrgRow, error)
+	// The command palette's system search, as SearchS3BucketsByOrg.
+	SearchSystemsByOrg(ctx context.Context, arg SearchSystemsByOrgParams) ([]SearchSystemsByOrgRow, error)
 	SetAlertState(ctx context.Context, arg SetAlertStateParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error

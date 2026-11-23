@@ -47,8 +47,10 @@ func TestClassify(t *testing.T) {
 		{"krill-7", false, GroupApp, "web"},
 		{"demodb", false, GroupDB, "demodb"},
 		{"krill-traefik", false, GroupInfra, "Traefik"},
-		{"traefik", false, GroupInfra, "traefik"}, // bare name is not the swarm service; stays raw
-		{"grafana", false, GroupInfra, "grafana"},
+		{"traefik", false, GroupOther, "traefik"}, // bare name is not the swarm service
+		{"grafana", false, GroupOther, "grafana"}, // a container on the host Krill did not start
+		{"krill-alloy-node", false, GroupInfra, "krill-alloy-node"},
+		{"krill-12", false, GroupInfra, "krill-12"}, // another organization's app stays unnamed
 	}
 	for _, tc := range cases {
 		g, n := Classify(tc.comp, tc.self, apps, dbs)

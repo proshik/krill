@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/proshik/krill/internal/metrics"
+	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -41,6 +42,7 @@ type monRow struct {
 	MemLimit  int64   `json:"mem_limit"`
 	Detail    string  `json:"detail,omitempty"` // project/environment of the org's app, engine of its server
 	Href      string  `json:"href,omitempty"`   // the org's own app or server page
+	Count     int     `json:"count,omitempty"`  // the "other" row: how many containers it sums
 }
 
 // monNode is one cluster node's current summary.
@@ -150,8 +152,22 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 	latest, _ := s.metrics.Latest(r.Context(), now.Add(-freshness))
 	hrefs := s.metricHrefs(r, o.ID)
 	rows := make([]monRow, 0, len(latest))
+	// Containers Krill did not start come as one row per node: listed one
+	// by one, the count changed with whatever else ran on the host.
+	other := map[string]*monRow{}
 	for _, sm := range latest {
 		grp, name := metrics.Classify(sm.Component, sm.Component == selfComp, apps, dbs)
+		if grp == metrics.GroupOther {
+			o := other[sm.Node]
+			if o == nil {
+				o = &monRow{Node: sm.Node, Component: "other", Group: grp, Detail: i18n.T(r.Context(), "mon.other_detail")}
+				other[sm.Node] = o
+			}
+			o.CPU += sm.CPUPct
+			o.Mem += sm.MemBytes
+			o.Count++
+			continue
+		}
 		key := sm.Node + "\x1f" + sm.Component
 		row := monRow{
 			Node: sm.Node, Component: sm.Component, Name: name, Group: grp,
@@ -164,6 +180,10 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 			row.Detail = l.Detail
 		}
 		rows = append(rows, row)
+	}
+	for _, o := range other {
+		o.Name = i18n.Tf(r.Context(), "mon.other", o.Count)
+		rows = append(rows, *o)
 	}
 	sortRows(rows)
 
@@ -255,6 +275,7 @@ var monGroupOrder = map[string]int{
 	metrics.GroupInfra:   1,
 	metrics.GroupApp:     2,
 	metrics.GroupDB:      3,
+	metrics.GroupOther:   4,
 }
 
 func sortRows(rows []monRow) {

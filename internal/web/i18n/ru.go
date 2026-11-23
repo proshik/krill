@@ -1535,6 +1535,8 @@ var ru = map[string]string{
 	"mon.pct_of_node":                  "% от узла",
 	"mon.cpu_of_cores":                 "CPU из %d ядер",
 	"mon.containers":                   "контейнеров: %d",
+	"mon.other":                        "другие контейнеры: %d",
+	"mon.other_detail":                 "не запущены Krill",
 	"mon.error":                        "метрики сейчас недоступны",
 	"mon.of":                           "из",
 	"mon.range":                        "период",

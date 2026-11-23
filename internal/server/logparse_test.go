@@ -40,6 +40,7 @@ func TestServiceLogsStreamNewestLast(t *testing.T) {
 		backlog: "2026-11-23T10:00:01Z current 1\n" +
 			"2026-11-23T10:00:02Z current 2\n" +
 			"2026-11-19T08:00:01Z stopped 1\n" +
+			"2026-11-19T08:00:01Z \n" +
 			"2026-11-19T08:00:02Z stopped 2\n",
 		live: "2026-11-23T10:00:02Z current 2\n" +
 			"2026-11-19T08:00:02Z stopped 2\n" +

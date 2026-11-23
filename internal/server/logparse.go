@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -40,6 +41,9 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 		rc.Close()
 	}
 	for _, l := range backlog {
+		if blankLine(l) {
+			continue
+		}
 		if !writeLogLine(ctx, conn, l) {
 			return nil
 		}
@@ -73,7 +77,7 @@ func streamParsedLogsToWS(ctx context.Context, conn *websocket.Conn, rc io.Reade
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
 	for sc.Scan() {
 		l := logparse.ParseLogLine(sc.Text())
-		if keep != nil && !keep(l) {
+		if blankLine(l) || (keep != nil && !keep(l)) {
 			continue
 		}
 		if !writeLogLine(ctx, conn, l) {
@@ -110,3 +114,7 @@ func endWithNotice(ctx context.Context, conn *websocket.Conn, scanErr error) boo
 	conn.Close(websocket.StatusInternalError, "log stream broken")
 	return true
 }
+
+// blankLine is a line with nothing to read (Postgres writes empty ones): the
+// viewer would show it as a row holding only a timestamp.
+func blankLine(l logparse.LogLine) bool { return strings.TrimSpace(l.Msg) == "" }

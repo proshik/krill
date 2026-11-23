@@ -169,17 +169,21 @@ func TestOrgSearchResources(t *testing.T) {
 		if _, err := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: s3.ID, EnvironmentID: e.ID, Name: bucket, AccessKey: "k", SecretKey: "x"}); err != nil {
 			t.Fatal(err)
 		}
+		// The palette also finds systems (L23 of the v0.13.0 audit).
+		if _, err := q.CreateSystem(ctx, db.CreateSystemParams{EnvironmentID: e.ID, Name: bucket + "-system"}); err != nil {
+			t.Fatal(err)
+		}
 		return o.ID, loginAs(t, q, email)
 	}
 	orgA, cookieA := seed("res-a@k.local", "resa", "orders_main", "orders-files")
 	seed("res-b@k.local", "resb", "orders_secret", "orders-private")
 
 	body := getWithCookie(t, h, "/orgs/"+i64(orgA)+"/search?q=orders", cookieA).Body.String()
-	if !strings.Contains(body, "orders_main") || !strings.Contains(body, "orders-files") {
-		t.Fatalf("own database or bucket missing:\n%s", body)
+	if !strings.Contains(body, "orders_main") || !strings.Contains(body, "orders-files") || !strings.Contains(body, "orders-files-system") {
+		t.Fatalf("own database, bucket or system missing:\n%s", body)
 	}
 	if strings.Contains(body, "orders_secret") || strings.Contains(body, "orders-private") {
-		t.Fatal("SECURITY: another organization's database or bucket in the results")
+		t.Fatal("SECURITY: another organization's database, bucket or system in the results")
 	}
 	if body := getWithCookie(t, h, "/orgs/"+i64(orgA)+"/search?q=%25", cookieA).Body.String(); strings.Contains(body, "orders_main") {
 		t.Fatal("a % in the search term matched everything")

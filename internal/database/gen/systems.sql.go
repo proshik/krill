@@ -147,6 +147,50 @@ func (q *Queries) RenameSystem(ctx context.Context, arg RenameSystemParams) erro
 	return err
 }
 
+const searchSystemsByOrg = `-- name: SearchSystemsByOrg :many
+SELECT s.id, s.name, s.environment_id
+FROM systems s
+JOIN environments e ON e.id = s.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+  AND s.name ILIKE $2
+ORDER BY s.name, s.id
+LIMIT $3
+`
+
+type SearchSystemsByOrgParams struct {
+	OrganizationID int64  `json:"organization_id"`
+	Pattern        string `json:"pattern"`
+	MaxRows        int32  `json:"max_rows"`
+}
+
+type SearchSystemsByOrgRow struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	EnvironmentID int64  `json:"environment_id"`
+}
+
+// The command palette's system search, as SearchS3BucketsByOrg.
+func (q *Queries) SearchSystemsByOrg(ctx context.Context, arg SearchSystemsByOrgParams) ([]SearchSystemsByOrgRow, error) {
+	rows, err := q.db.Query(ctx, searchSystemsByOrg, arg.OrganizationID, arg.Pattern, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchSystemsByOrgRow
+	for rows.Next() {
+		var i SearchSystemsByOrgRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.EnvironmentID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setAppSystem = `-- name: SetAppSystem :exec
 INSERT INTO system_members (application_id, system_id) VALUES ($1, $2)
 ON CONFLICT (application_id) DO UPDATE SET system_id = EXCLUDED.system_id

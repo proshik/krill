@@ -89,3 +89,46 @@ func TestTopoViewProjectsByID(t *testing.T) {
 		t.Fatalf("the filter for Sales / Europe shows %v", names)
 	}
 }
+
+// Narrowed to a project, the org topology showed main-db with another
+// project's database chips, and dropped the S3 server the project used
+// through a bucket link (the link was never drawn). A server stays when a
+// link of the project reaches it, and shows only that project's chips.
+func TestTopoViewProjectFilterServers(t *testing.T) {
+	g := topology.Graph{
+		Nodes: []topology.GNode{{ID: "n1", Name: "control-plane", State: "ready"}},
+		Services: []topology.GService{
+			{ID: "app-1", Kind: "app", NodeID: "n1", Label: "shop-api", ProjectID: 1, Project: "shop"},
+			{ID: "app-2", Kind: "app", NodeID: "n1", Label: "blog", ProjectID: 2, Project: "blog"},
+			{ID: "db-1", Kind: "db", NodeID: "n1", Label: "main-db", Engine: "postgres"},
+			{ID: "db-2", Kind: "db", NodeID: "n1", Label: "files", Engine: "minio"},
+		},
+		Dbs: []topology.GDB{
+			{ID: 10, ServiceID: "db-1", Name: "shop", ProjectID: 1},
+			{ID: 11, ServiceID: "db-1", Name: "blog", ProjectID: 2},
+		},
+		Links: []topology.GLink{
+			{From: "app-1", ToKind: "logical", ToID: "10", Kind: "db"},
+			{From: "app-2", ToKind: "logical", ToID: "11", Kind: "db"},
+			{From: "app-1", ToKind: "instance", ToID: "db-2", Kind: "db", Engine: "minio"},
+		},
+	}
+	v := topoView(context.Background(), 1, g, "1")
+	servers := map[string][]string{}
+	for _, l := range v.Lanes {
+		for _, c := range l.Servers {
+			for _, h := range c.Holds {
+				servers[c.Name] = append(servers[c.Name], h.Name)
+			}
+			if _, ok := servers[c.Name]; !ok {
+				servers[c.Name] = nil
+			}
+		}
+	}
+	if got := strings.Join(servers["main-db"], ","); got != "shop" {
+		t.Errorf("main-db chips under the shop filter = %q, want shop", got)
+	}
+	if _, ok := servers["files"]; !ok {
+		t.Errorf("the S3 server shop uses through a bucket link is missing: %v", servers)
+	}
+}

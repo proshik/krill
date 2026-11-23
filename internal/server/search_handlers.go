@@ -177,6 +177,19 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		add(g)
+		g = templates.PaletteGroup{Title: i18n.T(ctx, "palette.systems")}
+		syss, err := s.q.SearchSystemsByOrg(ctx, db.SearchSystemsByOrgParams{OrganizationID: o.ID, Pattern: pattern, MaxRows: paletteMax})
+		if err != nil {
+			logFrom(r).Error("orgSearch: systems", "err", err, "org_id", o.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, sy := range syss {
+			if _, ok := ix.envs[sy.EnvironmentID]; ok {
+				g.Items = append(g.Items, templates.PaletteItem{Label: sy.Name, Sub: ix.envLabel(sy.EnvironmentID), Href: ix.envURL(sy.EnvironmentID), Glyph: "i-app"})
+			}
+		}
+		add(g)
 		g = templates.PaletteGroup{Title: i18n.T(ctx, "nav.dbservers")}
 		insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
 		if err != nil {

@@ -9,7 +9,7 @@ import (
 // systems that group the canvas, new and cloned environments, deletion.
 templ EnvSettings(s Shell, v EnvSettingsView) {
 	@Page(s) {
-		<main class="wrap wrap--narrow">
+		<main class="wrap">
 			<div class="page-head"><h1>{ i18n.T(ctx, "envset.title") }</h1></div>
 			if v.Cloned {
 				<div class="callout callout--warn" data-clone-notice>

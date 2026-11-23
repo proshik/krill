@@ -97,6 +97,11 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 	for _, d := range g.Dbs {
 		id := strconv.FormatInt(d.ID, 10)
 		dbOwner[id] = d.ServiceID
+		// Narrowed to a project, a server shows only that project's
+		// databases: another project's chips do not belong to the view.
+		if project != "" && strconv.FormatInt(d.ProjectID, 10) != project {
+			continue
+		}
 		holds[d.ServiceID] = append(holds[d.ServiceID], templates.TopoHold{ElemID: elem("ldb-" + id), Name: d.Name, Env: d.Env})
 	}
 	to := map[string][]string{}
@@ -476,8 +481,36 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		}
 		for _, ld := range lds {
 			isid := "db-" + strconv.FormatInt(ld.InstanceID, 10)
-			dbs = append(dbs, topology.DBInput{ID: ld.ID, ServiceID: isid, Name: ld.Name, Env: envMeta[eid].Env, NodeID: instNode[isid]})
+			dbs = append(dbs, topology.DBInput{ID: ld.ID, ServiceID: isid, Name: ld.Name, Env: envMeta[eid].Env, NodeID: instNode[isid], ProjectID: envMeta[eid].ProjID})
 			envLogicals = append(envLogicals, topology.EnvLogical{ID: ld.ID, InstanceAppName: ld.InstanceAppName, DbName: ld.DbName})
+		}
+	}
+
+	// ---- app->bucket links: drawn to the bucket's S3 server ----
+	bucketInst := map[int64]int64{}
+	for _, eid := range envIDs {
+		bs, err := s.q.ListS3BucketsByEnvironment(ctx, eid)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list buckets failed: %w", err)
+		}
+		for _, b := range bs {
+			bucketInst[b.ID] = b.InstanceID
+		}
+	}
+	if len(appIDs) > 0 {
+		bls, err := s.q.ListBucketLinksByApplicationIDs(ctx, appIDs)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list bucket links failed: %w", err)
+		}
+		for _, l := range bls {
+			inst, ok := bucketInst[l.BucketID]
+			if !ok {
+				continue
+			}
+			dbLinks = append(dbLinks, topology.LinkInput{
+				From: "app-" + strconv.FormatInt(l.ApplicationID, 10), ToKind: "instance",
+				ToID: "db-" + strconv.FormatInt(inst, 10), Kind: "db", Engine: "minio", VarName: l.VarName,
+			})
 		}
 	}
 

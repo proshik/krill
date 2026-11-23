@@ -229,6 +229,9 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .deploy-keys { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); }
 .tag { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-pill); background: var(--color-paper-3); color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); }
 .tag--small { padding: 2px var(--space-xs); font-size: var(--text-xs); }
+/* On a card the tag takes the well colour: in the dark theme --color-card is
+   --color-paper-3, the tag's own background, and the tag vanished. */
+.svc .tag:not(.tag--active):not(.tag--failed) { background: var(--color-well); }
 .tag--active { background: var(--color-accent); color: var(--color-accent-ink); }
 .tag--failed { background: color-mix(in oklab, var(--color-err) 18%, transparent); color: var(--color-err); }
 .history { display: grid; gap: var(--space-xs); margin: 0; padding: 0; list-style: none; }
@@ -378,7 +381,10 @@ path.s3 { stroke: var(--color-warn); stroke-dasharray: 6 4; }
 .fig small { color: var(--color-muted); font: 400 var(--text-sm)/1 var(--font-display); letter-spacing: 0; }
 .fig > span:not(.meter) { color: var(--color-muted); font-size: var(--text-sm); }
 .fig .meter { width: 100%; margin-top: var(--space-2xs); }
-.spark { width: 100%; height: 24px; margin-top: var(--space-2xs); }
+.spark { width: 100%; height: 24px; margin-top: var(--space-2xs); border-radius: 6px; background: color-mix(in oklab, var(--color-rule) 55%, transparent); }
+/* At phone width "of 23.42 GiB" goes under the figure as a whole instead
+   of wrapping alone. */
+@media (max-width: 40rem) { .fig b small { display: block; margin-top: var(--space-2xs); } }
 .spark path { fill: none; stroke: var(--color-ink-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 /* The rows share one grid (subgrid), so the cpu and memory columns are as wide
    as their widest value: a fixed memory column let "123 MiB / 1024 MiB" with
@@ -687,7 +693,9 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .wires path.w-cross, .legend .w-cross { stroke-dasharray: 6 5; }
 .wires path.w-detected, .legend .w-detected { stroke-dasharray: 1 5; stroke-linecap: round; stroke-width: 2; }
 .wires path.w-link, .legend .w-link { stroke-dasharray: none; }
-.wires path.w-ingress, .legend .w-ingress { stroke: color-mix(in oklab, var(--color-accent) 70%, transparent); stroke-dasharray: none; }
+/* Ingress is drawn wide: in the accent colour alone it read like a linked
+   database on the same node. */
+.wires path.w-ingress, .legend .w-ingress { stroke: color-mix(in oklab, var(--color-accent) 55%, transparent); stroke-dasharray: none; stroke-width: 3.5; }
 .legend { display: flex; flex-wrap: wrap; gap: var(--space-lg); margin: 0 0 var(--space-lg); padding: 0; list-style: none; color: var(--color-muted); font-size: var(--text-sm); }
 .legend li { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .legend-line { width: 28px; height: 8px; }
