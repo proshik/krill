@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"path"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -177,4 +178,10 @@ func engineLabel(engine string) string {
 		return "S3"
 	}
 	return engine
+}
+
+// archiveName is the file name of a stored backup: what tells two archives
+// of the same minute and size apart.
+func archiveName(key string) string {
+	return path.Base(key)
 }

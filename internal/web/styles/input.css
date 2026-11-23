@@ -804,7 +804,8 @@ dialog.confirm .form-keys { justify-content: flex-end; border: 0; padding-top: v
 .snap--running { grid-template-columns: minmax(10em, 1.2fr) minmax(0, 1fr) 7.5em minmax(11em, auto); }
 .snap-keys { display: flex; justify-content: flex-end; gap: var(--space-2xs); }
 .bk-form + .list-head, .bk-form + h3.list-head { margin-top: var(--space-md); }
-.snap-when { font-variant-numeric: tabular-nums; }
+.snap-when { display: grid; gap: 2px; min-width: 0; font-variant-numeric: tabular-nums; }
+.snap-key { overflow: hidden; color: var(--color-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
 .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--color-rule-2); border-top-color: var(--color-accent); animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .page-head--obj { display: grid; gap: var(--space-xs); justify-content: start; }

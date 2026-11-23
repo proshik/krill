@@ -1,7 +1,10 @@
 package server
 
 import (
+	"time"
+
 	"context"
+	"github.com/jackc/pgx/v5/pgtype"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -555,42 +558,49 @@ func (s *Server) envDatabasesPage(w http.ResponseWriter, r *http.Request) {
 // backup configurations.
 type backupConfig struct {
 	Enabled bool
-	Status  string // the last run's status
-	Ran     bool
+	Status  string    // the last run's status
+	RanAt   time.Time // the last run, zero when it never ran
 }
 
-// backupSummary sums up every backup configuration of a resource: paused only
-// when all are paused, failed when any running one's last run failed, "no
-// runs yet" when no running one has run, fine otherwise. A resource with no
-// configuration is the caller's "no backups".
+// backupSummary sums up every backup configuration of a resource: the result
+// is the newest run's, whichever configuration made it (a manual run on a
+// paused one included); with no failure there, the resource is paused only
+// when all its configurations are, "no runs yet" when none has run, fine
+// otherwise. A resource with no configuration is the caller's "no backups".
 func backupSummary(ctx context.Context, cfgs []backupConfig) (string, string) {
-	active, ran := 0, 0
+	var newest backupConfig
+	active := 0
 	for _, c := range cfgs {
-		if !c.Enabled {
-			continue
+		if c.Enabled {
+			active++
 		}
-		active++
-		if c.Status == "error" {
-			return "err", i18n.T(ctx, "envdb.backup_failed")
-		}
-		if c.Ran {
-			ran++
+		if c.RanAt.After(newest.RanAt) {
+			newest = c
 		}
 	}
 	switch {
+	case !newest.RanAt.IsZero() && newest.Status == "error":
+		return "err", i18n.T(ctx, "envdb.backup_failed")
 	case active == 0:
 		return "idle", i18n.T(ctx, "envdb.backups_paused")
-	case ran == 0:
+	case newest.RanAt.IsZero():
 		return "idle", i18n.T(ctx, "envdb.backups_no_runs")
 	default:
 		return "ok", i18n.T(ctx, "envdb.backups_ok")
 	}
 }
 
+func ranAt(t pgtype.Timestamptz) time.Time {
+	if !t.Valid {
+		return time.Time{}
+	}
+	return t.Time
+}
+
 func dbBackupConfigs(bks []db.ListBackupsByLogicalDBRow) []backupConfig {
 	out := make([]backupConfig, len(bks))
 	for i, b := range bks {
-		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, Ran: b.LastRunAt.Valid}
+		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, RanAt: ranAt(b.LastRunAt)}
 	}
 	return out
 }
@@ -598,7 +608,7 @@ func dbBackupConfigs(bks []db.ListBackupsByLogicalDBRow) []backupConfig {
 func bucketBackupConfigs(bks []db.BucketBackup) []backupConfig {
 	out := make([]backupConfig, len(bks))
 	for i, b := range bks {
-		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, Ran: b.LastRunAt.Valid}
+		out[i] = backupConfig{Enabled: b.Enabled, Status: b.LastStatus, RanAt: ranAt(b.LastRunAt)}
 	}
 	return out
 }

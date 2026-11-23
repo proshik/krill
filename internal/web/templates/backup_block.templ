@@ -198,14 +198,17 @@ templ backupObjectList(objs []backup.Object, download, restore, restoreWarn stri
 		<ul class="snaps">
 			for _, o := range objs {
 				<li class="snap">
-					<span class="snap-when">{ o.LastModified.Local().Format("2006-01-02 15:04") }</span>
+					<span class="snap-when">
+						{ o.LastModified.Local().Format("2006-01-02 15:04:05") }
+						<code class="snap-key">{ archiveName(o.Key) }</code>
+					</span>
 					<span class="run-meta">{ humanSize(o.Size) }</span>
 					@ui.State("ok", i18n.T(ctx, "backup.complete"))
 					<span class="snap-keys">
 						if download != "" {
 							<a class="pill pill--small" href={ templ.SafeURL(download + "?key=" + url.QueryEscape(o.Key)) } hx-boost="false">{ i18n.T(ctx, "backup.download") }</a>
 						}
-						<form method="post" hx-boost="false" action={ templ.SafeURL(restore) } data-confirm={ i18n.Tf(ctx, "backup.restore_q", o.LastModified.Local().Format("2006-01-02 15:04")) } data-more={ restoreWarn } data-ok={ i18n.T(ctx, "backup.restore") } onsubmit="return krillConfirm(this)">
+						<form method="post" hx-boost="false" action={ templ.SafeURL(restore) } data-confirm={ i18n.Tf(ctx, "backup.restore_q", o.LastModified.Local().Format("2006-01-02 15:04:05")+", "+archiveName(o.Key)) } data-more={ restoreWarn } data-ok={ i18n.T(ctx, "backup.restore") } onsubmit="return krillConfirm(this)">
 							<input type="hidden" name="key" value={ o.Key }/>
 							<button type="submit" class="pill pill--small pill--danger">{ i18n.T(ctx, "backup.restore") }</button>
 						</form>
