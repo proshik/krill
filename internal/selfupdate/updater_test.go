@@ -1841,3 +1841,60 @@ func TestDefaultJobTimeout(t *testing.T) {
 		t.Errorf("snapshotTimeout = %v, want 10m", u.snapshotTimeout)
 	}
 }
+
+// After the restart that completes an update, Settings → Updates must not
+// say "not checked yet" for the minute the background loop waits: the
+// confirmed startup checks right away — but only when background checks are
+// on, and only after a restart an update or rollback caused.
+func TestConfirmStartup_ChecksLatestRightAway(t *testing.T) {
+	cases := []struct {
+		name      string
+		interval  time.Duration
+		pending   bool
+		wantCheck bool
+	}{
+		{"confirmed update", time.Hour, true, true},
+		{"background checks off", 0, true, false},
+		{"ordinary restart", time.Hour, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := make(chan struct{}, 4)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits <- struct{}{}
+				w.Header().Set("Location", "/"+testRepo+"/releases/tag/v0.3.0")
+				w.WriteHeader(http.StatusFound)
+			}))
+			t.Cleanup(srv.Close)
+			h := newHarness(t)
+			h.u.current = testTag
+			h.checker.interval = tc.interval
+			h.checker.baseURL = srv.URL
+			h.checker.state = CheckState{}
+			if tc.pending {
+				writePending(t, h, testCurrent, testTag)
+			}
+
+			h.u.ConfirmStartup(context.Background())
+
+			select {
+			case <-hits:
+				if !tc.wantCheck {
+					t.Fatal("checked for a release, want no check")
+				}
+			case <-time.After(2 * time.Second):
+				if tc.wantCheck {
+					t.Fatal("no release check after the confirmed update")
+				}
+				return
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for h.checker.State().Latest.Tag != "v0.3.0" {
+				if time.Now().After(deadline) {
+					t.Fatalf("latest = %q, want v0.3.0", h.checker.State().Latest.Tag)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+}
