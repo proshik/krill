@@ -192,17 +192,20 @@ function mountMonitoring(el) {
   const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
   function nodeSeries(d) {
     // Per node, per bucket: sum of the containers' values, as % of the node.
-    const cap = {};
-    (d.nodes || []).forEach((n) => { cap[n.node] = n; });
-    const out = {};
+    // Maps, not plain objects: node names are operators' words, and a worker
+    // named "constructor" would find Object.prototype's.
+    const cap = new Map();
+    (d.nodes || []).forEach((n) => { cap.set(n.node, n); });
+    const out = new Map();
     const len = (d.x || []).length;
     (d.series || []).forEach((s) => {
-      const n = cap[s.node] || {};
-      if (!out[s.node]) out[s.node] = { cpu: new Array(len).fill(null), mem: new Array(len).fill(null) };
+      const n = cap.get(s.node) || {};
+      if (!out.has(s.node)) out.set(s.node, { cpu: new Array(len).fill(null), mem: new Array(len).fill(null) });
+      const acc = out.get(s.node);
       for (let i = 0; i < len; i++) {
         const c = s.cpu[i], m = s.mem[i];
-        if (c != null && n.ncpu) out[s.node].cpu[i] = (out[s.node].cpu[i] || 0) + c / n.ncpu;
-        if (m != null && n.mem_total) out[s.node].mem[i] = (out[s.node].mem[i] || 0) + m * 1048576 * 100 / n.mem_total;
+        if (c != null && n.ncpu) acc.cpu[i] = (acc.cpu[i] || 0) + c / n.ncpu;
+        if (m != null && n.mem_total) acc.mem[i] = (acc.mem[i] || 0) + m * 1048576 * 100 / n.mem_total;
       }
     });
     return out;
@@ -227,7 +230,7 @@ function mountMonitoring(el) {
     let ends = "";
     names.forEach((n, i) => {
       if (nodeFilter && n !== nodeFilter) return;
-      const pts = (series[n] || {})[kind] || [];
+      const pts = (series.get(n) || {})[kind] || [];
       html += '<path class="' + CLS[i % CLS.length] + '" d="' + path(pts) + '"/>';
       const v = lastVal(pts);
       ends += '<li class="' + CLS[i % CLS.length] + '"><span class="swatch"></span>' + esc(n) + "<b>" + (v == null ? "—" : Math.round(v) + "%") + "</b></li>";
@@ -271,7 +274,7 @@ function mountMonitoring(el) {
         : warn ? '<span class="state state--warn"><svg class="sig sig--warn" aria-hidden="true"><use href="#s-warn"></use></svg>' + esc((t.i18nPressure || "%d").replace("%d", memPct).replace("%%", "%")) + "</span>"
         : '<span class="state state--ok"><svg class="sig sig--ok" aria-hidden="true"><use href="#s-ok"></use></svg>' + esc(t.i18nHealthy) + "</span>";
       const comps = rows.filter((r) => r.node === n.node).sort((a, b) => ord(a.group) - ord(b.group) || (a.name || "").localeCompare(b.name || ""));
-      const cpuPts = (series[n.node] || {}).cpu || [];
+      const cpuPts = (series.get(n.node) || {}).cpu || [];
       cols += '<section class="nodecol' + (warn ? " nodecol--warn" : "") + '" aria-label="' + esc(n.node) + '">' +
         '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
         '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc((t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +

@@ -99,6 +99,22 @@ async (page) => {
   assert(!(await page.evaluate(() => document.body.classList.contains('has-sheet'))), 'has-sheet stayed on the body');
   assert(await page.locator('a.server').first().isVisible(), 'the server list stayed hidden after closing the sheet');
 
+  // Monitoring draws a worker whatever its name, "constructor" included (the
+  // response is the real one plus such a worker, served by an interception).
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/monitoring/data*', async route => {
+    const real = await route.fetch();
+    const d = await real.json();
+    const len = (d.x || []).length;
+    d.nodes = (d.nodes || []).concat([{ node: 'constructor', cpu_pct: 12, mem_used: 1 << 30, mem_total: 4 << 30, ncpu: 2, containers: 1 }]);
+    d.series = (d.series || []).concat([{ node: 'constructor', component: 'krill-1', cpu: new Array(len).fill(5), mem: new Array(len).fill(256) }]);
+    await route.fulfill({ response: real, json: d });
+  });
+  await page.goto(origin + '/orgs/' + envPath.split('/')[2] + '/monitoring');
+  await page.waitForSelector('.nodecol[aria-label="constructor"]', { timeout: 10000 });
+  assert((await page.locator('.mon-status').textContent()).trim() === '', 'monitoring reported an error for a worker named constructor');
+  await page.unroute('**/monitoring/data*');
+
   // A stored choice cycled back to "system" follows the system's changes.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: 'light' });
@@ -113,5 +129,5 @@ async (page) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dark', null, { timeout: 3000 });
   await page.emulateMedia({ colorScheme: 'light' });
-  return 'PASS: dialog after cancel, confirm across refresh, rollback across refresh, a vanished form sends nothing, an old tab reloads, polling, canvas after Back, sheet close on a narrow screen, theme follows the system';
+  return 'PASS: dialog after cancel, confirm across refresh, rollback across refresh, a vanished form sends nothing, an old tab reloads, polling, canvas after Back, sheet close on a narrow screen, a worker named constructor, theme follows the system';
 }
