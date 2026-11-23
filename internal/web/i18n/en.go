@@ -330,6 +330,7 @@ var en = map[string]string{
 	"flash.err.bucket_linked":              "apps still use this bucket: remove their links first",
 	"flash.err.link_var_taken":             "%s is already injected by another link",
 	"flash.err.dbi_has_buckets":            "this server still holds buckets in Krill: delete them first (their data can be kept)",
+	"flash.err.dbi_linked":                 "apps %s use this server: remove their links to it and its databases first",
 	"flash.ok.bucket_created":              "bucket created",
 	"flash.ok.bucket_imported":             "bucket imported",
 	"flash.ok.bucket_rotated":              "new key issued. Redeploy the linked apps, check them, then revoke the previous key.",

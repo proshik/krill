@@ -25,3 +25,13 @@ FROM app_db_links WHERE application_id = ANY($1::bigint[]) ORDER BY application_
 SELECT DISTINCT a.name
 FROM app_db_links l JOIN applications a ON a.id = l.application_id
 WHERE l.logical_database_id = $1 ORDER BY a.name;
+
+-- name: ListDBLinkAppNamesByInstance :many
+-- The apps linked to a database server, directly or through one of its
+-- logical databases: the server cannot be deleted while any link remains.
+SELECT DISTINCT a.name
+FROM app_db_links l
+JOIN applications a ON a.id = l.application_id
+LEFT JOIN logical_databases ld ON ld.id = l.logical_database_id
+WHERE l.instance_id = @instance_id OR ld.instance_id = @instance_id
+ORDER BY a.name;

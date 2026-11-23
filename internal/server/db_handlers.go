@@ -274,7 +274,13 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 	defer oplock.Release(key)
 	// Like a bucket, a database an app is linked to is not deleted under it:
 	// the link would vanish with it and the app lose its variable at the
-	// next deploy.
+	// next deploy. Link creation holds the same lock, so none can commit
+	// between this check and the drop.
+	ldKey := oplock.LogicalDB(ld.ID)
+	if err := oplock.Acquire(r.Context(), ldKey); err != nil {
+		return
+	}
+	defer oplock.Release(ldKey)
 	ldID := ld.ID
 	linked, err := s.q.ListDBLinkAppNamesByLogicalDatabase(r.Context(), &ldID)
 	if err != nil {

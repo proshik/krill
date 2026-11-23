@@ -232,6 +232,9 @@ type Querier interface {
 	ListDBInstanceIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
+	// The apps linked to a database server, directly or through one of its
+	// logical databases: the server cannot be deleted while any link remains.
+	ListDBLinkAppNamesByInstance(ctx context.Context, instanceID *int64) ([]string, error)
 	// The apps a logical database is linked into: it cannot be deleted while any
 	// link remains (the same rule as buckets).
 	ListDBLinkAppNamesByLogicalDatabase(ctx context.Context, logicalDatabaseID *int64) ([]string, error)

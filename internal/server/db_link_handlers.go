@@ -9,6 +9,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/dbservice/drivers"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -53,6 +54,17 @@ func (s *Server) addDBLink(w http.ResponseWriter, r *http.Request) {
 		ld, gerr := s.q.GetLogicalDatabase(r.Context(), refID)
 		if gerr != nil || ld.EnvironmentID != c.Env.ID {
 			logFrom(r).Info("addDBLink: db not in app environment", "logical_database_id", refID, "app_id", c.App.ID)
+			s.flashErrT(w, r, "flash.err.db_not_in_env")
+			return
+		}
+		// Held through the insert: deleting the database checks its links
+		// under the same lock (see deleteLogicalDatabase).
+		key := oplock.LogicalDB(ld.ID)
+		if err := oplock.Acquire(r.Context(), key); err != nil {
+			return
+		}
+		defer oplock.Release(key)
+		if _, gerr := s.q.GetLogicalDatabase(r.Context(), ld.ID); gerr != nil {
 			s.flashErrT(w, r, "flash.err.db_not_in_env")
 			return
 		}

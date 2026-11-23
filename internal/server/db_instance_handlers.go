@@ -696,6 +696,35 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.dbi_has_buckets")
 		return
 	}
+	// As with one logical database, a server is not deleted while apps link
+	// to it or to its databases: the links would vanish with it. The
+	// databases' locks are held from the check through the removal, so no
+	// link to them can commit in between (see oplock.LogicalDB).
+	ldbs, err := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
+	if err != nil {
+		logFrom(r).Error("deleteDBInstance: list dbs failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	// A link creator holds one such lock at a time, so the order is free.
+	for _, ld := range ldbs {
+		key := oplock.LogicalDB(ld.ID)
+		if err := oplock.Acquire(r.Context(), key); err != nil {
+			return
+		}
+		defer oplock.Release(key)
+	}
+	instID := inst.ID
+	linked, err := s.q.ListDBLinkAppNamesByInstance(r.Context(), &instID)
+	if err != nil {
+		logFrom(r).Error("deleteDBInstance: list links failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	if len(linked) > 0 {
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.dbi_linked", strings.Join(linked, ", ")))
+		return
+	}
 	destroy := r.FormValue("destroy_data") == "on"
 
 	// Remove the instance's containers FIRST — the real-failure point — before

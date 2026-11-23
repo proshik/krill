@@ -82,6 +82,11 @@ func Acquire(ctx context.Context, name string) error {
 	}
 }
 
+// LogicalDB serializes creating a link to a logical database with its
+// deletion: deletion refuses while links exist, so a link must not commit
+// between that check and the drop.
+func LogicalDB(id int64) string { return "ldb:" + strconv.FormatInt(id, 10) }
+
 // AppRouting serializes final spec application with current routing updates.
 func AppRouting(id int64) string { return "app-routing:" + strconv.FormatInt(id, 10) }
 
