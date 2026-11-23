@@ -832,6 +832,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* ---------- kit ---------- */
 .empty-card { display: grid; justify-items: start; gap: var(--space-xs); padding: var(--space-lg); border-radius: var(--radius-card); background: var(--color-paper); }
 .empty-card .btn, .empty-card .pill { margin-top: var(--space-xs); }
+/* Blocks filled with the page colour read as a stray indent when they sit
+   straight on the page: give them a card surface there. Inside a sheet, a
+   settings section or a card they keep the page colour, which already
+   contrasts with that surface. Empty states and cluster rows look like the
+   database server cards (.server); the rest take the project cards' surface. */
+.wrap > .empty-card, .wrap > .sec > .empty-card, .canvas-empty .empty-card,
+.nodes-strip li { padding: var(--space-md); border-radius: 20px; background: var(--color-card); box-shadow: var(--shadow-card); }
+.nodes-strip li { padding: 0; }
+.nodes-strip li > a { padding: var(--space-md); border-radius: 20px; }
+.wrap > .callout:not(.callout--err), .setbody > .callout:not(.callout--err),
+.wrap > .sec .row-item, .wrap > .sec .bk,
+.page-head .seg { background: var(--color-paper-2); }
+/* The same gap the project grid leaves above the cluster strip. */
+.empty-card + .nodes-strip { margin-top: var(--space-xl); }
 .steps { display: grid; gap: var(--space-2xs); margin: 0; padding: 0; list-style: none; }
 .step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); min-height: 40px; padding: 0 var(--space-md); border-radius: 12px; background: var(--color-paper); color: var(--color-muted); }
 .step--done, .step--now { color: var(--color-ink); }
