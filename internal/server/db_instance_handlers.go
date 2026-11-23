@@ -772,14 +772,10 @@ func (s *Server) dbInstanceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
-	rc, err := s.engine.ServiceLogs(ctx, appName, true, 200) // 200: the viewer's live-tail window, unchanged from before tail was parameterized
-	if err != nil {
+	if err := s.streamServiceLogsToWS(ctx, conn, appName); err != nil {
 		logFrom(r).Error("dbInstanceLogs: engine service logs failed", "err", err, "instance_id", inst.ID, "app_name", appName)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
-		return
 	}
-	defer rc.Close()
-	streamParsedLogsToWS(ctx, conn, rc)
 }
 
 // dbInstanceDeployLogs streams the in-memory deploy-log feed over a WebSocket.
