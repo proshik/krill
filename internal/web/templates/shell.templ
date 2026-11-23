@@ -36,7 +36,7 @@ templ Page(s Shell) {
 		<head>
 			@docHead(s.Title)
 		</head>
-		<body class={ bodyClass(s) } hx-boost="true">
+		<body class={ bodyClass(s) } hx-boost="true" hx-headers={ assetHeaders() }>
 			// A boosted navigation swaps the body's content, not its attributes,
 			// and htmx's history cache keeps only the content: this marker
 			// carries the page's body classes through both (see app.js).
@@ -59,7 +59,7 @@ templ AuthPage(title string) {
 		<head>
 			@docHead(i18n.Sentence(title))
 		</head>
-		<body class="auth-page" hx-boost="true">
+		<body class="auth-page" hx-boost="true" hx-headers={ assetHeaders() }>
 			@ui.Sprite()
 			<main class="auth-wrap">
 				<div class="auth">
@@ -89,7 +89,7 @@ templ toasts() {
 // confirmDialog is the one confirmation every destructive action goes
 // through (krillConfirm in app.js fills it).
 templ confirmDialog() {
-	<dialog class="confirm" id="confirm" aria-labelledby="confirm-q">
+	<dialog class="confirm" id="confirm" aria-labelledby="confirm-q" data-gone={ i18n.T(ctx, "confirm.gone") }>
 		<form method="dialog">
 			<p class="confirm-q" id="confirm-q"></p>
 			<p class="hint confirm-more"></p>

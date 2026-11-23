@@ -3,6 +3,7 @@ package templates
 import (
 	"context"
 	"github.com/a-h/templ"
+	"github.com/proshik/krill/internal/web"
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -191,6 +192,12 @@ func dashBody(sheet bool) string {
 		return "page has-sheet"
 	}
 	return "page"
+}
+
+// assetHeaders is the body's hx-headers: the version of the assets this page
+// loaded, sent with every htmx request (see server.assetGate).
+func assetHeaders() string {
+	return `{"X-Krill-Assets":"` + web.AssetVersion + `"}`
 }
 
 // ariaCurrent marks the current link or card: aria-current="page" (or

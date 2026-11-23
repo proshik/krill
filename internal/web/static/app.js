@@ -381,26 +381,45 @@ function krillMountDBLink() {
 // Returns false to block the triggering submit and submits the form natively
 // once confirmed. The form must carry hx-boost="false" so htmx does not fire
 // its own request on the submit event.
-window.krillConfirm = function (form, message, confirmLabel, kind, more) {
+// krillFormIdentity names the exact operation a form performs: its action and
+// every hidden field (an archive's object key, say). Two forms with the same
+// identity do the same thing; forms that share an action do not.
+function krillFormIdentity(form) {
+  const parts = [form.getAttribute("action") || ""];
+  form.querySelectorAll('input[type="hidden"]').forEach(function (i) { parts.push(i.name + "=" + i.value); });
+  return parts.join("\n");
+}
+// krillLiveForm returns the form a confirmation was given for: the form
+// itself while it is on the page, else a replacement with the same identity
+// (a polled list re-rendered it), else null — never another operation.
+function krillLiveForm(form, identity) {
+  if (form.isConnected) return form;
+  return Array.from(document.querySelectorAll("form")).find(function (f) { return krillFormIdentity(f) === identity; }) || null;
+}
+// krillFormGone tells the operator that what they confirmed is no longer on
+// the page, so nothing was sent.
+function krillFormGone() {
   const dlg = document.getElementById("confirm");
-  if (!dlg || typeof dlg.showModal !== "function") return confirm(message);
+  krillShowToast((dlg && dlg.dataset.gone) || "The list changed; choose again.", "warn");
+}
+
+window.krillConfirm = function (form, message, confirmLabel, kind, more) {
   const d = (form && form.dataset) || {};
+  const dlg = document.getElementById("confirm");
+  // Without the dialog the native prompt still names the action.
+  if (!dlg || typeof dlg.showModal !== "function") return confirm([message || d.confirm || "", more || d.more || ""].filter(Boolean).join("\n\n"));
   dlg.querySelector(".confirm-q").textContent = message || d.confirm || "";
   dlg.querySelector(".confirm-more").textContent = more || d.more || "";
   const okEl = dlg.querySelector("#confirm-ok");
   okEl.textContent = confirmLabel || d.ok || d.label || okEl.dataset.default || okEl.textContent;
   if (!okEl.dataset.default) okEl.dataset.default = okEl.textContent;
   okEl.className = (kind || d.kind) === "primary" ? "btn btn--primary" : "btn btn--danger";
+  const identity = krillFormIdentity(form);
   window.__krillConfirmAction = function () {
-    // A polled fragment (the deployments list) may have replaced the form
-    // while the dialog was open: submit its live twin, the form with the same
-    // action, rather than a detached one that sends nothing.
-    let target = form;
-    if (!target.isConnected) {
-      const action = form.getAttribute("action");
-      target = Array.from(document.querySelectorAll("form")).find(function (f) { return f.getAttribute("action") === action; });
-      if (!target) return;
-    }
+    // A polled list may have replaced the form while the dialog was open:
+    // only the same operation may go out, never a neighbour sharing its action.
+    const target = krillLiveForm(form, identity);
+    if (!target) { krillFormGone(); return; }
     // form.submit() fires no submit event, so the double-submit guard below
     // would not see it: mark the form busy here, and refuse a second run.
     if (krillFormBusy(target)) target.submit();
@@ -464,9 +483,13 @@ if (!window.__krillUnsavedInit) {
     const msg = scope.dataset.unsavedMsg || "Unsaved changes will be lost. Continue?";
     // Re-dispatch through the normal path (htmx, the form's own confirm),
     // skipping this check once.
+    const identity = krillFormIdentity(form);
     const resubmit = function () {
-      form.__krillUnsavedOK = true;
-      form.requestSubmit(submitter);
+      const target = krillLiveForm(form, identity);
+      if (!target) { krillFormGone(); return; }
+      const button = submitter && target.contains(submitter) ? submitter : null;
+      target.__krillUnsavedOK = true;
+      target.requestSubmit(button);
     };
     const dlg = document.getElementById("confirm");
     if (!dlg || typeof dlg.showModal !== "function") {

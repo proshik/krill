@@ -33,6 +33,46 @@ async (page) => {
   await page.unroute('**/stop');
   assert(stopSent, 'a Stop confirmed across a refresh was not sent');
 
+  // A rollback confirmed after the list replaced its form: exactly one
+  // request, for the release that was chosen. Needs a release eligible for
+  // rollback in the history (KRILL_SECRET_KEY set, two deploys).
+  await page.goto(appURL);
+  const chosen = page.locator('.history form[action$="/rollback"]').first();
+  assert(await chosen.count() === 1, 'no release in the history can be rolled back');
+  const chosenAction = await chosen.getAttribute('action');
+  const original = await chosen.elementHandle();
+  const rollbacks = [];
+  await page.route('**/rollback', route => { rollbacks.push(new URL(route.request().url()).pathname); return route.abort(); });
+  await chosen.locator('button[type=submit]').click();
+  await page.waitForFunction(el => !el.isConnected, original, { timeout: 10000 });
+  await page.locator('#confirm-ok').click();
+  await page.waitForTimeout(1000);
+  assert(rollbacks.length === 1 && rollbacks[0] === chosenAction, 'the confirmed rollback went to ' + JSON.stringify(rollbacks) + ', not ' + chosenAction);
+
+  // The chosen form is gone for good: nothing is sent, and the operator is told.
+  await page.goto(appURL);
+  rollbacks.length = 0;
+  const gone = page.locator('.history form[action$="/rollback"]').first();
+  const goneAction = await gone.getAttribute('action');
+  await gone.locator('button[type=submit]').click();
+  await page.evaluate(a => {
+    document.querySelector('[hx-get$="/deployments-list"]').remove(); // no refresh brings it back
+    document.querySelectorAll('form').forEach(f => { if (f.getAttribute('action') === a) f.remove(); });
+  }, goneAction);
+  await page.locator('#confirm-ok').click();
+  await page.waitForTimeout(1000);
+  await page.unroute('**/rollback');
+  assert(rollbacks.length === 0, 'a confirmation whose form is gone sent ' + JSON.stringify(rollbacks));
+  assert(await page.locator('#toasts .toast--warn').count() > 0, 'the operator was not told to choose again');
+
+  // A tab still running another release's assets loads its next page in full.
+  await page.goto(appURL);
+  await page.evaluate(() => { window.__krillOldTab = true; document.body.setAttribute('hx-headers', '{"X-Krill-Assets":"stale"}'); });
+  await page.locator('.bar a[href="' + envPath + '/settings"]').click();
+  await page.waitForURL(u => u.pathname.endsWith('/settings'));
+  await page.waitForLoadState('load');
+  assert(await page.evaluate(() => window.__krillOldTab !== true), 'an old tab swapped the new page into its old assets');
+
   // The list keeps polling after its first refresh.
   await page.goto(appURL);
   await page.waitForResponse(r => r.url().endsWith('/deployments-list'), { timeout: 10000 });
@@ -73,5 +113,5 @@ async (page) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dark', null, { timeout: 3000 });
   await page.emulateMedia({ colorScheme: 'light' });
-  return 'PASS: dialog after cancel, confirm across refresh, polling, canvas after Back, sheet close on a narrow screen, theme follows the system';
+  return 'PASS: dialog after cancel, confirm across refresh, rollback across refresh, a vanished form sends nothing, an old tab reloads, polling, canvas after Back, sheet close on a narrow screen, theme follows the system';
 }

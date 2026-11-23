@@ -1380,6 +1380,7 @@ var en = map[string]string{
 	"flash.err.notif_time":             "digest time must look like 11:00",
 	"flash.err.notif_tz":               "unknown time zone (use a name like Europe/Moscow)",
 	"flash.err.notif_lang":             "unsupported message language",
+	"confirm.gone":                     "the list changed while you were confirming, so nothing was done. Choose again.",
 	"confirm.ok":                       "confirm",
 	"env.tab_canvas":                   "canvas",
 	"env.tab_databases":                "databases",

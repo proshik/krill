@@ -328,6 +328,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(csrfGuard)
+	r.Use(assetGate)
 	r.Use(s.panelHSTS)
 
 	// locale middleware (see requestLocale).

@@ -1380,6 +1380,7 @@ var ru = map[string]string{
 	"flash.err.notif_time":             "время сводки — в виде 11:00",
 	"flash.err.notif_tz":               "неизвестный часовой пояс (укажите имя вида Europe/Moscow)",
 	"flash.err.notif_lang":             "неподдерживаемый язык сообщений",
+	"confirm.gone":                     "пока вы подтверждали, список обновился, поэтому ничего не сделано. Выберите заново.",
 	"confirm.ok":                       "подтвердить",
 	"env.tab_canvas":                   "схема",
 	"env.tab_databases":                "базы данных",
