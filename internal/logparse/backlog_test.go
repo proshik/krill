@@ -112,4 +112,50 @@ func TestParseLogLineDetails(t *testing.T) {
 	if l := ParseLogLine("2026-11-23T10:00:01Z com.docker.swarm.whatever"); l.Task != "" || l.Msg != "com.docker.swarm.whatever" {
 		t.Fatalf("a message that only looks like details must stay: %+v", l)
 	}
+	// A logging driver's env option adds the app's values to the details, and
+	// docker sorts the keys: an uppercase variable comes before Swarm's.
+	l = ParseLogLine("2026-11-23T10:00:01Z POSTGRES_PASSWORD=s3cr%20et,com.docker.swarm.node.id=n1,com.docker.swarm.service.id=s1,com.docker.swarm.task.id=t1 ready")
+	if l.Task != "t1" || l.Msg != "ready" || strings.Contains(l.Msg, "s3cr") {
+		t.Fatalf("the whole attribute block must be stripped: %+v", l)
+	}
+}
+
+// Once a task's following stream has passed its replay, every line is new:
+// a worker clock that steps back must not hide the task's output.
+func TestCursorAfterReplayEverythingIsNew(t *testing.T) {
+	_, c, _ := Backlog(strings.NewReader("2026-11-23T10:00:05Z com.docker.swarm.task.id=a a5\n"), 10)
+	if c.Fresh(ParseLogLine("2026-11-23T10:00:05Z com.docker.swarm.task.id=a a5")) {
+		t.Fatal("the replayed line must be dropped")
+	}
+	if !c.Fresh(ParseLogLine("2026-11-23T10:00:06Z com.docker.swarm.task.id=a a6")) {
+		t.Fatal("a newer line must be fresh")
+	}
+	if !c.Fresh(ParseLogLine("2026-11-23T10:00:01Z com.docker.swarm.task.id=a after the clock stepped back")) {
+		t.Error("after the replay, an earlier timestamp is still a new line")
+	}
+	if c.Gap() {
+		t.Error("the task's stream began with its replay: no gap")
+	}
+}
+
+// Blank lines are part of a task's replay: a tail of replayed blanks and one
+// new line is not a gap.
+func TestCursorBlankReplayIsNotAGap(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("2026-11-23T10:00:00Z com.docker.swarm.task.id=a visible\n")
+	for i := 0; i < 50; i++ {
+		b.WriteString("2026-11-23T10:00:01Z com.docker.swarm.task.id=a \n")
+	}
+	_, c, _ := Backlog(strings.NewReader(b.String()), 10)
+	for i := 0; i < 49; i++ {
+		if c.Fresh(ParseLogLine("2026-11-23T10:00:01Z com.docker.swarm.task.id=a ")) {
+			t.Fatalf("replayed blank %d taken as new", i)
+		}
+	}
+	if !c.Fresh(ParseLogLine("2026-11-23T10:00:02Z com.docker.swarm.task.id=a new")) {
+		t.Fatal("the new line must be fresh")
+	}
+	if c.Gap() {
+		t.Error("the overlap began with replayed blanks: no gap")
+	}
 }

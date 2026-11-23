@@ -1426,7 +1426,7 @@ var en = map[string]string{
 	"env.editor":                       "editor",
 	"log.all":                          "all",
 	"log.empty":                        "no logs yet: start the service or deploy it",
-	"log.gap":                          "some lines may be missing here: the service wrote faster than the stream opened. Reload the page to see them.",
+	"log.gap":                          "some lines may be missing here: the service wrote faster than the stream opened. Reload the page to load the latest lines again.",
 	"log.error":                        "log stream error",
 	"log.level":                        "level",
 	"log.runtime":                      "runtime logs",

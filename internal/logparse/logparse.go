@@ -111,20 +111,25 @@ func ScanEndNotice(err error) (LogLine, bool) {
 }
 
 // splitDockerDetails strips the attributes docker puts before a line when a
-// service's logs are read with details ("com.docker.swarm.node.id=…,
-// com.docker.swarm.service.id=…,com.docker.swarm.task.id=… message") and
-// returns the task ID. A line without them is returned as it is.
+// service's logs are read with details and returns the task ID. Swarm adds
+// com.docker.swarm.node.id, .service.id and .task.id; a logging driver's
+// env/labels options add more (an app's environment values among them), and
+// docker sorts all keys, so the Swarm ones need not come first. The whole
+// block is one token of comma-separated key=value pairs (values are
+// URL-encoded: no spaces or commas), and it is stripped whatever it holds, so
+// none of it can reach a reader as message text. A line without the task key
+// in its first token is returned as it is.
 func splitDockerDetails(s string) (task, rest string) {
-	if !strings.HasPrefix(s, "com.docker.swarm.") {
-		return "", s
-	}
 	attrs, rest, ok := strings.Cut(s, " ")
 	if !ok {
 		attrs, rest = s, ""
 	}
+	if !strings.Contains(attrs, "com.docker.swarm.task.id=") {
+		return "", s
+	}
 	for _, kv := range strings.Split(attrs, ",") {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok {
+		if !ok || k == "" {
 			return "", s // not docker's attribute list after all
 		}
 		if k == "com.docker.swarm.task.id" {

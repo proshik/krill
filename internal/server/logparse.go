@@ -90,7 +90,8 @@ func streamParsedLogsToWS(ctx context.Context, conn *websocket.Conn, rc io.Reade
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
 	for sc.Scan() {
 		l := logparse.ParseLogLine(sc.Text())
-		if logparse.Blank(l) || (keep != nil && !keep(l)) {
+		// keep sees blank lines too: they are part of a task's replay.
+		if (keep != nil && !keep(l)) || logparse.Blank(l) {
 			continue
 		}
 		if !writeLogLine(ctx, conn, l) {
