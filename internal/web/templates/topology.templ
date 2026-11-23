@@ -9,8 +9,13 @@ import (
 // TopoView is the topology page: an ingress lane and one lane per node.
 type TopoView struct {
 	Lanes    []TopoLane
-	Projects []string
-	Project  string // the project filter, "" for all
+	Projects []TopoProject
+	Project  string // the project filter: a project ID, "" for all
+}
+
+// TopoProject is a project in the topology's filter.
+type TopoProject struct {
+	ID, Name string
 }
 
 // TopoLane is a lane of the topology.
@@ -37,7 +42,7 @@ type TopoCard struct {
 	StateText string
 	To        []string
 	Detected  []string
-	Projects  string // space-separated project names, for the filter
+	Projects  string // the app's project ID
 	Holds     []TopoHold
 	Gateway   bool
 	System    bool
@@ -45,6 +50,7 @@ type TopoCard struct {
 
 // TopoHold is a database inside a server card.
 type TopoHold struct {
+	ElemID    string // what a wire to this database ends at
 	Name, Env string
 }
 
@@ -57,7 +63,7 @@ templ Topology(org db.Organization, role string, v TopoView) {
 					<nav class="seg seg--tight" aria-label={ i18n.T(ctx, "topo.project") }>
 						<a href={ templ.SafeURL(orgURL(org.ID) + "/topology") } { ariaCurrent(v.Project == "", "page")... }>{ i18n.T(ctx, "topo.all_projects") }</a>
 						for _, p := range v.Projects {
-							<a href={ templ.SafeURL(orgURL(org.ID) + "/topology?project=" + urlQuery(p)) } { ariaCurrent(v.Project == p, "page")... }>{ p }</a>
+							<a href={ templ.SafeURL(orgURL(org.ID) + "/topology?project=" + urlQuery(p.ID)) } { ariaCurrent(v.Project == p.ID, "page")... }>{ p.Name }</a>
 						}
 					</nav>
 				}
@@ -145,7 +151,7 @@ templ topoCardBody(c TopoCard) {
 	if len(c.Holds) > 0 {
 		<span class="holds">
 			for _, h := range c.Holds {
-				<span class="hold">{ h.Name }<em>{ h.Env }</em></span>
+				<span class="hold" id={ h.ElemID }>{ h.Name }<em>{ h.Env }</em></span>
 			}
 		</span>
 	}

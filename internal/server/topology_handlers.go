@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/proshik/krill/internal/auth"
 	"net/http"
 	"sort"
 	"strconv"
@@ -84,16 +85,18 @@ func (s *Server) topologyGraph(w http.ResponseWriter, r *http.Request, orgID int
 // topoView turns the graph into lanes of cards. Every link becomes a target
 // in the card's data-to, which is what the map draws; the ones found only in
 // env values are also listed in data-detected, which styles them. A logical
-// database's link points at the server holding it, so several links can
-// resolve to one target: each target is listed once, and it counts as
-// detected only when no modeled link reaches it.
+// database's link ends at its chip inside the server's card, so an app shows
+// which database it uses. Several links (one per injected field) can reach
+// one target: each target is listed once, and it counts as detected only
+// when no modeled link reaches it. project is a project ID ("" for all).
 func topoView(ctx context.Context, orgID int64, g topology.Graph, project string) templates.TopoView {
 	elem := func(serviceID string) string { return "t-" + serviceID }
 	dbOwner := map[string]string{}
 	holds := map[string][]templates.TopoHold{}
 	for _, d := range g.Dbs {
-		dbOwner[strconv.FormatInt(d.ID, 10)] = d.ServiceID
-		holds[d.ServiceID] = append(holds[d.ServiceID], templates.TopoHold{Name: d.Name, Env: d.Env})
+		id := strconv.FormatInt(d.ID, 10)
+		dbOwner[id] = d.ServiceID
+		holds[d.ServiceID] = append(holds[d.ServiceID], templates.TopoHold{ElemID: elem("ldb-" + id), Name: d.Name, Env: d.Env})
 	}
 	to := map[string][]string{}
 	detected := map[string][]string{}
@@ -102,20 +105,20 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 	found := map[[2]string]bool{}    // from, target: reached by a detected link
 	ingress := map[string][]string{} // app service -> domains
 	servedProjects := map[string]map[string]bool{}
-	projectOf := map[string]string{}
+	projectOf := map[string]string{} // app service -> project ID
+	projectName := map[string]string{}
 	for _, sv := range g.Services {
-		if sv.Kind == "app" {
-			if i := strings.Index(sv.Sub, " / "); i >= 0 {
-				projectOf[sv.ID] = sv.Sub[:i]
-			}
+		if sv.Kind == "app" && sv.ProjectID != 0 {
+			id := strconv.FormatInt(sv.ProjectID, 10)
+			projectOf[sv.ID], projectName[id] = id, sv.Project
 		}
 	}
 	for _, l := range g.Links {
-		target := l.ToID
+		target, owner := l.ToID, l.ToID
 		if l.ToKind == "logical" {
-			target = dbOwner[l.ToID]
+			target, owner = "ldb-"+l.ToID, dbOwner[l.ToID]
 		}
-		if target == "" {
+		if owner == "" {
 			continue
 		}
 		pair := [2]string{l.From, target}
@@ -135,10 +138,10 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 			modeled[pair] = true
 		}
 		if p := projectOf[l.From]; p != "" {
-			if servedProjects[target] == nil {
-				servedProjects[target] = map[string]bool{}
+			if servedProjects[owner] == nil {
+				servedProjects[owner] = map[string]bool{}
 			}
-			servedProjects[target][p] = true
+			servedProjects[owner][p] = true
 		}
 	}
 	for pair := range found {
@@ -162,14 +165,15 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		return true
 	}
 	v := templates.TopoView{Project: project}
-	seen := map[string]bool{}
-	for _, p := range projectOf {
-		if !seen[p] {
-			seen[p] = true
-			v.Projects = append(v.Projects, p)
-		}
+	for id, name := range projectName {
+		v.Projects = append(v.Projects, templates.TopoProject{ID: id, Name: name})
 	}
-	sort.Strings(v.Projects)
+	sort.Slice(v.Projects, func(i, j int) bool {
+		if v.Projects[i].Name != v.Projects[j].Name {
+			return v.Projects[i].Name < v.Projects[j].Name
+		}
+		return v.Projects[i].ID < v.Projects[j].ID
+	})
 	// Lanes are matched to services by node ID: display names can repeat.
 	byNode := map[string]*templates.TopoLane{}
 	for _, n := range g.Nodes {
@@ -177,7 +181,9 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		if n.ID == "ingress" {
 			lane.Ingress = true
 		} else if n.ID != "unplaced" {
-			lane.Href = "/orgs/" + strconv.FormatInt(orgID, 10) + "/nodes#node-" + n.Name
+			if auth.IsInstanceAdmin(ctx) { // the Nodes page is theirs only
+				lane.Href = "/orgs/" + strconv.FormatInt(orgID, 10) + "/nodes#node-" + n.Name
+			}
 			if n.State == "ready" {
 				lane.StateKind, lane.StateText = "ok", i18n.T(ctx, "nodes.state_ready")
 			} else {
@@ -364,7 +370,8 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		m := envMeta[a.EnvironmentID]
 		services = append(services, topology.ServiceInput{
 			ID: sid, Kind: "app", NodeID: node, Label: a.Name, Sub: m.Proj + " / " + m.Env, Status: status,
-			Href: envURL(orgID, m.ProjID, a.EnvironmentID) + "/apps/" + strconv.FormatInt(a.ID, 10),
+			Href:      envURL(orgID, m.ProjID, a.EnvironmentID) + "/apps/" + strconv.FormatInt(a.ID, 10),
+			ProjectID: m.ProjID, Project: m.Proj,
 		})
 		// modeled app->DB links
 		for _, l := range linksByApp[a.ID] {

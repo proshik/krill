@@ -1080,9 +1080,12 @@ function mountWiredMap(map) {
     map.classList.toggle("is-focus", !!card);
     cards.forEach(function (c) { c.classList.remove("is-lit"); });
     links.forEach(function (l) {
-      const hit = card && (l.from === card || l.to === card);
+      // A wire may end at a database chip inside a server's card: the card
+      // lights it, and the chip's card lights up with it.
+      const end = l.to.closest(".svc") || l.to;
+      const hit = card && (l.from === card || l.to === card || end === card);
       if (l.path) l.path.classList.toggle("is-lit", !!hit);
-      if (hit) { l.from.classList.add("is-lit"); l.to.classList.add("is-lit"); }
+      if (hit) { l.from.classList.add("is-lit"); l.to.classList.add("is-lit"); end.classList.add("is-lit"); }
     });
     if (card) card.classList.add("is-lit");
   };
