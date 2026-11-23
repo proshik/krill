@@ -334,7 +334,6 @@ templ appPortsSection(c AppCtx) {
 templ volumesSection(c AppCtx) {
 	<section class="sec" id="s-vol" aria-labelledby="vol-h">
 		<h3 id="vol-h">{ i18n.T(ctx, "volumes.tab") }</h3>
-		<p class="hint">{ i18n.T(ctx, "volumes.settings_desc") }</p>
 		if len(c.Volumes) == 0 {
 			<p class="empty">{ i18n.T(ctx, "volumes.empty") }</p>
 		} else {

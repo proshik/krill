@@ -248,7 +248,6 @@ var ru = map[string]string{
 	"domains.not_exposed_warning":          "это приложение не открыто в интернет. Включите домен в",
 	"volumes.tab":                          "тома",
 	"volumes.settings_title":               "тома",
-	"volumes.settings_desc":                "именованные тома, подключённые к контейнерам приложения",
 	"volumes.name":                         "имя",
 	"volumes.mount_path":                   "путь монтирования",
 	"volumes.owner":                        "владелец",

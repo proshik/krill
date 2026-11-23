@@ -248,7 +248,6 @@ var en = map[string]string{
 	"domains.not_exposed_warning":          "this app is not exposed to the internet. Enable a domain in",
 	"volumes.tab":                          "volumes",
 	"volumes.settings_title":               "volumes",
-	"volumes.settings_desc":                "named volumes mounted into the app's containers",
 	"volumes.name":                         "name",
 	"volumes.mount_path":                   "mount path",
 	"volumes.owner":                        "owner",
