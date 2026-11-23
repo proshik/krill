@@ -1451,6 +1451,7 @@ var ru = map[string]string{
 	"canvas.internal":                  "внутреннее",
 	"canvas.pg_on":                     "Postgres на %s",
 	"canvas.bucket_on":                 "бакет на %s",
+	"canvas.shared_hint":               "используется и вне этой системы, или на его сервере есть другие базы или бакеты",
 	"canvas.server":                    "сервер %s",
 	"canvas.memory_pct":                "память %d%%",
 	"canvas.failed_note":               "выкладка не удалась %s, работает прежняя версия",

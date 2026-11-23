@@ -249,8 +249,11 @@ func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, 
 }
 
 // envStatuses renders just the card status badges (OOB) for live refresh.
+// envStatuses is the canvas's 10-second poll: state badges, where each card
+// runs and the node chips' counts, all from one snapshot, so a card that
+// started running also moves into its node's filter.
 func (s *Server) envStatuses(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := s.loadOrg(w, r)
+	o, role, ok := s.loadOrg(w, r)
 	if !ok {
 		return
 	}
@@ -262,10 +265,9 @@ func (s *Server) envStatuses(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	apps, _ := s.q.ListApplicationsByEnvironment(r.Context(), e.ID)
-	ldbs, _ := s.q.ListLogicalDatabasesByEnvironment(r.Context(), e.ID)
-	s.deriveCardStatuses(r.Context(), apps, ldbs)
-	render(w, r, http.StatusOK, templates.EnvStatuses(apps, ldbs))
+	ctx := r.Context()
+	d := s.loadEnvData(ctx, o.ID, p.ID, e)
+	render(w, r, http.StatusOK, templates.CanvasRefresh(s.canvasFor(ctx, o, role, p, e, d, "", false)))
 }
 
 func projURL(orgID, projID int64) string {

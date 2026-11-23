@@ -26,6 +26,7 @@ type CanvasCard struct {
 	StateText string
 	Nodes     []string // display names of the nodes it runs on
 	NodeIDs   []string // their Swarm node IDs, for the node filter
+	Shared    bool     // a resource also used outside its system, or on a server hosting more
 	Href      string
 	To        []string // ElemIDs of the resources the app uses
 	Detected  []string // the subset of To only found in env values

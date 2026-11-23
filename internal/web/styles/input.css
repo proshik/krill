@@ -216,6 +216,7 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .deploy-msg--err { color: var(--color-err); }
 .deploy-keys { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-top: var(--space-xs); }
 .tag { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-pill); background: var(--color-paper-3); color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); }
+.tag--small { padding: 2px var(--space-xs); font-size: var(--text-xs); }
 .tag--active { background: var(--color-accent); color: var(--color-accent-ink); }
 .tag--failed { background: color-mix(in oklab, var(--color-err) 18%, transparent); color: var(--color-err); }
 .history { display: grid; gap: var(--space-xs); margin: 0; padding: 0; list-style: none; }

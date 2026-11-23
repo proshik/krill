@@ -1012,6 +1012,13 @@ krillShellEnhance();
 // lights it and its links; a node chip (data-node) lights every card placed
 // on that node and pins the filter when clicked. The canvas also zooms
 // (buttons, ctrl+wheel) and pans (drag on the background).
+// krillCardNodes is the Swarm node IDs a card runs on: its placement line's
+// data-nodes, which the canvas's status poll replaces, else the card's own.
+function krillCardNodes(c) {
+  const where = c.querySelector(".where[data-nodes]");
+  return ((where || c).dataset.nodes || "").split(" ").filter(Boolean);
+}
+
 function mountWiredMap(map) {
   // A JS property, not an attribute: htmx's history cache restores a page from
   // its serialized HTML, which would carry an attribute but not the listeners.
@@ -1073,7 +1080,7 @@ function mountWiredMap(map) {
     if (node) {
       map.classList.add("is-focus");
       links.forEach(function (l) { if (l.path) l.path.classList.remove("is-lit"); });
-      cards.forEach(function (c) { c.classList.toggle("is-lit", (c.dataset.nodes || "").split(" ").indexOf(node) >= 0); });
+      cards.forEach(function (c) { c.classList.toggle("is-lit", krillCardNodes(c).indexOf(node) >= 0); });
       return;
     }
     const card = hovered && hovered.classList.contains("svc") ? hovered : map.querySelector('.svc[aria-current="true"]');

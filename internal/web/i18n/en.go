@@ -1451,6 +1451,7 @@ var en = map[string]string{
 	"canvas.internal":                  "internal",
 	"canvas.pg_on":                     "Postgres on %s",
 	"canvas.bucket_on":                 "bucket on %s",
+	"canvas.shared_hint":               "also used outside this system, or its server hosts other databases or buckets",
 	"canvas.server":                    "%s server",
 	"canvas.memory_pct":                "memory %d%%",
 	"canvas.failed_note":               "deploy failed %s, the old version still serves",

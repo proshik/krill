@@ -280,11 +280,21 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 	for _, b := range d.buckets {
 		bucketByID[b.ID] = b
 	}
+	// A resource is shared when, in any system showing it, it is also used
+	// outside that system or its server hosts more (topology.BuildEnvView).
+	shared := map[string]bool{}
+	for _, sy := range append(d.view.Systems, d.view.Ungrouped) {
+		for _, rv := range sy.Resources {
+			if rv.Shared {
+				shared[rv.Key] = true
+			}
+		}
+	}
 	for _, r := range all {
 		in := d.insts[r.InstanceID]
 		kind, text := templates.ServerState(ctx, in.Status)
 		c := templates.CanvasCard{Key: r.Key, ElemID: elem(r.Key), Glyph: engineGlyph(r.Engine), Href: r.Href,
-			StateKind: kind, StateText: text, Nodes: running[in.AppName], NodeIDs: runningIDs[in.AppName]}
+			StateKind: kind, StateText: text, Nodes: running[in.AppName], NodeIDs: runningIDs[in.AppName], Shared: shared[r.Key]}
 		id, _ := strconv.ParseInt(r.Key[strings.IndexByte(r.Key, ':')+1:], 10, 64)
 		switch r.Kind {
 		case "ldb":

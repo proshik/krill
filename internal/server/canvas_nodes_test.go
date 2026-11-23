@@ -52,6 +52,18 @@ func TestCanvasNodeChips(t *testing.T) {
 		t.Fatal("a member is shown cluster nodes no card of this environment runs on")
 	}
 
+	// The status poll carries the placement of the same snapshot as the
+	// badges: the app moves from n2 to n1, and its card follows.
+	tasks = []docker.TaskInfo{{ServiceName: "krill-" + i64(app.ID), NodeID: "n1", State: "running", Desired: "running"}}
+	poll := getWithCookie(t, h, path+"/statuses", loginAs(t, q, "chips-member@k.local")).Body.String()
+	where := `id="cw-s-app-` + i64(app.ID) + `"`
+	if !strings.Contains(poll, where) || !strings.Contains(poll, `data-nodes="n1"`) || !strings.Contains(poll, `hx-swap-oob="true"`) {
+		t.Fatalf("the poll does not refresh where the app runs:\n%s", poll)
+	}
+	if !strings.Contains(poll, `id="cn-n1"`) || !strings.Contains(poll, `id="cs-app-`+i64(app.ID)+`"`) {
+		t.Fatalf("the poll lacks the node counts or the badge:\n%s", poll)
+	}
+
 	if err := q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: owner, IsAdmin: true}); err != nil {
 		t.Fatal(err)
 	}

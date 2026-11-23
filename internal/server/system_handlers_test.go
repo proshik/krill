@@ -132,3 +132,30 @@ func TestSystemTenancyAndRBAC(t *testing.T) {
 		t.Fatalf("member environment settings: %d", rec.Code)
 	}
 }
+
+// A resource whose server also hosts something the system does not use is
+// marked shared on the canvas.
+func TestCanvasMarksSharedResources(t *testing.T) {
+	f := newBucketFixture(t, "sys-shared@k.local")
+	ctx := context.Background()
+	sy, err := f.q.CreateSystem(ctx, db.CreateSystemParams{EnvironmentID: f.env.ID, Name: "Penpot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetAppSystem(ctx, db.SetAppSystemParams{ApplicationID: f.app.ID, SystemID: sy.ID}); err != nil {
+		t.Fatal(err)
+	}
+	used, _ := f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "penpot", AccessKey: "krill-penpot-aaaaaa", SecretKey: "x", CreatedByKrill: true})
+	f.q.CreateBucketLink(ctx, db.CreateBucketLinkParams{ApplicationID: f.app.ID, BucketID: used.ID, VarName: "S3_BUCKET", Field: "bucket"})
+	f.q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: f.inst.ID, EnvironmentID: f.env.ID, Name: "elsewhere", AccessKey: "krill-elsewhere-bbbbbb", SecretKey: "x", CreatedByKrill: true})
+	body := getPage(t, f.h, f.envBase, f.cookie, nil).Body.String()
+	i := strings.Index(body, `id="s-bucket-`+i64(used.ID)+`"`)
+	if i < 0 {
+		t.Fatal("the used bucket's card is missing")
+	}
+	card := body[i:]
+	card = card[:strings.Index(card, "</a>")]
+	if !strings.Contains(card, ">shared<") {
+		t.Fatalf("a bucket on a server hosting more is not marked shared:\n%s", card)
+	}
+}

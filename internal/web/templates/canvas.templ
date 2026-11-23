@@ -34,7 +34,7 @@ templ canvasView(v CanvasView) {
 				for _, n := range v.Nodes {
 					<button type="button" class="chip" data-node={ n.ID } aria-pressed="false">
 						{ n.Name }
-						<span class="chip-count">{ nodeCountLabel(n) }</span>
+						@canvasNodeCount(n, false)
 						if n.Warn != "" {
 							@ui.State("warn", n.Warn)
 						}
@@ -131,26 +131,54 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			style={ templ.SafeCSS(canvasStyle(x, y)) }
 			data-to={ joinSpace(c.To) }
 			data-detected={ joinSpace(c.Detected) }
-			data-nodes={ joinSpace(c.NodeIDs) }
 			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">
 				@ui.Glyph(c.Glyph)
 				<span class="svc-name">{ c.Name }</span>
+				if c.Shared {
+					<span class="tag tag--small" title={ i18n.T(ctx, "canvas.shared_hint") }>{ i18n.T(ctx, "system.shared") }</span>
+				}
 			</span>
 			<span class={ "svc-sub", templ.KV("svc-sub--link", c.SubLink) }>{ c.Sub }</span>
 			<span class="svc-foot">
 				@ui.StateID(c.StateID, c.StateKind, c.StateText, false)
-				<span class="where">
-					if len(c.Nodes) > 0 {
-						@ui.Icon("i-node")
-						{ joinComma(c.Nodes) }
-					} else {
-						{ i18n.T(ctx, "canvas.not_running") }
-					}
-				</span>
+				@canvasWhere(c, false)
 			</span>
 		</a>
+	}
+}
+
+// canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
+// what the node filter matches; the status poll replaces it (oob) with the
+// placement of the same snapshot as the badges.
+templ canvasWhere(c CanvasCard, oob bool) {
+	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } hx-swap-oob?={ oob }>
+		if len(c.Nodes) > 0 {
+			@ui.Icon("i-node")
+			{ joinComma(c.Nodes) }
+		} else {
+			{ i18n.T(ctx, "canvas.not_running") }
+		}
+	</span>
+}
+
+// canvasNodeCount is a node chip's count of cards, refreshed by the poll.
+templ canvasNodeCount(n CanvasNode, oob bool) {
+	<span class="chip-count" id={ "cn-" + n.ID } hx-swap-oob?={ oob }>{ nodeCountLabel(n) }</span>
+}
+
+// CanvasRefresh is the canvas's status poll: every card's state badge and
+// placement, and the node chips' counts, from one snapshot.
+templ CanvasRefresh(v CanvasView) {
+	for _, c := range v.Cards {
+		if c.StateID != "" {
+			@ui.StateID(c.StateID, c.StateKind, c.StateText, true)
+		}
+		@canvasWhere(c, true)
+	}
+	for _, n := range v.Nodes {
+		@canvasNodeCount(n, true)
 	}
 }
 
