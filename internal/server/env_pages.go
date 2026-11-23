@@ -313,13 +313,19 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 		}
 	}
 	operator := auth.IsInstanceAdmin(ctx)
-	pressure := map[string]string{}
+	pressure := map[string]string{} // by Swarm node ID
 	if operator {
+		byKey := map[string]string{}
 		for _, n := range s.nodeSummaries(ctx) {
 			if n.MemTotal > 0 && !n.Stale {
 				if pct := int(n.MemUsed * 100 / n.MemTotal); pct >= 85 {
-					pressure[n.Node] = i18n.Tf(ctx, "canvas.memory_pct", pct)
+					byKey[n.Node] = i18n.Tf(ctx, "canvas.memory_pct", pct)
 				}
+			}
+		}
+		for id, key := range s.metricsNodeKeys(ctx, nodes) {
+			if w := byKey[key]; w != "" {
+				pressure[id] = w
 			}
 		}
 	}
@@ -328,7 +334,7 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 			continue
 		}
 		name := nodeDisplayName(n, labels)
-		v.Nodes = append(v.Nodes, templates.CanvasNode{ID: n.ID, Name: name, Count: count[n.ID], Warn: pressure[name]})
+		v.Nodes = append(v.Nodes, templates.CanvasNode{ID: n.ID, Name: name, Count: count[n.ID], Warn: pressure[n.ID]})
 	}
 
 	if s.cloner != nil {

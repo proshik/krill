@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
@@ -152,12 +153,13 @@ func (s *Server) nodeLanes(r *http.Request, o db.Organization, live []docker.Swa
 			}
 		}
 	}
+	metricKeys := s.metricsNodeKeys(ctx, live)
 	lanes := make([]templates.NodeLane, 0, len(live))
 	idx := map[string]int{}
 	for _, n := range live {
 		name := nodeDisplayName(n, labels)
 		l := templates.NodeLane{Node: n, Name: name, Label: labels[n.ID], Managed: managed[n.ID], CPU: -1, Mem: -1}
-		if sm, ok := summary[name]; ok && !sm.Stale && sm.MemTotal > 0 {
+		if sm, ok := summary[metricKeys[n.ID]]; ok && !sm.Stale && sm.MemTotal > 0 {
 			l.CPU, l.Cores = int(sm.CPUPct+0.5), sm.NCPU
 			l.Mem, l.MemUsed, l.MemTotal = int(sm.MemUsed*100/sm.MemTotal), sm.MemUsed, sm.MemTotal
 		}
@@ -577,4 +579,32 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.flashOK(w, r, "flash.ok.node_removed")
 	http.Redirect(w, r, "/orgs/"+strconv.FormatInt(o.ID, 10)+"/nodes", http.StatusSeeOther)
+}
+
+// metricsNodeKeys maps each Swarm node ID to the name the metrics sampler
+// files its samples under: "control-plane" for the manager Krill runs on, a
+// worker's cluster_nodes name otherwise (none for a worker Krill did not add,
+// which is not sampled). The display label must not be used for this: it can
+// differ, or match another worker's registered name.
+func (s *Server) metricsNodeKeys(ctx context.Context, live []docker.SwarmNode) map[string]string {
+	keys := map[string]string{}
+	workers := map[string]string{}
+	if rows, err := s.q.ListClusterNodes(ctx); err == nil {
+		for _, r := range rows {
+			if r.SwarmNodeID != "" {
+				workers[r.SwarmNodeID] = r.Name
+			}
+		}
+	} else {
+		slog.Warn("metricsNodeKeys: list cluster nodes", "err", err)
+	}
+	for _, n := range live {
+		switch {
+		case n.Leader || n.Role == "manager":
+			keys[n.ID] = "control-plane"
+		case workers[n.ID] != "":
+			keys[n.ID] = workers[n.ID]
+		}
+	}
+	return keys
 }
