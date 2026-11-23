@@ -1087,6 +1087,7 @@ var en = map[string]string{
 	"app.predeploy_command":            "pre-deploy command",
 	"app.predeploy_hint":               "optional shell command in the new image, before deployment (5-minute limit). The old app stays running. Uses the app environment and network, without volumes. Failure prevents deployment; database changes are not undone. Requires /bin/sh. Network migration and rollback skip this command. Do not put secrets in the command; use environment variables.",
 	"deploy.rollback":                  "roll back",
+	"deploy.restore_release":           "restore this release",
 	"deploy.rollback_hint":             "rollback restores the image and runtime editor settings; the next deploy uses those settings. Database and volume data are not restored. Only confirmed releases with encrypted snapshots are eligible.",
 	"deploy.rollback_key_required":     "release snapshots require KRILL_SECRET_KEY. Old deployments without a snapshot cannot be rolled back.",
 	"deploy.rollback_source":           " · rollback from #%d",
