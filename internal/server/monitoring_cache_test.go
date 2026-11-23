@@ -10,22 +10,25 @@ import (
 // minted its own entry for the same underlying response, and nothing ever
 // removed them: an unbounded map fed straight from the URL.
 func TestMonitoringCacheKeyIsNormalized(t *testing.T) {
-	if got, want := monCacheKey(7, "1h"), monCacheKey(7, "1h"); got != want {
+	if got, want := monCacheKey(7, "1h", "en"), monCacheKey(7, "1h", "en"); got != want {
 		t.Fatalf("stable input produced different keys: %q vs %q", got, want)
 	}
 	// Junk and the default both mean 24h, so they must share one entry.
-	a := monCacheKey(7, "24h")
+	a := monCacheKey(7, "24h", "en")
 	for _, junk := range []string{"", "banana", "24h ", "1e9h", "../../etc"} {
-		if got := monCacheKey(7, junk); got != a {
+		if got := monCacheKey(7, junk, "en"); got != a {
 			t.Errorf("range %q keyed as %q, want the normalized %q", junk, got, a)
 		}
 	}
 	// Different orgs must still be isolated.
-	if monCacheKey(7, "1h") == monCacheKey(8, "1h") {
+	if monCacheKey(7, "1h", "en") == monCacheKey(8, "1h", "en") {
 		t.Error("cache key does not separate organizations")
 	}
 	// Genuinely different ranges must not collide.
-	if monCacheKey(7, "1h") == monCacheKey(7, "6h") {
+	if monCacheKey(7, "1h", "en") == monCacheKey(7, "1h", "ru") {
+		t.Error("the cached rows carry translated text: locales must not share an entry")
+	}
+	if monCacheKey(7, "1h", "en") == monCacheKey(7, "6h", "en") {
 		t.Error("1h and 6h share a cache key")
 	}
 }

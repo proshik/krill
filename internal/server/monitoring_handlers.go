@@ -81,7 +81,7 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 
 	// Serve from the per-(org,range) cache while it is fresh: the samples only
 	// change once per interval, so 10s polls must not re-scan Postgres each time.
-	cacheKey := monCacheKey(o.ID, rngParam)
+	cacheKey := monCacheKey(o.ID, rngParam, i18n.Current(r.Context()))
 	ttl := s.cfg.MetricsInterval
 	if ttl <= 0 {
 		ttl = 30 * time.Second
@@ -237,8 +237,10 @@ const monCacheMaxAge = 10 * time.Minute
 // parameter: parseRange collapses everything it does not recognise to 24h, so
 // keying on the raw string let any ?range=<junk> mint a fresh entry for a
 // response that is byte-identical to the default one.
-func monCacheKey(orgID int64, rngParam string) string {
-	return strconv.FormatInt(orgID, 10) + ":" + parseRange(rngParam).String()
+// monCacheKey keys the cached JSON by organization, range and locale: the
+// rows carry translated text (the "other containers" row).
+func monCacheKey(orgID int64, rngParam, locale string) string {
+	return strconv.FormatInt(orgID, 10) + ":" + parseRange(rngParam).String() + ":" + locale
 }
 
 // monBucketCount picks how many time buckets to render for a range so each
