@@ -20,9 +20,18 @@ import (
 
 // scaledDownEngine reports every service scaled to zero, as Swarm does for
 // an app stopped through the API while its stored status still reads running.
-type scaledDownEngine struct{ noopEngine }
+// It counts cluster-wide state listings.
+type scaledDownEngine struct {
+	noopEngine
+	listings *int
+}
 
-func (scaledDownEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+func (scaledDownEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	return docker.ServiceState{Found: true, Desired: 0}, nil
+}
+
+func (e scaledDownEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	*e.listings++
 	out := map[string]docker.ServiceState{}
 	for _, n := range names {
 		out[n] = docker.ServiceState{Found: true, Desired: 0}
@@ -132,14 +141,19 @@ func TestDeploymentsTabPollingFormsAndHistory(t *testing.T) {
 // scaled to zero offers Start, not Stop, even while its stored status still
 // reads running.
 func TestDeploymentsRefreshUsesLiveStatus(t *testing.T) {
-	f := newSheetFixture(t, scaledDownEngine{}, "image")
+	var listings int
+	f := newSheetFixture(t, scaledDownEngine{listings: &listings}, "image")
 	if err := f.q.UpdateApplicationStatus(context.Background(), db.UpdateApplicationStatusParams{ID: f.app.ID, Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	f.deploy(t, "nginx:1.0")
+	listings = 0
 	frag := f.get(t, f.base+"/deployments-list")
 	if strings.Contains(frag, `form="stop-form"`) || !strings.Contains(frag, `>start<`) {
 		t.Fatal("the refresh used the stored running status of a stopped app")
+	}
+	if listings != 0 {
+		t.Errorf("the 3-second refresh listed the whole cluster's services %d times", listings)
 	}
 }
 

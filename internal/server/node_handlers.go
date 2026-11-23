@@ -96,7 +96,7 @@ func (s *Server) nodeLanes(r *http.Request, o db.Organization, live []docker.Swa
 	if err != nil {
 		logFrom(r).Warn("nodeLanes: org index", "err", err)
 	}
-	s.deriveCardStatuses(ctx, ix.apps, nil)
+	s.liveIndexStatuses(ctx, ix.apps)
 	insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
 	if err != nil {
 		logFrom(r).Warn("nodeLanes: list servers", "err", err)

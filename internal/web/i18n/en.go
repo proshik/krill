@@ -1772,6 +1772,7 @@ var en = map[string]string{
 	"palette.nothing":                  "nothing found",
 	"palette.open":                     "open %s",
 	"palette.apps":                     "apps",
+	"palette.buckets":                  "buckets",
 	"palette.databases":                "databases and servers",
 	"palette.go_to":                    "Go to",
 }

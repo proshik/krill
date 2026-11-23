@@ -215,6 +215,9 @@ type Querier interface {
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
+	// What the organization-wide index (palette, used-by lists, nodes,
+	// monitoring links) needs of each app; never its env or build values.
+	ListAppIndexByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]ListAppIndexByEnvironmentIDsRow, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)

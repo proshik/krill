@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 )
 
 // The registries and git credentials pages list the apps that use each one,
@@ -243,5 +245,55 @@ func TestShownEndpointsUseTheVisitedOrigin(t *testing.T) {
 	app := get("/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(a.ID) + "?tab=settings")
 	if !strings.Contains(app, "http://203.0.113.10:8080/webhooks/deploy/"+i64(a.ID)) {
 		t.Fatalf("the auto-deploy webhook does not use the visited origin:\n%s", excerpt(app, "/webhooks/"))
+	}
+}
+
+// countingEngine counts cluster-wide service-state listings.
+type countingEngine struct {
+	noopEngine
+	listings *int
+}
+
+func (e countingEngine) ServiceStates(ctx context.Context, names []string) (map[string]docker.ServiceState, error) {
+	*e.listings++
+	return e.noopEngine.ServiceStates(ctx, names)
+}
+
+// A palette search that shows no app does not ask Swarm for any status, and
+// a server stays findable next to many matching databases.
+func TestOrgSearchScopesItsWork(t *testing.T) {
+	var listings int
+	h, q, orgSvc, _, _ := buildDeployServer(t, nil, countingEngine{listings: &listings})
+	ctx := context.Background()
+	u := mkUser(t, q, "scope-palette@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, u, "ScopePalette")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "shop", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	mkApp(t, q, e.ID, "storefront", "scope-palette.example.com")
+	pg, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: o.ID, Engine: "postgres", Name: "main", AppName: "krill-postgres-scope", Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		n := "cache_" + strconv.Itoa(i)
+		if _, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{InstanceID: pg.ID, EnvironmentID: e.ID, Name: n, DbName: n, Username: n, Password: "x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: o.ID, Engine: "redis", Name: "cache", AppName: "krill-redis-scope", Image: "redis:7", Superuser: "default", SuperuserPassword: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginAs(t, q, "scope-palette@k.local")
+	listings = 0
+	body := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/search?q=cache", cookie).Body.String()
+	if listings != 0 {
+		t.Errorf("a search showing no app listed Swarm state %d times", listings)
+	}
+	if !strings.Contains(body, "/db-servers/") {
+		t.Fatal("the cache server was pushed out by matching databases")
+	}
+	listings = 0
+	if body := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/search?q=storefront", cookie).Body.String(); !strings.Contains(body, "storefront") || listings != 1 {
+		t.Errorf("an app result must be looked up once (listings %d)", listings)
 	}
 }

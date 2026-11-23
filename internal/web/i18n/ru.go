@@ -1772,6 +1772,7 @@ var ru = map[string]string{
 	"palette.nothing":                  "ничего не найдено",
 	"palette.open":                     "открыть %s",
 	"palette.apps":                     "приложения",
+	"palette.buckets":                  "бакеты",
 	"palette.databases":                "базы и серверы",
 	"palette.go_to":                    "перейти",
 }

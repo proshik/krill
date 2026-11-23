@@ -49,10 +49,6 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	s.deriveCardStatuses(ctx, ix.apps, nil)
-	for _, a := range ix.apps { // the lookup below must see the live statuses
-		ix.appByID[a.ID] = a
-	}
 	base := "/orgs/" + strconv.FormatInt(o.ID, 10)
 	admin := isAdminRole(role)
 	var groups []templates.PaletteGroup
@@ -64,8 +60,55 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 			groups = append(groups, g)
 		}
 	}
+	// The apps to show are picked first, capped, and only they are looked up
+	// in Swarm for their live status (nothing is, when none is shown).
+	byName := func(ids []int64) {
+		sort.SliceStable(ids, func(i, j int) bool { return ix.appByID[ids[i]].Name < ix.appByID[ids[j]].Name })
+	}
+	capped := func(ids []int64) []int64 {
+		if len(ids) > paletteMax {
+			return ids[:paletteMax]
+		}
+		return ids
+	}
+	var envID int64 = -1
+	var envApps, orgApps []int64
+	if id, err := strconv.ParseInt(r.URL.Query().Get("env"), 10, 64); err == nil {
+		if _, ok := ix.envs[id]; ok {
+			envID = id
+			for _, a := range ix.apps {
+				if a.EnvironmentID == id && match(a.Name) {
+					envApps = append(envApps, a.ID)
+				}
+			}
+			byName(envApps)
+			envApps = capped(envApps)
+		}
+	}
+	if q != "" {
+		for _, a := range ix.apps {
+			if match(a.Name, ix.envLabel(a.EnvironmentID)) {
+				orgApps = append(orgApps, a.ID)
+			}
+		}
+		byName(orgApps)
+		orgApps = capped(orgApps)
+	}
+	var shown []indexApp
+	seen := map[int64]bool{}
+	for _, id := range append(append([]int64{}, envApps...), orgApps...) {
+		if !seen[id] {
+			seen[id] = true
+			shown = append(shown, ix.appByID[id])
+		}
+	}
+	s.liveIndexStatuses(ctx, shown)
+	live := map[int64]indexApp{}
+	for _, a := range shown {
+		live[a.ID] = a
+	}
 	appItem := func(appID int64) templates.PaletteItem {
-		a := ix.appByID[appID]
+		a := live[appID]
 		it := templates.PaletteItem{Label: i18n.Tf(ctx, "palette.open", a.Name), Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
 		if kind, text := templates.AppState(ctx, a.Status); kind == "err" || kind == "warn" {
 			it.StateKind, it.StateText = kind, text
@@ -74,49 +117,38 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The environment the palette was opened in.
-	if envID, err := strconv.ParseInt(r.URL.Query().Get("env"), 10, 64); err == nil {
-		if e, ok := ix.envs[envID]; ok {
-			g := templates.PaletteGroup{Title: ix.envLabel(envID)}
-			envBase := ix.envURL(envID)
-			if admin {
-				for _, it := range []templates.PaletteItem{
-					{Label: i18n.T(ctx, "project.new_app"), Href: envBase + "?new=app", Glyph: "i-plus"},
-					{Label: i18n.T(ctx, "db.new"), Href: envBase + "/databases?new=database", Glyph: "i-plus"},
-					{Label: i18n.T(ctx, "bucket.new"), Href: envBase + "/databases?new=bucket", Glyph: "i-plus"},
-				} {
-					if match(it.Label) {
-						g.Items = append(g.Items, it)
-					}
+	if envID >= 0 {
+		g := templates.PaletteGroup{Title: ix.envLabel(envID)}
+		envBase := ix.envURL(envID)
+		if admin {
+			for _, it := range []templates.PaletteItem{
+				{Label: i18n.T(ctx, "project.new_app"), Href: envBase + "?new=app", Glyph: "i-plus"},
+				{Label: i18n.T(ctx, "db.new"), Href: envBase + "/databases?new=database", Glyph: "i-plus"},
+				{Label: i18n.T(ctx, "bucket.new"), Href: envBase + "/databases?new=bucket", Glyph: "i-plus"},
+			} {
+				if match(it.Label) {
+					g.Items = append(g.Items, it)
 				}
 			}
-			var envApps []int64
-			for _, a := range ix.apps {
-				if a.EnvironmentID == e.ID && match(a.Name) {
-					envApps = append(envApps, a.ID)
-				}
-			}
-			sort.Slice(envApps, func(i, j int) bool { return ix.appByID[envApps[i]].Name < ix.appByID[envApps[j]].Name })
-			for _, id := range envApps {
-				g.Items = append(g.Items, appItem(id))
-			}
-			add(g)
 		}
+		for _, id := range envApps {
+			g.Items = append(g.Items, appItem(id))
+		}
+		add(g)
 	}
 
 	// Apps of the whole organization.
-	if q != "" {
+	if len(orgApps) > 0 {
 		g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.apps")}
-		for _, a := range ix.apps {
-			if match(a.Name, ix.envLabel(a.EnvironmentID)) {
-				g.Items = append(g.Items, appItem(a.ID))
-			}
+		for _, id := range orgApps {
+			g.Items = append(g.Items, appItem(id))
 		}
-		sort.SliceStable(g.Items, func(i, j int) bool { return g.Items[i].Label < g.Items[j].Label })
 		add(g)
 	}
 
 	// Databases, buckets and servers: one organization-wide query each,
-	// matched and capped in SQL.
+	// matched and capped in SQL, and a group each, so many matching databases
+	// cannot push a bucket or a server out of the results.
 	if q != "" {
 		g := templates.PaletteGroup{Title: i18n.T(ctx, "palette.databases")}
 		pattern := "%" + likeEscaper.Replace(q) + "%"
@@ -137,11 +169,15 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		add(g)
+		g = templates.PaletteGroup{Title: i18n.T(ctx, "palette.buckets")}
 		for _, b := range bs {
 			if _, ok := ix.envs[b.EnvironmentID]; ok {
 				g.Items = append(g.Items, templates.PaletteItem{Label: b.Name, Sub: ix.envLabel(b.EnvironmentID), Href: ix.envURL(b.EnvironmentID) + "/buckets/" + strconv.FormatInt(b.ID, 10), Glyph: "i-bucket"})
 			}
 		}
+		add(g)
+		g = templates.PaletteGroup{Title: i18n.T(ctx, "nav.dbservers")}
 		insts, err := s.q.ListDBInstancesByOrg(ctx, o.ID)
 		if err != nil {
 			logFrom(r).Error("orgSearch: database servers", "err", err, "org_id", o.ID)

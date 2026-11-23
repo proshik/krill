@@ -28,10 +28,15 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The same live status the sheet shows: the stored one can lag behind
-	// Swarm (an app stopped through the API still reads running).
-	apps := []db.Application{c.App}
-	s.deriveCardStatuses(r.Context(), apps, nil)
-	c.App.Status = apps[0].Status
+	// Swarm (an app stopped through the API still reads running). This polls
+	// every few seconds, so it asks for this one service only.
+	if s.engine != nil {
+		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
+			c.App.Status = deploy.DeriveStatus(st, c.App.Status)
+		} else {
+			logFrom(r).Warn("listDeployments: service state", "err", err, "app_id", c.App.ID)
+		}
+	}
 	render(w, r, http.StatusOK, templates.DeploymentsList(c, deps))
 }
 
