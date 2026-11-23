@@ -120,11 +120,14 @@ func (u *Updater) ConfirmStartup(ctx context.Context) {
 // the operator is looking at it. It runs outside the job slot (a network
 // call must not hold off a Start or Rollback) and only when background
 // checks are on: an operator who turned them off gets no unasked-for call.
+// It is a background check (Check), not CheckNow: it must not take the
+// manual button's once-a-minute allowance, or a failed lookup here would
+// leave "Check now" throttled right when the operator wants to retry.
 func (u *Updater) refreshLatest(ctx context.Context) {
 	if u.checker == nil || u.checker.interval <= 0 {
 		return
 	}
-	if _, err := u.checker.CheckNow(ctx); err != nil && !errors.Is(err, ErrThrottled) {
+	if _, err := u.checker.Check(ctx); err != nil {
 		slog.Warn("update check after restart failed", "err", err)
 	}
 }

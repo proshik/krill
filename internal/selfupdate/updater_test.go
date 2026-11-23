@@ -1898,3 +1898,36 @@ func TestConfirmStartup_ChecksLatestRightAway(t *testing.T) {
 		})
 	}
 }
+
+// The startup refresh is a background check: a failed lookup right after the
+// restart must leave "Check now" free to retry at once.
+func TestConfirmStartup_RefreshKeepsManualCheck(t *testing.T) {
+	fail := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fail <- struct{}{}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	h := newHarness(t)
+	h.u.current = testTag
+	h.checker.interval = time.Hour
+	h.checker.baseURL = srv.URL
+	writePending(t, h, testCurrent, testTag)
+
+	h.u.ConfirmStartup(context.Background())
+	select {
+	case <-fail:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no release check after the confirmed update")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for h.checker.State().CheckedAt.IsZero() {
+		if time.Now().After(deadline) {
+			t.Fatal("the startup check never recorded its result")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := h.checker.CheckNow(context.Background()); errors.Is(err, ErrThrottled) {
+		t.Fatal("the startup refresh took the manual check's allowance")
+	}
+}
