@@ -664,7 +664,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 	status := c.App.Status
 	if s.engine != nil {
 		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
-			status = deploy.DeriveStatus(st, c.App.Status)
+			status = deploy.DisplayStatus(st, c.App.Status)
 		} else {
 			logFrom(r).Error("appStatus: failed to query engine service state", "err", err, "app_id", c.App.ID)
 		}

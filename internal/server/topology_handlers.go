@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/proshik/krill/internal/auth"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -346,6 +347,22 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			domsByApp[d.ApplicationID] = append(domsByApp[d.ApplicationID], d)
 		}
 	}
+	// An app with no running task is either stopped or was never deployed;
+	// only Swarm can tell them apart (see deploy.DisplayStatus).
+	var idle []string
+	for _, a := range apps {
+		if svc := docker.ServiceName(a.ID); len(running[svc]) == 0 {
+			idle = append(idle, svc)
+		}
+	}
+	var idleStates map[string]docker.ServiceState
+	if s.engine != nil && len(idle) > 0 {
+		if st, err := s.engine.ServiceStates(ctx, idle); err != nil {
+			slog.Warn("topology: service states", "err", err)
+		} else {
+			idleStates = st
+		}
+	}
 	for _, a := range apps {
 		sid := "app-" + strconv.FormatInt(a.ID, 10)
 		svcName := docker.ServiceName(a.ID)
@@ -366,6 +383,8 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		status := a.Status
 		if len(running[svcName]) > 0 {
 			status = deploy.StatusRunning
+		} else if idleStates != nil {
+			status = deploy.DisplayStatus(idleStates[svcName], a.Status)
 		}
 		m := envMeta[a.EnvironmentID]
 		services = append(services, topology.ServiceInput{

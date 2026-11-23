@@ -147,6 +147,8 @@ func AppState(ctx context.Context, status string) (string, string) {
 		return "warn", i18n.T(ctx, "state.deploying")
 	case "error":
 		return "err", i18n.T(ctx, "state.deploy_failed")
+	case "not_deployed":
+		return "idle", i18n.T(ctx, "state.not_deployed")
 	default:
 		return "idle", i18n.T(ctx, "state.stopped")
 	}

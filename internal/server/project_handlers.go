@@ -241,7 +241,7 @@ func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, 
 		return
 	}
 	for i := range apps {
-		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
+		apps[i].Status = deploy.DisplayStatus(states[dockerName(apps[i].ID)], apps[i].Status)
 	}
 	for i := range ldbs {
 		ldbs[i].InstanceStatus = deploy.DeriveStatus(states[ldbs[i].InstanceAppName], ldbs[i].InstanceStatus)

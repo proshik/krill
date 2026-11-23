@@ -107,6 +107,6 @@ func (s *Server) liveIndexStatuses(ctx context.Context, apps []indexApp) {
 		return
 	}
 	for i := range apps {
-		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
+		apps[i].Status = deploy.DisplayStatus(states[dockerName(apps[i].ID)], apps[i].Status)
 	}
 }

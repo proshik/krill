@@ -8,6 +8,10 @@ const (
 	StatusDeploying = "deploying"
 	StatusRunning   = "running"
 	StatusError     = "error"
+	// StatusNotDeployed is never stored: DisplayStatus reports it for an app
+	// Swarm has no service for while the stored status is still the initial
+	// idle — it has never been deployed (or its service was removed).
+	StatusNotDeployed = "not_deployed"
 )
 
 // DeriveStatus computes the "live" status from the Swarm state, falling back to
@@ -31,4 +35,15 @@ func DeriveStatus(s docker.ServiceState, dbStatus string) string {
 		return StatusRunning
 	}
 	return StatusDeploying
+}
+
+// DisplayStatus is DeriveStatus for the web UI, called only once Swarm has
+// answered: it tells an app that was never deployed (no service, stored
+// status still the initial idle) from one that was stopped, which both read
+// "idle" otherwise. The agent API keeps DeriveStatus and its "idle".
+func DisplayStatus(s docker.ServiceState, dbStatus string) string {
+	if !s.Found && dbStatus == StatusIdle {
+		return StatusNotDeployed
+	}
+	return DeriveStatus(s, dbStatus)
 }

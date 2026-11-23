@@ -40,7 +40,11 @@ func (s *Server) envHealth(ctx context.Context, envs []db.Environment) map[int64
 		return out
 	}
 	s.deriveCardStatuses(ctx, apps, nil)
-	rank := map[string]int{"idle": 0, "ok": 1, "warn": 2, "err": 3}
+	// The same order the projects page summarises an environment in: one
+	// failed app makes it red, one deploying yellow, and it is green only
+	// when every app runs — one stopped app keeps it grey.
+	rank := map[string]int{"ok": 0, "idle": 1, "warn": 2, "err": 3}
+	seen := map[int64]bool{}
 	for _, a := range apps {
 		k := "idle"
 		switch a.Status {
@@ -51,9 +55,10 @@ func (s *Server) envHealth(ctx context.Context, envs []db.Environment) map[int64
 		case deploy.StatusError:
 			k = "err"
 		}
-		if rank[k] > rank[out[a.EnvironmentID]] {
+		if !seen[a.EnvironmentID] || rank[k] > rank[out[a.EnvironmentID]] {
 			out[a.EnvironmentID] = k
 		}
+		seen[a.EnvironmentID] = true
 	}
 	return out
 }
