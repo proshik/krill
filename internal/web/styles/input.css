@@ -771,6 +771,9 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .envmenu a[aria-current] { color: var(--color-ink); background: var(--color-paper-3); }
 .envmenu-add { margin-top: var(--space-2xs); border-top: 1px solid var(--color-rule); border-radius: 0 0 10px 10px; color: var(--color-muted) !important; }
 .envmenu-add .ico { width: 14px; height: 14px; }
+.envmenu-group { display: grid; }
+.envmenu-orgs { margin-top: var(--space-2xs); padding-top: var(--space-2xs); border-top: 1px solid var(--color-rule); }
+.envmenu--org .tab-badge { margin-left: auto; }
 /* projects: the card opens production, each environment is its own link */
 .projects .project { display: grid; gap: var(--space-xs); padding: var(--space-sm) var(--space-sm) var(--space-md); border-radius: 20px; background: var(--color-paper-2); }
 .projects .project > :not(.mini) { margin-inline: 0; }

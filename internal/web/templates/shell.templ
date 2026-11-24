@@ -166,17 +166,31 @@ templ bar(s Shell) {
 	</header>
 }
 
-// orgCrumb is the organization crumb; it opens the organization switcher,
-// loaded on first open.
+// orgCrumb is the organization crumb. Its menu lists the organization's
+// sections first (the same ones, behind the same gates, as the organization
+// tabs, which an environment's bar hides on a desktop), then the organization
+// switcher, loaded on first open into its own part so the sections stay.
 templ orgCrumb(s Shell) {
 	<details class="envpick envpick--org">
 		<summary class={ "crumb", templ.KV("crumb--quiet", s.Env != nil) } aria-label={ i18n.Tf(ctx, "nav.org_menu", s.Org.Name) }>
 			{ s.Org.Name }
 			@ui.Icon("i-chev")
 		</summary>
-		<div class="envmenu" hx-get={ "/orgs/switcher?current=" + itoa(s.Org.ID) } hx-trigger="toggle from:closest details once" hx-swap="innerHTML">
-			<a href={ templ.SafeURL(orgURL(s.Org.ID)) } aria-current="page">{ s.Org.Name }</a>
-			<a class="envmenu-add" href="/orgs">{ i18n.T(ctx, "orgs.all") }</a>
+		<div class="envmenu envmenu--org">
+			<div class="envmenu-group" role="group" aria-label={ i18n.T(ctx, "nav.org_sections") }>
+				for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
+					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(s.Env == nil && t.Key == currentOrgTab(ctx, s), "page")... }>
+						{ t.Label }
+						if t.Key == "settings" && auth.IsInstanceAdmin(ctx) && nav.UpdateAvailable(ctx) != "" {
+							<span class="tab-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", nav.UpdateAvailable(ctx)) }>{ i18n.T(ctx, "nav.update_badge") }</span>
+						}
+					</a>
+				}
+			</div>
+			<div class="envmenu-group envmenu-orgs" role="group" aria-label={ i18n.T(ctx, "nav.org_list") } hx-get={ "/orgs/switcher?current=" + itoa(s.Org.ID) } hx-trigger="toggle from:closest details once" hx-swap="innerHTML">
+				<a href={ templ.SafeURL(orgURL(s.Org.ID)) } aria-current="true">{ s.Org.Name }</a>
+				<a class="envmenu-add" href="/orgs">{ i18n.T(ctx, "orgs.all") }</a>
+			</div>
 		</div>
 	</details>
 }

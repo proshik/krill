@@ -36,7 +36,7 @@ templ Orgs(orgs []db.Organization) {
 // (the current one marked) and the way to the full list.
 templ OrgSwitcher(orgs []db.Organization, currentID int64) {
 	for _, o := range orgs {
-		<a href={ templ.SafeURL(orgURL(o.ID)) } { ariaCurrent(o.ID == currentID, "page")... }>{ o.Name }</a>
+		<a href={ templ.SafeURL(orgURL(o.ID)) } { ariaCurrent(o.ID == currentID, "true")... }>{ o.Name }</a>
 	}
 	<a class="envmenu-add" href="/orgs">
 		@ui.Icon("i-plus")
