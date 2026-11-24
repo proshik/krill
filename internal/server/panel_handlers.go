@@ -297,6 +297,9 @@ func (s *Server) panelDomainPage(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Connection", "close")
 		} else if st.Available && !st.Pending {
 			v.HostDirectClosed, v.DirectDrift = s.directPortDrift(r, st.Locked, v.DirectPortClosed)
+			// Krill reads only its own table: with none on the host it cannot
+			// tell whether some other firewall closes the port.
+			v.KrillTableMissing = v.DirectDrift && !st.Locked
 		}
 	}
 	render(w, r, http.StatusOK, templates.PanelDomain(o, role, v))
@@ -319,8 +322,13 @@ func (s *Server) directPortDrift(r *http.Request, locked, stored bool) (hostClos
 		hostClosed = closed
 	}
 	if hostClosed != stored {
-		logFrom(r).Warn("panel direct port: host ruleset disagrees with stored state",
-			"host_closed", hostClosed, "stored_closed", stored)
+		if !locked {
+			logFrom(r).Warn("panel direct port: stored state says closed, but Krill's own firewall table (inet krill) is not on the host; a firewall Krill does not manage is not checked",
+				"stored_closed", stored)
+		} else {
+			logFrom(r).Warn("panel direct port: host ruleset disagrees with stored state",
+				"host_closed", hostClosed, "stored_closed", stored)
+		}
 		return hostClosed, true
 	}
 	return hostClosed, false

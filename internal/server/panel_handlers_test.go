@@ -683,6 +683,32 @@ func TestPanelDirectPortDriftShown(t *testing.T) {
 	if body := page(); !strings.Contains(body, "lets it in from everywhere") {
 		t.Fatal("a closed stored state over an open host must be shown")
 	}
+
+	// Krill's own table is gone (msk: the port is closed by a hand-made table
+	// Krill does not read). The page says what Krill actually knows, and the
+	// action only corrects the record: nothing is applied on the host.
+	e.fw.mu.Lock()
+	e.fw.locked = false
+	applied := len(e.fw.rulesets)
+	e.fw.mu.Unlock()
+	body = page()
+	if !strings.Contains(body, "(inet krill) is not on this host") || !strings.Contains(body, "record as open") {
+		t.Fatalf("a missing Krill table must be named, with a record-only action:\n%s", body)
+	}
+	if strings.Contains(body, "lets it in from everywhere") || strings.Contains(body, "reopen direct access") {
+		t.Fatal("without a Krill table the page must not claim the host lets the port in or offer to reopen it")
+	}
+	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{}, true); hasErrFlash(rec) {
+		t.Fatalf("record as open: %q", flashCookieValue(rec))
+	}
+	e.fw.mu.Lock()
+	defer e.fw.mu.Unlock()
+	if len(e.fw.rulesets) != applied || e.fw.locked {
+		t.Fatalf("recording must not touch the host: %d rulesets (was %d), locked=%v", len(e.fw.rulesets), applied, e.fw.locked)
+	}
+	if e.row(t).DirectPortClosed {
+		t.Fatal("the stored state must now say open")
+	}
 }
 
 // A close that nobody confirmed reverts on the host; the page notices and the

@@ -704,6 +704,8 @@ var en = map[string]string{
 	"panel.direct_open_desc_port":          "the UI port (%s) is open to the world over plain HTTP on every address of this host. Close it to leave the domain as the only way in; the gateway keeps its own access.",
 	"panel.direct_drift_host_closed":       "the control-plane firewall on the host already closes the UI port, but the saved settings say it is open: a change was applied and never recorded. Reopen direct access to rewrite the ruleset from the saved settings, or close it again to record it.",
 	"panel.direct_drift_host_open":         "the saved settings say the UI port is closed, but the control-plane firewall on the host lets it in from everywhere. Reopen direct access, then close it again to put the ruleset back.",
+	"panel.direct_drift_no_table":          "the saved settings say the UI port is closed, but Krill's own firewall table (inet krill) is not on this host, so Krill does not close the port. If another firewall closes it, Krill cannot see that. \"Record as open\" only corrects Krill's record and changes nothing on the host; to have Krill close the port itself, lock down the control plane on the firewall page and close direct access again.",
+	"panel.direct_record_open":             "record as open",
 	"panel.direct_needs_lockdown":          "closing the port uses the control-plane firewall: turn on the lockdown on the firewall page first.",
 	"panel.direct_needs_domain":            "open this page through the domain to close the port: the confirmation has to arrive the way you will keep working.",
 	"panel.direct_close":                   "close direct access",
