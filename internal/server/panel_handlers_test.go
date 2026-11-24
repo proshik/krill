@@ -698,8 +698,30 @@ func TestPanelDirectPortDriftShown(t *testing.T) {
 	if strings.Contains(body, "lets it in from everywhere") || strings.Contains(body, "reopen direct access") {
 		t.Fatal("without a Krill table the page must not claim the host lets the port in or offer to reopen it")
 	}
-	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{}, true); hasErrFlash(rec) {
+	if !strings.Contains(body, `name="record_only" value="1"`) {
+		t.Fatal("the record-only form must say so, so a stale form cannot reopen")
+	}
+	// A stale record-only form, posted after Krill's table came back, must
+	// not turn into a reopen that rewrites the ruleset.
+	e.fw.mu.Lock()
+	e.fw.locked = true
+	e.fw.mu.Unlock()
+	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{"record_only": {"1"}}, true); !hasErrFlash(rec) {
+		t.Fatal("a record-only request over a Krill table must be refused")
+	}
+	e.fw.mu.Lock()
+	if len(e.fw.rulesets) != applied || !e.row(t).DirectPortClosed {
+		e.fw.mu.Unlock()
+		t.Fatal("a refused record-only request must change nothing")
+	}
+	e.fw.locked = false
+	e.fw.mu.Unlock()
+	rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{"record_only": {"1"}}, true)
+	if hasErrFlash(rec) {
 		t.Fatalf("record as open: %q", flashCookieValue(rec))
+	}
+	if v, _ := url.QueryUnescape(flashCookieValue(rec)); !strings.Contains(v, "recorded as open") || strings.Contains(v, "reopened") {
+		t.Fatalf("recording must say it only recorded, not that access was reopened: %q", v)
 	}
 	e.fw.mu.Lock()
 	defer e.fw.mu.Unlock()

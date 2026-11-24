@@ -735,6 +735,8 @@ var en = map[string]string{
 	"flash.ok.panel_close_pending":         "UI port closed: confirm below within 2 minutes to keep it.",
 	"flash.ok.panel_close_confirmed":       "direct access stays closed",
 	"flash.ok.panel_direct_opened":         "direct access reopened",
+	"flash.ok.panel_direct_recorded":       "recorded as open: Krill has no firewall table on this host, so nothing changed there. Whether the UI port answers from outside depends on the host's other firewall.",
+	"flash.err.panel_record_stale":         "Krill's firewall table is on the host again, so nothing was recorded. Reload the page.",
 	"panel.hsts":                           "HSTS",
 	"panel.hsts_desc":                      "tell browsers to open this domain over HTTPS only, so even a first visit typed as http:// never leaves in clear text. A browser remembers it for the whole period and refuses plain HTTP on the domain until it expires. Start short and raise it once the domain has proven stable. It covers this domain alone, never its subdomains or neighbours. Off sends max-age=0, which makes browsers forget an earlier setting on their next visit.",
 	"panel.hsts_max_age":                   "remember for",

@@ -736,6 +736,15 @@ func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.panel_firewall_unavailable")
 		return
 	}
+	// "Record as open" was offered because Krill's table was missing; it
+	// promised to change nothing on the host. Should the table be back by now,
+	// reopening would rewrite the ruleset, so the page has to be reloaded.
+	recordOnly := r.FormValue("record_only") == "1"
+	if recordOnly && locked {
+		logFrom(r).Warn("openPanelDirectPort: record-only request, but Krill's firewall table is back; nothing changed")
+		s.flashErrT(w, r, "flash.err.panel_record_stale")
+		return
+	}
 	if locked {
 		ruleset, key := s.controlPlaneRuleset(r, false)
 		if key != "" {
@@ -768,7 +777,13 @@ func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	logFrom(r).Info("panel direct port opened")
-	s.flashOK(w, r, "flash.ok.panel_direct_opened")
+	if !locked {
+		// Nothing was applied: without Krill's table only the record changed.
+		logFrom(r).Info("panel direct port recorded as open; no Krill firewall table, nothing changed on the host")
+		s.flashOK(w, r, "flash.ok.panel_direct_recorded")
+	} else {
+		logFrom(r).Info("panel direct port opened")
+		s.flashOK(w, r, "flash.ok.panel_direct_opened")
+	}
 	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
 }

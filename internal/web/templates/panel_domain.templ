@@ -132,7 +132,9 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 						}
 						<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/panel-domain/direct-port/open") }>
 							if v.KrillTableMissing {
-								// With no Krill table the handler changes nothing on the host.
+								// With no Krill table the handler changes nothing on the host;
+								// record_only makes it refuse should the table be back.
+								<input type="hidden" name="record_only" value="1"/>
 								<button type="submit" class="pill">{ i18n.T(ctx, "panel.direct_record_open") }</button>
 							} else {
 								<button type="submit" class="pill">{ i18n.T(ctx, "panel.direct_open") }</button>
