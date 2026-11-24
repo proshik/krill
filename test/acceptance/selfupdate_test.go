@@ -463,8 +463,23 @@ func (s *suite) waitDeployStatus(t *testing.T, ev *Evidence, timeout time.Durati
 // converged"); one still inside its window (start period 720s + 60s) ends when
 // the window does ("service did not converge"). Either way it is bounded by
 // busyDeployWindow from the deploy's start.
+//
+// The stop only works once the deploy has applied its spec: a stop pressed
+// before the deployer created or updated the service scales nothing, and the
+// deploy then brings the app up anyway. So it first waits for the service to
+// carry the deploy's one replica (a stopped app's spec has zero, and only the
+// deploy sets it back), unless the deploy has already ended.
 func (s *suite) endBusyDeploy(t *testing.T, ev *Evidence) {
 	t.Helper()
+	svc := fmt.Sprintf("krill-%d", s.app.appID)
+	waitFor(t, ev, "the busy deploy applied to "+svc, 3*time.Minute, 2*time.Second, func() (bool, string) {
+		if st := s.deployStatus(t); st != "running" {
+			return true, "deployment " + st
+		}
+		out, err := s.vm.Sudo(s.ctx, "docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "+svc)
+		out = strings.TrimSpace(out)
+		return err == nil && out == "1", "replicas " + out
+	})
 	s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
 	s.waitDeployStatus(t, ev, busyDeployWindow+3*time.Minute, func(st string) bool { return st != "running" })
 	out, err := s.host.Psql(s.ctx, fmt.Sprintf("select status||' '||coalesce(error_message, '') from deployments where application_id=%d order by started_at desc limit 1", s.app.appID))
