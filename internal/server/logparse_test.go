@@ -206,3 +206,64 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// brokenFollow is a live log stream that breaks while the viewer is still
+// there: the daemon's connection drops mid-stream.
+type brokenFollow struct{ docker.Engine }
+
+func (brokenFollow) ServiceLogs(_ context.Context, _ string, follow bool, _ int) (io.ReadCloser, error) {
+	if !follow {
+		return io.NopCloser(strings.NewReader("2026-11-23T10:00:01Z hello\n")), nil
+	}
+	return io.NopCloser(io.MultiReader(strings.NewReader("2026-11-23T10:00:02Z more\n"), errReader{io.ErrUnexpectedEOF})), nil
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// A stream that breaks while the viewer is connected is still an error: it is
+// logged and the viewer is told (the quiet close is for a viewer leaving).
+func TestServiceLogsBrokenStreamIsStillAnError(t *testing.T) {
+	var buf strings.Builder
+	var mu sync.Mutex
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	s := &Server{engine: brokenFollow{}}
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		s.serveServiceLogs(w, r, "krill-1")
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	var last logparse.LogLine
+	for {
+		_, b, err := conn.Read(ctx)
+		if err != nil {
+			if got := websocket.CloseStatus(err); got != websocket.StatusInternalError {
+				t.Fatalf("close status = %v, want internal error", got)
+			}
+			break
+		}
+		_ = json.Unmarshal(b, &last)
+	}
+	<-done
+	if last.Level != "error" {
+		t.Fatalf("the viewer was not told the stream broke: last line %+v", last)
+	}
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+	if !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "unexpected EOF") {
+		t.Fatalf("broken stream not logged as an error:\n%s", out)
+	}
+}
