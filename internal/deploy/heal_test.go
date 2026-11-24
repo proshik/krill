@@ -24,7 +24,7 @@ func (f *fakeStore) ListStuckDeployingApps(context.Context) ([]StuckApp, error) 
 	return out, nil
 }
 
-func (f *fakeStore) HealAppStatus(_ context.Context, app int64, status string) (bool, error) {
+func (f *fakeStore) HealAppStatus(_ context.Context, app int64, status string, _ time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.status[app] != StatusDeploying || f.runningFor(app) {
@@ -91,36 +91,47 @@ func TestHealLeavesAppWithRunningDeploy(t *testing.T) {
 
 func TestHealedStatus(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	recent, old := now.Add(-time.Minute), now.Add(-settleTimeout)
+	recent := StuckApp{LastFinished: now.Add(-time.Minute), LastStatus: "error"}
+	old := StuckApp{LastFinished: now.Add(-settleTimeout), LastStatus: "error"}
+	done := StuckApp{LastFinished: now.Add(-time.Minute), LastStatus: "done"}
 	cases := []struct {
 		name string
-		st   docker.ServiceState
-		last time.Time
+		p    docker.ServiceProgress
+		last StuckApp
 		want string
 	}{
-		{"no service", docker.ServiceState{}, recent, StatusIdle},
-		{"scaled to zero", docker.ServiceState{Found: true}, recent, StatusIdle},
-		{"converged", docker.ServiceState{Found: true, Running: 1, Desired: 1}, old, StatusRunning},
-		{"still starting", docker.ServiceState{Found: true, Running: 0, Desired: 1}, recent, ""},
-		{"never converged", docker.ServiceState{Found: true, Running: 1, Desired: 2}, old, StatusError},
+		{"no service after a done deploy (stopped global app)", docker.ServiceProgress{}, done, StatusIdle},
+		{"no service after a failed deploy (interrupted first deploy)", docker.ServiceProgress{}, recent, StatusError},
+		{"scaled to zero", docker.ServiceProgress{Found: true}, recent, StatusIdle},
+		{"converged", docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "completed"}, old, StatusRunning},
+		{"never updated", docker.ServiceProgress{Found: true, Running: 1, Desired: 1}, old, StatusRunning},
+		// The old replica of a start-first update still runs: not converged.
+		{"update in progress", docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "updating"}, recent, ""},
+		{"update stuck past the settle window", docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "updating"}, old, StatusError},
+		{"rolling back", docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "rollback_started"}, recent, ""},
+		{"rolled back", docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "rollback_completed"}, recent, StatusError},
+		{"global, no eligible node yet", docker.ServiceProgress{Found: true, Global: true}, recent, ""},
+		{"global, no eligible node past the window", docker.ServiceProgress{Found: true, Global: true}, old, StatusError},
+		{"still starting", docker.ServiceProgress{Found: true, Running: 0, Desired: 1}, recent, ""},
+		{"never converged", docker.ServiceProgress{Found: true, Running: 1, Desired: 2}, old, StatusError},
 	}
 	for _, c := range cases {
-		if got := healedStatus(c.st, c.last, now); got != c.want {
+		if got := healedStatus(c.p, c.last, now); got != c.want {
 			t.Errorf("%s: healedStatus = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
 
-type statesEngine map[string]docker.ServiceState
+type progressEngine map[string]docker.ServiceProgress
 
-func (e statesEngine) ServiceStates(context.Context, []string) (map[string]docker.ServiceState, error) {
-	return e, nil
+func (e progressEngine) ServiceProgress(_ context.Context, name string, _ []string) (docker.ServiceProgress, error) {
+	return e[name], nil
 }
 
 // The queries against a real schema: msk's state (deploy 36 done, app left
 // "deploying", service 1/1) heals to running; an app with a deployment still
-// running is never listed; and a deploy that starts between the listing and
-// the write keeps its "deploying".
+// running is never listed; and a deploy that starts — or starts and ends —
+// between the listing and the write keeps what it wrote.
 func TestHealStuckStatusesOnDB(t *testing.T) {
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -129,6 +140,12 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-heal", OwnerID: u.ID})
 	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "P", Slug: "p-heal", Description: ""})
 	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "prod", Slug: "prod"})
+	setStatus := func(app int64, st string) {
+		t.Helper()
+		if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: app, Status: st}); err != nil {
+			t.Fatalf("set status: %v", err)
+		}
+	}
 	newApp := func(name string) int64 {
 		t.Helper()
 		a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
@@ -138,12 +155,10 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create app: %v", err)
 		}
-		if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: a.ID, Status: StatusDeploying}); err != nil {
-			t.Fatalf("set status: %v", err)
-		}
+		setStatus(a.ID, StatusDeploying)
 		return a.ID
 	}
-	deployment := func(app int64, finish string) {
+	deployment := func(app int64, finish string) int64 {
 		t.Helper()
 		d, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: app, Trigger: "api"})
 		if err != nil {
@@ -154,6 +169,7 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 				t.Fatalf("finish deployment: %v", err)
 			}
 		}
+		return d.ID
 	}
 	status := func(app int64) string {
 		t.Helper()
@@ -170,41 +186,61 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 	deployment(inFlight, "")
 	raced := newApp("raced")
 	deployment(raced, "error")
+	ended := newApp("ended")
+	deployment(ended, "error")
 
 	s := NewDBStore(q)
 	listed, err := s.ListStuckDeployingApps(ctx)
 	if err != nil {
 		t.Fatalf("ListStuckDeployingApps: %v", err)
 	}
-	ids := map[int64]bool{}
+	byID := map[int64]StuckApp{}
 	for _, a := range listed {
-		ids[a.ID] = true
-		if a.LastFinished.IsZero() {
-			t.Errorf("app %d listed without the time its last deployment ended", a.ID)
+		byID[a.ID] = a
+		if a.LastFinished.IsZero() || a.Seen.IsZero() {
+			t.Errorf("app %d listed without the time its last deployment ended or its row changed", a.ID)
 		}
 	}
-	if !ids[stuck] || !ids[raced] || ids[inFlight] || len(ids) != 2 {
-		t.Fatalf("listed %v, want exactly %d and %d", ids, stuck, raced)
+	if _, ok := byID[inFlight]; ok || len(byID) != 3 {
+		t.Fatalf("listed %v, want stuck, raced and ended only", byID)
+	}
+	if byID[stuck].LastStatus != "done" || byID[raced].LastStatus != "error" {
+		t.Errorf("last deployment status: stuck %q, raced %q", byID[stuck].LastStatus, byID[raced].LastStatus)
 	}
 
-	// A new deploy of "raced" starts after the listing, before the write.
+	// After the listing: a deploy of "raced" starts (submit writes the row,
+	// then the status); one of "ended" starts and is interrupted at shutdown,
+	// which leaves the app "deploying" again with no deploy running.
 	deployment(raced, "")
-	up := docker.ServiceState{Found: true, Running: 1, Desired: 1}
-	eng := statesEngine{docker.ServiceName(stuck): up, docker.ServiceName(raced): up, docker.ServiceName(inFlight): up}
-	if ok, err := s.HealAppStatus(ctx, raced, StatusRunning); err != nil || ok {
+	setStatus(raced, StatusDeploying)
+	deployment(ended, "error")
+	setStatus(ended, StatusDeploying)
+	if ok, err := s.HealAppStatus(ctx, raced, StatusRunning, byID[raced].Seen); err != nil || ok {
 		t.Fatalf("HealAppStatus on an app with a deploy running = %v, %v; want false", ok, err)
 	}
-	n, err := HealStuckStatuses(ctx, s, eng, time.Now())
-	if err != nil || n != 1 {
-		t.Fatalf("HealStuckStatuses = %d, %v; want 1", n, err)
+	if ok, err := s.HealAppStatus(ctx, ended, StatusIdle, byID[ended].Seen); err != nil || ok {
+		t.Fatalf("HealAppStatus from a listing older than the last deploy = %v, %v; want false", ok, err)
+	}
+	if ok, err := s.HealAppStatus(ctx, stuck, StatusRunning, byID[stuck].Seen); err != nil || !ok {
+		t.Fatalf("HealAppStatus on the stuck app = %v, %v; want true", ok, err)
 	}
 	if got := status(stuck); got != StatusRunning {
 		t.Errorf("stuck app status = %q, want running", got)
 	}
-	if got := status(raced); got != StatusDeploying {
-		t.Errorf("app whose deploy started meanwhile = %q, want deploying", got)
+	for _, app := range []int64{raced, ended, inFlight} {
+		if got := status(app); got != StatusDeploying {
+			t.Errorf("app %d status = %q, want deploying", app, got)
+		}
 	}
-	if got := status(inFlight); got != StatusDeploying {
-		t.Errorf("app with a deploy in flight = %q, want deploying", got)
+
+	// A full pass from a fresh listing: "ended" heals from its live service,
+	// "raced" (deploy running) and "inflight" stay.
+	up := docker.ServiceProgress{Found: true, Running: 1, Desired: 1, UpdateState: "completed"}
+	eng := progressEngine{docker.ServiceName(ended): up, docker.ServiceName(raced): up, docker.ServiceName(inFlight): up}
+	if n, err := HealStuckStatuses(ctx, s, eng, time.Now()); err != nil || n != 1 {
+		t.Fatalf("HealStuckStatuses = %d, %v; want 1", n, err)
+	}
+	if got := status(ended); got != StatusRunning {
+		t.Errorf("ended app status = %q, want running", got)
 	}
 }

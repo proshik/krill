@@ -203,9 +203,10 @@ type Querier interface {
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
-	// Rewrites a stuck 'deploying' status, but only while it is still stuck: a
-	// deploy that started since the list was read has a running deployment and
-	// keeps its status.
+	// Rewrites a stuck 'deploying' status, but only while the row is exactly as
+	// listed: every status write sets updated_at, so a deploy that started (or
+	// started and ended) since the listing keeps what it wrote — including one the
+	// statement's snapshot of deployments cannot see yet.
 	HealApplicationStatus(ctx context.Context, arg HealApplicationStatusParams) (int64, error)
 	// Enabled channels of EVERY organization that an instance operator opted into
 	// node-level alerts. Used only by the internal resource monitor.
@@ -306,7 +307,9 @@ type Querier interface {
 	// Apps whose stored status says a deploy is under way while no deployment of
 	// theirs is: a deploy interrupted by a shutdown or a crash leaves the status
 	// behind, and nothing else ever rewrites it. last_finished is when the app's
-	// latest deployment ended, or its row last changed when it has none.
+	// latest deployment ended, or its row last changed when it has none;
+	// last_status is that deployment's status ('' when none); updated_at lets the
+	// write tell whether anything touched the row since.
 	ListStuckDeployingApplications(ctx context.Context) ([]ListStuckDeployingApplicationsRow, error)
 	ListSystemMembersByEnvironment(ctx context.Context, environmentID int64) ([]SystemMember, error)
 	ListSystemsByEnvironment(ctx context.Context, environmentID int64) ([]System, error)

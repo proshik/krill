@@ -624,14 +624,14 @@ func (s *DBStore) ListStuckDeployingApps(ctx context.Context) ([]StuckApp, error
 	}
 	out := make([]StuckApp, len(rows))
 	for i, r := range rows {
-		out[i] = StuckApp{ID: r.ID, LastFinished: r.LastFinished}
+		out[i] = StuckApp{ID: r.ID, Seen: r.UpdatedAt, LastFinished: r.LastFinished, LastStatus: r.LastStatus}
 	}
 	return out, nil
 }
 
-// HealAppStatus sets a stuck app's status, unless a deploy has started (or the
-// status changed) since it was listed.
-func (s *DBStore) HealAppStatus(ctx context.Context, appID int64, status string) (bool, error) {
-	n, err := s.q.HealApplicationStatus(ctx, db.HealApplicationStatusParams{ID: appID, Status: status})
+// HealAppStatus sets a stuck app's status, unless its row changed since it
+// was listed (seen) or a deploy of it is running.
+func (s *DBStore) HealAppStatus(ctx context.Context, appID int64, status string, seen time.Time) (bool, error) {
+	n, err := s.q.HealApplicationStatus(ctx, db.HealApplicationStatusParams{ID: appID, Status: status, Seen: seen})
 	return n > 0, err
 }
