@@ -1537,6 +1537,7 @@ var en = map[string]string{
 	"topo.lane_empty":                  "nothing of this project runs here",
 	"topo.legend.link":                 "linked database, same node",
 	"mon.pct_of_node":                  "% of the node",
+	"topo.lane_empty_org":              "nothing of this organization runs here",
 	"mon.cpu_of_cores":                 "CPU of %d cores",
 	"mon.containers":                   "containers: %d",
 	"mon.other":                        "other containers: %d",

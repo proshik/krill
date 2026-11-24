@@ -1537,6 +1537,7 @@ var ru = map[string]string{
 	"topo.lane_empty":                  "здесь ничего из этого проекта не работает",
 	"topo.legend.link":                 "подключённая база на той же ноде",
 	"mon.pct_of_node":                  "% от ноды",
+	"topo.lane_empty_org":              "здесь ничего из этой организации не работает",
 	"mon.cpu_of_cores":                 "CPU из %d ядер",
 	"mon.containers":                   "контейнеров: %d",
 	"mon.other":                        "другие контейнеры: %d",
