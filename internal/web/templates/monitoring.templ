@@ -14,7 +14,6 @@ templ Monitoring(org db.Organization, role string) {
 				class="mon"
 				data-url={ orgURL(org.ID) + "/monitoring/data" }
 				data-i18n-stale={ i18n.T(ctx, "mon.stale") }
-				data-i18n-cores={ i18n.T(ctx, "mon.cpu_of_cores") }
 				data-i18n-memory={ i18n.T(ctx, "mon.memory") }
 				data-i18n-containers={ i18n.T(ctx, "mon.containers") }
 				data-i18n-healthy={ i18n.T(ctx, "nodes.state_ready") }

@@ -152,7 +152,7 @@ templ observabilityState(orgID int64, v ObservabilityView) {
 		if len(v.CoverageMissing) > 0 {
 			<div class="callout callout--warn">
 				<div class="callout-body">
-					<p>{ i18n.Tf(ctx, "obs.coverage.partial", v.CoverageDeployed, v.CoverageExpected, strings.Join(v.CoverageMissing, ", ")) }</p>
+					<p>{ i18n.Tn(ctx, "obs.coverage.partial", v.CoverageExpected, v.CoverageDeployed, strings.Join(v.CoverageMissing, ", ")) }</p>
 					<p class="hint">{ i18n.T(ctx, "obs.coverage.hint") }</p>
 				</div>
 			</div>

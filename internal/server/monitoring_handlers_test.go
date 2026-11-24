@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -136,6 +137,7 @@ func TestMonitoringDataPerNode(t *testing.T) {
 			Node     string `json:"node"`
 			NCPU     int    `json:"ncpu"`
 			MemTotal int64  `json:"mem_total"`
+			Cores    string `json:"cores_text"`
 		} `json:"nodes"`
 		Rows []struct {
 			Node string `json:"node"`
@@ -147,6 +149,11 @@ func TestMonitoringDataPerNode(t *testing.T) {
 	nodes := map[string]bool{}
 	for _, n := range d.Nodes {
 		nodes[n.Node] = true
+		// The node card's "CPU of N cores" is formatted on the server, so
+		// its plural form follows the catalog ("из 1 ядер" before).
+		if want := fmt.Sprintf("CPU of %d cores", n.NCPU); n.Cores != want {
+			t.Errorf("node %s cores_text = %q, want %q", n.Node, n.Cores, want)
+		}
 	}
 	if !nodes["cp"] || !nodes["w1"] {
 		t.Fatalf("expected both nodes in summary, got %v", nodes)

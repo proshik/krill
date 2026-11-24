@@ -307,7 +307,7 @@ func Nodes(org db.Organization, role string, lanes []NodeLane, newNode bool) tem
 							return templ_7745c5c3_Err
 						}
 						var templ_7745c5c3_Var17 string
-						templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tf(ctx, "nodes.cpu_of", l.CPU, l.Cores))
+						templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tn(ctx, "nodes.cpu_of", l.Cores, l.CPU))
 						if templ_7745c5c3_Err != nil {
 							return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/nodes.templ`, Line: 80, Col: 57}
 						}

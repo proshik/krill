@@ -77,7 +77,7 @@ templ Nodes(org db.Organization, role string, lanes []NodeLane, newNode bool) {
 										<span class="use">
 											{ i18n.T(ctx, "nodes.cpu") }
 											@ui.Meter(l.CPU, false)
-											{ i18n.Tf(ctx, "nodes.cpu_of", l.CPU, l.Cores) }
+											{ i18n.Tn(ctx, "nodes.cpu_of", l.Cores, l.CPU) }
 										</span>
 										<span class="use">
 											{ i18n.T(ctx, "nodes.memory") }
