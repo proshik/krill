@@ -454,10 +454,28 @@ func (s *suite) waitDeployStatus(t *testing.T, ev *Evidence, timeout time.Durati
 	}
 }
 
-func (s *suite) waitNoRunningDeploy(t *testing.T, ev *Evidence) {
+// endBusyDeploy stops the busy app and waits for its deploy to leave
+// "running". The busy app never converges (its healthcheck always fails), and
+// since a deploy that has not converged by its window is watched for up to 20
+// more minutes before it is recorded (deploy "settle", v0.13.0), waiting for it
+// to end on its own takes over half an hour. Stopping it is deterministic: a
+// deploy past its window ends within a poll ("stopped before the service
+// converged"); one still inside its window (start period 720s + 60s) ends when
+// the window does ("service did not converge"). Either way it is bounded by
+// busyDeployWindow from the deploy's start.
+func (s *suite) endBusyDeploy(t *testing.T, ev *Evidence) {
 	t.Helper()
-	s.waitDeployStatus(t, ev, 25*time.Minute, func(st string) bool { return st != "running" })
+	s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
+	s.waitDeployStatus(t, ev, busyDeployWindow+3*time.Minute, func(st string) bool { return st != "running" })
+	out, err := s.host.Psql(s.ctx, fmt.Sprintf("select status||' '||coalesce(error_message, '') from deployments where application_id=%d order by started_at desc limit 1", s.app.appID))
+	must(t, err, "deployment outcome")
+	ev.Note("busy deploy ended after the stop: %s", out)
 }
+
+// busyDeployWindow is how long a deploy of the busy app waits to converge
+// before the settle watch takes over: its start period (720s, createBusyApp)
+// plus the 60s headroom the deployer adds.
+const busyDeployWindow = 780 * time.Second
 
 // --- egress throttle ------------------------------------------------------------
 
@@ -764,7 +782,8 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 
 	// 3.
 	s.run(t, "busy_during_download", func(t *testing.T, ev *Evidence) {
-		s.waitNoRunningDeploy(t, ev)
+		// Step 2's deploy would refuse this install at the click; end it.
+		s.endBusyDeploy(t, ev)
 		t.Cleanup(func() {
 			out, err := s.vm.Sudo(s.ctx, unthrottleScript)
 			ev.Output("remove throttle", out)
@@ -778,6 +797,9 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		must(t, err, "install")
 		flashContains(t, ev, "POST install v0.90.1 (throttled)", resp, ui("flash.ok.update_started"))
 		s.waitPage(t, ev, 60*time.Second, phase("downloading"), ui("update.job_tag", "v0.90.1"))
+		// This deploy stays running for at least busyDeployWindow (the settle
+		// watch keeps it so up to 20 minutes longer), well past the end of the
+		// throttled download, where the job checks for busy work again.
 		s.deploy(t, ev)
 		start := time.Now()
 		s.waitPage(t, ev, 20*time.Minute, phase("failed"), busyFailed("deploy"))
@@ -792,9 +814,9 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 
 	// 4.
 	s.run(t, "update_to_v0.90.1", func(t *testing.T, ev *Evidence) {
-		s.waitNoRunningDeploy(t, ev)
-		// Quiet the always-unhealthy app; a stopped app is not busy work.
-		s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
+		// Quiet the always-unhealthy app and end step 3's deploy: a stopped
+		// app is not busy work, a running deploy is.
+		s.endBusyDeploy(t, ev)
 		s.waitAvailable(t, ev, "v0.90.1")
 		s.updateTo(t, ev, "v0.90.0", "v0.90.1", s.base+1)
 	})
