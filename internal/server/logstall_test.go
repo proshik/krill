@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,10 +25,24 @@ var testNotices = logNotices{Gap: "GAP", Cut: "CUT"}
 type stallingLogsEngine struct {
 	docker.Engine
 	backlog, live string
-	stall         bool // the backlog read stalls instead of ending
+	stall         bool  // the backlog read stalls instead of ending
+	stallOpen     bool  // opening the backlog read never returns
+	backlogEnd    error // the backlog read ends with this error
+	followDelay   time.Duration
 }
 
 func (e *stallingLogsEngine) ServiceLogs(ctx context.Context, _ string, follow bool, _ int) (io.ReadCloser, error) {
+	if !follow && e.stallOpen {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if follow && e.followDelay > 0 {
+		select {
+		case <-time.After(e.followDelay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	pr, pw := io.Pipe()
 	text := e.backlog
 	if follow {
@@ -36,7 +51,7 @@ func (e *stallingLogsEngine) ServiceLogs(ctx context.Context, _ string, follow b
 	go func() {
 		pw.Write([]byte(text))
 		if !follow && !e.stall {
-			pw.Close()
+			pw.CloseWithError(e.backlogEnd)
 			return
 		}
 		<-ctx.Done()
@@ -50,9 +65,9 @@ func (e *stallingLogsEngine) ServiceLogs(ctx context.Context, _ string, follow b
 // took.
 func viewLogs(t *testing.T, eng docker.Engine, frames int) ([]string, time.Duration) {
 	t.Helper()
-	old := backlogTimeout
-	backlogTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { backlogTimeout = old })
+	oldB, oldF := backlogTimeout, followOpenWait
+	backlogTimeout, followOpenWait = 200*time.Millisecond, 300*time.Millisecond
+	t.Cleanup(func() { backlogTimeout, followOpenWait = oldB, oldF })
 
 	s := &Server{engine: eng}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,5 +154,49 @@ func TestServiceLogsEmptyBacklogSaysLive(t *testing.T) {
 	got, _ := viewLogs(t, eng, 2)
 	if want := "EV|a3"; strings.Join(got, "|") != want {
 		t.Fatalf("frames = %q, want %q", strings.Join(got, "|"), want)
+	}
+}
+
+// Opening the backlog read never returns (the daemon withholds its answer
+// to the task listing): the same budget ends it, and the viewer goes live.
+func TestServiceLogsBacklogOpenThatNeverReturns(t *testing.T) {
+	eng := &stallingLogsEngine{stallOpen: true, live: "2026-11-24T10:00:03Z com.docker.swarm.task.id=a a3\n"}
+	got, first := viewLogs(t, eng, 3)
+	if want := "CUT|EV|a3"; strings.Join(got, "|") != want {
+		t.Fatalf("frames = %q, want %q", strings.Join(got, "|"), want)
+	}
+	if first > 3*time.Second {
+		t.Fatalf("first frame after %v", first)
+	}
+}
+
+// The engine could not read one task's log: the lines it has are shown and
+// the viewer is told the history is incomplete, then it goes live.
+func TestServiceLogsIncompleteBacklog(t *testing.T) {
+	eng := &stallingLogsEngine{
+		backlog:    "2026-11-24T10:00:01Z com.docker.swarm.task.id=a a1\n",
+		backlogEnd: fmt.Errorf("%w: 1 of 2 tasks", logparse.ErrIncomplete),
+		live:       "2026-11-24T10:00:01Z com.docker.swarm.task.id=a a1\n2026-11-24T10:00:02Z com.docker.swarm.task.id=a a2\n",
+	}
+	got, _ := viewLogs(t, eng, 4)
+	if want := "a1|CUT|EV|a2"; strings.Join(got, "|") != want {
+		t.Fatalf("frames = %q, want %q", strings.Join(got, "|"), want)
+	}
+}
+
+// The live stream is slow to open: the backlog is not held back for it
+// longer than followOpenWait, and its lines still come once it opens.
+func TestServiceLogsSlowFollowOpenDoesNotHoldTheBacklog(t *testing.T) {
+	eng := &stallingLogsEngine{
+		backlog:     "2026-11-24T10:00:01Z com.docker.swarm.task.id=a a1\n",
+		live:        "2026-11-24T10:00:01Z com.docker.swarm.task.id=a a1\n2026-11-24T10:00:02Z com.docker.swarm.task.id=a a2\n",
+		followDelay: 2 * time.Second,
+	}
+	got, first := viewLogs(t, eng, 3)
+	if want := "a1|EV|a2"; strings.Join(got, "|") != want {
+		t.Fatalf("frames = %q, want %q", strings.Join(got, "|"), want)
+	}
+	if first > 1500*time.Millisecond {
+		t.Fatalf("the backlog waited %v for the live stream to open", first)
 	}
 }

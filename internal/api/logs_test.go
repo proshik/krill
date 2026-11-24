@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/logparse"
 )
 
 func TestAppLogsClampsTail(t *testing.T) {
@@ -641,5 +642,44 @@ func TestAppLogsStalledReadAnswersWithWhatItRead(t *testing.T) {
 	lines, err = svc.AppLogs(t.Context(), f.ident, f.appIDString, 2, "")
 	if err != nil || len(lines) != 2 || lines[0].Message != "a plain line with no detectable level" || lines[1].Level != "warn" {
 		t.Fatalf("tail 2 = %+v, %v", lines, err)
+	}
+}
+
+// withholdingEngine never answers the log request at all (the daemon holds
+// back its answer to the task listing).
+type withholdingEngine struct{ docker.Engine }
+
+func (withholdingEngine) ServiceLogs(ctx context.Context, _ string, _ bool, _ int) (io.ReadCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// The open counts against the same bound: AppLogs answers with the notice
+// alone instead of hanging.
+func TestAppLogsOpenThatNeverReturns(t *testing.T) {
+	t.Cleanup(api.SetAppLogsTimeout(100 * time.Millisecond))
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, withholdingEngine{}, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 1 || lines[0].Level != "warn" || !strings.Contains(lines[0].Message, "incomplete") {
+		t.Fatalf("lines = %+v, want only the incomplete-read notice", lines)
+	}
+}
+
+// The engine could not read one task's log: the answer keeps the other
+// lines and says it is incomplete, without leaking the cause.
+func TestAppLogsIncompleteSource(t *testing.T) {
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody, readErr: fmt.Errorf("%w: 1 of 2 tasks (node 10.0.0.7 unreachable)", logparse.ErrIncomplete)}, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	last := lines[len(lines)-1]
+	if len(lines) != 6 || last.Level != "warn" || strings.Contains(last.Message, "10.0.0.7") {
+		t.Fatalf("lines = %+v, want the five lines and the incomplete-read notice", lines)
 	}
 }

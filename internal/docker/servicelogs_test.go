@@ -11,6 +11,8 @@ import (
 
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/pkg/stdcopy"
+
+	"github.com/proshik/krill/internal/logparse"
 )
 
 func TestLogTasksOrderAndSkip(t *testing.T) {
@@ -27,7 +29,7 @@ func TestLogTasksOrderAndSkip(t *testing.T) {
 		task("run-b", "n2", swarm.TaskStateRunning, swarm.TaskStateRunning, 4),
 		task("never-ran", "n1", swarm.TaskStateShutdown, swarm.TaskStateShutdown, 2),
 	})
-	if want := "run-b|run-a|newer|never-ran|old"; strings.Join(got, "|") != want {
+	if want := "starting|run-b|run-a|newer|never-ran|old"; strings.Join(got, "|") != want {
 		t.Fatalf("tasks = %q, want %q", strings.Join(got, "|"), want)
 	}
 }
@@ -81,8 +83,8 @@ func TestTaskLogsStreamReadsEachTaskInTurn(t *testing.T) {
 	rc := taskLogsStream(context.Background(), []string{"a", "stall", "gone", "b"}, open)
 	defer rc.Close()
 	out, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	if !errors.Is(err, logparse.ErrIncomplete) {
+		t.Fatalf("read ended with %v, want ErrIncomplete: two tasks were not read in full", err)
 	}
 	if want := "a1\na2\ns1\ns2 cut mid-line\nb1\n"; string(out) != want {
 		t.Fatalf("stream = %q, want %q", out, want)
@@ -128,5 +130,16 @@ func TestTaskLogsStreamStopsWithItsContextAndReader(t *testing.T) {
 	case <-done:
 		t.Fatal("kept reading tasks after the reader was closed")
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestTaskLogsStreamEndsCleanWhenEveryTaskWasRead(t *testing.T) {
+	rc := taskLogsStream(context.Background(), []string{"a", "b"}, func(ctx context.Context, id string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(muxed(id + "\n"))), nil
+	})
+	defer rc.Close()
+	out, err := io.ReadAll(rc)
+	if err != nil || string(out) != "a\nb\n" {
+		t.Fatalf("stream = %q, %v", out, err)
 	}
 }

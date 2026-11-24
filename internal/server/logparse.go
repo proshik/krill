@@ -40,43 +40,69 @@ type logNotices struct {
 // tell a log with no lines yet from one still loading.
 var liveEvent = []byte(`{"ev":"live"}`)
 
-// backlogTimeout is a var so tests can shorten it.
-var backlogTimeout = logparse.BacklogTimeout
+// backlogTimeout and followOpenWait are vars so tests can shorten them.
+var (
+	backlogTimeout = logparse.BacklogTimeout
+	// followOpenWait is how long the backlog waits for the live stream to
+	// open before it is sent anyway.
+	followOpenWait = 5 * time.Second
+)
 
 // streamServiceLogsToWS sends a service's runtime log over conn: first its
 // newest lines merged across tasks by time (see logparse.Backlog), then the
-// live stream. The backlog read is given up after backlogTimeout, keeping
-// what it read. The live stream is opened right after the backlog is read and
-// before any of it is sent, so a slow browser does not widen the gap between
-// the two; should a task still write more than liveOverlap lines in between,
-// notices.Gap is sent before its first new line. An error opening the backlog
-// is returned before anything is sent, so the caller can log it and close the
+// live stream. The backlog read, opening included, is given up after
+// backlogTimeout, keeping what it read; an incomplete backlog is followed by
+// notices.Cut. The live stream is opened right after the backlog is read and,
+// unless it takes longer than followOpenWait, before any of it is sent, so a
+// slow browser does not widen the gap between the two; should a task still
+// write more than liveOverlap lines in between, notices.Gap is sent before
+// its first new line. Once the backlog is through, liveEvent tells the viewer
+// whatever comes next is live. An error opening the backlog is returned
+// before anything is sent, so the caller can log it and close the
 // connection; later failures close the connection here.
 func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn, service string, notices logNotices) error {
-	rc, err := s.engine.ServiceLogs(ctx, service, false, logWindow)
-	if err != nil {
-		return err
+	backlog, cursor, cut, openErr, scanErr := logparse.ReadBacklog(ctx, backlogTimeout, logWindow,
+		func(ctx context.Context) (io.ReadCloser, error) {
+			return s.engine.ServiceLogs(ctx, service, false, logWindow)
+		})
+	if openErr != nil {
+		return openErr
 	}
-	var backlog []logparse.LogLine
-	var scanErr error
-	var cut bool
-	cursor := &logparse.Cursor{}
-	if rc != nil {
-		backlog, cursor, cut, scanErr = logparse.BacklogWithin(rc, logWindow, backlogTimeout)
-		rc.Close()
-		if cut {
-			slog.Warn("log stream: backlog read gave up, continuing with what it read",
-				"service", service, "timeout", backlogTimeout, "lines", len(backlog))
-		}
+	if cut {
+		slog.Warn("log stream: backlog incomplete, continuing with what it read",
+			"service", service, "timeout", backlogTimeout, "lines", len(backlog))
 	}
+	var liveCh chan openedLog
 	var live io.ReadCloser
 	var liveErr error
+	waiting := false // the live stream's open is still outstanding
 	if scanErr == nil {
-		live, liveErr = s.engine.ServiceLogs(ctx, service, true, liveOverlap)
-		if live != nil {
-			defer live.Close()
+		liveCh = make(chan openedLog, 1)
+		go func() {
+			rc, err := s.engine.ServiceLogs(ctx, service, true, liveOverlap)
+			liveCh <- openedLog{rc, err}
+		}()
+		waiting = true
+		t := time.NewTimer(followOpenWait)
+		select {
+		case o := <-liveCh:
+			live, liveErr, waiting = o.rc, o.err, false
+		case <-t.C:
 		}
+		t.Stop()
 	}
+	defer func() {
+		if live != nil {
+			live.Close()
+		}
+		if waiting { // whatever the open still returns is closed
+			go func() {
+				if o := <-liveCh; o.rc != nil {
+					o.rc.Close()
+				}
+			}()
+		}
+	}()
 	for _, l := range backlog {
 		if !writeLogLine(ctx, conn, l) {
 			return nil
@@ -90,6 +116,14 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 	}
 	if !writeFrame(ctx, conn, liveEvent) {
 		return nil
+	}
+	if waiting {
+		select {
+		case o := <-liveCh:
+			live, liveErr, waiting = o.rc, o.err, false
+		case <-ctx.Done():
+			return nil
+		}
 	}
 	if liveErr != nil {
 		if ctx.Err() == nil {
@@ -112,6 +146,12 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 		return true
 	})
 	return nil
+}
+
+// openedLog is the outcome of opening a log stream.
+type openedLog struct {
+	rc  io.ReadCloser
+	err error
 }
 
 // streamParsedLogsToWS reads lines from rc, parses each into a LogLine, and

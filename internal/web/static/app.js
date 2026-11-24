@@ -103,6 +103,7 @@ function mountLogViewer(el) {
   let query = "";
 
   function rowVisible(row) {
+    if (row.dataset.placeholder) return true; // says why there is nothing to filter
     const lvlOK = level === "all" || row.dataset.level === level;
     const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
     return lvlOK && txtOK;
@@ -139,12 +140,13 @@ function mountLogViewer(el) {
       addRow({ msg: text });
       placeholder = body.lastElementChild;
       placeholder.dataset.placeholder = "1";
+      placeholder.hidden = false;
     } else {
       placeholder.querySelector("code").textContent = text;
     }
   }
   function addRow(line) {
-    if (placeholder) { placeholder.remove(); placeholder = null; }
+    if (placeholder && line.t) { placeholder.remove(); placeholder = null; }
     const row = document.createElement("li");
     const lv = (line.lvl || "").toLowerCase();
     row.dataset.level = lv;
@@ -173,7 +175,9 @@ function mountLogViewer(el) {
     try { line = JSON.parse(e.data); } catch (_) { return; }
     // {"ev":"live"}: the backlog is through, the live stream follows.
     if (line.ev === "live") { if (!got) setPlaceholder(el.dataset.waiting || "no lines yet"); return; }
-    got = true;
+    // Only the service's own lines (they carry docker's timestamp) count:
+    // a notice about the stream keeps the waiting text coming.
+    if (line.t) got = true;
     addRow(line);
   };
   ws.onclose = () => { if (!got) setPlaceholder(el.dataset.empty || "no logs yet"); };

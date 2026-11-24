@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sort"
@@ -13,6 +14,8 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/pkg/stdcopy"
+
+	"github.com/proshik/krill/internal/logparse"
 )
 
 // taskLogTimeout bounds one task's part of a non-following service log read.
@@ -56,10 +59,13 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 
 // logTasks picks the tasks a non-following service log read covers, in the
 // order to read them: the ones meant to run first, then the rest newest
-// first, so a caller that stops early still has the current output. Like
-// Swarm's own service read it skips tasks that never reached a node or never
-// got as far as running: they have no output, and a task without a node
-// would hold a task-scoped read open until it is scheduled.
+// first, so a caller that stops early still has the current output. It
+// skips tasks that never reached a node (a task-scoped read of one would
+// stay open until it is scheduled) and tasks whose container has not been
+// started yet. A starting task is kept: during a start-first update its
+// container runs (and logs) while its healthcheck is pending, and Swarm's
+// own service read showed those lines whenever the node also held another
+// task of the service.
 func logTasks(tasks []swarm.Task) []string {
 	var picked []swarm.Task
 	for _, t := range tasks {
@@ -86,7 +92,7 @@ func logTasks(tasks []swarm.Task) []string {
 func notStarted(s swarm.TaskState) bool {
 	switch s {
 	case swarm.TaskStateNew, swarm.TaskStateAllocated, swarm.TaskStatePending, swarm.TaskStateAssigned,
-		swarm.TaskStateAccepted, swarm.TaskStatePreparing, swarm.TaskStateReady, swarm.TaskStateStarting:
+		swarm.TaskStateAccepted, swarm.TaskStatePreparing, swarm.TaskStateReady:
 		return true
 	}
 	return false
@@ -94,26 +100,38 @@ func notStarted(s swarm.TaskState) bool {
 
 // taskLogsStream reads each task's log in turn, demultiplexed, into one
 // stream. A task whose log cannot be read, or not within taskLogTimeout, is
-// logged and skipped: the others are still worth showing. The stream ends
-// with ctx's error when ctx ends, and stops when the reader is closed.
+// logged and skipped, and the stream then ends with logparse.ErrIncomplete
+// after the other tasks' lines, so a caller can say the history is partial.
+// The stream ends with ctx's error when ctx ends, and stops when the reader
+// is closed (cancel ctx too to stop a task read that has not written yet).
 func taskLogsStream(ctx context.Context, ids []string, open func(context.Context, string) (io.ReadCloser, error)) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
 		w := &lineEndWriter{w: pw}
+		failed := 0
 		for _, id := range ids {
-			if err := copyTaskLog(ctx, w, id, open); err != nil {
+			ok, err := copyTaskLog(ctx, w, id, open)
+			if err != nil {
 				pw.CloseWithError(err)
 				return
 			}
+			if !ok {
+				failed++
+			}
+		}
+		if failed > 0 {
+			pw.CloseWithError(fmt.Errorf("%w: %d of %d tasks", logparse.ErrIncomplete, failed, len(ids)))
+			return
 		}
 		pw.Close()
 	}()
 	return pr
 }
 
-// copyTaskLog copies one task's log into w. It returns an error only when
-// the whole read should stop: ctx ended or w's reader is gone.
-func copyTaskLog(ctx context.Context, w *lineEndWriter, id string, open func(context.Context, string) (io.ReadCloser, error)) error {
+// copyTaskLog copies one task's log into w and reports whether all of it
+// was read. It returns an error only when the whole read should stop: ctx
+// ended or w's reader is gone.
+func copyTaskLog(ctx context.Context, w *lineEndWriter, id string, open func(context.Context, string) (io.ReadCloser, error)) (bool, error) {
 	tctx, cancel := context.WithTimeout(ctx, taskLogTimeout)
 	defer cancel()
 	rc, err := open(tctx, id)
@@ -122,23 +140,25 @@ func copyTaskLog(ctx context.Context, w *lineEndWriter, id string, open func(con
 		rc.Close()
 	}
 	if w.err != nil {
-		return w.err
+		return false, w.err
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return false, ctx.Err()
 	}
 	// A task cut short may end mid-line; its next line must not run into
 	// the following task's first.
 	if err := w.endLine(); err != nil {
-		return err
+		return false, err
 	}
 	switch {
 	case errors.Is(tctx.Err(), context.DeadlineExceeded):
 		slog.Warn("service logs: task log read timed out, skipped the rest of it", "task", id, "timeout", taskLogTimeout)
+		return false, nil
 	case err != nil:
 		slog.Warn("service logs: task log unavailable", "task", id, "err", err)
+		return false, nil
 	}
-	return nil
+	return true, nil
 }
 
 // lineEndWriter remembers whether the last byte written ended a line, and
