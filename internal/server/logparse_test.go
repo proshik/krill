@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,4 +130,79 @@ func TestServiceLogsStreamReportsGap(t *testing.T) {
 	if strings.Join(got, "|") != "a1|GAP|a9|a10" {
 		t.Fatalf("lines = %q, want the gap notice once, before the first new line", strings.Join(got, "|"))
 	}
+}
+
+// followUntilGone is a live log stream that stays open until the viewer
+// leaves, then fails the way docker's does: with the context's error.
+type followUntilGone struct {
+	docker.Engine
+	backlogErr bool // the backlog read already sees the viewer gone
+}
+
+func (e *followUntilGone) ServiceLogs(ctx context.Context, _ string, follow bool, _ int) (io.ReadCloser, error) {
+	if !follow {
+		if e.backlogErr {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return io.NopCloser(strings.NewReader("2026-11-23T10:00:01Z hello\n")), nil
+	}
+	pr, pw := io.Pipe()
+	go func() { <-ctx.Done(); pw.CloseWithError(ctx.Err()) }()
+	return pr, nil
+}
+
+// Leaving a logs tab closes its WebSocket, which cancels the stream's
+// context; that ended every stream with an ERROR "context canceled" line in
+// the journal (seen on v0.13.1). A viewer leaving is the normal end.
+func TestServiceLogsViewerLeavingIsNotAnError(t *testing.T) {
+	for _, backlogErr := range []bool{false, true} {
+		var buf strings.Builder
+		var mu sync.Mutex
+		old := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, nil)))
+		t.Cleanup(func() { slog.SetDefault(old) })
+
+		s := &Server{engine: &followUntilGone{backlogErr: backlogErr}}
+		done := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer close(done)
+			s.serveServiceLogs(w, r, "krill-1")
+		}))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !backlogErr {
+			if _, _, err := conn.Read(ctx); err != nil {
+				t.Fatalf("read backlog: %v", err)
+			}
+		}
+		conn.Close(websocket.StatusGoingAway, "")
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("stream did not end when the viewer left")
+		}
+		cancel()
+		srv.Close()
+		mu.Lock()
+		out := buf.String()
+		mu.Unlock()
+		if strings.Contains(out, "level=ERROR") {
+			t.Fatalf("backlogErr=%v: viewer leaving logged an error:\n%s", backlogErr, out)
+		}
+	}
+}
+
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
