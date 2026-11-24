@@ -92,7 +92,7 @@ func runReleaseJob(t *testing.T, d *Deployer, id int64) {
 	if id == 0 {
 		t.Fatal("enqueue failed")
 	}
-	j := <-d.queue
+	j := d.nextJob()
 	d.run(t.Context(), j)
 }
 func requireDeployment(t *testing.T, q *db.Queries, id int64, status string) {

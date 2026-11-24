@@ -154,7 +154,7 @@ type Deployer struct {
 	hub       *DeployLogHub
 	network   string
 	notifier  Notifier
-	queue     chan job
+	queue     *jobQueue
 	done      chan struct{}
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
@@ -225,7 +225,7 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 		store:     store,
 		hub:       hub,
 		network:   network,
-		queue:     make(chan job, 64),
+		queue:     newJobQueue(queueCapacity),
 		done:      make(chan struct{}),
 		runCtx:    runCtx,
 		runCancel: runCancel,
@@ -248,24 +248,21 @@ func (d *Deployer) Start(ctx context.Context) {
 	go func() {
 		defer d.wg.Done()
 		for {
-			select {
-			case <-d.done:
+			if d.stopping() {
 				d.drainQueue()
 				return
-			case j := <-d.queue:
-				// select picks randomly when both channels are ready, so a job can
-				// be dequeued exactly as we stop — re-check before running it.
+			}
+			j, ok := d.queue.pop()
+			if !ok {
 				select {
 				case <-d.done:
-					d.failQueued(j, "server shutting down")
-					d.drainQueue()
-					return
-				default:
+				case <-d.queue.wake:
 				}
-				jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
-				d.run(jobCtx, j)
-				cancel()
+				continue
 			}
+			jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
+			d.run(jobCtx, j)
+			cancel()
 		}
 	}()
 }
@@ -273,13 +270,8 @@ func (d *Deployer) Start(ctx context.Context) {
 // drainQueue fails every job still sitting in the queue at shutdown so its
 // deployment row isn't orphaned as 'running' forever.
 func (d *Deployer) drainQueue() {
-	for {
-		select {
-		case j := <-d.queue:
-			d.failQueued(j, "server shutting down")
-		default:
-			return
-		}
+	for _, j := range d.queue.takeAll() {
+		d.failQueued(j, "server shutting down")
 	}
 }
 
@@ -401,7 +393,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 }
 
 // queueFull reports whether the shared job queue has no room left.
-func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
+func (d *Deployer) queueFull() bool { return d.queue.full() }
 
 func (d *Deployer) enqueue(appID int64, trigger string, opts job) (int64, error) {
 	select {
@@ -471,21 +463,7 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 	// Tracked before the send: the worker may pick the job up at once, and a
 	// stop must find it either way.
 	d.track(deployID, appID)
-	select {
-	case d.queue <- job{deployID: deployID, appID: appID, noCache: opts.noCache, system: opts.system, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}:
-		if opts.tag != "" {
-			// After the send, not before: a refused job must not leave its tag
-			// on the application. The worker never reads it from the row, so
-			// writing it now cannot change what this deploy ships. Should the
-			// write fail, the deploy still ships the tag it carries; only the
-			// next deploy without one falls back to the old tag.
-			wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := d.store.SetApplicationImage(wctx, appID, opts.image, opts.tag); err != nil {
-				slog.Error("record deployed image on the application failed", "app", appID, "deploy", deployID, "image", opts.image, "tag", opts.tag, "err", err)
-			}
-		}
-	case <-d.done:
+	if d.stopping() {
 		// Server shutting down before the job was queued: mark the deployment
 		// failed with a detached context so it isn't orphaned as 'deploying'.
 		if !d.claimFinish(deployID) {
@@ -498,7 +476,8 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 		// live status poll reconciles after restart.
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
 		return 0, ErrDeployerStopped
-	default:
+	}
+	if !d.queue.push(job{deployID: deployID, appID: appID, noCache: opts.noCache, system: opts.system, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}) {
 		// Queue full (a full queue is hours of backlog with one worker): fail the
 		// deployment immediately instead of blocking the HTTP handler goroutine
 		// until a slot frees up.
@@ -510,6 +489,18 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "deploy queue full, try again later", "")
 		_ = d.store.SetStatus(wctx, appID, StatusError)
 		return 0, ErrQueueFull
+	}
+	if opts.tag != "" {
+		// After the send, not before: a refused job must not leave its tag
+		// on the application. The worker never reads it from the row, so
+		// writing it now cannot change what this deploy ships. Should the
+		// write fail, the deploy still ships the tag it carries; only the
+		// next deploy without one falls back to the old tag.
+		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := d.store.SetApplicationImage(wctx, appID, opts.image, opts.tag); err != nil {
+			slog.Error("record deployed image on the application failed", "app", appID, "deploy", deployID, "image", opts.image, "tag", opts.tag, "err", err)
+		}
 	}
 	return deployID, nil
 }
@@ -745,7 +736,10 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			// The migration chose this app while it ran, but it may have been
 			// stopped since (this deploy can wait long for a queue slot):
 			// moving it now would start it again.
-			if j.system && prev.Found && !prev.Global && prev.Desired == 0 {
+			// A global service is removed rather than scaled to zero, so a
+			// missing service counts as stopped too (the migration never moves
+			// an app that was not deployed).
+			if j.system && (!prev.Found || (!prev.Global && prev.Desired == 0)) {
 				return errStoppedMeanwhile
 			}
 			if expected != nil {

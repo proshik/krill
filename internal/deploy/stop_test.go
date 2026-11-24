@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"strings"
@@ -34,7 +35,8 @@ type stopEngine struct {
 
 	jitter bool // random short delays in every call (the race test)
 
-	scaled map[string]bool // services scaled to zero
+	scaled  map[string]bool // services scaled to zero
+	missing bool            // no service at all (a stopped global app is removed)
 }
 
 func newStopEngine() *stopEngine { return &stopEngine{mockEngine: &mockEngine{}} }
@@ -83,8 +85,11 @@ func (e *stopEngine) ServiceProgress(ctx context.Context, name string, baseline 
 		return docker.ServiceProgress{}, nil
 	}
 	e.emu.Lock()
-	down := e.scaled[name]
+	down, missing := e.scaled[name], e.missing
 	e.emu.Unlock()
+	if missing {
+		return docker.ServiceProgress{}, nil
+	}
 	if down {
 		return docker.ServiceProgress{Found: true, Desired: 0, TaskIDs: []string{"t-new"}}, nil
 	}
@@ -191,14 +196,14 @@ func TestStopCancelsQueuedDeploy(t *testing.T) {
 	}
 	// The job left the queue, and the slot is free: a new deploy is
 	// accepted right away and is the only job queued.
-	if n := len(d.queue); n != 0 {
+	if n := d.queue.len(); n != 0 {
 		t.Fatalf("%d jobs queued after the stop, want 0", n)
 	}
 	next, err := d.EnqueueErr(1, TriggerManual)
 	if err != nil {
 		t.Fatalf("deploy after stop refused: %v", err)
 	}
-	if j := <-d.queue; j.deployID != next || len(d.queue) != 0 {
+	if j := d.nextJob(); j.deployID != next || d.queue.len() != 0 {
 		t.Fatalf("queued job %d, want only %d", j.deployID, next)
 	}
 	if st.depStatus(id) != "error" {
@@ -369,7 +374,7 @@ func TestStopCancelsSystemDeploy(t *testing.T) {
 	if got := stopApp(t, d, e, 1); len(got) != 1 || got[0] != id {
 		t.Fatalf("cancelled = %v, want [%d]", got, id)
 	}
-	if len(d.queue) != 0 {
+	if d.queue.len() != 0 {
 		t.Fatal("stopped system deploy still queued")
 	}
 	if !strings.Contains(st.depError(id), "before it was applied") {
@@ -490,13 +495,13 @@ func TestStoppedJobsLeaveTheQueue(t *testing.T) {
 	d.Enqueue(2, TriggerManual)
 	<-bb.started // the worker is busy for good
 
-	for i := range 2 * cap(d.queue) {
+	for i := range 2 * d.queue.max {
 		if _, err := d.EnqueueErr(3, TriggerManual); err != nil {
 			t.Fatalf("deploy %d of the stopped app refused: %v", i, err)
 		}
 		stopApp(t, d, e, 3)
 	}
-	if n := len(d.queue); n != 0 {
+	if n := d.queue.len(); n != 0 {
 		t.Fatalf("%d cancelled jobs still hold queue slots", n)
 	}
 	if _, err := d.EnqueueErr(4, TriggerManual); err != nil {
@@ -533,7 +538,7 @@ func TestStopRetriesAFailedCancellationWrite(t *testing.T) {
 	if got := st.depStatus(id); got != "" {
 		t.Fatalf("deployment recorded %q despite the failed write", got)
 	}
-	if e.deploys() != 0 || len(d.queue) != 0 {
+	if e.deploys() != 0 || d.queue.len() != 0 {
 		t.Fatal("the cancelled deploy is still queued")
 	}
 	mu.Lock()
@@ -596,7 +601,7 @@ func TestShutdownDrainAndStopRecordOnce(t *testing.T) {
 		st := &countingStore{fakeStore: newFakeStore(imageApp())}
 		d := newDeployer(e, &mockBuilder{}, st)
 		id := d.Enqueue(1, TriggerManual)
-		j := <-d.queue
+		j := d.nextJob()
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); d.failQueued(j, "server shutting down") }()
@@ -655,7 +660,7 @@ func TestStopWaitsForADeployBeingAccepted(t *testing.T) {
 	if got := await(t, done); len(got) != 1 || got[0] != id {
 		t.Fatalf("cancelled %v, want [%d]", got, id)
 	}
-	if len(d.queue) != 0 {
+	if d.queue.len() != 0 {
 		t.Fatal("the cancelled deploy is still queued")
 	}
 }
@@ -670,7 +675,7 @@ func TestSystemDeploySkipsAnAppStoppedMeanwhile(t *testing.T) {
 	fn := &fakeNotifier{}
 	d.SetNotifier(fn)
 	id := d.EnqueueSystem(t.Context(), 1)
-	d.run(t.Context(), <-d.queue)
+	d.run(t.Context(), d.nextJob())
 	if e.deploys() != 0 {
 		t.Fatal("system deploy started a stopped app")
 	}
@@ -679,5 +684,202 @@ func TestSystemDeploySkipsAnAppStoppedMeanwhile(t *testing.T) {
 	}
 	if fn.was() {
 		t.Fatal("skipped system deploy alerted")
+	}
+}
+
+// nextJob takes the first queued job; a test calls it only when one is there.
+func (d *Deployer) nextJob() job {
+	j, ok := d.queue.pop()
+	if !ok {
+		panic("no queued job")
+	}
+	return j
+}
+
+// A deploy that converges while the stop waits for the routing lock, and so
+// starts recording its outcome after the stop looked at it, is waited for
+// too: its "running" cannot land after the stop's "idle".
+func TestStopWaitsForADeployFinishingAfterItsFirstLook(t *testing.T) {
+	e := newStopEngine()
+	e.deployStarted, e.deployRelease = make(chan struct{}), make(chan struct{})
+	entered, hold := make(chan struct{}), make(chan struct{})
+	st := &hookStore{fakeStore: newFakeStore(imageApp())}
+	st.finish = func(int64, string) error {
+		close(entered)
+		<-hold
+		return nil
+	}
+	d := newDeployer(e, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	defer release() // before d.Stop, should the test fail early
+	id := d.Enqueue(1, TriggerManual)
+	<-e.deployStarted
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.StopApp(context.Background(), 1, "alice", func(context.Context) error {
+			<-entered // the deploy converged and is writing "running" now
+			return nil
+		})
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // the stop has looked and waits for the lock
+	close(e.deployRelease)
+	select {
+	case <-done:
+		t.Fatal("stop returned while the deploy was still writing its outcome")
+	case <-time.After(150 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if st.depStatus(id) != "done" || st.appStatus(1) != StatusRunning {
+		t.Fatalf("deploy outcome %q / app %q not written before the stop returned", st.depStatus(id), st.appStatus(1))
+	}
+}
+
+// slowExitBuilder is a build that takes a while to wind down once cancelled
+// (a container being removed).
+type slowExitBuilder struct {
+	started chan struct{}
+	mu      sync.Mutex
+	exited  time.Time
+}
+
+func (b *slowExitBuilder) Build(ctx context.Context, _ builder.BuildRequest, _ io.Writer) (builder.BuildResult, error) {
+	close(b.started)
+	<-ctx.Done()
+	time.Sleep(200 * time.Millisecond)
+	b.mu.Lock()
+	b.exited = time.Now()
+	b.mu.Unlock()
+	return builder.BuildResult{}, ctx.Err()
+}
+
+// The stop returns only once the cancelled run has wound down, so its build
+// or predeploy container is gone when the app is reported stopped.
+func TestStopWaitsForTheCancelledRunToExit(t *testing.T) {
+	e := newStopEngine()
+	b := &slowExitBuilder{started: make(chan struct{})}
+	d := newDeployer(e, b, newFakeStore(dockerfileApp()))
+	d.Start(context.Background())
+	defer d.Stop()
+	d.Enqueue(2, TriggerManual)
+	<-b.started
+	stopApp(t, d, e, 2)
+	returned := time.Now()
+	b.mu.Lock()
+	exited := b.exited
+	b.mu.Unlock()
+	if exited.IsZero() || exited.After(returned) {
+		t.Fatal("stop returned before the cancelled build wound down")
+	}
+}
+
+// A stop does not hang behind an enqueue stuck in the database: it gives up
+// when its context does.
+func TestStopGivesUpWaitingForAStuckEnqueue(t *testing.T) {
+	e := newStopEngine()
+	d := newDeployer(e, &mockBuilder{}, newFakeStore(imageApp()))
+	d.admitMu.Lock() // an enqueue holding it
+	defer d.admitMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := d.StopApp(ctx, 1, "alice", e.scaler(1)); err == nil {
+		t.Fatal("stop succeeded without the admission lock")
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("stop ignored its context")
+	}
+}
+
+// Two stops at once write the cancellation once, with its log.
+func TestConcurrentStopsWriteTheCancellationOnce(t *testing.T) {
+	for i := range 100 {
+		e := newStopEngine()
+		var mu sync.Mutex
+		var logs []string
+		st := &hookStore{fakeStore: newFakeStore(imageApp())}
+		d := newDeployer(e, &mockBuilder{}, st)
+		st.finish = func(int64, string) error { return nil }
+		id := d.Enqueue(1, TriggerManual)
+		fmt.Fprintln(d.hub.Writer(id), "→ resolving")
+		wrap := &logStore{hookStore: st, logs: &logs, mu: &mu}
+		d.store = wrap
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() { defer wg.Done(); _, _ = d.StopApp(context.Background(), 1, "alice", e.scaler(1)) }()
+		}
+		wg.Wait()
+		mu.Lock()
+		if len(logs) != 1 || !strings.Contains(logs[0], "resolving") || !strings.Contains(logs[0], "before it was applied") {
+			t.Fatalf("run %d: writes %q", i, logs)
+		}
+		mu.Unlock()
+	}
+}
+
+type logStore struct {
+	*hookStore
+	mu   *sync.Mutex
+	logs *[]string
+}
+
+func (l *logStore) FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error {
+	l.mu.Lock()
+	*l.logs = append(*l.logs, log)
+	l.mu.Unlock()
+	return l.hookStore.FinishDeployment(ctx, deployID, status, imageTag, errMsg, log)
+}
+
+// A global app is removed, not scaled, when stopped: a system deploy that
+// finds no service does not create it again.
+func TestSystemDeploySkipsAStoppedGlobalApp(t *testing.T) {
+	shortSettle(t, time.Second)
+	e := newStopEngine()
+	e.missing = true
+	st := newFakeStore(imageApp())
+	d := newDeployer(e, &mockBuilder{}, st)
+	id := d.EnqueueSystem(t.Context(), 1)
+	d.run(t.Context(), d.nextJob())
+	if e.deploys() != 0 {
+		t.Fatal("system deploy recreated a stopped global app")
+	}
+	if !strings.Contains(st.depError(id), "stopped") {
+		t.Fatalf("deployment error = %q", st.depError(id))
+	}
+}
+
+// Compacting the queue keeps the order of the jobs left, whatever the worker
+// does meanwhile.
+func TestCompactingKeepsQueueOrder(t *testing.T) {
+	e := newStopEngine()
+	st := newFakeStore(imageApp())
+	st.apps = map[int64]App{}
+	for id := int64(2); id <= 6; id++ {
+		a := imageApp()
+		a.ID = id
+		st.apps[id] = a
+	}
+	d := newDeployer(e, &mockBuilder{}, st)
+	var want []int64
+	for id := int64(2); id <= 6; id++ {
+		dep := d.Enqueue(id, TriggerManual)
+		if id != 4 {
+			want = append(want, dep)
+		}
+	}
+	stopApp(t, d, e, 4)
+	var got []int64
+	for d.queue.len() > 0 {
+		got = append(got, d.nextJob().deployID)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("queue order %v, want %v", got, want)
 	}
 }

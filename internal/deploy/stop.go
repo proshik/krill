@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/proshik/krill/internal/oplock"
@@ -52,6 +53,15 @@ type tracked struct {
 	// a deploy finishing at that moment cannot overwrite the stop's status.
 	finishing bool
 	done      chan struct{}
+
+	// persisting is set while one stop writes the cancellation, so a second
+	// stop running at the same time neither takes the log a second time
+	// (getting an empty one) nor overwrites the row with it.
+	persisting bool
+	// exited closes when a cancelled run has returned (its build or predeploy
+	// container is gone); nil for a deploy the worker never started.
+	exited     chan struct{}
+	exitedOnce sync.Once
 }
 
 // errStoppedBeforeApply ends a deploy whose application was stopped before the
@@ -126,6 +136,7 @@ func (d *Deployer) begin(deployID int64, cancel context.CancelCauseFunc) bool {
 	}
 	t.phase = phasePreparing
 	t.cancel = cancel
+	t.exited = make(chan struct{})
 	return true
 }
 
@@ -174,6 +185,9 @@ func (d *Deployer) abandon(deployID int64) {
 	defer d.trackMu.Unlock()
 	if t := d.tracked[deployID]; t != nil && t.recorded {
 		t.workerDone = true
+		if t.exited != nil {
+			t.exitedOnce.Do(func() { close(t.exited) })
+		}
 		d.forgetLocked(deployID, t)
 	}
 }
@@ -212,27 +226,9 @@ func (d *Deployer) finished(deployID int64) {
 // order of the others. A cancelled job used to keep its slot until the worker
 // reached it, and its in-flight caps were already free, so deploying and
 // stopping in a loop while a long build ran could fill the shared queue and
-// refuse every other tenant's deploys. admitMu must be held: every sender
-// holds it, so the jobs taken out fit back in whatever the worker does.
+// refuse every other tenant's deploys.
 func (d *Deployer) compactQueue() {
-	n := len(d.queue)
-	kept := make([]job, 0, n)
-	for i := 0; i < n; i++ {
-		var j job
-		select {
-		case j = <-d.queue:
-		default:
-			i = n // the worker took the rest
-			continue
-		}
-		if d.dropCancelled(j.deployID) {
-			continue
-		}
-		kept = append(kept, j)
-	}
-	for _, j := range kept {
-		d.queue <- j
-	}
+	d.queue.remove(func(j job) bool { return d.dropCancelled(j.deployID) })
 }
 
 // dropCancelled reports whether a queued job was cancelled by a stop, and
@@ -249,8 +245,9 @@ func (d *Deployer) dropCancelled(deployID int64) bool {
 	return true
 }
 
-// stopWaitLimit caps how long StopApp waits for a deploy applying or
-// recording its outcome to let go of the app.
+// stopWaitLimit caps how long StopApp waits for what it has to let finish
+// first: an enqueue in progress, a cancelled run winding down, a deploy
+// applying its spec or writing its outcome.
 var stopWaitLimit = 30 * time.Second
 
 // StopApp stops an application and every deploy of it that has not applied its
@@ -261,15 +258,18 @@ var stopWaitLimit = 30 * time.Second
 // its context canceled and is recorded as stopped at once, so the
 // application's in-flight slot and its organization's are free when StopApp
 // returns. This happens under admitMu, so no deploy of the app can be between
-// its database row and its tracking. A deploy recording its outcome right now
-// is waited for, so its status cannot land after the stop's.
+// its database row and its tracking. A cancelled run is waited for until it
+// has wound down (its build killed, its predeploy container removed), and a
+// deploy recording its outcome right now is waited for, so its status cannot
+// land after the stop's.
 //
 // stop (scaling the service to zero) then runs under the app's routing lock,
 // which a deploy holds from its last check (enterApply) to the end of its
 // ServiceDeploy: a deploy that got there first has its new spec scaled down; a
 // deploy that did not is refused at that check. Only once stop succeeded is a
 // deploy that already applied its spec marked stopped, so it ends quietly when
-// it sees the service at zero; a failed stop leaves it to report normally.
+// it sees the service at zero; a failed stop leaves it to report normally. One
+// that started recording its outcome meanwhile is waited for instead.
 //
 // by names who stopped the app in the deploy log and the deployment's error.
 // It returns the deployments it cancelled. An error writing a cancellation is
@@ -278,9 +278,13 @@ func (d *Deployer) StopApp(ctx context.Context, appID int64, by string, stop fun
 	if by == "" {
 		by = stopActorUnknown
 	}
+	lctx, cancel := context.WithTimeout(ctx, stopWaitLimit)
+	defer cancel()
+	if err := d.lockAdmit(lctx); err != nil {
+		return nil, fmt.Errorf("wait for a deploy being queued: %w", err)
+	}
 	var cancelled, applying []int64
-	var finishing []chan struct{}
-	d.admitMu.Lock()
+	var waits []chan struct{}
 	d.trackMu.Lock()
 	for id, t := range d.tracked {
 		if t.appID != appID {
@@ -292,7 +296,7 @@ func (d *Deployer) StopApp(ctx context.Context, appID int64, by string, stop fun
 				cancelled = append(cancelled, id) // an earlier write failed
 			}
 		case t.finishing:
-			finishing = append(finishing, t.done)
+			waits = append(waits, t.done)
 		case t.phase == phaseApplying:
 			applying = append(applying, id)
 		default:
@@ -302,6 +306,9 @@ func (d *Deployer) StopApp(ctx context.Context, appID int64, by string, stop fun
 				t.cancel(errStoppedBeforeApply)
 			}
 			cancelled = append(cancelled, id)
+		}
+		if t.recorded && t.exited != nil {
+			waits = append(waits, t.exited)
 		}
 	}
 	d.trackMu.Unlock()
@@ -318,46 +325,75 @@ func (d *Deployer) StopApp(ctx context.Context, appID int64, by string, stop fun
 		slog.Info("deploy stopped before it was applied", "deploy", id, "app", appID)
 	}
 
-	lctx, cancel := context.WithTimeout(ctx, stopWaitLimit)
-	defer cancel()
-	for _, done := range finishing {
-		select {
-		case <-done:
-		case <-lctx.Done():
-			return cancelled, fmt.Errorf("wait for the app's deploy to record its outcome: %w", lctx.Err())
-		}
+	if err := waitAll(lctx, waits); err != nil {
+		return cancelled, fmt.Errorf("wait for the app's deploy to wind down: %w", err)
 	}
 	key := oplock.AppRouting(appID)
 	if err := oplock.Acquire(lctx, key); err != nil {
 		return cancelled, fmt.Errorf("wait for the app's deploy to finish applying: %w", err)
 	}
-	defer oplock.Release(key)
-	if err := stop(ctx); err != nil {
+	err := stop(ctx)
+	oplock.Release(key)
+	if err != nil {
 		return cancelled, err
 	}
+	waits = waits[:0]
 	d.trackMu.Lock()
 	for _, id := range applying {
-		if t := d.tracked[id]; t != nil && !t.finishing && t.stoppedBy == "" {
+		t := d.tracked[id]
+		switch {
+		case t == nil:
+		case t.finishing:
+			waits = append(waits, t.done) // decided before it could see the stop
+		default:
 			t.stoppedBy = by
 		}
 	}
 	d.trackMu.Unlock()
+	if err := waitAll(lctx, waits); err != nil {
+		return cancelled, fmt.Errorf("wait for the app's deploy to record its outcome: %w", err)
+	}
 	if persistErr != nil {
 		return cancelled, fmt.Errorf("record a stopped deployment: %w", persistErr)
 	}
 	return cancelled, nil
 }
 
-// persistStop writes a cancelled deploy's outcome, once: its log line and
-// feed close on the first attempt, the database row on the first attempt that
-// succeeds.
+// lockAdmit takes admitMu, giving up when ctx ends: an enqueue holds it
+// across database calls, and a stop must not hang behind a stuck one.
+func (d *Deployer) lockAdmit(ctx context.Context) error {
+	for !d.admitMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	return nil
+}
+
+func waitAll(ctx context.Context, chans []chan struct{}) error {
+	for _, ch := range chans {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+// persistStop writes a cancelled deploy's outcome. One call at a time takes
+// it: the first takes the deploy log (closing its feed), and a failed write
+// leaves it for the next stop, which writes the same log.
 func (d *Deployer) persistStop(ctx context.Context, deployID int64) error {
 	d.trackMu.Lock()
 	t := d.tracked[deployID]
-	if t == nil || t.persisted {
+	if t == nil || t.persisted || t.persisting {
 		d.trackMu.Unlock()
 		return nil
 	}
+	t.persisting = true
 	msg := t.stopMsg
 	d.trackMu.Unlock()
 
@@ -374,12 +410,14 @@ func (d *Deployer) persistStop(ctx context.Context, deployID int64) error {
 
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if err := d.store.FinishDeployment(wctx, deployID, "error", "", msg, full); err != nil {
+	err := d.store.FinishDeployment(wctx, deployID, "error", "", msg, full)
+	d.trackMu.Lock()
+	defer d.trackMu.Unlock()
+	t.persisting = false
+	if err != nil {
 		return err
 	}
-	d.trackMu.Lock()
 	t.persisted = true
 	d.forgetLocked(deployID, t)
-	d.trackMu.Unlock()
 	return nil
 }

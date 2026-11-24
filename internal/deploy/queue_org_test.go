@@ -89,7 +89,7 @@ func TestEnqueueSystemWaitsForQueueRoom(t *testing.T) {
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
 	// No worker is started, so nothing drains: fill the queue to capacity with
 	// one deploy per distinct app (the per-app guard allows one each).
-	for i := 1; i <= cap(d.queue); i++ {
+	for i := 1; i <= d.queue.max; i++ {
 		if id := d.Enqueue(int64(i), "manual"); id == 0 {
 			t.Fatalf("filling the queue: app %d was refused", i)
 		}
@@ -106,7 +106,7 @@ func TestEnqueueSystemWaitsForQueueRoom(t *testing.T) {
 	}
 
 	// Room frees up: the same call succeeds.
-	<-d.queue
+	d.nextJob()
 	if id := d.EnqueueSystem(context.Background(), 9999); id == 0 {
 		t.Fatal("with room in the queue the system deploy must be accepted")
 	}
@@ -119,21 +119,21 @@ func TestEnqueueSystemWaitsForQueueRoom(t *testing.T) {
 func TestEnqueueRefusalsAreTypedAndLeaveNoTrace(t *testing.T) {
 	st := newFakeStore(imageApp())
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, st)
-	for i := 0; i < cap(d.queue); i++ {
+	for i := 0; i < d.queue.max; i++ {
 		if _, err := d.EnqueueErr(int64(i+1), "manual"); err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
 	}
 	before := len(st.depApp)
 	st.mu.Lock()
-	statusBefore := st.status[int64(cap(d.queue)+1)]
+	statusBefore := st.status[int64(d.queue.max+1)]
 	st.mu.Unlock()
 
-	if id, err := d.EnqueueErr(int64(cap(d.queue)+1), "manual"); id != 0 || !errors.Is(err, ErrQueueFull) {
+	if id, err := d.EnqueueErr(int64(d.queue.max+1), "manual"); id != 0 || !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("full queue: id=%d err=%v", id, err)
 	}
 	st.mu.Lock()
-	after, statusAfter := len(st.depApp), st.status[int64(cap(d.queue)+1)]
+	after, statusAfter := len(st.depApp), st.status[int64(d.queue.max+1)]
 	st.mu.Unlock()
 	if after != before || statusAfter != statusBefore {
 		t.Fatalf("a refused deploy left a trace: deployments %d->%d, app status %q->%q", before, after, statusBefore, statusAfter)
