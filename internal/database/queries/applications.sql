@@ -120,11 +120,12 @@ SELECT id FROM applications WHERE id = $1 FOR UPDATE;
 -- theirs is: a deploy interrupted by a shutdown or a crash leaves the status
 -- behind, and nothing else ever rewrites it. last_finished is when the app's
 -- latest deployment ended, or its row last changed when it has none;
--- last_status is that deployment's status ('' when none); updated_at lets the
+-- last_status/last_error are that deployment's ('' when none); updated_at lets the
 -- write tell whether anything touched the row since.
 SELECT a.id, a.updated_at,
        COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished,
-       COALESCE((SELECT d.status FROM deployments d WHERE d.application_id = a.id ORDER BY d.id DESC LIMIT 1), '')::text AS last_status
+       COALESCE((SELECT d.status FROM deployments d WHERE d.application_id = a.id ORDER BY d.id DESC LIMIT 1), '')::text AS last_status,
+       COALESCE((SELECT d.error_message FROM deployments d WHERE d.application_id = a.id ORDER BY d.id DESC LIMIT 1), '')::text AS last_error
 FROM applications a
 WHERE a.status = 'deploying'
   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');

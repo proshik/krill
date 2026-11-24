@@ -624,7 +624,7 @@ func (s *DBStore) ListStuckDeployingApps(ctx context.Context) ([]StuckApp, error
 	}
 	out := make([]StuckApp, len(rows))
 	for i, r := range rows {
-		out[i] = StuckApp{ID: r.ID, Seen: r.UpdatedAt, LastFinished: r.LastFinished, LastStatus: r.LastStatus}
+		out[i] = StuckApp{ID: r.ID, Seen: r.UpdatedAt, LastFinished: r.LastFinished, LastStatus: r.LastStatus, LastError: r.LastError}
 	}
 	return out, nil
 }

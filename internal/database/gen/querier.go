@@ -308,7 +308,7 @@ type Querier interface {
 	// theirs is: a deploy interrupted by a shutdown or a crash leaves the status
 	// behind, and nothing else ever rewrites it. last_finished is when the app's
 	// latest deployment ended, or its row last changed when it has none;
-	// last_status is that deployment's status ('' when none); updated_at lets the
+	// last_status/last_error are that deployment's ('' when none); updated_at lets the
 	// write tell whether anything touched the row since.
 	ListStuckDeployingApplications(ctx context.Context) ([]ListStuckDeployingApplicationsRow, error)
 	ListSystemMembersByEnvironment(ctx context.Context, environmentID int64) ([]SystemMember, error)

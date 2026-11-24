@@ -18,6 +18,7 @@ type StuckApp struct {
 	Seen         time.Time // the row's updated_at when listed
 	LastFinished time.Time // when its latest deployment ended
 	LastStatus   string    // that deployment's status; "" when it has none
+	LastError    string    // and its error message
 }
 
 // StatusHealer is the store side of HealStuckStatuses.
@@ -33,9 +34,19 @@ type ServiceProgressReader interface {
 	ServiceProgress(ctx context.Context, name string, exclude []string) (docker.ServiceProgress, error)
 }
 
-// healPassTimeout bounds one pass: a Docker call that never answers must not
-// hold back every later pass.
-const healPassTimeout = 30 * time.Second
+// healLookupTimeout bounds each Docker and database call of a pass: one that
+// never answers must not hold back the apps after it, or every later pass.
+const healLookupTimeout = 5 * time.Second
+
+// stoppedOutcome reports whether a deployment's error records a stop of its
+// app (the stop owns the app's status) rather than a failure. A shutdown's
+// "interrupted: krill stopped …" is not one.
+func stoppedOutcome(msg string) bool {
+	return strings.HasPrefix(msg, "stopped by ") ||
+		msg == "stopped before the service converged" ||
+		msg == errStoppedMeanwhile.Error() ||
+		msg == errStoppedBeforeApply.Error()
+}
 
 // healedStatus is the status a stuck app gets from its live service, or ""
 // to leave it for a later pass. Whatever is still moving — a rolling update
@@ -55,8 +66,10 @@ func healedStatus(p docker.ServiceProgress, last StuckApp, now time.Time) string
 	switch {
 	case !p.Found:
 		// No service: a deploy that never created it failed (an interrupted
-		// first deploy), while a stopped global app has its service removed.
-		if last.LastStatus == "error" {
+		// first deploy), while a stopped global app has its service removed —
+		// also when the stop cancelled the deploy and Krill exited before the
+		// stop wrote the app's status.
+		if last.LastStatus == "error" && !stoppedOutcome(last.LastError) {
 			return StatusError
 		}
 		return StatusIdle
@@ -80,30 +93,50 @@ func healedStatus(p docker.ServiceProgress, last StuckApp, now time.Time) string
 // notified: the deploy's own outcome was already recorded (or failed at
 // startup), and the health watcher reports a service that is down.
 func HealStuckStatuses(ctx context.Context, s StatusHealer, eng ServiceProgressReader, now time.Time) (int, error) {
-	stuck, err := s.ListStuckDeployingApps(ctx)
+	lctx, lcancel := context.WithTimeout(ctx, healLookupTimeout)
+	stuck, err := s.ListStuckDeployingApps(lctx)
+	lcancel()
 	if err != nil {
 		return 0, err
 	}
 	healed := 0
+	var firstErr error
 	for _, a := range stuck {
-		p, err := eng.ServiceProgress(ctx, docker.ServiceName(a.ID), nil)
+		if ctx.Err() != nil {
+			return healed, ctx.Err()
+		}
+		// One app's failed lookup (a service removed meanwhile, a slow
+		// daemon) leaves that app for the next pass, not the ones after it.
+		pctx, pcancel := context.WithTimeout(ctx, healLookupTimeout)
+		p, err := eng.ServiceProgress(pctx, docker.ServiceName(a.ID), nil)
+		pcancel()
 		if err != nil {
-			return healed, err
+			slog.Warn("heal: could not read the service of an app left deploying", "app", a.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		status := healedStatus(p, a, now)
 		if status == "" {
 			continue
 		}
-		ok, err := s.HealAppStatus(ctx, a.ID, status, a.Seen)
+		wctx, wcancel := context.WithTimeout(ctx, healLookupTimeout)
+		ok, err := s.HealAppStatus(wctx, a.ID, status, a.Seen)
+		wcancel()
 		if err != nil {
-			return healed, err
+			slog.Warn("heal: could not write the status of an app left deploying", "app", a.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if ok {
 			healed++
 			slog.Info("application status was left deploying with no deploy running; set from the service", "app", a.ID, "status", status)
 		}
 	}
-	return healed, nil
+	return healed, firstErr
 }
 
 // StartStatusHeal runs HealStuckStatuses now and then every interval until ctx
@@ -115,11 +148,9 @@ func StartStatusHeal(ctx context.Context, s StatusHealer, eng ServiceProgressRea
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
-			pctx, pcancel := context.WithTimeout(ctx, healPassTimeout)
-			if _, err := HealStuckStatuses(pctx, s, eng, time.Now()); err != nil && ctx.Err() == nil {
-				slog.Warn("could not heal stuck application statuses", "err", err)
+			if _, err := HealStuckStatuses(ctx, s, eng, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Warn("could not heal every stuck application status", "err", err)
 			}
-			pcancel()
 			select {
 			case <-ctx.Done():
 				return
