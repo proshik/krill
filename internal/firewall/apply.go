@@ -291,6 +291,25 @@ func Status(ctx context.Context, r Runner) (bool, error) {
 	return strings.Contains(out, "yes"), nil
 }
 
+// TableAbsent reports whether nft positively lists the node's tables without
+// the lockdown table. Status cannot tell "no table" from "nft could not read
+// the ruleset" (both print no), which is fine for showing the page but not for
+// clearing a stored "closed" on the strength of it.
+func TableAbsent(ctx context.Context, r Runner) (bool, error) {
+	out, err := r.Run(ctx, "", "# krill-fw-tables\nout=$(nft list tables 2>&1) || { echo \"error: $out\"; exit 0; }; printf '%s\\n' \"$out\" | grep -qx 'table inet krill' && echo present || echo absent")
+	if err != nil {
+		return false, err
+	}
+	out = strings.TrimSpace(out)
+	switch {
+	case out == "absent":
+		return true, nil
+	case out == "present":
+		return false, nil
+	}
+	return false, fmt.Errorf("list nft tables: %s", out)
+}
+
 // GatewayOnly reports whether the node's live table admits some port only from
 // GatewayInterface — the rule BuildManagerRuleset writes for gatewayPorts, i.e.
 // the control plane's UI port closed to the world. A node with no table

@@ -468,6 +468,7 @@ func (s *Server) Router() http.Handler {
 				r.Post("/panel-domain/direct-port/close", s.closePanelDirectPort)
 				r.Post("/panel-domain/direct-port/confirm", s.confirmPanelDirectPort)
 				r.Post("/panel-domain/direct-port/open", s.openPanelDirectPort)
+				r.Post("/panel-domain/direct-port/record", s.recordPanelDirectPortOpen)
 				r.Get("/updates", s.updatesPage)
 				r.Post("/updates/check", s.checkUpdates)
 				r.Post("/updates/install", s.installUpdate)

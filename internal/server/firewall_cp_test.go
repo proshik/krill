@@ -30,6 +30,7 @@ type hostFirewall struct {
 	refused   int // Applies refused because a switch was already armed
 	rulesets  []string
 	persisted string // ruleset saved for boot ("" = none)
+	listErr   bool   // nft cannot list the tables (TableAbsent)
 }
 
 func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error) {
@@ -75,6 +76,14 @@ func (h *hostFirewall) Run(_ context.Context, stdin, cmd string) (string, error)
 		}
 		h.pending = true
 		return "armed 1700000000\n", nil
+	case strings.HasPrefix(cmd, "# krill-fw-tables"): // TableAbsent
+		switch {
+		case h.listErr:
+			return "error: Operation not permitted\n", nil
+		case h.locked:
+			return "present\n", nil
+		}
+		return "absent\n", nil
 	case strings.HasPrefix(cmd, "nft list table"): // GatewayOnly
 		if h.locked && len(h.rulesets) > 0 {
 			return h.rulesets[len(h.rulesets)-1], nil

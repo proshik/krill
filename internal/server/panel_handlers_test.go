@@ -698,25 +698,29 @@ func TestPanelDirectPortDriftShown(t *testing.T) {
 	if strings.Contains(body, "lets it in from everywhere") || strings.Contains(body, "reopen direct access") {
 		t.Fatal("without a Krill table the page must not claim the host lets the port in or offer to reopen it")
 	}
-	if !strings.Contains(body, `name="record_only" value="1"`) {
-		t.Fatal("the record-only form must say so, so a stale form cannot reopen")
+	if !strings.Contains(body, "/panel-domain/direct-port/record") || strings.Contains(body, "/panel-domain/direct-port/open") {
+		t.Fatal("record as open must post to its own route, never to reopen")
 	}
-	// A stale record-only form, posted after Krill's table came back, must
-	// not turn into a reopen that rewrites the ruleset.
-	e.fw.mu.Lock()
-	e.fw.locked = true
-	e.fw.mu.Unlock()
-	if rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{"record_only": {"1"}}, true); !hasErrFlash(rec) {
-		t.Fatal("a record-only request over a Krill table must be refused")
-	}
-	e.fw.mu.Lock()
-	if len(e.fw.rulesets) != applied || !e.row(t).DirectPortClosed {
+	// Posted after Krill's table came back (a stale form), or while nft
+	// cannot list the tables: refused, nothing recorded or applied.
+	for _, c := range []struct{ locked, listErr bool }{{true, false}, {false, true}} {
+		e.fw.mu.Lock()
+		e.fw.locked, e.fw.listErr = c.locked, c.listErr
 		e.fw.mu.Unlock()
-		t.Fatal("a refused record-only request must change nothing")
+		if rec := e.post(t, base+"/panel-domain/direct-port/record", cookie, url.Values{}, true); !hasErrFlash(rec) {
+			t.Fatalf("record with locked=%v listErr=%v must be refused", c.locked, c.listErr)
+		}
+		e.fw.mu.Lock()
+		changed := len(e.fw.rulesets) != applied
+		e.fw.mu.Unlock()
+		if changed || !e.row(t).DirectPortClosed {
+			t.Fatalf("a refused record (locked=%v listErr=%v) must change nothing", c.locked, c.listErr)
+		}
 	}
-	e.fw.locked = false
+	e.fw.mu.Lock()
+	e.fw.locked, e.fw.listErr = false, false
 	e.fw.mu.Unlock()
-	rec := e.post(t, base+"/panel-domain/direct-port/open", cookie, url.Values{"record_only": {"1"}}, true)
+	rec := e.post(t, base+"/panel-domain/direct-port/record", cookie, url.Values{}, true)
 	if hasErrFlash(rec) {
 		t.Fatalf("record as open: %q", flashCookieValue(rec))
 	}

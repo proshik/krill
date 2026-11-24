@@ -130,16 +130,17 @@ templ PanelDomain(org db.Organization, role string, v PanelDomainView) {
 						if !v.KrillTableMissing {
 							<p class="hint">{ i18n.T(ctx, "panel.direct_closed") }</p>
 						}
-						<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/panel-domain/direct-port/open") }>
-							if v.KrillTableMissing {
-								// With no Krill table the handler changes nothing on the host;
-								// record_only makes it refuse should the table be back.
-								<input type="hidden" name="record_only" value="1"/>
+						if v.KrillTableMissing {
+							// Its own route: it only clears the record, and refuses
+							// should Krill's table be back.
+							<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/panel-domain/direct-port/record") }>
 								<button type="submit" class="pill">{ i18n.T(ctx, "panel.direct_record_open") }</button>
-							} else {
+							</form>
+						} else {
+							<form method="post" hx-boost="false" action={ templ.SafeURL(orgURL(org.ID) + "/panel-domain/direct-port/open") }>
 								<button type="submit" class="pill">{ i18n.T(ctx, "panel.direct_open") }</button>
-							}
-						</form>
+							</form>
+						}
 					} else {
 						if !v.DirectDrift && v.DirectURL != "" {
 							<p class="hint">{ i18n.Tf(ctx, "panel.direct_open_desc", v.DirectURL) }</p>
