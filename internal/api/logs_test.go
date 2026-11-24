@@ -9,10 +9,12 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/api"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/logparse"
 )
 
 func TestAppLogsClampsTail(t *testing.T) {
@@ -600,5 +602,84 @@ func assertMessages(t *testing.T, lines []api.LogLine, want ...string) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("messages:\n got  %q\n want %q", got, want)
+	}
+}
+
+// stalledLogsEngine's log read gives body and then never ends, the way
+// Swarm's did for two apps on v0.13.2 (it only ends when closed).
+type stalledLogsEngine struct {
+	docker.Engine
+	body string
+}
+
+func (e *stalledLogsEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+	go pw.Write([]byte(e.body))
+	return pr, nil
+}
+
+// A log read that stalls must not hold the request: AppLogs answers with what
+// it read, and says the answer may be incomplete.
+func TestAppLogsStalledReadAnswersWithWhatItRead(t *testing.T) {
+	t.Cleanup(api.SetAppLogsTimeout(100 * time.Millisecond))
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, &stalledLogsEngine{body: sampleLogBody}, nil)
+	start := time.Now()
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("took %v", took)
+	}
+	if len(lines) != 6 {
+		t.Fatalf("want the 5 lines read plus a notice, got %d: %+v", len(lines), lines)
+	}
+	if last := lines[5]; last.Level != "warn" || !strings.Contains(last.Message, "missing") || last.Time != "" {
+		t.Fatalf("last line = %+v, want the incomplete-read notice", last)
+	}
+	// The tail still bounds the answer, notice included.
+	lines, err = svc.AppLogs(t.Context(), f.ident, f.appIDString, 2, "")
+	if err != nil || len(lines) != 2 || lines[0].Message != "a plain line with no detectable level" || lines[1].Level != "warn" {
+		t.Fatalf("tail 2 = %+v, %v", lines, err)
+	}
+}
+
+// withholdingEngine never answers the log request at all (the daemon holds
+// back its answer to the task listing).
+type withholdingEngine struct{ docker.Engine }
+
+func (withholdingEngine) ServiceLogs(ctx context.Context, _ string, _ bool, _ int) (io.ReadCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// The open counts against the same bound: AppLogs answers with the notice
+// alone instead of hanging.
+func TestAppLogsOpenThatNeverReturns(t *testing.T) {
+	t.Cleanup(api.SetAppLogsTimeout(100 * time.Millisecond))
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, withholdingEngine{}, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if len(lines) != 1 || lines[0].Level != "warn" || !strings.Contains(lines[0].Message, "incomplete") {
+		t.Fatalf("lines = %+v, want only the incomplete-read notice", lines)
+	}
+}
+
+// The engine could not read one task's log: the answer keeps the other
+// lines and says it is incomplete, without leaking the cause.
+func TestAppLogsIncompleteSource(t *testing.T) {
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, &stubLogsEngine{body: sampleLogBody, readErr: fmt.Errorf("%w: 1 of 2 tasks (node 10.0.0.7 unreachable)", logparse.ErrIncomplete)}, nil)
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	last := lines[len(lines)-1]
+	if len(lines) != 6 || last.Level != "warn" || strings.Contains(last.Message, "10.0.0.7") {
+		t.Fatalf("lines = %+v, want the five lines and the incomplete-read notice", lines)
 	}
 }

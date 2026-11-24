@@ -55,7 +55,7 @@ func TestServiceLogsStreamNewestLast(t *testing.T) {
 			return
 		}
 		defer conn.CloseNow()
-		if err := s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", "GAP"); err != nil {
+		if err := s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", testNotices); err != nil {
 			t.Errorf("stream: %v", err)
 		}
 	}))
@@ -76,6 +76,9 @@ func TestServiceLogsStreamNewestLast(t *testing.T) {
 				t.Fatalf("read: %v", err)
 			}
 			break
+		}
+		if string(b) == string(liveEvent) {
+			continue
 		}
 		var l logparse.LogLine
 		if err := json.Unmarshal(b, &l); err != nil {
@@ -107,7 +110,7 @@ func TestServiceLogsStreamReportsGap(t *testing.T) {
 			return
 		}
 		defer conn.CloseNow()
-		_ = s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", "GAP")
+		_ = s.streamServiceLogsToWS(conn.CloseRead(context.Background()), conn, "krill-1", testNotices)
 	}))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -122,6 +125,9 @@ func TestServiceLogsStreamReportsGap(t *testing.T) {
 		_, b, err := conn.Read(ctx)
 		if err != nil {
 			break
+		}
+		if string(b) == string(liveEvent) {
+			continue
 		}
 		var l logparse.LogLine
 		_ = json.Unmarshal(b, &l)

@@ -556,23 +556,6 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 	return out, nil
 }
 
-func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool, tail int) (io.ReadCloser, error) {
-	rc, err := e.cli.ServiceLogs(ctx, name, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     follow,
-		Tail:       strconv.Itoa(tail),
-		Timestamps: true,
-		// Each line carries its task: the log viewer keeps its place per task
-		// (logparse.Cursor), and logparse.ParseLogLine strips the attributes.
-		Details: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return NewLogReader(rc), nil
-}
-
 func (e *dockerEngine) ImagePull(ctx context.Context, ref string, out io.Writer) error {
 	rc, err := e.cli.ImagePull(ctx, ref, image.PullOptions{})
 	if err != nil {

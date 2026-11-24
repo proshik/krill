@@ -3,12 +3,19 @@ package logparse
 import (
 	"bufio"
 	"container/heap"
+	"context"
+	"errors"
 	"hash/fnv"
 	"io"
 	"sort"
 	"strings"
 	"time"
 )
+
+// BacklogTimeout bounds how long a caller waits for a non-following service
+// log read, opening included (ReadBacklog, ReadWithin), before it uses what
+// it has.
+const BacklogTimeout = 10 * time.Second
 
 // backlogBytes bounds the message text a backlog keeps: Swarm returns the
 // tail of every task, running and stopped, and lines can be long.
@@ -28,35 +35,209 @@ const backlogBytes = 4 << 20
 // timestamp sorts with the line before it. The returned error is the
 // scanner's: the lines read before it are still returned.
 func Backlog(r io.Reader, n int) ([]LogLine, *Cursor, error) {
-	c := &Cursor{tasks: map[string]*taskMark{}}
-	h := &newest{}
-	var last time.Time
-	var seq, bytes int
+	b := newBacklog(n)
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
+	sc.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for sc.Scan() {
-		l := ParseLogLine(sc.Text())
-		if ts, err := time.Parse(time.RFC3339Nano, l.Time); err == nil {
-			last = ts
-			c.mark(l, ts)
-		}
-		if Blank(l) || n <= 0 {
-			continue
-		}
-		seq++
-		heap.Push(h, entry{at: last, seq: seq, line: l})
-		bytes += len(l.Msg)
-		for h.Len() > n || (bytes > backlogBytes && h.Len() > 1) {
-			bytes -= len(heap.Pop(h).(entry).line.Msg)
-		}
+		b.add(sc.Text())
 	}
-	entries := []entry(*h)
+	lines, c := b.result()
+	return lines, c, sc.Err()
+}
+
+// ReadBacklog is Backlog over a read that open starts, the whole of it —
+// opening included — bounded by d: Swarm's non-following log read can stall
+// without ending, and a viewer waiting on it would see nothing at all. cut
+// reports that the history is incomplete: d ran out, or the source said
+// part of it could not be read (ErrIncomplete). The lines read by then are
+// returned and the cursor covers exactly them, so a following stream
+// started next still drops their replays and reports a gap for a task it
+// finds already past them. openErr is open's error; scanErr is the read's.
+func ReadBacklog(ctx context.Context, d time.Duration, n int, open func(context.Context) (io.ReadCloser, error)) (lines []LogLine, c *Cursor, cut bool, openErr, scanErr error) {
+	b := newBacklog(n)
+	cut, openErr, scanErr = ReadWithin(ctx, d, open, b.add)
+	lines, c = b.result()
+	return lines, c, cut, openErr, scanErr
+}
+
+// ErrIncomplete ends a log stream whose source could not read all of it (a
+// task's log that failed or took too long): the lines before it are good,
+// but some are missing. ScanWithin reports it as a cut, not as an error.
+var ErrIncomplete = errors.New("part of the log could not be read")
+
+// ReadWithin opens a non-following log read with open and calls line for
+// each of its lines, both within d. The context open gets is cancelled when
+// ReadWithin returns, so whatever the source still has in flight stops with
+// it. cut reports an incomplete read (see ReadBacklog); openErr is open's
+// error, returned before any line; scanErr is the read's.
+func ReadWithin(ctx context.Context, d time.Duration, open func(context.Context) (io.ReadCloser, error), line func(string)) (cut bool, openErr, scanErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	deadline := time.Now().Add(d)
+	type opened struct {
+		rc  io.ReadCloser
+		err error
+	}
+	res := make(chan opened, 1)
+	go func() {
+		rc, err := open(ctx)
+		res <- opened{rc, err}
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	var rc io.ReadCloser
+	select {
+	case o := <-res:
+		if o.err != nil {
+			return false, o.err, nil
+		}
+		rc = o.rc
+	case <-timer.C:
+		// Abandoned: the cancel above ends the open, and whatever it still
+		// returns is closed.
+		go func() {
+			if o := <-res; o.rc != nil {
+				o.rc.Close()
+			}
+		}()
+		return true, nil, nil
+	}
+	if rc == nil {
+		return false, nil, nil
+	}
+	defer rc.Close()
+	cut, scanErr = ScanWithin(rc, time.Until(deadline), line)
+	return cut, nil, scanErr
+}
+
+// backlog collects the newest lines of a stream, see Backlog.
+type backlog struct {
+	n     int
+	c     *Cursor
+	h     *newest
+	last  time.Time
+	seq   int
+	bytes int
+}
+
+func newBacklog(n int) *backlog {
+	return &backlog{n: n, c: &Cursor{tasks: map[string]*taskMark{}}, h: &newest{}}
+}
+
+func (b *backlog) add(raw string) {
+	l := ParseLogLine(raw)
+	if ts, err := time.Parse(time.RFC3339Nano, l.Time); err == nil {
+		b.last = ts
+		b.c.mark(l, ts)
+	}
+	if Blank(l) || b.n <= 0 {
+		return
+	}
+	b.seq++
+	heap.Push(b.h, entry{at: b.last, seq: b.seq, line: l})
+	b.bytes += len(l.Msg)
+	for b.h.Len() > b.n || (b.bytes > backlogBytes && b.h.Len() > 1) {
+		b.bytes -= len(heap.Pop(b.h).(entry).line.Msg)
+	}
+}
+
+func (b *backlog) result() ([]LogLine, *Cursor) {
+	entries := []entry(*b.h)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].before(entries[j]) })
 	out := make([]LogLine, len(entries))
 	for i, e := range entries {
 		out[i] = e.line
 	}
-	return out, c, sc.Err()
+	return out, b.c
+}
+
+// maxLine is the longest log line a scan accepts (bufio.ErrTooLong past it).
+const maxLine = 1024 * 1024
+
+// ScanWithin calls line for each line of r, in order, until r ends or d has
+// passed. A read ending with ErrIncomplete counts as cut. A read still running at d is abandoned: r is closed (which ends a
+// docker log read) and ScanWithin returns with cut set, after handing line
+// whatever was already read, without waiting for the read to notice — a
+// reader that ignores Close cannot hold the caller either. err is the
+// scanner's error when r ended first.
+func ScanWithin(r io.ReadCloser, d time.Duration, line func(string)) (cut bool, err error) {
+	lines := make(chan string, 64)
+	scanErr := make(chan error, 1)
+	stop := make(chan struct{})
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), maxLine)
+		for sc.Scan() {
+			select {
+			case lines <- sc.Text():
+			case <-stop:
+				return
+			}
+		}
+		scanErr <- sc.Err()
+	}()
+	// ended reports a read that finished on its own (lines closed before
+	// stop): its error was sent before lines was closed.
+	ended := func() (bool, error) {
+		var err error
+		select {
+		case err = <-scanErr:
+		default:
+		}
+		if errors.Is(err, ErrIncomplete) {
+			return true, nil
+		}
+		return false, err
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				return ended()
+			}
+			line(l)
+		case <-timer.C:
+			// An outcome the read already reached stands (an overlong line
+			// is still an error): take what is queued before closing r.
+			for i := 0; i <= cap(lines); i++ {
+				select {
+				case l, ok := <-lines:
+					if !ok {
+						return ended()
+					}
+					line(l)
+					continue
+				default:
+				}
+				break
+			}
+			close(stop)
+			r.Close()
+			for {
+				select {
+				case l, ok := <-lines:
+					if !ok {
+						// r ended cleanly right at d after all; any error
+						// here may be the Close above.
+						select {
+						case err = <-scanErr:
+							if err == nil {
+								return false, nil
+							}
+						default:
+						}
+						return true, nil
+					}
+					line(l)
+				default:
+					return true, nil
+				}
+			}
+		}
+	}
 }
 
 // Blank is a line with nothing to read (Postgres writes empty ones): shown, it

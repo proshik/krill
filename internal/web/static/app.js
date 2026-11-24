@@ -103,6 +103,9 @@ function mountLogViewer(el) {
   let query = "";
 
   function rowVisible(row) {
+    // A row without a timestamp is not the service's output but a word about
+    // the stream (nothing yet, lines missing, stream broken): filters keep it.
+    if (row.dataset.notice) return true;
     const lvlOK = level === "all" || row.dataset.level === level;
     const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
     return lvlOK && txtOK;
@@ -131,10 +134,24 @@ function mountLogViewer(el) {
     const clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     return d.toDateString() === today.toDateString() ? clock : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${clock}`;
   }
+  // placeholder is the one row saying there is nothing to show yet: the
+  // server has sent its backlog and it was empty. A real line replaces it.
+  let placeholder = null;
+  function setPlaceholder(text) {
+    if (!placeholder) {
+      addRow({ msg: text });
+      placeholder = body.lastElementChild;
+      placeholder.dataset.placeholder = "1";
+    } else {
+      placeholder.querySelector("code").textContent = text;
+    }
+  }
   function addRow(line) {
+    if (placeholder && line.t) { placeholder.remove(); placeholder = null; }
     const row = document.createElement("li");
     const lv = (line.lvl || "").toLowerCase();
     row.dataset.level = lv;
+    if (!line.t) row.dataset.notice = "1";
     row.dataset.text = (line.msg || "").toLowerCase();
     const t = document.createElement("time");
     t.textContent = fmtTime(line.t);
@@ -155,8 +172,17 @@ function mountLogViewer(el) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}${el.dataset.logs}`);
   let got = false;
-  ws.onmessage = (e) => { got = true; try { addRow(JSON.parse(e.data)); } catch (_) { /* ignore */ } };
-  ws.onclose = () => { if (!got) addRow({ msg: el.dataset.empty || "no logs yet" }); };
+  ws.onmessage = (e) => {
+    let line;
+    try { line = JSON.parse(e.data); } catch (_) { return; }
+    // {"ev":"live"}: the backlog is through, the live stream follows.
+    if (line.ev === "live") { if (!got) setPlaceholder(el.dataset.waiting || "no lines yet"); return; }
+    // Only the service's own lines (they carry docker's timestamp) count:
+    // a notice about the stream keeps the waiting text coming.
+    if (line.t) got = true;
+    addRow(line);
+  };
+  ws.onclose = () => { if (!got) setPlaceholder(el.dataset.empty || "no logs yet"); };
   ws.onerror = () => addRow({ lvl: "error", msg: el.dataset.error || "log stream error" });
   // A boosted navigation away replaces the body: close the stream with it.
   const stop = () => { try { ws.close(); } catch (_) { /* closed */ } document.removeEventListener("htmx:beforeSwap", onSwap); };

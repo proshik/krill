@@ -34,7 +34,10 @@ func (s *Server) serveServiceLogs(w http.ResponseWriter, r *http.Request, servic
 	}
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
-	if err := s.streamServiceLogsToWS(ctx, conn, service, i18n.T(r.Context(), "log.gap")); err != nil {
+	if err := s.streamServiceLogsToWS(ctx, conn, service, logNotices{
+		Gap: i18n.T(r.Context(), "log.gap"),
+		Cut: i18n.T(r.Context(), "log.cut"),
+	}); err != nil {
 		if viewerGone(ctx, err) {
 			return
 		}
