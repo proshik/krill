@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"strings"
@@ -188,14 +189,17 @@ func TestStopCancelsQueuedDeploy(t *testing.T) {
 	if st.depStatus(id) != "error" || st.depError(id) != "stopped by alice@example.com before it was applied" {
 		t.Fatalf("deployment = %q %q", st.depStatus(id), st.depError(id))
 	}
-	// The slot is free: a new deploy is accepted right away.
-	if _, err := d.EnqueueErr(1, TriggerManual); err != nil {
+	// The job left the queue, and the slot is free: a new deploy is
+	// accepted right away and is the only job queued.
+	if n := len(d.queue); n != 0 {
+		t.Fatalf("%d jobs queued after the stop, want 0", n)
+	}
+	next, err := d.EnqueueErr(1, TriggerManual)
+	if err != nil {
 		t.Fatalf("deploy after stop refused: %v", err)
 	}
-	// The worker drops the stopped job and runs the new one.
-	d.run(t.Context(), <-d.queue)
-	if e.deploys() != 0 {
-		t.Fatalf("stopped queued deploy applied its spec: %v", e.log())
+	if j := <-d.queue; j.deployID != next || len(d.queue) != 0 {
+		t.Fatalf("queued job %d, want only %d", j.deployID, next)
 	}
 	if st.depStatus(id) != "error" {
 		t.Fatalf("stopped deployment rewritten to %q", st.depStatus(id))
@@ -365,9 +369,11 @@ func TestStopCancelsSystemDeploy(t *testing.T) {
 	if got := stopApp(t, d, e, 1); len(got) != 1 || got[0] != id {
 		t.Fatalf("cancelled = %v, want [%d]", got, id)
 	}
-	d.run(t.Context(), <-d.queue)
-	if e.deploys() != 0 {
-		t.Fatalf("stopped system deploy applied: %v", e.log())
+	if len(d.queue) != 0 {
+		t.Fatal("stopped system deploy still queued")
+	}
+	if !strings.Contains(st.depError(id), "before it was applied") {
+		t.Fatalf("deployment error = %q", st.depError(id))
 	}
 }
 
@@ -437,3 +443,241 @@ func (c *countingStore) finishes(id int64) int {
 
 var _ builder.Builder = (*blockingBuilder)(nil)
 var _ io.Writer = (*hubWriter)(nil)
+
+// hookStore lets a test hold or fail the writes a stop races with.
+type hookStore struct {
+	*fakeStore
+	finish func(deployID int64, errMsg string) error // nil: record normally
+	create func()                                    // runs inside CreateDeployment
+}
+
+func (h *hookStore) FinishDeployment(ctx context.Context, deployID int64, status, imageTag, errMsg, log string) error {
+	if h.finish != nil {
+		if err := h.finish(deployID, errMsg); err != nil {
+			return err
+		}
+	}
+	return h.fakeStore.FinishDeployment(ctx, deployID, status, imageTag, errMsg, log)
+}
+
+func (h *hookStore) CreateDeployment(ctx context.Context, appID int64, trigger string) (int64, error) {
+	if h.create != nil {
+		h.create()
+	}
+	return h.fakeStore.CreateDeployment(ctx, appID, trigger)
+}
+
+// Deploying and stopping an app in a loop while a long build holds the
+// worker must not fill the shared queue: a cancelled job leaves it at once.
+// Before, each one kept its slot until the worker reached it, while its
+// in-flight caps were already free, and 64 of them refused every other
+// tenant's deploys with "queue full".
+func TestStoppedJobsLeaveTheQueue(t *testing.T) {
+	e := newStopEngine()
+	bb := &blockingBuilder{started: make(chan struct{})}
+	st := newFakeStore(dockerfileApp())
+	for _, id := range []int64{3, 4} {
+		a := imageApp()
+		a.ID = id
+		if st.apps == nil {
+			st.apps = map[int64]App{}
+		}
+		st.apps[id] = a
+	}
+	d := newDeployer(e, bb, st)
+	d.Start(context.Background())
+	defer d.Stop()
+	d.Enqueue(2, TriggerManual)
+	<-bb.started // the worker is busy for good
+
+	for i := range 2 * cap(d.queue) {
+		if _, err := d.EnqueueErr(3, TriggerManual); err != nil {
+			t.Fatalf("deploy %d of the stopped app refused: %v", i, err)
+		}
+		stopApp(t, d, e, 3)
+	}
+	if n := len(d.queue); n != 0 {
+		t.Fatalf("%d cancelled jobs still hold queue slots", n)
+	}
+	if _, err := d.EnqueueErr(4, TriggerManual); err != nil {
+		t.Fatalf("another app's deploy refused: %v", err)
+	}
+	d.trackMu.Lock()
+	n := len(d.tracked)
+	d.trackMu.Unlock()
+	if n != 2 { // the build and app 4's deploy
+		t.Fatalf("%d deploys still tracked, want 2", n)
+	}
+}
+
+// A cancellation that cannot be written is not lost: StopApp says so, the
+// deploy stays cancelled (it never applies), and the next stop writes it.
+func TestStopRetriesAFailedCancellationWrite(t *testing.T) {
+	e := newStopEngine()
+	fail := true
+	var mu sync.Mutex
+	st := &hookStore{fakeStore: newFakeStore(imageApp())}
+	st.finish = func(int64, string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if fail {
+			return errors.New("database unavailable")
+		}
+		return nil
+	}
+	d := newDeployer(e, &mockBuilder{}, st)
+	id := d.Enqueue(1, TriggerManual)
+	if _, err := d.StopApp(t.Context(), 1, "alice@example.com", e.scaler(1)); err == nil {
+		t.Fatal("a failed write was reported as a successful stop")
+	}
+	if got := st.depStatus(id); got != "" {
+		t.Fatalf("deployment recorded %q despite the failed write", got)
+	}
+	if e.deploys() != 0 || len(d.queue) != 0 {
+		t.Fatal("the cancelled deploy is still queued")
+	}
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	if got := stopApp(t, d, e, 1); len(got) != 1 || got[0] != id {
+		t.Fatalf("second stop cancelled %v, want a retry of %d", got, id)
+	}
+	if st.depError(id) != "stopped by alice@example.com before it was applied" {
+		t.Fatalf("deployment error = %q", st.depError(id))
+	}
+	d.trackMu.Lock()
+	n := len(d.tracked)
+	d.trackMu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d deploys still tracked", n)
+	}
+}
+
+// A stop that fails to scale the service does not mark an applied deploy
+// stopped: its later failure is reported and alerted as usual.
+func TestFailedStopLeavesAppliedDeployReporting(t *testing.T) {
+	old := convergeTimeout
+	convergeTimeout = time.Minute
+	defer func() { convergeTimeout = old }()
+	e := newStopEngine()
+	e.deployStarted, e.deployRelease = make(chan struct{}), make(chan struct{})
+	e.mockEngine.crashLooping = true
+	st := newFakeStore(imageApp())
+	d := newDeployer(e, &mockBuilder{}, st)
+	fn := &fakeNotifier{}
+	d.SetNotifier(fn)
+	d.Start(context.Background())
+	defer d.Stop()
+
+	id := d.Enqueue(1, TriggerManual)
+	<-e.deployStarted
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.StopApp(context.Background(), 1, "alice", func(context.Context) error { return errors.New("swarm unavailable") })
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(e.deployRelease)
+	if err := <-done; err == nil {
+		t.Fatal("failed scale reported as a stop")
+	}
+	waitFor(t, func() bool { return st.depStatus(id) == "error" })
+	waitFor(t, fn.was)
+	if st.appStatus(1) != StatusError {
+		t.Fatalf("app status = %q, want error", st.appStatus(1))
+	}
+}
+
+// Shutdown draining the queue and a stop of the same deploy record it once,
+// whichever comes first.
+func TestShutdownDrainAndStopRecordOnce(t *testing.T) {
+	for i := range 200 {
+		e := newStopEngine()
+		st := &countingStore{fakeStore: newFakeStore(imageApp())}
+		d := newDeployer(e, &mockBuilder{}, st)
+		id := d.Enqueue(1, TriggerManual)
+		j := <-d.queue
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); d.failQueued(j, "server shutting down") }()
+		go func() { defer wg.Done(); _, _ = d.StopApp(context.Background(), 1, "alice", e.scaler(1)) }()
+		wg.Wait()
+		if n := st.finishes(id); n != 1 {
+			t.Fatalf("run %d: deployment recorded %d times", i, n)
+		}
+	}
+}
+
+// A deploy recording its outcome when the stop arrives is waited for: its
+// app status cannot land after the stop's.
+func TestStopWaitsForAFinishingDeploy(t *testing.T) {
+	e := newStopEngine()
+	hold, entered := make(chan struct{}), make(chan struct{})
+	st := &hookStore{fakeStore: newFakeStore(imageApp())}
+	st.finish = func(int64, string) error {
+		close(entered)
+		<-hold
+		return nil
+	}
+	d := newDeployer(e, &mockBuilder{}, st)
+	d.Start(context.Background())
+	defer d.Stop()
+	id := d.Enqueue(1, TriggerManual)
+	<-entered // the deploy converged and is writing its outcome
+	done := stopAsync(d, e, 1)
+	select {
+	case <-done:
+		t.Fatal("stop returned while the deploy was still writing its outcome")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(hold)
+	await(t, done)
+	if st.appStatus(1) != StatusRunning || st.depStatus(id) != "done" {
+		t.Fatalf("deploy outcome %q / app %q not written before the stop returned", st.depStatus(id), st.appStatus(1))
+	}
+}
+
+// A stop arriving while a deploy is being accepted (its row exists, the
+// worker does not know it yet) waits for it and cancels it.
+func TestStopWaitsForADeployBeingAccepted(t *testing.T) {
+	e := newStopEngine()
+	inCreate, release := make(chan struct{}), make(chan struct{})
+	st := &hookStore{fakeStore: newFakeStore(imageApp())}
+	st.create = func() { close(inCreate); <-release }
+	d := newDeployer(e, &mockBuilder{}, st)
+	ids := make(chan int64, 1)
+	go func() { ids <- d.Enqueue(1, TriggerManual) }()
+	<-inCreate
+	done := stopAsync(d, e, 1)
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	id := <-ids
+	if got := await(t, done); len(got) != 1 || got[0] != id {
+		t.Fatalf("cancelled %v, want [%d]", got, id)
+	}
+	if len(d.queue) != 0 {
+		t.Fatal("the cancelled deploy is still queued")
+	}
+}
+
+// The network migration may queue a system deploy of a running app that is
+// stopped before the deploy runs: it must not start the app again.
+func TestSystemDeploySkipsAnAppStoppedMeanwhile(t *testing.T) {
+	e := newStopEngine()
+	e.mockEngine.stopped = true // the service exists, scaled to zero
+	st := newFakeStore(imageApp())
+	d := newDeployer(e, &mockBuilder{}, st)
+	fn := &fakeNotifier{}
+	d.SetNotifier(fn)
+	id := d.EnqueueSystem(t.Context(), 1)
+	d.run(t.Context(), <-d.queue)
+	if e.deploys() != 0 {
+		t.Fatal("system deploy started a stopped app")
+	}
+	if st.depStatus(id) != "error" || !strings.Contains(st.depError(id), "stopped") {
+		t.Fatalf("deployment = %q %q", st.depStatus(id), st.depError(id))
+	}
+	if fn.was() {
+		t.Fatal("skipped system deploy alerted")
+	}
+}
