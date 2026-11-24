@@ -608,6 +608,7 @@ var ru = map[string]string{
 	"flash.ok.app_created":                 "приложение создано",
 	"flash.ok.app_deleted":                 "приложение удалено",
 	"flash.ok.app_stopped":                 "приложение остановлено",
+	"flash.ok.stop_cancelled_deploy":       "приложение остановлено, незавершённый деплой отменён",
 	"flash.ok.backup_created":              "бекап создан",
 	"flash.ok.backup_deleted":              "бекап удалён",
 	"flash.ok.backup_updated":              "бекап обновлён",

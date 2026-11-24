@@ -608,6 +608,7 @@ var en = map[string]string{
 	"flash.ok.app_created":                 "application created",
 	"flash.ok.app_deleted":                 "application deleted",
 	"flash.ok.app_stopped":                 "application stopped",
+	"flash.ok.stop_cancelled_deploy":       "application stopped, the unfinished deploy was cancelled",
 	"flash.ok.backup_created":              "backup created",
 	"flash.ok.backup_deleted":              "backup deleted",
 	"flash.ok.backup_updated":              "backup updated",
