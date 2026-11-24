@@ -35,7 +35,7 @@ func RunMigrations(dsn string) error {
 // what this binary embeds, it logs a warning and returns without calling
 // Up() rather than failing with "no migration found for version N". This is
 // safe only because migrations are required to be additive relative to the
-// previous release — see the compatibility policy in CLAUDE.md §4.
+// previous release — see the compatibility policy in docs/internals/code-map.md.
 //
 // Cancelling ctx (a shutdown signal) never interrupts a migration halfway:
 // golang-migrate marks the schema dirty before each migration and clean

@@ -59,8 +59,9 @@ make test
 - **Commits** follow [Conventional Commits](https://www.conventionalcommits.org/):
   `feat(scope): …`, `fix(scope): …`, `docs: …`.
 
-[CLAUDE.md](CLAUDE.md) holds the detailed notes on internals and known pitfalls, written for AI
-coding agents and just as useful to people.
+[AGENTS.md](AGENTS.md) holds the project rules and known pitfalls, and
+[docs/internals/](docs/internals/README.md) the detailed notes on each feature's internals —
+written for AI coding agents and just as useful to people.
 
 ## Pull requests
 

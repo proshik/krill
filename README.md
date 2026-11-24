@@ -140,6 +140,7 @@ else's production:
 | [krill-cli](docs/guides/krill-cli.md) | Build on your machine, deploy to Krill. |
 | [Architecture](docs/architecture.md) | How it fits together, data model, source layout. |
 | [Development](docs/development.md) | Run from source, tests, releases. |
+| [Internals](docs/internals/README.md) | Implementation notes per feature, for contributors and coding agents (rules in [AGENTS.md](AGENTS.md)). |
 
 ## Contributing
 

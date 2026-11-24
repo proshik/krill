@@ -1,0 +1,118 @@
+# Networking, gateway and domains
+
+How organizations get their own overlay networks, how Traefik routes apps and the Krill UI itself, and how domains, paths, redirects, protection and raw ports work.
+
+## Per-organization networks
+
+every organization now gets its own Docker overlay network, `krill-org-<id>` (`internal/orgnet.Name`), instead of sharing the single `KRILL_NETWORK`. `organizations.network_name` (migration 000042) records it once created; `organizations.network_migrated_at` (migration 000043) records that every one of the organization's services has actually been moved there — `network_name` alone can't carry that, since it is written *before* anything moves. `internal/deploy` (`GetOrganizationNetworkByApp`) and `internal/dbservice` (`GetOrgNetwork`) resolve an app's/instance's org network at deploy time and fall back to `KRILL_NETWORK` when it is still empty. Traefik joins every organization's network plus the base one (`traefik.Reconcile`, replacing the old one-shot `Bootstrap`; idempotent via a spec-fingerprint label so an unchanged spec doesn't force a task recreation on every restart) and is kept in sync as organizations are created (`Server.reconcileGateway`, a `func()`-typed field set by `SetGatewayReconcile` and triggered from `createOrg`, debounced 3s + rate-limited to one reconcile/minute so a burst of org creation can't be used to blip ingress repeatedly). On an existing install, `internal/orgnet.Migrator` runs once in the background **after** the HTTP listener is up (never blocks boot — a full pass can take minutes) and only once Traefik's own reconcile has succeeded (migrating services into networks the gateway never joined would be worse than not migrating): it moves each organization's databases before its apps (an app landing on the new network before its database can't resolve it by name), waits for each batch of databases to actually come up before enqueuing the apps that depend on them (a transient `ServiceStates` error is logged and polled past, not fatal), skips apps that are stopped or were never deployed, and **parks** stopped database instances instead of redeploying them (`orgnet.RunningInstancesFilter` + `dbservice.ParkInstance`: the service is rewritten onto the org network at its current replica count — zero for a stopped one — without starting it or waiting on it; skipping it would not do, because `StartInstance` only scales the existing service and would bring it back up on the shared network), and marks an organization migrated only once every step of its pass has completed — including every app deployment it submitted reaching a terminal status other than `error` (`RedeployApp` returns the deployment id and the migrator polls `ListDeploymentStatuses`; a submitted deploy proves nothing, and one that fails leaves that app on the old network). A partial pass (a failed database listing, a redeploy that errors, an app deployment that fails or is still unfinished when the 30-minute pass deadline expires) leaves the organization unmarked and the *whole* pass is retried on the next boot, not resumed piecemeal. The pass runs in two phases (2026-09-22): first every organization's databases are moved and its app redeploys submitted, then all organizations' deployments are polled together and each organization is marked as soon as its own finish — so one slow organization no longer spends the shared deadline while the ones after it wait unsubmitted; after the deadline one last sweep on a detached context (`finalSweepTimeout`) still records the organizations that did finish, and the mark itself is written on a detached context too. The database phase is still sequential per organization (each batch waits up to 3 minutes for its instances). Moving a service is an ordinary redeploy (`Deployer.EnqueueSystem`, bypassing both the per-app and per-org in-flight caps so the migration itself is never rate-limited by them), so a Dockerfile app is rebuilt (from cache, not `--no-cache`) to move networks — the first start after upgrading an install with several such apps is correspondingly slow. `docker.Engine.NetworkRemove` exists (idempotent, modeled on `NetworkEnsure`) but has no production caller yet — there is no "delete organization" endpoint in the codebase for it to clean up after.
+
+## Panel domain
+
+the UI is a host process, so the swarm provider (labels) cannot route to it; instead Traefik's **HTTP provider** polls Krill at `GET /_krill/gateway/config` (`panel.ProviderPath`) for the UI's routes (`panel.DynamicConfig`: `krill-panel-https` on websecure with `tls.certResolver=le`, `krill-panel-http` redirect-only on web, service → `http://KRILL_ADVERTISE_ADDR:<listen port>` from `panel.Upstream`; routers carry priority 1 000 000 so a tenant app claiming the same host can't tie; with an IP allowlist a higher-priority `krill-panel-machine` router keeps `/webhooks/`, `/api/`, `/mcp` unfiltered). Chosen over a file provider (a bind mount ties Traefik to a host path and breaks on Colima) and over running Krill as a Swarm service (changes the install model) — same dynamic-config shape Dokploy/Coolify write to files. Singleton table `panel_gateway` (migration 000045) holds a random `secret` (`secret.Enc`, created by `panel.EnsureSecret` at startup, replaced if undecryptable) from which **two** HMAC tokens derive (`panel.DeriveTokens`): the *provider* token goes into Traefik's args (`--providers.http.headers.X-Krill-Gateway-Provider=…`; args depend only on config + secret, so the spec fingerprint is stable and `traefik.Reconcile`/`TraefikSpec` take a `PanelProvider` — zero value = provider omitted when `panel.Upstream` fails, e.g. no advertise addr or loopback listen), and the *forwarded* token is stamped by a `headers.customRequestHeaders` middleware on every proxied request (`X-Krill-Gateway`). They must differ — the forwarded token rides on every request through the domain, and `gatewayConfig` 404s any request carrying it. A valid forwarded token is how the server recognizes a gateway request (`Server.viaGateway`/`secureViaGateway` + Traefik's own `X-Forwarded-Proto`, which Traefik strips from untrusted clients): it makes `X-Forwarded-For` trusted for the login limiter (`trustForwardedFor`, per request — `KRILL_TRUST_PROXY` stays for external proxies) and cookies `Secure` (`cookieSecure(r)`; `setFlash`/`setFlashPw`/`setFlashToken` now take `r`), so direct `http://ip:8080` keeps plain cookies and remains the way back. The login page warns when `KRILL_COOKIE_SECURE=true` meets plain HTTP. State `off → pending → active`: saving a host routes it immediately but changes nothing for the direct address; `confirmPanelDomain` accepts only a request on the domain over HTTPS (`onPanelDomain`) **and** a trusted cert (`panel.CheckCertificate` dials `ADVERTISE:443` with SNI — checks the cert only, not reachability; skipped with `KRILL_ACME_STAGING`). **Direct port close** (`closePanelDirectPort`, requires active + on-domain + lockdown already on) rebuilds the control-plane ruleset with `controlPlaneServicePorts(listen, closeDirect=true)` → UI port moves from the public set to `iifname "docker_gwbridge"` (`firewall.BuildManagerRuleset(ips, public, gateway)`), applied via `lockdownControlPlane` with the dead-man switch; `direct_port_close_pending` until `confirmPanelDirectPort` arrives through the domain. `lockdownControlPlane` now drops idle keep-alive conns after Apply (`SetIdleConnCloser` → `srv.SetKeepAlivesEnabled(false/true)`) so a pre-apply connection can't carry the confirmation. Coupling with the Firewall page: a lockdown honors `direct_port_closed` and is refused off-domain when it is set; the firewall confirm also finalizes a pending panel close; **Open cluster** resets the flags; the page clears a close whose switch fired. Guards: the domain can't be changed/removed while direct access is closed or closing; apps can't take the panel host (`hostReservedByPanel` in `createApp`/`addDomain`) nor the panel an app's host; an operator on the domain can't save an allowlist excluding their own IP. **HSTS** (migration 000046, `panel_gateway.hsts_max_age`, CHECK: non-zero only while `active`; reset by `SetPanelDomainPending`/`DisablePanelDomain`): the global `panelHSTS` middleware sets `Strict-Transport-Security: max-age=N` only when `secureViaGateway(r)` AND state active AND `RequestHost(r)==host` — `max-age=0` while off, to unwind an earlier policy; never `includeSubDomains`/`preload` (the panel shares a parent domain with unrelated hosts); max-age is limited to `panel.HSTSPresets` (0/5m/1d/1w/30d/1y), set via `setPanelHSTS` (refused unless active). `TestPanelCookiesSecureOnlyViaGateway` pins the per-request Secure decision for both session and flash cookies (direct, direct claiming https, gateway https, gateway http, forged token). `Server.baseURL` prefers `KRILL_PUBLIC_URL`, then `https://<active panel host>`. No basic-auth option (it would eat the `Authorization: Bearer` of API/MCP). Rollback runbook (SSH: `nft delete table inet krill` + `UPDATE panel_gateway …`) lives in `docs/guides/domains.md`. Handlers: `internal/server/panel_handlers.go`, instance-admin routes under `/orgs/{id}/panel-domain`.
+
+## Domains/TLS
+
+*(Phase 5)*
+
+the `domains` table (host UNIQUE, tls, is_primary) is the routing source of truth; `applications.domain` is the denormalized primary. `traefik.AppLabels(serviceName, []traefik.Domain, port, network)` emits per-domain routers — non-TLS on `web`, TLS on `websecure` with `tls.certresolver=le` plus a `web`→HTTPS redirect router (no global redirect). Domain CRUD re-applies labels via `engine.ServiceUpdateLabels` (service-level labels only → no container restart). Traefik bootstrap adds `:443` + the `le` HTTP-01 resolver + the persistent `krill-traefik-acme` volume at `/letsencrypt`. Real ACME issuance is verified manually (needs public DNS); locally TLS stays off and sslip.io domains serve plain HTTP.
+
+## Gateway route exposure
+
+per-domain `domains.exposed` + `domains.paths`. `traefik.AppLabels` skips non-exposed domains — **zero exposed → `traefik.enable=false` (overlay-only, internal)**; exposed + paths → `Host(...) && (PathPrefix(...) || …)` rule (anything else 404); `validPaths` guards against rule injection. **New apps are internal by default** (auto primary domain `exposed=false`, with a "not exposed" warning banner); existing domains were backfilled `exposed=true`. UI: Domains tab has a per-domain Exposed toggle + paths editor. The "who" axis (basic-auth / IP-allowlist) is done — see [Route protection](#route-protection-basic-auth--ip-allowlist) below.
+
+## Route protection (basic-auth / IP-allowlist)
+
+per-domain `domains.basic_auth_users` (htpasswd `user:bcrypthash`, newline-separated) + `domains.allowed_ips` (CIDR/IP, newline-separated; migration 000020). `traefik.AppLabels` attaches middlewares to the serving router (non-TLS `base`, TLS `base+"s"`; the redirect router is left unprotected) in order `ipallowlist.sourcerange` then `basicauth.users` — chained = AND. Admin-gated handlers (`addDomainBasicAuthUser`/`deleteDomainBasicAuthUser`/`setDomainAllowedIPs`) validate username-regex + `net.ParseCIDR`/`ParseIP` (canonicalized), bcrypt via `auth.HashPassword`; passwords/hashes are never logged or shown — logins only. UI: "Access protection" section on the Domains tab (exposed domains only). IDOR/admin-gate tests + a 4-lens adversarial review are green.
+
+## Shared hosts by path
+
+*(2026-10-02)*
+
+implemented on `feat/shared-host-paths`; live
+Let's Encrypt acceptance remains in ROADMAP. Apps of one environment can share a host,
+with one catch-all and disjoint segment paths. `internal/hostshare.Store` checks and writes
+under a per-host PostgreSQL advisory lock; `Add` inherits the host's TLS, `UpdatePaths`
+checks its own row without self-conflicts, and `SetTLS` requires the original domain ID
+still to exist before changing all rows. `CreateApplication` reserves an exclusive primary
+host and inserts app + domain atomically; `SetPanelDomain` uses the same host lock, and
+app writes recheck the panel reservation inside it. All domain mutations must preserve
+this lock protocol now that `domains_host_key` is gone. Domain claims are row-locked to
+prevent deletion during a checked update. The Domains tab lists sibling apps and confirms
+host-wide HTTPS; topology ingress labels include paths. See `docs/guides/domains.md`.
+
+## Domain redirect to the primary domain
+
+*(2026-11-16)*
+
+branch `domain-redirect-to-primary`;
+live Let's Encrypt acceptance remains in ROADMAP. `domains.redirect_to_primary` (migration
+000060, CHECK `NOT (is_primary AND redirect_to_primary)`) makes a non-primary domain answer
+every request with a `redirectregex` middleware (`^https?://[^/]+(.*)$` →
+`<primary scheme>://<primary host>${1}`, `permanent=true`: Traefik v3.6 sends 301 to GET and
+308 to every other method — it has no 308-on-GET option). `traefik.AppLabels` computes the
+target from the `Primary` row on every label write, so a primary change moves redirects with
+the next label sync; redirect routers are Host-only at catch-all priority (no paths, hidden
+metrics paths, basic-auth or allowlist), routed regardless of `exposed`, TLS gets its own
+`le` certificate on websecure plus a web router redirecting straight to the target (ACME's
+`acme-http@internal` router has priority `math.MaxInt`, so HTTP-01 is never redirected). A
+redirect without a primary in the list is not routed. Every label writer converts rows with
+`deploy.TraefikDomains` — add new routing fields there. `hostshare.Store.SetRedirect`/
+`MakePrimary` run under the per-host lock: a redirect takes its whole host (`Claim.Redirect`
+in `Check`, `flash.err.host_redirects`), is refused on the primary (conditional UPDATE + the
+CHECK), and **Make primary** (the first way to change `is_primary` after creation) is refused
+for a redirecting domain and for a host other apps share, rewrites `is_primary` for every row
+of the app and `applications.domain`; it takes an application advisory lock
+(`krill.domain-primary:<appID>`) BEFORE the host lock — two primary changes on different
+hosts would otherwise deadlock on each other's target row (`TestStoreConcurrentMakePrimary`),
+and then locks the `applications` row before any `domains` row (`LockApplicationRow`) — an app
+delete takes them in that order via ON DELETE CASCADE (`TestStoreMakePrimaryVersusApplicationDelete`).
+Since the primary can now move, `deleteDomain` deletes with `DeleteNonPrimaryDomain`
+(`AND NOT is_primary`, 0 rows ⇒ refused), and `CountExposedDomainsByApplication` ignores
+redirecting rows. Traefik drops routers of a service without running
+tasks (`allowEmptyServices=false`), so a stopped app's redirect 404s — documented, not changed.
+
+## Raw TCP/UDP published ports
+
+`app_ports` table (migration 000025: `host_port`/`container_port`/`protocol`, `UNIQUE(host_port, protocol)`) → `deploy.App.Ports` → `spec.Ports` (host publish mode; the `internal/docker` layer already supported TCP/UDP via `PortSpec.UDP`). Admin-gated `addAppPort`/`deleteAppPort` validate range 1..65535 + protocol ∈ {tcp,udp} and conflict-check the host port against both `app_ports` AND managed-DB `external_port` (for TCP); tenant chain-check + IDOR. UI: "Published ports" on the Advanced tab. Applied on the next deploy. Deferred: ingress (swarm LB) mode, port ranges, auto-pick, firewall/UFW.
+
+## Pitfalls
+
+### Traefik is pinned to `v3.6.1`
+
+**Traefik is pinned to `v3.6.1`** (`internal/traefik/bootstrap.go`, const `TraefikVersion`). Versions ≤3.6.0 hardcode Docker API 1.24, which Docker Engine 29.x rejects ("client version 1.24 is too old"), breaking the Swarm provider and all routing. v3.6.1 auto-negotiates the API version. Traefik is configured via CLI args only (no `traefik.yml`); the only mount is the docker socket (read-only).
+
+### A host-mode published port deadlocks a StartFirst update
+
+*(2026-09-13)*
+
+The replacement task binds the same port on the same node, so Swarm leaves it `Pending` ("no suitable node (host-mode port conflict)") and — StartFirst — never stops the old task: the update neither finishes nor fails, the old spec keeps running, and nothing is logged. It hit Traefik (`:80`/`:443` in host mode, pinned to the manager): every gateway spec change after the first create (a new organization, the startup reconcile after an upgrade) silently left Traefik on its old networks. `buildSwarmSpec` now uses StopFirst for any service with a host-mode port (Traefik, raw TCP/UDP app ports, DB proxies — a brief gap instead of a hang), and `traefik.Reconcile` waits for the new task to run and for Swarm to mark the update `completed` (baseline-relative, 3 min — `completed` lands after the 5s update monitor, inside which Swarm can still roll back) and returns an error otherwise, so `gatewayReady` — and with it the org-network migration — means the gateway really joined the networks. Reconcile also refuses to trust a matching spec-hash label while the service's `UpdateState` is still `updating`/`paused`: the label is written with the spec, so an install stuck before the fix carries the current hash and would otherwise never be redeployed.
+
+### Gateway timeouts are explicit and long responses are safe
+
+*(2026-11-21)*
+
+`traefik.gatewayTimeoutArgs` pins Traefik v3.6's own defaults (measured on the pinned image): entrypoint `readTimeout=60s` (reading the whole REQUEST, body included — slow uploads fail), `writeTimeout=0s` (no cap on a response), `idleTimeout=180s` (keep-alive idle BETWEEN requests only), and towards apps `dialTimeout=30s`, `responseHeaderTimeout=0s`, `idleConnTimeout=90s`. `TestGatewayTimeoutsAndAccessLogOnRealTraefik` (`-tags=integration`, ~90s) proves a response silent for 75s is delivered whole over HTTP/1.1 and HTTP/2; a 200s silence was also checked by hand. `KRILL_GATEWAY_ACCESS_LOG` (`off`/`filtered`/`all`, `traefik.SetAccessLog` before the first Reconcile) adds JSON access-log args: `filtered` = status 400-599 OR retried OR duration ≥ 10s (Traefik ORs filters), headers dropped, query strings logged. Any change to these args changes the spec fingerprint, so the first start after an upgrade redeploys the gateway once (stop-first: a few seconds without ingress).
+
+### Shared hosts need explicit priorities
+
+Metrics deny rules can make a catch-all's
+rule longer than a path rule. App path routers use 200, catch-all 100 (both below the
+panel's 1,000,000), including HTTP-to-HTTPS redirects. `/api` matches `Path(/api)` or
+`PathPrefix(/api/)`, never the raw string prefix that also matches `/apiary`. Normalize
+legacy trailing slashes and `/` on reads, not only when saving a domain.
+
+### Hidden metrics paths use ``PathRegexp(`(?i)^<path>(?:[/;].*)?$`)``, not `Path`/`PathPrefix`
+
+Case-insensitive backends (ASP.NET) and servlet containers stripping `;` parameters would otherwise serve `/METRICS` or `/metrics;x` through the domain. `internal/traefik`'s `TestHiddenMetricsPathsOnRealTraefik` (`-tags=integration`) runs the pinned Traefik and fails on the old rule.
+
+### An overlay network's `com.docker.network.driver.mtu` is the underlay MTU, not the containers'
+
+*(2026-11-06)*
+
+Containers on the network get the option minus 50 (VXLAN); no option means 1500, hence Docker's 1450. `KRILL_OVERLAY_MTU` is the container-side value and `overlayCreateOptions` adds the 50 — verified by `TestOverlayNetworkMTU` (`-tags=integration`), which reads `eth0`'s MTU inside a container. An existing network's MTU cannot change; it applies only at creation. The nftables ruleset is persisted only on confirm (`/etc/krill/firewall.nft` + `krill-firewall.service`) and carries an empty `krill_rs_<hash>` chain as its identity, which the Firewall page compares live against the ruleset the cluster needs now.
+
+### The firewall dead-man switch has one snapshot per node
+
+*(2026-09-22)*
+
+`firewall.Apply` snapshots the table to `/run/krill-fw-prev.nft` and arms the `krill-fw-revert` timer that restores it. A second Apply before Confirm used to overwrite the snapshot with the unconfirmed ruleset and only then fail on `systemd-run` (the unit name was taken), so the revert put back the change it was guarding. This was hit live by pressing **Close direct access** twice. Now one shell script (`armScript`) refuses while the timer or its service is active (`*firewall.RevertArmedError` carries the revert time), and only then snapshots and arms. The script runs under an `flock` on a fixed fd, so two overlapping Applies can't both pass the check. Every firewall-changing handler also holds `Server.fwMu` (`lockFirewall`, which refuses with "busy" instead of waiting), because they read the stored state, change the host and record the result as separate steps. The snapshot starts with the same `table inet krill { }` + `delete table inet krill` prologue as `buildRuleset`, since a bare `nft list table` restored with `nft -f` appends to the live table instead of replacing it. A ruleset `nft -f` rejects changed nothing, so Apply disarms the switch it just armed. Only `firewall.Open` (**Open cluster**) stops the timer without waiting. **`Confirm` (2026-11-07)** disarms only a timer that is still waiting (`disarmIfArmedScript`; otherwise `ErrRevertFired` and nothing is persisted — the revert may be restoring the previous table right then). `systemctl is-active` on the timer alone can't tell a waiting timer from one whose revert service already runs, and stopping the timer doesn't stop that service, so Confirm and the revert share one protocol: both take an `flock` on `<snapshot>.lock`, Confirm (under it) refuses while the service is active and otherwise leaves a `<snapshot>.confirmed` marker before stopping the timer, and the revert (`revertShell`, under the same lock) exits without touching nft when the marker exists, and otherwise leaves a `<snapshot>.reverted` marker before restoring, which makes Confirm answer "expired" — on real systemd a Confirm that waited for the lock while the revert ran then saw the service inactive and the timer still active, and confirmed a reverted change; `armScript` deletes both markers before arming, and arms the timer with `AccuracySec=1s` (systemd's default of one minute let it fire up to a minute after the revert time the page shows). `TestConfirmProtocolOnRealSystemd` (`-tags=realsystemd`, a privileged systemd container, see the test) checks this on systemd 252 and 257. Once disarmed, Confirm never returns an error for a failed persist (logged; the page's drift note shows it), because callers treat a Confirm error as "not confirmed" while the ruleset would be in force with no revert left. Removing a node opens its firewall (its persisted ruleset would otherwise reload at every boot with nothing in Krill able to open it), under `fwMu` through the Open and the row delete — a lockdown running meanwhile would otherwise apply its ruleset after Open stopped the revert. Swarm ports are bound to the WireGuard interface only with a complete address list (`swarmAddrSet`): a missing address makes binding MORE likely, so any doubt leaves it unbound.

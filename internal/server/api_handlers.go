@@ -391,7 +391,7 @@ type apiSetEnvRequest struct {
 // effect on the next deployment (see api.Service.SetEnv for why this does not
 // redeploy by itself).
 // The audit line deliberately omits the value: it may be a secret, and
-// CLAUDE.md's logging rule ("never log secrets... connection strings")
+// AGENTS.md's logging rule ("never log secrets... connection strings")
 // applies here exactly as it does to the web UI's own env editor.
 func (s *Server) apiSetEnv(w http.ResponseWriter, r *http.Request, ref string) {
 	ident, ok := api.IdentityFrom(r.Context())

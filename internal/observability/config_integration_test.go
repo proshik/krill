@@ -52,7 +52,7 @@ func TestNodeConfigValidates(t *testing.T) {
 }
 
 // TestNodeConfigWithNodesLoads goes further than TestNodeConfigValidates: as
-// CLAUDE.md's Alloy gotcha notes, `alloy validate` does not catch every
+// docs/internals/operations.md's Alloy pitfall notes, `alloy validate` does not catch every
 // class of error — confirmed here the hard way, since it accepts a
 // single-backslash regex (e.g. "node-1\.ru") that `alloy run` then rejects
 // at load with "unknown escape sequence" (verified manually against this same

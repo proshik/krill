@@ -3,9 +3,10 @@
 # Policy: a migration must keep the PREVIOUS release's binary bootable. Self-update rolls back
 # to that binary on a failed upgrade, and it has to start and keep working against whatever
 # schema the newer release already applied (see "Migrations" in docs/development.md and
-# CLAUDE.md §4). So only the rules that catch a change the previous binary could trip over are
-# kept: dropping or renaming what it reads, changing a type it scans, adding a column it does not
-# know how to fill, or a new uniqueness or foreign key that can reject a write it still performs.
+# the migration rules in AGENTS.md). So only the rules that catch a change the previous binary
+# could trip over are kept: dropping or renaming what it reads, changing a type it scans, adding
+# a column it does not know how to fill, or a new uniqueness or foreign key that can reject a
+# write it still performs.
 #
 # Every other built-in rule of squawk v2.65.0 is excluded explicitly below. Those are
 # lock-safety, performance and style rules (CONCURRENTLY, NOT VALID, timeouts, preferred column

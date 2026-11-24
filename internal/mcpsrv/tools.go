@@ -457,7 +457,7 @@ func registerSetEnv(srv *mcp.Server, svc *api.Service) {
 			return toolError(ctx, err), nil, nil
 		}
 		// The audit line omits the value, which may be a secret — the same
-		// rule CLAUDE.md states for the web UI's env editor, and that the
+		// rule AGENTS.md states for the web UI's env editor, and that the
 		// REST adapter's apiSetEnv already follows.
 		slog.InfoContext(ctx, "mcp set env requested", "app_ref", in.App, "key", in.Key, "remove", in.Remove, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
 		return jsonResult(ctx, okResult), nil, nil
