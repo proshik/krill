@@ -143,3 +143,51 @@ func TestTaskLogsStreamEndsCleanWhenEveryTaskWasRead(t *testing.T) {
 		t.Fatalf("stream = %q, %v", out, err)
 	}
 }
+
+// Each kind of failed task read on its own marks the stream incomplete: a
+// body that stalls past taskLogTimeout, and an open that fails.
+func TestTaskLogsStreamEachFailureIsIncomplete(t *testing.T) {
+	old := taskLogTimeout
+	taskLogTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { taskLogTimeout = old })
+	for name, failing := range map[string]func(ctx context.Context) (io.ReadCloser, error){
+		"timeout": func(ctx context.Context) (io.ReadCloser, error) {
+			return &stalledBody{ctx: ctx, r: bytes.NewReader(muxed("s1\n"))}, nil
+		},
+		"open": func(context.Context) (io.ReadCloser, error) { return nil, errors.New("no such task") },
+	} {
+		rc := taskLogsStream(context.Background(), []string{"a", "bad"}, func(ctx context.Context, id string) (io.ReadCloser, error) {
+			if id == "bad" {
+				return failing(ctx)
+			}
+			return io.NopCloser(bytes.NewReader(muxed("a1\n"))), nil
+		})
+		out, err := io.ReadAll(rc)
+		rc.Close()
+		if !errors.Is(err, logparse.ErrIncomplete) || !strings.HasPrefix(string(out), "a1\n") {
+			t.Fatalf("%s: stream %q ended with %v, want a1 then ErrIncomplete", name, out, err)
+		}
+	}
+}
+
+// Closing the engine's reader cancels the task read still waiting behind
+// it, without a write to notice the close by.
+func TestCancelOnCloseStopsTheTaskReads(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan context.Context, 1)
+	rc := cancelOnClose{ReadCloser: taskLogsStream(ctx, []string{"silent", "next"}, func(ctx context.Context, id string) (io.ReadCloser, error) {
+		if id == "next" {
+			t.Error("opened the next task after the reader was closed")
+		}
+		started <- ctx
+		return &stalledBody{ctx: ctx, r: bytes.NewReader(nil)}, nil
+	}), cancel: cancel}
+	tctx := <-started
+	rc.Close()
+	select {
+	case <-tctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the task read was not cancelled")
+	}
+	time.Sleep(50 * time.Millisecond)
+}

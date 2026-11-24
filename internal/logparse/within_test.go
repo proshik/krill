@@ -223,13 +223,33 @@ func TestReadWithinBoundsTheOpen(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		return r, nil
 	}, func(string) {})
-	if took := time.Since(start); !cut || took > 600*time.Millisecond {
-		t.Fatalf("cut=%v after %v, want the whole read within the budget", cut, took)
+	if took := time.Since(start); !cut || took > 450*time.Millisecond {
+		t.Fatalf("cut=%v after %v, want the whole read within the 300ms budget, not a fresh one for the scan", cut, took)
 	}
 
 	// An open error is returned as such.
 	want := errors.New("no such service")
 	if _, openErr, _ := ReadWithin(context.Background(), time.Second, func(context.Context) (io.ReadCloser, error) { return nil, want }, func(string) {}); !errors.Is(openErr, want) {
 		t.Fatalf("openErr = %v", openErr)
+	}
+}
+
+// An outcome the read already reached when the deadline fires stands: an
+// overlong line is still an error, not a cut. The first line's handler is
+// slow, so by the next select the scan has failed and the deadline is due
+// too; with both ready the timeout branch must still report the error.
+func TestScanWithinKeepsAnErrorReachedBeforeTheDeadline(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		r := io.NopCloser(strings.NewReader("a\n" + strings.Repeat("x", maxLine+1)))
+		first := true
+		cut, err := ScanWithin(r, 20*time.Millisecond, func(string) {
+			if first {
+				first = false
+				time.Sleep(80 * time.Millisecond)
+			}
+		})
+		if cut || err == nil {
+			t.Fatalf("run %d: cut=%v err=%v, want the scanner's error", i, cut, err)
+		}
 	}
 }

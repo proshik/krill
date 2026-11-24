@@ -93,6 +93,13 @@ func readBacklog(t *testing.T, e docker.Engine, name string, limit time.Duration
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		l := logparse.ParseLogLine(sc.Text())
+		// The merge by time and the live cursor need both.
+		if l.Task == "" {
+			t.Fatalf("line without its task: %q", sc.Text())
+		}
+		if _, err := time.Parse(time.RFC3339Nano, l.Time); err != nil {
+			t.Fatalf("line without docker's timestamp: %q", sc.Text())
+		}
 		perTask[l.Task]++
 		total++
 	}

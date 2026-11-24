@@ -27,8 +27,9 @@ const (
 // logNotices are the viewer's texts for the two ways its log can be
 // incomplete, in the viewer's language.
 type logNotices struct {
-	// Gap goes before a task's first following line when the task wrote
-	// more than liveOverlap lines between the two reads.
+	// Gap goes before a task's first following line when that line is
+	// already past the backlog: the task wrote more than liveOverlap lines
+	// between the two reads, or its backlog was cut before its end.
 	Gap string
 	// Cut follows the backlog when its read was given up after
 	// logparse.BacklogTimeout: some of the earlier lines may be missing, and

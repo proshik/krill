@@ -103,7 +103,9 @@ function mountLogViewer(el) {
   let query = "";
 
   function rowVisible(row) {
-    if (row.dataset.placeholder) return true; // says why there is nothing to filter
+    // A row without a timestamp is not the service's output but a word about
+    // the stream (nothing yet, lines missing, stream broken): filters keep it.
+    if (row.dataset.notice) return true;
     const lvlOK = level === "all" || row.dataset.level === level;
     const txtOK = query === "" || row.dataset.text.indexOf(query) !== -1;
     return lvlOK && txtOK;
@@ -140,7 +142,6 @@ function mountLogViewer(el) {
       addRow({ msg: text });
       placeholder = body.lastElementChild;
       placeholder.dataset.placeholder = "1";
-      placeholder.hidden = false;
     } else {
       placeholder.querySelector("code").textContent = text;
     }
@@ -150,6 +151,7 @@ function mountLogViewer(el) {
     const row = document.createElement("li");
     const lv = (line.lvl || "").toLowerCase();
     row.dataset.level = lv;
+    if (!line.t) row.dataset.notice = "1";
     row.dataset.text = (line.msg || "").toLowerCase();
     const t = document.createElement("time");
     t.textContent = fmtTime(line.t);

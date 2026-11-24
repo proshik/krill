@@ -1430,7 +1430,7 @@ var en = map[string]string{
 	"env.editor":                       "editor",
 	"log.all":                          "all",
 	"log.empty":                        "no logs yet: start the service or deploy it",
-	"log.gap":                          "some lines may be missing here: the service wrote faster than the stream opened. Reload the page to load the latest lines again.",
+	"log.gap":                          "some lines may be missing here, between the earlier lines and the live ones. Reload the page to load the latest lines again.",
 	"log.cut":                          "not all of the earlier lines could be loaded: some may be missing above, and older lines of some runs may show up below. Reload the page to load them again.",
 	"log.error":                        "log stream error",
 	"log.level":                        "level",

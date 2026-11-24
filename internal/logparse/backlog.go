@@ -177,23 +177,43 @@ func ScanWithin(r io.ReadCloser, d time.Duration, line func(string)) (cut bool, 
 		}
 		scanErr <- sc.Err()
 	}()
+	// ended reports a read that finished on its own (lines closed before
+	// stop): its error was sent before lines was closed.
+	ended := func() (bool, error) {
+		var err error
+		select {
+		case err = <-scanErr:
+		default:
+		}
+		if errors.Is(err, ErrIncomplete) {
+			return true, nil
+		}
+		return false, err
+	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	for {
 		select {
 		case l, ok := <-lines:
 			if !ok {
-				select {
-				case err = <-scanErr:
-				default: // stopped, not ended: cannot happen before stop
-				}
-				if errors.Is(err, ErrIncomplete) {
-					return true, nil
-				}
-				return false, err
+				return ended()
 			}
 			line(l)
 		case <-timer.C:
+			// An outcome the read already reached stands (an overlong line
+			// is still an error): take what is queued before closing r.
+			for i := 0; i <= cap(lines); i++ {
+				select {
+				case l, ok := <-lines:
+					if !ok {
+						return ended()
+					}
+					line(l)
+					continue
+				default:
+				}
+				break
+			}
 			close(stop)
 			r.Close()
 			for {

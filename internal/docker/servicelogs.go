@@ -52,9 +52,24 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 	if err != nil {
 		return nil, err
 	}
-	return taskLogsStream(ctx, logTasks(tasks), func(ctx context.Context, id string) (io.ReadCloser, error) {
+	// Closing the reader cancels the task reads behind it: one still waiting
+	// on a silent task would otherwise only notice at its next write.
+	ctx, cancel := context.WithCancel(ctx)
+	rc := taskLogsStream(ctx, logTasks(tasks), func(ctx context.Context, id string) (io.ReadCloser, error) {
 		return e.cli.TaskLogs(ctx, id, opts)
-	}), nil
+	})
+	return cancelOnClose{ReadCloser: rc, cancel: cancel}, nil
+}
+
+// cancelOnClose cancels a context when its reader is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	c.cancel()
+	return c.ReadCloser.Close()
 }
 
 // logTasks picks the tasks a non-following service log read covers, in the
