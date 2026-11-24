@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
@@ -224,7 +223,9 @@ func parseLevelFilter(level string) (int, error) {
 // can come first and a dead task's older ones after them. Taking the last n
 // lines of that stream would return whichever task happened to be last, so
 // AppLogs merges every task's lines by their docker timestamp first and only
-// then keeps the n most recent (see sortByLogTime).
+// then keeps the n most recent (see sortByLogTime). The read is given up
+// after appLogsTimeout (a Swarm log read can stall without ending): the lines
+// read by then are returned, ending with a warn-level notice saying so.
 func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int, level string) ([]LogLine, error) {
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
@@ -251,20 +252,20 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 
 	var entries []timedLine
 	var last time.Time // sort key of the previous line in the stream, filtered or not
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
-	for sc.Scan() {
-		parsed := logparse.ParseLogLine(sc.Text())
+	// Swarm's non-following read can stall without ending; past
+	// appLogsTimeout the lines read so far are the answer.
+	cut, scanErr := logparse.ScanWithin(rc, appLogsTimeout, func(raw string) {
+		parsed := logparse.ParseLogLine(raw)
 		if ts, err := time.Parse(time.RFC3339Nano, parsed.Time); err == nil {
 			last = ts
 		}
 		if minRank >= 0 {
 			if r, ok := logLevelRank(parsed.Level); ok && r < minRank {
-				continue
+				return
 			}
 		}
 		entries = append(entries, timedLine{at: last, line: LogLine{Time: parsed.Time, Level: parsed.Level, Message: parsed.Msg}})
-	}
+	})
 	sortByLogTime(entries)
 	if len(entries) > n {
 		entries = entries[len(entries)-n:]
@@ -282,9 +283,16 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 	// timestamp, so it is appended after the sort: always the last line. It
 	// still counts toward n, as it always has — the window gives up its oldest
 	// line to make room.
-	if notice, ok := logparse.ScanEndNotice(sc.Err()); ok {
+	notice, ok := logparse.ScanEndNotice(scanErr)
+	if ok {
 		// The notice handed to the reader is generic; the cause belongs here.
-		slog.Error("log stream scan ended with an error", "err", sc.Err())
+		slog.Error("log stream scan ended with an error", "err", scanErr)
+	} else if cut {
+		slog.Warn("app logs: log read gave up, answering with what it read",
+			"app_id", app.ID, "timeout", appLogsTimeout, "lines", len(lines))
+		notice, ok = cutNotice, true
+	}
+	if ok {
 		if len(lines) >= n {
 			lines = lines[len(lines)-n+1:]
 		}
@@ -292,6 +300,14 @@ func (s *Service) AppLogs(ctx context.Context, id Identity, ref string, tail int
 	}
 	return lines, nil
 }
+
+// appLogsTimeout bounds AppLogs' read of the log; a var so tests can
+// shorten it.
+var appLogsTimeout = logparse.BacklogTimeout
+
+// cutNotice ends an answer whose read was given up: lines of some tasks may
+// be missing from it.
+var cutNotice = logparse.LogLine{Level: "warn", Msg: "log read stopped before the end: lines of some runs may be missing"}
 
 // timedLine is a parsed log line with the time it sorts by.
 type timedLine struct {

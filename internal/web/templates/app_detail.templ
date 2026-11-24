@@ -403,7 +403,7 @@ templ logsTab(c AppCtx) {
 
 // logViewer is the structured log viewer bound to a log WebSocket.
 templ logViewer(wsPath string) {
-	<section class="sec" data-logs={ wsPath } data-empty={ i18n.T(ctx, "log.empty") } data-error={ i18n.T(ctx, "log.error") } aria-labelledby="lg-h">
+	<section class="sec" data-logs={ wsPath } data-empty={ i18n.T(ctx, "log.empty") } data-waiting={ i18n.T(ctx, "log.waiting") } data-error={ i18n.T(ctx, "log.error") } aria-labelledby="lg-h">
 		<div class="sec-head">
 			<h3 id="lg-h">{ i18n.T(ctx, "log.runtime") }</h3>
 			<div class="sec-keys" role="group" aria-label={ i18n.T(ctx, "log.level") }>

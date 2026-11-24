@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/api"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -600,5 +601,45 @@ func assertMessages(t *testing.T, lines []api.LogLine, want ...string) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("messages:\n got  %q\n want %q", got, want)
+	}
+}
+
+// stalledLogsEngine's log read gives body and then never ends, the way
+// Swarm's did for two apps on v0.13.2 (it only ends when closed).
+type stalledLogsEngine struct {
+	docker.Engine
+	body string
+}
+
+func (e *stalledLogsEngine) ServiceLogs(context.Context, string, bool, int) (io.ReadCloser, error) {
+	pr, pw := io.Pipe()
+	go pw.Write([]byte(e.body))
+	return pr, nil
+}
+
+// A log read that stalls must not hold the request: AppLogs answers with what
+// it read, and says the answer may be incomplete.
+func TestAppLogsStalledReadAnswersWithWhatItRead(t *testing.T) {
+	t.Cleanup(api.SetAppLogsTimeout(100 * time.Millisecond))
+	f := newAPIFixture(t)
+	svc := api.NewService(f.q, &stalledLogsEngine{body: sampleLogBody}, nil)
+	start := time.Now()
+	lines, err := svc.AppLogs(t.Context(), f.ident, f.appIDString, 0, "")
+	if err != nil {
+		t.Fatalf("app logs: %v", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("took %v", took)
+	}
+	if len(lines) != 6 {
+		t.Fatalf("want the 5 lines read plus a notice, got %d: %+v", len(lines), lines)
+	}
+	if last := lines[5]; last.Level != "warn" || !strings.Contains(last.Message, "missing") || last.Time != "" {
+		t.Fatalf("last line = %+v, want the incomplete-read notice", last)
+	}
+	// The tail still bounds the answer, notice included.
+	lines, err = svc.AppLogs(t.Context(), f.ident, f.appIDString, 2, "")
+	if err != nil || len(lines) != 2 || lines[0].Message != "a plain line with no detectable level" || lines[1].Level != "warn" {
+		t.Fatalf("tail 2 = %+v, %v", lines, err)
 	}
 }

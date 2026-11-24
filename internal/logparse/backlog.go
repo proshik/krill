@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// BacklogTimeout bounds how long a caller waits for a non-following service
+// log read (BacklogWithin, ScanWithin) before it uses what it has.
+const BacklogTimeout = 10 * time.Second
+
 // backlogBytes bounds the message text a backlog keeps: Swarm returns the
 // tail of every task, running and stopped, and lines can be long.
 const backlogBytes = 4 << 20
@@ -28,35 +32,130 @@ const backlogBytes = 4 << 20
 // timestamp sorts with the line before it. The returned error is the
 // scanner's: the lines read before it are still returned.
 func Backlog(r io.Reader, n int) ([]LogLine, *Cursor, error) {
-	c := &Cursor{tasks: map[string]*taskMark{}}
-	h := &newest{}
-	var last time.Time
-	var seq, bytes int
+	b := newBacklog(n)
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // tolerate long log lines
+	sc.Buffer(make([]byte, 0, 64*1024), maxLine)
 	for sc.Scan() {
-		l := ParseLogLine(sc.Text())
-		if ts, err := time.Parse(time.RFC3339Nano, l.Time); err == nil {
-			last = ts
-			c.mark(l, ts)
-		}
-		if Blank(l) || n <= 0 {
-			continue
-		}
-		seq++
-		heap.Push(h, entry{at: last, seq: seq, line: l})
-		bytes += len(l.Msg)
-		for h.Len() > n || (bytes > backlogBytes && h.Len() > 1) {
-			bytes -= len(heap.Pop(h).(entry).line.Msg)
-		}
+		b.add(sc.Text())
 	}
-	entries := []entry(*h)
+	lines, c := b.result()
+	return lines, c, sc.Err()
+}
+
+// BacklogWithin is Backlog that gives up after d: Swarm's non-following log
+// read can stall without ending, and a viewer waiting on it would see
+// nothing at all. cut reports that d ran out first; the lines read by then
+// are returned and the cursor covers exactly them, so a following stream
+// started next still drops their replays and reports a gap for a task it
+// finds already past them (see ScanWithin for what happens to r).
+func BacklogWithin(r io.ReadCloser, n int, d time.Duration) (lines []LogLine, c *Cursor, cut bool, err error) {
+	b := newBacklog(n)
+	cut, err = ScanWithin(r, d, b.add)
+	lines, c = b.result()
+	return lines, c, cut, err
+}
+
+// backlog collects the newest lines of a stream, see Backlog.
+type backlog struct {
+	n     int
+	c     *Cursor
+	h     *newest
+	last  time.Time
+	seq   int
+	bytes int
+}
+
+func newBacklog(n int) *backlog {
+	return &backlog{n: n, c: &Cursor{tasks: map[string]*taskMark{}}, h: &newest{}}
+}
+
+func (b *backlog) add(raw string) {
+	l := ParseLogLine(raw)
+	if ts, err := time.Parse(time.RFC3339Nano, l.Time); err == nil {
+		b.last = ts
+		b.c.mark(l, ts)
+	}
+	if Blank(l) || b.n <= 0 {
+		return
+	}
+	b.seq++
+	heap.Push(b.h, entry{at: b.last, seq: b.seq, line: l})
+	b.bytes += len(l.Msg)
+	for b.h.Len() > b.n || (b.bytes > backlogBytes && b.h.Len() > 1) {
+		b.bytes -= len(heap.Pop(b.h).(entry).line.Msg)
+	}
+}
+
+func (b *backlog) result() ([]LogLine, *Cursor) {
+	entries := []entry(*b.h)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].before(entries[j]) })
 	out := make([]LogLine, len(entries))
 	for i, e := range entries {
 		out[i] = e.line
 	}
-	return out, c, sc.Err()
+	return out, b.c
+}
+
+// maxLine is the longest log line a scan accepts (bufio.ErrTooLong past it).
+const maxLine = 1024 * 1024
+
+// ScanWithin calls line for each line of r, in order, until r ends or d has
+// passed. A read still running at d is abandoned: r is closed (which ends a
+// docker log read) and ScanWithin returns with cut set, after handing line
+// whatever was already read, without waiting for the read to notice — a
+// reader that ignores Close cannot hold the caller either. err is the
+// scanner's error when r ended first.
+func ScanWithin(r io.ReadCloser, d time.Duration, line func(string)) (cut bool, err error) {
+	lines := make(chan string, 64)
+	scanErr := make(chan error, 1)
+	stop := make(chan struct{})
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64*1024), maxLine)
+		for sc.Scan() {
+			select {
+			case lines <- sc.Text():
+			case <-stop:
+				return
+			}
+		}
+		scanErr <- sc.Err()
+	}()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				select {
+				case err = <-scanErr:
+				default: // stopped, not ended: cannot happen before stop
+				}
+				return false, err
+			}
+			line(l)
+		case <-timer.C:
+			close(stop)
+			r.Close()
+			for {
+				select {
+				case l, ok := <-lines:
+					if !ok {
+						select {
+						case err = <-scanErr: // r ended right at d after all
+							return false, err
+						default:
+							return true, nil
+						}
+					}
+					line(l)
+				default:
+					return true, nil
+				}
+			}
+		}
+	}
 }
 
 // Blank is a line with nothing to read (Postgres writes empty ones): shown, it

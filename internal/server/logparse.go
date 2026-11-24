@@ -24,25 +24,50 @@ const (
 	liveOverlap = 50
 )
 
+// logNotices are the viewer's texts for the two ways its log can be
+// incomplete, in the viewer's language.
+type logNotices struct {
+	// Gap goes before a task's first following line when the task wrote
+	// more than liveOverlap lines between the two reads.
+	Gap string
+	// Cut follows the backlog when its read was given up after
+	// logparse.BacklogTimeout: some of the earlier lines may be missing, and
+	// tasks it never reached show their tail below, from the live stream.
+	Cut string
+}
+
+// liveEvent is the frame sent once the backlog is through, so the viewer can
+// tell a log with no lines yet from one still loading.
+var liveEvent = []byte(`{"ev":"live"}`)
+
+// backlogTimeout is a var so tests can shorten it.
+var backlogTimeout = logparse.BacklogTimeout
+
 // streamServiceLogsToWS sends a service's runtime log over conn: first its
 // newest lines merged across tasks by time (see logparse.Backlog), then the
-// live stream. The live stream is opened right after the backlog is read and
+// live stream. The backlog read is given up after backlogTimeout, keeping
+// what it read. The live stream is opened right after the backlog is read and
 // before any of it is sent, so a slow browser does not widen the gap between
 // the two; should a task still write more than liveOverlap lines in between,
-// gapNotice is sent before its first new line. An error opening the backlog
+// notices.Gap is sent before its first new line. An error opening the backlog
 // is returned before anything is sent, so the caller can log it and close the
 // connection; later failures close the connection here.
-func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn, service, gapNotice string) error {
+func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn, service string, notices logNotices) error {
 	rc, err := s.engine.ServiceLogs(ctx, service, false, logWindow)
 	if err != nil {
 		return err
 	}
 	var backlog []logparse.LogLine
 	var scanErr error
+	var cut bool
 	cursor := &logparse.Cursor{}
 	if rc != nil {
-		backlog, cursor, scanErr = logparse.Backlog(rc, logWindow)
+		backlog, cursor, cut, scanErr = logparse.BacklogWithin(rc, logWindow, backlogTimeout)
 		rc.Close()
+		if cut {
+			slog.Warn("log stream: backlog read gave up, continuing with what it read",
+				"service", service, "timeout", backlogTimeout, "lines", len(backlog))
+		}
 	}
 	var live io.ReadCloser
 	var liveErr error
@@ -60,6 +85,12 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 	if endWithNotice(ctx, conn, scanErr) {
 		return nil
 	}
+	if cut && !writeLogLine(ctx, conn, logparse.LogLine{Level: "warn", Msg: notices.Cut}) {
+		return nil
+	}
+	if !writeFrame(ctx, conn, liveEvent) {
+		return nil
+	}
 	if liveErr != nil {
 		if ctx.Err() == nil {
 			slog.Error("log stream: follow failed", "err", liveErr, "service", service)
@@ -75,7 +106,7 @@ func (s *Server) streamServiceLogsToWS(ctx context.Context, conn *websocket.Conn
 		if !cursor.Fresh(l) {
 			return false
 		}
-		if cursor.Gap() && !writeLogLine(ctx, conn, logparse.LogLine{Level: "warn", Msg: gapNotice}) {
+		if cursor.Gap() && !writeLogLine(ctx, conn, logparse.LogLine{Level: "warn", Msg: notices.Gap}) {
 			return false
 		}
 		return true
@@ -111,6 +142,11 @@ func writeLogLine(ctx context.Context, conn *websocket.Conn, l logparse.LogLine)
 	if err != nil {
 		return true
 	}
+	return writeFrame(ctx, conn, b)
+}
+
+// writeFrame sends one text frame; false means the connection is gone.
+func writeFrame(ctx context.Context, conn *websocket.Conn, b []byte) bool {
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return conn.Write(wctx, websocket.MessageText, b) == nil
