@@ -1118,9 +1118,12 @@ function routeAround(l, lanes, colGap, rowGap, box) {
   const dx = Math.max(40, Math.abs(x2 - x1) / 2) * (dir || 1);
   const c1x = dir === 0 ? x1 + 48 : x1 + dx, c2x = dir === 0 ? x2 + 48 : x2 - dx;
   const others = lanes.filter(function (x) { return x !== la && x !== lb; });
+  // Sampled about every 4px of the curve's extent (at least 24 points): a
+  // fixed handful of points could step over a lane's corner.
+  const steps = Math.max(24, Math.ceil((Math.abs(x2 - x1) + Math.abs(yb - ya) + 96) / 4));
   let blocked = false;
-  for (let i = 1; i < 24 && !blocked; i++) {
-    const t = i / 24, u = 1 - t;
+  for (let i = 1; i < steps && !blocked; i++) {
+    const t = i / steps, u = 1 - t;
     const x = u * u * u * x1 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * x2;
     const y = u * u * u * ya + 3 * u * u * t * ya + 3 * u * t * t * yb + t * t * t * yb;
     blocked = others.some(function (o) { return x > o.left + 1 && x < o.right - 1 && y > o.top + 1 && y < o.bottom - 1; });
