@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -44,9 +45,18 @@ func (f *feed) append(b []byte) {
 func (f *feed) snapshot() string {
 	if f.dropped == 0 {
 		// head+tail is the complete, contiguous log — no marker.
-		return string(f.head) + string(f.tail)
+		return storable(string(f.head) + string(f.tail))
 	}
-	return string(f.head) + fmt.Sprintf("\n...[truncated %d bytes]...\n", f.dropped) + string(f.tail)
+	return storable(string(f.head) + fmt.Sprintf("\n...[truncated %d bytes]...\n", f.dropped) + string(f.tail))
+}
+
+// storable makes a log something PostgreSQL's TEXT accepts. It refuses the
+// whole UPDATE for invalid UTF-8 — which the byte caps above produce
+// whenever a cut falls inside a multi-byte character — and for a NUL byte,
+// which a build or predeploy command can print; the deployment's status went
+// unrecorded with it.
+func storable(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
 }
 
 func (f *feed) hasContent() bool { return len(f.head) > 0 || len(f.tail) > 0 }
