@@ -311,7 +311,7 @@ function mountMonitoring(el) {
       const cpuPts = (series.get(n.node) || {}).cpu || [];
       cols += '<section class="nodecol' + (warn ? " nodecol--warn" : "") + '" aria-label="' + esc(n.node) + '">' +
         '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
-        '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc(n.cores_text || String(n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
+        '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc(n.cores_text || (t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
         '<div class="fig"><b><span class="fig-v">' + gib(n.mem_used || 0) + "</span> <small>" + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
         '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", n.containers != null ? n.containers : comps.length)) + "</h3><ul class=\"comps\">" +
         comps.map((r) => {
@@ -1107,7 +1107,7 @@ function krillCardNodes(c) {
 // the gutter beside it, runs along the gap above the target's row, and comes
 // down the gutter beside the target lane. It returns the path, or null when
 // the plain curve is clear (or the ends share a lane).
-function routeAround(l, lanes, colGap, rowGap, box) {
+function routeAround(l, lanes, colGap, rowGap, box, width) {
   const la = lanes.find(function (x) { return x.el.contains(l.from); });
   const lb = lanes.find(function (x) { return x.el.contains(l.to); });
   if (!la || !lb || la === lb) return null;
@@ -1117,7 +1117,14 @@ function routeAround(l, lanes, colGap, rowGap, box) {
   const x1 = dir < 0 ? a.left : a.right, x2 = dir > 0 ? b.left : b.right;
   const dx = Math.max(40, Math.abs(x2 - x1) / 2) * (dir || 1);
   const c1x = dir === 0 ? x1 + 48 : x1 + dx, c2x = dir === 0 ? x2 + 48 : x2 - dx;
-  const others = lanes.filter(function (x) { return x !== la && x !== lb; });
+  // Only lanes inside the curve's bounding box can be crossed (a map of the
+  // ingress lane and one node lane has none, and returns at once).
+  const minX = Math.min(x1, x2, c1x, c2x), maxX = Math.max(x1, x2, c1x, c2x);
+  const minY = Math.min(ya, yb), maxY = Math.max(ya, yb);
+  const others = lanes.filter(function (x) {
+    return x !== la && x !== lb && x.right > minX && x.left < maxX && x.bottom > minY && x.top < maxY;
+  });
+  if (!others.length) return null;
   // Sampled about every 4px of the curve's extent (at least 24 points): a
   // fixed handful of points could step over a lane's corner.
   const steps = Math.max(24, Math.ceil((Math.abs(x2 - x1) + Math.abs(yb - ya) + 96) / 4));
@@ -1132,12 +1139,21 @@ function routeAround(l, lanes, colGap, rowGap, box) {
   // Gateway wires and database wires keep apart where both detour, so a
   // dashed database link never merges into a gateway's line.
   const shift = l.from.hasAttribute("data-gateway") ? 0 : 6;
-  const out = dir < 0 ? la.left - colGap / 2 - shift : la.right + colGap / 2 + shift;
+  let out = dir < 0 ? la.left - colGap / 2 - shift : la.right + colGap / 2 + shift;
+  let ax = x1, bx = x2;
+  if (dir === 0 && out > width) {
+    // Same column, rightmost lane: the gutter beyond it is outside the map
+    // (clipped on the nodes page); go down the left side instead.
+    out = la.left - colGap / 2 - shift;
+    if (out < 0) return null;
+    ax = a.left;
+    bx = b.left;
+  }
   const r = 10;
   // Rounded orthogonal segments through the given points.
-  const pts = [[x1, ya], [out, ya]];
+  const pts = [[ax, ya], [out, ya]];
   if (dir === 0) {
-    pts.push([out, yb], [x2, yb]);
+    pts.push([out, yb], [bx, yb]);
   } else {
     const into = dir > 0 ? lb.left - colGap / 2 + shift : lb.right + colGap / 2 - shift;
     // Close above the row: a first row has only the page's own margin above
@@ -1212,7 +1228,7 @@ function mountWiredMap(map) {
         const dx = Math.max(40, Math.abs(x2 - x1) / 2) * dir;
         p.setAttribute("d", "M" + x1 + " " + ya + "C" + (x1 + dx) + " " + ya + " " + (x2 - dx) + " " + yb + " " + x2 + " " + yb);
       }
-      const routed = routeAround(l, lanes, colGap, rowGap, box);
+      const routed = routeAround(l, lanes, colGap, rowGap, box, map.offsetWidth);
       if (routed) p.setAttribute("d", routed);
       if (l.from.hasAttribute("data-gateway")) p.classList.add("w-ingress");
       else if (l.detected) p.classList.add("w-detected");
