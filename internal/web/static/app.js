@@ -3,6 +3,9 @@
 // htmx:afterSettle), so any log view added by a page swap mounts automatically;
 // the data-mounted guard makes it idempotent and the singleton id is gone.
 const KRILL_TERM_THEME = { background: "#1c1d20", foreground: "#d6d7da", cursor: "#a9a6d8", selectionBackground: "#3a3950" };
+// The same mono font as the rest of the UI (--font-outlier); xterm measures
+// its cells on open, so the terminals refit once the web fonts are loaded.
+const KRILL_TERM_FONT = '"JetBrains Mono", ui-monospace, monospace';
 function mountTerminalEl(el) {
   if (!el || el.dataset.mounted) return;
   const wsPath = el.dataset.termLog;
@@ -16,7 +19,7 @@ function mountTerminalEl(el) {
   }
   el.dataset.mounted = "1";
 
-  const term = new Terminal({ convertEol: true, fontSize: 12, theme: KRILL_TERM_THEME });
+  const term = new Terminal({ convertEol: true, fontSize: 12, fontFamily: KRILL_TERM_FONT, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
@@ -25,6 +28,7 @@ function mountTerminalEl(el) {
   // ResizeObserver re-fit once height exists.
   const refit = () => { try { fit.fit(); } catch (_) { /* not laid out yet */ } };
   requestAnimationFrame(refit);
+  if (document.fonts) document.fonts.ready.then(() => { term.options.fontFamily = KRILL_TERM_FONT; refit(); });
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
@@ -50,12 +54,13 @@ function mountExecTerminal(el) {
     return;
   }
   el.dataset.mounted = "1";
-  const term = new Terminal({ fontSize: 12, cursorBlink: true, theme: KRILL_TERM_THEME });
+  const term = new Terminal({ fontSize: 12, fontFamily: KRILL_TERM_FONT, cursorBlink: true, theme: KRILL_TERM_THEME });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(el);
   const refit = () => { try { fit.fit(); } catch (_) { /* not laid out */ } };
   requestAnimationFrame(refit);
+  if (document.fonts) document.fonts.ready.then(() => { term.options.fontFamily = KRILL_TERM_FONT; refit(); });
   window.addEventListener("resize", refit);
   if (window.ResizeObserver) { new ResizeObserver(refit).observe(el); }
 
@@ -80,8 +85,9 @@ function mountExecTerminal(el) {
     ws.onclose = () => setStatus(t.i18nEnded || "session ended");
     ws.onerror = () => setStatus(t.i18nError || "connection error");
   }
+  // Connects only on the button: opening the tab must not start a shell in a
+  // container (or report a raw daemon error for an app that has none).
   el._krillConnect = connect;
-  connect();
 }
 
 // Mounts the structured log viewer into `[data-logs]`: streams JSON frames
@@ -191,7 +197,6 @@ function mountMonitoring(el) {
   // such as a worker's come from operators and go into aria-label="…".
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const gib = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GiB" : Math.round(b / 1048576) + " MiB";
-  const mib = (b) => Math.round(b / 1048576) + " MiB";
   const CLS = ["s1", "s2", "s3", "s4", "s5", "s6"];
   function nodeSeries(d) {
     // Per node, per bucket: sum of the containers' values, as % of the node.
@@ -282,10 +287,10 @@ function mountMonitoring(el) {
         '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
         '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc((t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
         '<div class="fig"><b>' + gib(n.mem_used || 0) + "<small> " + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
-        '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", comps.length)) + "</h3><ul class=\"comps\">" +
+        '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", n.containers != null ? n.containers : comps.length)) + "</h3><ul class=\"comps\">" +
         comps.map((r) => {
           const name = r.href ? '<a href="' + esc(r.href) + '">' + esc(r.name) + "</a>" : "<span>" + esc(r.name) + "</span>";
-          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + mib(r.mem) + " / " + mib(r.mem_limit) : mib(r.mem);
+          const lim = r.mem_limit && r.mem_limit > 0 ? meter(Math.round(r.mem * 100 / r.mem_limit), r.mem * 100 / r.mem_limit >= 85) + gib(r.mem) + " / " + gib(r.mem_limit) : gib(r.mem);
           return '<li><span class="comp-name">' + name + "<em>" + esc(r.detail || r.group || "") + '</em></span><span class="comp-cpu">' + (r.cpu || 0).toFixed(1) + '%</span><span class="comp-mem">' + lim + "</span></li>";
         }).join("") + "</ul></section>";
     });
@@ -315,12 +320,58 @@ window.krillEnhance = function () {
     krillEnvMode(mode);
   }
   krillMountDBLink();
+  document.querySelectorAll(".seg").forEach(krillSegScroll);
+  krillTermState();
   // Stop a monitoring poll timer from a previous page (cleared on every nav/swap;
   // re-armed by mountMonitoring only when the monitoring page is present).
   if (!document.querySelector(".mon")) {
     if (window.__krillMonTimer) { clearInterval(window.__krillMonTimer); window.__krillMonTimer = null; }
   }
 };
+
+// krillTermState follows the terminal's "no running replica" state from the
+// sheet's status badge, which refreshes every 3 s with the running replica
+// count: a replica started elsewhere enables Connect without a reload.
+function krillTermState() {
+  const btn = document.getElementById("term-connect");
+  const badge = document.getElementById("app-state");
+  if (!btn || !badge || badge.dataset.running == null) return;
+  const running = parseInt(badge.dataset.running, 10);
+  if (isNaN(running) || running < 0) return;
+  btn.disabled = running === 0;
+  const note = document.getElementById("term-noreplica");
+  if (note) note.hidden = running !== 0;
+}
+
+// krillSegScroll keeps a one-line segmented bar usable when its items are wider
+// than the bar: the current item is scrolled into view (sideways only — the
+// page must not jump), and is-scroll-start/-end fade the edge that hides more.
+function krillSegScroll(seg) {
+  const edges = () => {
+    const more = seg.scrollWidth - seg.clientWidth;
+    seg.classList.toggle("is-scroll-start", more > 1 && seg.scrollLeft < more - 1);
+    seg.classList.toggle("is-scroll-end", more > 1 && seg.scrollLeft > 1);
+  };
+  if (!seg.dataset.segMounted) {
+    seg.dataset.segMounted = "1";
+    seg.addEventListener("scroll", edges, { passive: true });
+    if (window.ResizeObserver) new ResizeObserver(edges).observe(seg);
+  }
+  // Only when the bar appears or its current item changes: krillEnhance also
+  // runs on unrelated swaps (the status badge every 3 s), and must not undo
+  // the user's own scrolling of the bar.
+  const cur = seg.querySelector('[aria-current="page"], [aria-pressed="true"]');
+  const curKey = cur ? (cur.getAttribute("href") || cur.dataset.node || cur.dataset.range || cur.textContent) : "";
+  const moved = seg.dataset.segCurrent !== curKey;
+  seg.dataset.segCurrent = curKey;
+  if (moved && cur && seg.scrollWidth > seg.clientWidth) {
+    const left = cur.getBoundingClientRect().left - seg.getBoundingClientRect().left + seg.scrollLeft, right = left + cur.offsetWidth;
+    if (left < seg.scrollLeft || right > seg.scrollLeft + seg.clientWidth) {
+      seg.scrollLeft = Math.max(0, left - (seg.clientWidth - cur.offsetWidth) / 2);
+    }
+  }
+  edges();
+}
 
 // Engine-aware Scheme + Field selects for the DB-link form: rebuilds the scheme
 // options to only those valid for the currently selected database (Postgres ->
@@ -1054,9 +1105,15 @@ function mountWiredMap(map) {
       const ya = (a.top + a.height / 2 - host.top) / k, yb = (b.top + b.height / 2 - host.top) / k;
       const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
       if (dir === 0) {
+        // Two cards in one column: the loop bulges right, but only as far as
+        // the lane's own padding — 48px used to cross the gutter into the
+        // next lane (and the ingress arc left its card).
         const x = (Math.max(a.right, b.right) - host.left) / k;
         const xa = (a.right - host.left) / k, xb = (b.right - host.left) / k;
-        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + 48) + " " + ya + " " + (x + 48) + " " + yb + " " + xb + " " + yb);
+        const lane = l.from.closest(".lane");
+        const room = lane && lane === l.to.closest(".lane") ? (lane.getBoundingClientRect().right - host.left) / k - x - 3 : 48;
+        const bulge = Math.max(6, Math.min(48, room));
+        p.setAttribute("d", "M" + xa + " " + ya + "C" + (x + bulge) + " " + ya + " " + (x + bulge) + " " + yb + " " + xb + " " + yb);
       } else {
         const x1 = ((dir > 0 ? a.right : a.left) - host.left) / k;
         const x2 = ((dir > 0 ? b.left : b.right) - host.left) / k;

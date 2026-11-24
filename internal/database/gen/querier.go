@@ -225,6 +225,8 @@ type Querier interface {
 	ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSinceParams) ([]BackupRun, error)
 	ListBackupsByLogicalDB(ctx context.Context, logicalDatabaseID int64) ([]ListBackupsByLogicalDBRow, error)
 	ListBucketBackupsByBucket(ctx context.Context, bucketID int64) ([]BucketBackup, error)
+	// The org topology's bucket links, each with the S3 server holding its bucket.
+	ListBucketLinkTargetsByApplicationIDs(ctx context.Context, ids []int64) ([]ListBucketLinkTargetsByApplicationIDsRow, error)
 	ListBucketLinksByApplication(ctx context.Context, applicationID int64) ([]AppBucketLink, error)
 	ListBucketLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]AppBucketLink, error)
 	ListBucketLinksByBucket(ctx context.Context, bucketID int64) ([]ListBucketLinksByBucketRow, error)
@@ -232,9 +234,19 @@ type Querier interface {
 	ListDBInstanceIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListDBInstancesByNodeHostname(ctx context.Context, nodeHostname string) ([]ListDBInstancesByNodeHostnameRow, error)
 	ListDBInstancesByOrg(ctx context.Context, organizationID int64) ([]DbInstance, error)
+	// The apps linked to a database server, directly or through one of its
+	// logical databases: the server cannot be deleted while any link remains.
+	ListDBLinkAppNamesByInstance(ctx context.Context, instanceID *int64) ([]string, error)
+	// The apps a logical database is linked into: it cannot be deleted while any
+	// link remains (the same rule as buckets).
+	ListDBLinkAppNamesByLogicalDatabase(ctx context.Context, logicalDatabaseID *int64) ([]string, error)
 	ListDBLinksByApplication(ctx context.Context, applicationID int64) ([]ListDBLinksByApplicationRow, error)
 	// Batched form for the topology view (one query instead of one per app).
 	ListDBLinksByApplicationIDs(ctx context.Context, dollar_1 []int64) ([]ListDBLinksByApplicationIDsRow, error)
+	// The apps that have been deployed at least once: an app with no Swarm service
+	// is "not deployed" in the UI only when it has none (a stopped global app has
+	// no service either, see docker ServiceScale).
+	ListDeployedApplicationIDs(ctx context.Context, ids []int64) ([]int64, error)
 	// Status of each listed deployment, without the log column. The startup
 	// network migration polls this until every app redeploy it submitted is
 	// terminal: submitting a deploy proves nothing about whether it moved the app.
@@ -345,6 +357,8 @@ type Querier interface {
 	SearchLogicalDatabasesByOrg(ctx context.Context, arg SearchLogicalDatabasesByOrgParams) ([]SearchLogicalDatabasesByOrgRow, error)
 	// The command palette's bucket search, as SearchLogicalDatabasesByOrg.
 	SearchS3BucketsByOrg(ctx context.Context, arg SearchS3BucketsByOrgParams) ([]SearchS3BucketsByOrgRow, error)
+	// The command palette's system search, as SearchS3BucketsByOrg.
+	SearchSystemsByOrg(ctx context.Context, arg SearchSystemsByOrgParams) ([]SearchSystemsByOrgRow, error)
 	SetAlertState(ctx context.Context, arg SetAlertStateParams) error
 	SetAppSystem(ctx context.Context, arg SetAppSystemParams) error
 	SetApplicationAutoDeploy(ctx context.Context, arg SetApplicationAutoDeployParams) error

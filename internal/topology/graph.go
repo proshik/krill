@@ -41,6 +41,7 @@ type GDB struct {
 	ServiceID string `json:"service"` // owning instance's GService.ID ("db-<instanceID>")
 	Name      string `json:"name"`
 	Env       string `json:"env"`
+	ProjectID int64  `json:"project,omitempty"` // the environment's project
 }
 
 type GLink struct {
@@ -93,6 +94,7 @@ type DBInput struct {
 	Name      string
 	Env       string
 	NodeID    string // owning instance's node id (for cross-node calc)
+	ProjectID int64  // the environment's project
 }
 
 type LinkInput struct {
@@ -304,7 +306,7 @@ func Build(in Inputs) Graph {
 	dbNode := make(map[int64]string, len(in.Dbs))
 	dbExists := make(map[int64]bool, len(in.Dbs))
 	for _, d := range in.Dbs {
-		g.Dbs = append(g.Dbs, GDB{ID: d.ID, ServiceID: d.ServiceID, Name: d.Name, Env: d.Env})
+		g.Dbs = append(g.Dbs, GDB{ID: d.ID, ServiceID: d.ServiceID, Name: d.Name, Env: d.Env, ProjectID: d.ProjectID})
 		dbNode[d.ID] = d.NodeID
 		dbExists[d.ID] = true
 	}

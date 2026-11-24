@@ -109,7 +109,7 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	appItem := func(appID int64) templates.PaletteItem {
 		a := live[appID]
-		it := templates.PaletteItem{Label: i18n.Tf(ctx, "palette.open", a.Name), Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
+		it := templates.PaletteItem{Label: a.Name, Sub: ix.envLabel(a.EnvironmentID), Href: ix.appURL(a), Glyph: "i-app"}
 		if kind, text := templates.AppState(ctx, a.Status); kind == "err" || kind == "warn" {
 			it.StateKind, it.StateText = kind, text
 		}
@@ -174,6 +174,19 @@ func (s *Server) orgSearch(w http.ResponseWriter, r *http.Request) {
 		for _, b := range bs {
 			if _, ok := ix.envs[b.EnvironmentID]; ok {
 				g.Items = append(g.Items, templates.PaletteItem{Label: b.Name, Sub: ix.envLabel(b.EnvironmentID), Href: ix.envURL(b.EnvironmentID) + "/buckets/" + strconv.FormatInt(b.ID, 10), Glyph: "i-bucket"})
+			}
+		}
+		add(g)
+		g = templates.PaletteGroup{Title: i18n.T(ctx, "palette.systems")}
+		syss, err := s.q.SearchSystemsByOrg(ctx, db.SearchSystemsByOrgParams{OrganizationID: o.ID, Pattern: pattern, MaxRows: paletteMax})
+		if err != nil {
+			logFrom(r).Error("orgSearch: systems", "err", err, "org_id", o.ID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		for _, sy := range syss {
+			if _, ok := ix.envs[sy.EnvironmentID]; ok {
+				g.Items = append(g.Items, templates.PaletteItem{Label: sy.Name, Sub: ix.envLabel(sy.EnvironmentID), Href: ix.envURL(sy.EnvironmentID), Glyph: "i-app"})
 			}
 		}
 		add(g)

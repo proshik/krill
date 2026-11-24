@@ -147,6 +147,8 @@ func AppState(ctx context.Context, status string) (string, string) {
 		return "warn", i18n.T(ctx, "state.deploying")
 	case "error":
 		return "err", i18n.T(ctx, "state.deploy_failed")
+	case "not_deployed":
+		return "idle", i18n.T(ctx, "state.not_deployed")
 	default:
 		return "idle", i18n.T(ctx, "state.stopped")
 	}
@@ -188,6 +190,7 @@ type EnvResourceRow struct {
 	BackupKind string // "" when the kind has no backups
 	BackupText string
 	BackupHref string
+	BackupNone bool // no backup is set up: the link offers to set one up
 }
 
 // UsedBy is an app that uses a resource, with the variables it gets.
@@ -289,3 +292,12 @@ func nodeRoleLine(ctx context.Context, l NodeLane) string {
 }
 
 func urlQuery(s string) string { return url.QueryEscape(s) }
+
+// usedByNames lists the users' names, comma-separated.
+func usedByNames(users []UsedBy) string {
+	names := make([]string, len(users))
+	for i, u := range users {
+		names[i] = u.Name
+	}
+	return strings.Join(names, ", ")
+}

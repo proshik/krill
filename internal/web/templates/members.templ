@@ -22,7 +22,7 @@ templ Members(org db.Organization, role string, members []db.ListMembersRow, tem
 			</div>
 		}
 		<section class="sec" aria-labelledby="mm-h">
-			<div class="sec-head"><h3 id="mm-h">{ i18n.Tf(ctx, "members.n", len(members)) }</h3></div>
+			<div class="sec-head"><h3 id="mm-h">{ i18n.Tn(ctx, "members.n", len(members)) }</h3></div>
 			<ul class="members">
 				for _, m := range members {
 					<li class="member">

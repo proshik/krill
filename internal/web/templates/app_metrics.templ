@@ -66,7 +66,7 @@ templ metricsTab(c AppCtx) {
 			<form class="link-form link-form--ep" method="post" action={ templ.SafeURL(c.base() + "/metrics/endpoints") }>
 				<div class="field"><label for="mp">{ i18n.T(ctx, "metrics.port") }</label><input class="input input--mono" id="mp" type="number" name="port" min="1" max="65535" required value={ itoa(int64(c.App.Port)) }/></div>
 				<div class="field"><label for="mpa">{ i18n.T(ctx, "metrics.path") }</label><input class="input input--mono" id="mpa" name="path" value="/metrics" required maxlength="129" spellcheck="false"/></div>
-				<div class="field"><label for="mj">{ i18n.T(ctx, "metrics.job") }</label><input class="input input--mono" id="mj" name="job" maxlength="64" placeholder={ i18n.T(ctx, "metrics.job_placeholder") } spellcheck="false"/></div>
+				<div class="field"><label for="mj">{ i18n.T(ctx, "metrics.job") }</label><input class="input input--mono" id="mj" name="job" maxlength="64" placeholder={ c.App.Name } spellcheck="false"/></div>
 				<button type="submit" class="pill">
 					@ui.Icon("i-plus")
 					{ i18n.T(ctx, "metrics.add_endpoint") }
@@ -86,15 +86,19 @@ templ metricsTab(c AppCtx) {
 			</form>
 			if c.MetricsTokenUnreadable {
 				<p class="field-err">{ i18n.T(ctx, "metrics.token_unreadable") }</p>
+			} else if c.MetricsToken == "" {
+				<p class="empty">{ i18n.T(ctx, "metrics.token_none") }</p>
 			} else {
 				@ui.CopyField("mtok", i18n.T(ctx, "metrics.token"), c.MetricsToken, true, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
 			}
+			if c.MetricsToken != "" || c.MetricsTokenUnreadable {
 			<div class="sec-add">
 				<form method="post" action={ templ.SafeURL(c.base() + "/metrics/token/rotate") } hx-boost="false" data-confirm={ i18n.T(ctx, "metrics.rotate_confirm") } data-ok={ i18n.T(ctx, "metrics.rotate") } data-kind="primary" onsubmit="return krillConfirm(this)">
 					<button type="submit" class="pill">{ i18n.T(ctx, "metrics.rotate") }</button>
 				</form>
 				<span class="hint">{ i18n.T(ctx, "metrics.redeploy_hint") }</span>
 			</div>
+			}
 		</section>
 	}
 	<section class="sec" aria-labelledby="st-h">

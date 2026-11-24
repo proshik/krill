@@ -454,10 +454,43 @@ func (s *suite) waitDeployStatus(t *testing.T, ev *Evidence, timeout time.Durati
 	}
 }
 
-func (s *suite) waitNoRunningDeploy(t *testing.T, ev *Evidence) {
+// endBusyDeploy stops the busy app and waits for its deploy to leave
+// "running". The busy app never converges (its healthcheck always fails), and
+// since a deploy that has not converged by its window is watched for up to 20
+// more minutes before it is recorded (deploy "settle", v0.13.0), waiting for it
+// to end on its own takes over half an hour. Stopping it is deterministic: a
+// deploy past its window ends within a poll ("stopped before the service
+// converged"); one still inside its window (start period 720s + 60s) ends when
+// the window does ("service did not converge"). Either way it is bounded by
+// busyDeployWindow from the deploy's start.
+//
+// The stop only works once the deploy has applied its spec: a stop pressed
+// before the deployer created or updated the service scales nothing, and the
+// deploy then brings the app up anyway. So it first waits for the service to
+// carry the deploy's one replica (a stopped app's spec has zero, and only the
+// deploy sets it back), unless the deploy has already ended.
+func (s *suite) endBusyDeploy(t *testing.T, ev *Evidence) {
 	t.Helper()
-	s.waitDeployStatus(t, ev, 25*time.Minute, func(st string) bool { return st != "running" })
+	svc := fmt.Sprintf("krill-%d", s.app.appID)
+	waitFor(t, ev, "the busy deploy applied to "+svc, 3*time.Minute, 2*time.Second, func() (bool, string) {
+		if st := s.deployStatus(t); st != "running" {
+			return true, "deployment " + st
+		}
+		out, err := s.vm.Sudo(s.ctx, "docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "+svc)
+		out = strings.TrimSpace(out)
+		return err == nil && out == "1", "replicas " + out
+	})
+	s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
+	s.waitDeployStatus(t, ev, busyDeployWindow+3*time.Minute, func(st string) bool { return st != "running" })
+	out, err := s.host.Psql(s.ctx, fmt.Sprintf("select status||' '||coalesce(error_message, '') from deployments where application_id=%d order by started_at desc limit 1", s.app.appID))
+	must(t, err, "deployment outcome")
+	ev.Note("busy deploy ended after the stop: %s", out)
 }
+
+// busyDeployWindow is how long a deploy of the busy app waits to converge
+// before the settle watch takes over: its start period (720s, createBusyApp)
+// plus the 60s headroom the deployer adds.
+const busyDeployWindow = 780 * time.Second
 
 // --- egress throttle ------------------------------------------------------------
 
@@ -518,7 +551,7 @@ func (s *suite) followRestart(t *testing.T, ev *Evidence, from string, timeout t
 				down, obs.firstDown = true, time.Since(start)
 			}
 		case resp.Status == http.StatusOK && !resp.HXRefresh:
-			for _, p := range []string{"Downloading", "Verifying", "Installing", "Restarting"} {
+			for _, p := range []string{phase("downloading"), phase("verifying"), phase("installing"), phase("restarting")} {
 				if strings.Contains(resp.Text(), p) {
 					obs.phases[p] = true
 				}
@@ -529,8 +562,8 @@ func (s *suite) followRestart(t *testing.T, ev *Evidence, from string, timeout t
 				break // restarting right now; poll again
 			}
 			text := page.Text()
-			if strings.Contains(text, "Running version "+from) {
-				if strings.Contains(text, "The update failed") {
+			if strings.Contains(text, runningVersion(from)) {
+				if strings.Contains(text, uiBefore("update.job_failed", ":")) {
 					ev.Output("GET "+UpdatesPath(s.orgID)+" (text)", text)
 					t.Fatalf("the job failed instead of restarting")
 				}
@@ -553,7 +586,7 @@ func (s *suite) updateTo(t *testing.T, ev *Evidence, from, to string, schema int
 	t.Helper()
 	resp, err := s.client.Install(s.ctx, s.orgID, to)
 	must(t, err, "install")
-	flashContains(t, ev, "POST install "+to, resp, "The update has started.")
+	flashContains(t, ev, "POST install "+to, resp, ui("flash.ok.update_started"))
 	obs := s.followRestart(t, ev, from, 12*time.Minute)
 	if !obs.sawStarting {
 		// Not a failure: the gate is up only while one small migration runs
@@ -563,7 +596,7 @@ func (s *suite) updateTo(t *testing.T, ev *Evidence, from, to string, schema int
 			obs.firstDown.Round(100*time.Millisecond), obs.firstServing.Round(100*time.Millisecond), obs.connErrors)
 	}
 	s.waitServing(t, ev, 2*time.Minute)
-	s.waitPage(t, ev, 2*time.Minute, "Running version "+to, "Updated from "+from+" to "+to+".")
+	s.waitPage(t, ev, 2*time.Minute, runningVersion(to), ui("update.result.updated", from, to))
 	s.expectVersion(t, ev, to)
 	s.expectPrev(t, ev, from)
 	s.expectSchema(t, ev, schema)
@@ -651,12 +684,12 @@ func TestVMSmoke(t *testing.T) {
 
 	s.run(t, "updates_page", func(t *testing.T, ev *Evidence) {
 		text := s.page(t, ev)
-		for _, want := range []string{"Running version v0.90.0", "Check now"} {
+		for _, want := range []string{runningVersion("v0.90.0"), ui("update.check_now")} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("updates page does not show %q", want)
 			}
 		}
-		for _, bad := range []string{"can't update itself", "development build", "Self-update is not enabled"} {
+		for _, bad := range []string{ui("update.unsupported.intro"), uiBefore("update.dev_build", " ("), ui("update.unwired")} {
 			if strings.Contains(text, bad) {
 				t.Fatalf("updates page says %q", bad)
 			}
@@ -667,7 +700,7 @@ func TestVMSmoke(t *testing.T) {
 		resp, err := s.client.CheckNow(s.ctx, s.orgID)
 		must(t, err, "check now")
 		ev.Output("POST check (text, expected to report a failed check before Phase B)", resp.Text())
-		for _, marker := range []string{"Could not check for updates", "Last check failed", "has no published release", "Checked for updates."} {
+		for _, marker := range []string{ui("flash.err.update_check"), uiBefore("update.check_failed", ":"), ui("flash.err.update_no_release"), ui("flash.ok.update_checked")} {
 			if strings.Contains(resp.Text(), marker) {
 				ev.Note("check result contains %q", marker)
 			}
@@ -681,8 +714,8 @@ func TestVMSmoke(t *testing.T) {
 		// changed" — and no job starts.
 		resp, err = s.client.Install(s.ctx, s.orgID, "v0.0.1")
 		must(t, err, "install probe")
-		flashContains(t, ev, "POST install v0.0.1 (supported probe)", resp, "The latest release changed. Check again, then update.")
-		if strings.Contains(resp.Text(), "can't update itself") {
+		flashContains(t, ev, "POST install v0.0.1 (supported probe)", resp, ui("flash.err.update_not_latest"))
+		if strings.Contains(resp.Text(), ui("update.unsupported.intro")) || strings.Contains(resp.Text(), ui("flash.err.update_unsupported")) {
 			t.Fatalf("self-update is not supported on the VM")
 		}
 		s.expectNoJobTrace(t, ev)
@@ -754,8 +787,8 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		s.deploy(t, ev)
 		resp, err := s.client.Install(s.ctx, s.orgID, "v0.90.1")
 		must(t, err, "install")
-		flashContains(t, ev, "POST install v0.90.1 while deploying", resp, "Not now: a deploy is running.")
-		if strings.Contains(resp.Text(), "Downloading") {
+		flashContains(t, ev, "POST install v0.90.1 while deploying", resp, busyRefused("deploy"))
+		if strings.Contains(resp.Text(), phase("downloading")) {
 			t.Fatalf("a job started despite the running deploy")
 		}
 		s.expectVersion(t, ev, "v0.90.0")
@@ -764,7 +797,8 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 
 	// 3.
 	s.run(t, "busy_during_download", func(t *testing.T, ev *Evidence) {
-		s.waitNoRunningDeploy(t, ev)
+		// Step 2's deploy would refuse this install at the click; end it.
+		s.endBusyDeploy(t, ev)
 		t.Cleanup(func() {
 			out, err := s.vm.Sudo(s.ctx, unthrottleScript)
 			ev.Output("remove throttle", out)
@@ -776,11 +810,14 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 
 		resp, err := s.client.Install(s.ctx, s.orgID, "v0.90.1")
 		must(t, err, "install")
-		flashContains(t, ev, "POST install v0.90.1 (throttled)", resp, "The update has started.")
-		s.waitPage(t, ev, 60*time.Second, "Downloading", "Version v0.90.1")
+		flashContains(t, ev, "POST install v0.90.1 (throttled)", resp, ui("flash.ok.update_started"))
+		s.waitPage(t, ev, 60*time.Second, phase("downloading"), ui("update.job_tag", "v0.90.1"))
+		// This deploy stays running for at least busyDeployWindow (the settle
+		// watch keeps it so up to 20 minutes longer), well past the end of the
+		// throttled download, where the job checks for busy work again.
 		s.deploy(t, ev)
 		start := time.Now()
-		s.waitPage(t, ev, 20*time.Minute, "Failed", "The update failed: a deploy is running")
+		s.waitPage(t, ev, 20*time.Minute, phase("failed"), busyFailed("deploy"))
 		ev.Note("job failed with the busy reason %s after the deploy started", time.Since(start).Round(time.Second))
 		s.expectVersion(t, ev, "v0.90.0")
 		s.expectNoJobTrace(t, ev)
@@ -792,24 +829,24 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 
 	// 4.
 	s.run(t, "update_to_v0.90.1", func(t *testing.T, ev *Evidence) {
-		s.waitNoRunningDeploy(t, ev)
-		// Quiet the always-unhealthy app; a stopped app is not busy work.
-		s.post(t, ev, s.app.path(s.orgID)+"/stop", nil)
+		// Quiet the always-unhealthy app and end step 3's deploy: a stopped
+		// app is not busy work, a running deploy is.
+		s.endBusyDeploy(t, ev)
 		s.waitAvailable(t, ev, "v0.90.1")
 		s.updateTo(t, ev, "v0.90.0", "v0.90.1", s.base+1)
 	})
 
 	// 5.
 	s.run(t, "manual_rollback_to_v0.90.0", func(t *testing.T, ev *Evidence) {
-		s.waitPage(t, ev, 30*time.Second, "Roll back to v0.90.0")
+		s.waitPage(t, ev, 30*time.Second, rollbackOffer("v0.90.0"))
 		cursor := s.journalCursor(t)
 		resp, err := s.client.Rollback(s.ctx, s.orgID)
 		must(t, err, "rollback")
-		flashContains(t, ev, "POST rollback", resp, "The rollback has started.")
+		flashContains(t, ev, "POST rollback", resp, ui("flash.ok.update_rollback_started"))
 		s.followRestart(t, ev, "v0.90.1", 5*time.Minute)
 		s.waitServing(t, ev, 2*time.Minute)
-		text := s.waitPage(t, ev, 2*time.Minute, "Running version v0.90.0", "Rolled back from v0.90.1 to v0.90.0.")
-		if strings.Contains(text, "Roll back to v0.90.1") {
+		text := s.waitPage(t, ev, 2*time.Minute, runningVersion("v0.90.0"), ui("update.result.rollback", "v0.90.1", "v0.90.0"))
+		if strings.Contains(text, rollbackOffer("v0.90.1")) {
 			t.Fatalf("page offers a rollback to the newer v0.90.1")
 		}
 		s.expectVersion(t, ev, "v0.90.0")
@@ -836,7 +873,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		cursor := s.journalCursor(t)
 		resp, err := s.client.Install(s.ctx, s.orgID, "v0.90.2")
 		must(t, err, "install")
-		flashContains(t, ev, "POST install v0.90.2", resp, "The update has started.")
+		flashContains(t, ev, "POST install v0.90.2", resp, ui("flash.ok.update_started"))
 		clicked := time.Now()
 		s.waitInstalled(t, ev, "v0.90.2", 10*time.Minute)
 
@@ -880,7 +917,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 			time.Sleep(10 * time.Second)
 		}
 		s.login(t, ev)
-		s.waitPage(t, ev, 2*time.Minute, "The update to v0.90.2 did not start and was rolled back")
+		s.waitPage(t, ev, 2*time.Minute, ui("update.result.reverted", "v0.90.2"))
 		s.expectVersion(t, ev, "v0.90.1")
 		s.expectSchema(t, ev, s.base+2)
 		j := s.journal(t, ev, cursor)
@@ -940,7 +977,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 			t.Fatalf("install.sh removed the update drop-in")
 		}
 		text := s.page(t, ev)
-		if strings.Contains(text, "Roll back to") {
+		if strings.Contains(text, rollbackAny) {
 			t.Fatalf("page offers a rollback after install.sh removed krill.prev")
 		}
 		s.expectUnitActive(t, ev)
@@ -968,7 +1005,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		cursor := s.journalCursor(t)
 		resp, err := s.client.Install(s.ctx, s.orgID, "v0.90.4")
 		must(t, err, "install")
-		flashContains(t, ev, "POST install v0.90.4", resp, "The update has started.")
+		flashContains(t, ev, "POST install v0.90.4", resp, ui("flash.ok.update_started"))
 		clicked := time.Now()
 		s.waitInstalled(t, ev, "v0.90.4", 10*time.Minute)
 
@@ -1034,7 +1071,7 @@ func TestSelfUpdateAcceptance(t *testing.T) {
 		s.expectSchema(t, ev, s.base+3)
 		s.expectUnitActive(t, ev)
 		text := s.page(t, ev)
-		ev.Note("page reports the revert: %v", strings.Contains(text, "The update to v0.90.4 did not start and was rolled back"))
+		ev.Note("page reports the revert: %v", strings.Contains(text, ui("update.result.reverted", "v0.90.4")))
 	})
 
 	// 10.

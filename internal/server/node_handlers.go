@@ -227,10 +227,16 @@ func (s *Server) nodeLanes(r *http.Request, o db.Organization, live []docker.Swa
 		}
 	}
 	// Krill's own services.
-	system := map[string]string{
-		traefik.ServiceName: i18n.T(ctx, "nodes.sys_gateway"),
-		"krill-alloy-node":  i18n.T(ctx, "nodes.sys_agent"),
-		"krill-alloy-apps":  i18n.T(ctx, "nodes.sys_collector"),
+	// origin tells the operator where each one comes from (the conditions are
+	// traefik.Reconcile at startup and observability.Reconcile: the node agent
+	// while observability is on, the apps collector while it also has a
+	// metrics address).
+	type sysSvc struct{ sub, origin, href string }
+	obsHref := base + "/observability"
+	system := map[string]sysSvc{
+		traefik.ServiceName:           {i18n.T(ctx, "nodes.sys_gateway"), i18n.T(ctx, "nodes.sys_gateway_from"), ""},
+		observability.NodeServiceName: {i18n.T(ctx, "nodes.sys_agent"), i18n.T(ctx, "nodes.sys_agent_from"), obsHref},
+		observability.AppsServiceName: {i18n.T(ctx, "nodes.sys_collector"), i18n.T(ctx, "nodes.sys_collector_from"), obsHref},
 	}
 	names := make([]string, 0, len(system))
 	for n := range system {
@@ -241,8 +247,9 @@ func (s *Server) nodeLanes(r *http.Request, o db.Organization, live []docker.Swa
 		for _, nid := range on[svc] {
 			if li, ok := idx[nid]; ok {
 				lanes[li].System = append(lanes[li].System, templates.LaneItem{
-					ElemID: "n-sys-" + svc + "-" + nid, Name: svc, Sub: system[svc], Glyph: "i-app",
+					ElemID: "n-sys-" + svc + "-" + nid, Name: svc, Sub: system[svc].sub, Glyph: "i-app",
 					StateKind: "ok", StateText: i18n.T(ctx, "state.online"),
+					Origin: system[svc].origin, OriginHref: system[svc].href,
 				})
 			}
 		}

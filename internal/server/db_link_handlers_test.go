@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 func TestAddDBLinkHappyPath(t *testing.T) {
@@ -224,4 +226,69 @@ func TestAddDBLinkPerField(t *testing.T) {
 	if ls, _ := q.ListDBLinksByApplication(ctx, app.ID); len(ls) != 3 {
 		t.Fatalf("minio dbname should be rejected, have %d links", len(ls))
 	}
+}
+
+// Both ways to link a logical database, the UI form and the agent API, wait
+// for the database's lock: a delete holding it (past its link check, up to
+// the drop) cannot have a link commit under it.
+func TestDBLinkCreationWaitsForTheDatabaseLock(t *testing.T) {
+	waits := func(t *testing.T, ldbID int64, call func() *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+		t.Helper()
+		key := oplock.LogicalDB(ldbID)
+		if err := oplock.Acquire(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() { done <- call() }()
+		select {
+		case <-done:
+			oplock.Release(key)
+			t.Fatal("the link was created while the database's lock was held")
+		case <-time.After(300 * time.Millisecond):
+		}
+		oplock.Release(key)
+		return <-done
+	}
+
+	t.Run("ui", func(t *testing.T) {
+		h, q, orgSvc, _ := newDeployServer(t)
+		ctx := context.Background()
+		uid := mkUser(t, q, "dbl-lock-ui@k.local")
+		o, _ := orgSvc.CreateOrg(ctx, uid, "Org")
+		p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+		e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+		app, _ := q.CreateApplication(ctx, db.CreateApplicationParams{
+			EnvironmentID: e.ID, Name: "web", Image: "nginx", Tag: "alpine", Domain: "web-lock.x", Port: 80,
+			SourceType: "image", DockerfilePath: "Dockerfile",
+		})
+		inst, _ := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+			OrganizationID: o.ID, Engine: "postgres", Name: "pg1", AppName: "krill-postgres-pg-lock",
+			Image: "postgres:17", Superuser: "postgres", SuperuserPassword: "pw",
+		})
+		ldb, _ := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{
+			InstanceID: inst.ID, EnvironmentID: e.ID, Name: "maindb", DbName: "maindb", Username: "maindb", Password: "pw",
+		})
+		cookie := loginAs(t, q, "dbl-lock-ui@k.local")
+		base := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/apps/" + i64(app.ID)
+		waits(t, ldb.ID, func() *httptest.ResponseRecorder {
+			return postForm(t, h, base+"/db-links", cookie, url.Values{"db_ref": {"pg:" + i64(ldb.ID)}, "var_name": {"DATABASE_URL"}, "scheme": {"postgres"}})
+		})
+		if links, _ := q.ListDBLinksByApplication(ctx, app.ID); len(links) != 1 {
+			t.Fatalf("the link must be created once the lock is free, have %d", len(links))
+		}
+	})
+
+	t.Run("api", func(t *testing.T) {
+		fx := seedProvision(t)
+		ld, err := fx.q.CreateLogicalDatabase(context.Background(), db.CreateLogicalDatabaseParams{InstanceID: fx.instID, EnvironmentID: fx.envID, Name: "app", DbName: "app", Username: "app", Password: "pw"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := waits(t, ld.ID, func() *httptest.ResponseRecorder {
+			return provCall(t, fx.h, fx.provTok, "/api/v1/apps/proj/prod/web/db-links", `{"var":"DATABASE_URL","database":"app"}`)
+		})
+		if rec.Code/100 != 2 {
+			t.Fatalf("the link must be created once the lock is free, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

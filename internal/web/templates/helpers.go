@@ -175,12 +175,14 @@ func limitText(ctx context.Context, value, source string) string {
 }
 
 // limitPlaceholder says what a blank limit field means: the instance default
-// when one is configured, otherwise no limit.
-func limitPlaceholder(ctx context.Context, example, def string) string {
+// when one is configured, otherwise no limit. Only the value: the field is
+// about ten characters wide, and the hint below the row says where the value
+// that applies comes from.
+func limitPlaceholder(ctx context.Context, def string) string {
 	if def != "" {
-		return i18n.Tf(ctx, "runtime.placeholder_default", example, def)
+		return def
 	}
-	return i18n.Tf(ctx, "runtime.placeholder_none", example)
+	return i18n.T(ctx, "runtime.placeholder_none")
 }
 
 // taskDetail is a task's own message, error and exit code in one line.
@@ -245,3 +247,42 @@ func restoreName(bucket string) string {
 	}
 	return strings.TrimLeft(name, "-")
 }
+
+// commaPrefix is ", s" for a non-empty s: written right after an element on
+// the same templ line, it adds no space before the comma (templ puts one
+// between nodes on separate lines).
+func commaPrefix(s string) string {
+	if s == "" {
+		return ""
+	}
+	return ", " + s
+}
+
+// fwNoNft names the nodes without nft, for the page's warning. A lockdown
+// leaves such a worker as it is and goes on with the others (it is reported
+// as failed), so only a control plane without nft makes it unavailable: see
+// fwControlPlaneNoNft.
+func fwNoNft(nodes []FirewallNode) []string {
+	var out []string
+	for _, n := range nodes {
+		if n.State == "nft_missing" {
+			out = append(out, n.Name)
+		}
+	}
+	return out
+}
+
+// fwControlPlaneNoNft reports whether the control plane has no nft: the
+// lockdown handler refuses then, so the page does not offer one.
+func fwControlPlaneNoNft(nodes []FirewallNode) bool {
+	for _, n := range nodes {
+		if n.ControlPlane && n.State == "nft_missing" {
+			return true
+		}
+	}
+	return false
+}
+
+// Opening the cluster stays available whatever the nodes report: it also
+// clears what a probe cannot see (a ruleset persisted on a node that has lost
+// nft, the panel's direct-port flags), so it is never disabled.

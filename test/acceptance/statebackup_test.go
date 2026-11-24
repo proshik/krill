@@ -359,7 +359,7 @@ func (b *sbk) stateRuns(t *testing.T) int64 {
 func (b *sbk) backupNow(t *testing.T, ev *Evidence) string {
 	t.Helper()
 	before := b.id(t, "select coalesce(max(id), 0) from state_backup_runs")
-	b.postOK(t, ev, b.sbkPath()+"/run", url.Values{}, "Backup of Krill's state started.")
+	b.postOK(t, ev, b.sbkPath()+"/run", url.Values{}, ui("flash.ok.sbk_started"))
 	row := waitFor(t, ev, "state backup run", 5*time.Minute, 3*time.Second, func() (bool, string) {
 		out, err := b.host.Psql(b.ctx, fmt.Sprintf("select trigger||'|'||status||'|'||object_key||'|'||size_bytes||'|'||error from state_backup_runs where id > %d order by id desc limit 1", before))
 		return err == nil && out != "", out
@@ -753,7 +753,7 @@ func TestStateBackupAcceptance(t *testing.T) {
 		cursor := b.journalCursor(t)
 		resp, err := b.client.Install(b.ctx, b.org, "v0.91.2")
 		must(t, err, "install")
-		flashContains(t, ev, "POST install v0.91.2", resp, "The update has started.")
+		flashContains(t, ev, "POST install v0.91.2", resp, ui("flash.ok.update_started"))
 		b.waitInstalled(t, ev, "v0.91.2", 10*time.Minute)
 		want := fmt.Sprintf("database schema is dirty at version %d", b.base+2)
 		waitFor(t, ev, "v0.91.2 refusing the dirty schema", 4*time.Minute, 5*time.Second, func() (bool, string) {
@@ -967,7 +967,7 @@ func (b *sbk) populate(t *testing.T, ev *Evidence) {
 	b.post(t, ev, b.dbPath()+"/backups", url.Values{"destination_id": {strconv.FormatInt(b.dest, 10)}, "schedule_preset": {"daily"},
 		"schedule_custom": {""}, "retention": {"3"}, "prefix": {""}})
 	b.backup = b.id(t, fmt.Sprintf("select id from backups where logical_database_id=%d", b.ldb))
-	b.postOK(t, ev, fmt.Sprintf("%s/backups/%d/run", b.dbPath(), b.backup), url.Values{}, "Backup started")
+	b.postOK(t, ev, fmt.Sprintf("%s/backups/%d/run", b.dbPath(), b.backup), url.Values{}, ui("flash.ok.backup_started"))
 	waitFor(t, ev, "app DB backup", 5*time.Minute, 3*time.Second, func() (bool, string) {
 		st, err := b.host.Psql(b.ctx, fmt.Sprintf("select last_status from backups where id=%d", b.backup))
 		return err == nil && (st == "ok" || st == "error"), st
@@ -1055,7 +1055,7 @@ func (b *sbk) recoverWorkloads(t *testing.T, ev *Evidence) {
 	}
 	ev.Note("the recreated database is empty: the marker table does not exist yet")
 	// Restore the app database backup.
-	b.postOK(t, ev, fmt.Sprintf("%s/backups/%d/restore", b.dbPath(), b.backup), url.Values{"key": {b.appBackupKey}}, "Restore started")
+	b.postOK(t, ev, fmt.Sprintf("%s/backups/%d/restore", b.dbPath(), b.backup), url.Values{"key": {b.appBackupKey}}, ui("flash.ok.restore_started"))
 	waitFor(t, ev, "marker row restored", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		m, err := b.marker(t)
 		if err != nil {

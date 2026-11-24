@@ -71,7 +71,7 @@ func OrgDashboard(org db.Organization, role string, projects []ProjectCard, clus
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"wrap\"><div class=\"page-head\"><h1>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<main class=\"wrap wrap--wide\"><div class=\"page-head\"><h1>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

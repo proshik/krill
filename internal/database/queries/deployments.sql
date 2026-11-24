@@ -79,3 +79,9 @@ SELECT count(*) FROM deployments WHERE status = 'running';
 -- network migration polls this until every app redeploy it submitted is
 -- terminal: submitting a deploy proves nothing about whether it moved the app.
 SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);
+
+-- name: ListDeployedApplicationIDs :many
+-- The apps that have been deployed at least once: an app with no Swarm service
+-- is "not deployed" in the UI only when it has none (a stopped global app has
+-- no service either, see docker ServiceScale).
+SELECT DISTINCT application_id FROM deployments WHERE application_id = ANY(@ids::bigint[]);

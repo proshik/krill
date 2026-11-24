@@ -351,3 +351,46 @@ func TestTopologyIngressLabelShowsPaths(t *testing.T) {
 	}
 	t.Fatalf("no ingress link labelled m.example.com/api: %+v", g.Links)
 }
+
+// A bucket link was never drawn in the org topology: it now reaches the
+// bucket's S3 server.
+func TestTopologyDataBucketLink(t *testing.T) {
+	h, q, orgSvc := newServerWithNodesEngine(t, topoTestEngine())
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "topo-bucket-owner@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "Proj", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	inst, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{
+		OrganizationID: o.ID, Engine: "minio", Name: "files", AppName: "krill-minio-files-t1",
+		Image: "pgsty/silo:x", Superuser: "root", SuperuserPassword: "pw",
+	})
+	if err != nil {
+		t.Fatalf("create instance: %v", err)
+	}
+	b, err := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: inst.ID, EnvironmentID: e.ID, Name: "uploads", AccessKey: "k", SecretKey: "s"})
+	if err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	app, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+		EnvironmentID: e.ID, Name: "api", Image: "nginx", Tag: "alpine", Domain: "api.example.com", Port: 80,
+		SourceType: "image", DockerfilePath: "Dockerfile",
+	})
+	if err != nil {
+		t.Fatalf("create app: %v", err)
+	}
+	if _, err := q.CreateBucketLink(ctx, db.CreateBucketLinkParams{ApplicationID: app.ID, BucketID: b.ID, VarName: "S3_BUCKET", Field: "bucket"}); err != nil {
+		t.Fatalf("create bucket link: %v", err)
+	}
+	rec := getWithCookie(t, h, "/orgs/"+i64(o.ID)+"/topology/data", loginAs(t, q, "topo-bucket-owner@k.local"))
+	var g topology.Graph
+	if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+		t.Fatalf("bad json: %v (%d)", err, rec.Code)
+	}
+	for _, l := range g.Links {
+		if l.From == "app-"+i64(app.ID) && l.ToKind == "instance" && l.ToID == "db-"+i64(inst.ID) {
+			return
+		}
+	}
+	t.Errorf("no link from the app to its bucket's S3 server: %+v", g.Links)
+}

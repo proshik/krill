@@ -164,6 +164,41 @@ func (q *Queries) GetS3Bucket(ctx context.Context, id int64) (S3Bucket, error) {
 	return i, err
 }
 
+const listBucketLinkTargetsByApplicationIDs = `-- name: ListBucketLinkTargetsByApplicationIDs :many
+SELECT l.application_id, l.var_name, b.instance_id
+FROM app_bucket_links l
+JOIN s3_buckets b ON b.id = l.bucket_id
+WHERE l.application_id = ANY($1::bigint[])
+ORDER BY l.application_id, l.var_name
+`
+
+type ListBucketLinkTargetsByApplicationIDsRow struct {
+	ApplicationID int64  `json:"application_id"`
+	VarName       string `json:"var_name"`
+	InstanceID    int64  `json:"instance_id"`
+}
+
+// The org topology's bucket links, each with the S3 server holding its bucket.
+func (q *Queries) ListBucketLinkTargetsByApplicationIDs(ctx context.Context, ids []int64) ([]ListBucketLinkTargetsByApplicationIDsRow, error) {
+	rows, err := q.db.Query(ctx, listBucketLinkTargetsByApplicationIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBucketLinkTargetsByApplicationIDsRow
+	for rows.Next() {
+		var i ListBucketLinkTargetsByApplicationIDsRow
+		if err := rows.Scan(&i.ApplicationID, &i.VarName, &i.InstanceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBucketLinksByApplication = `-- name: ListBucketLinksByApplication :many
 SELECT id, application_id, bucket_id, var_name, field, created_at FROM app_bucket_links WHERE application_id = $1 ORDER BY var_name
 `

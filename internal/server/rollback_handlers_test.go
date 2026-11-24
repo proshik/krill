@@ -30,18 +30,26 @@ func TestRollbackHandlerAuthorizationAndHistory(t *testing.T) {
 	defer secret.Init("")
 	h, q, orgSvc, _, dep := buildDeployServer(t, nil, rollbackHandlerEngine{})
 	base, cookie, appID := domainFixture(t, h, q, orgSvc, "rollback-handler.test")
-	original := dep.Enqueue(appID, "manual")
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		row, _ := q.GetDeployment(t.Context(), original)
-		if row.Status == "done" {
-			break
+	waitDone := func(id int64) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			row, _ := q.GetDeployment(t.Context(), id)
+			if row.Status == "done" {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("deployment did not complete")
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("deployment did not complete")
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	original := dep.Enqueue(appID, "manual")
+	waitDone(original)
+	// A newer release makes the original one history: the release that runs
+	// now offers no rollback to itself.
+	current := dep.Enqueue(appID, "manual")
+	waitDone(current)
 	path := base + "/deployments/" + i64(original) + "/rollback"
 	member := mkUser(t, q, "rollback-member@k.local")
 	chain, _ := q.GetApplicationChain(t.Context(), appID)
@@ -76,6 +84,9 @@ func TestRollbackHandlerAuthorizationAndHistory(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), path) {
 		t.Fatal("eligible rollback action missing")
+	}
+	if strings.Contains(rec.Body.String(), base+"/deployments/"+i64(current)+"/rollback") {
+		t.Fatal("the active release offers a rollback to itself")
 	}
 	req = httptest.NewRequest(http.MethodGet, base+"?tab=deployments", nil)
 	req.AddCookie(loginAs(t, q, "rollback-member@k.local"))

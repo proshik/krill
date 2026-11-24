@@ -251,12 +251,12 @@ func (c *Client) WaitServing(ctx context.Context, timeout time.Duration) (sawSta
 	}
 }
 
-// WaitAvailable clicks "Check now" until the page offers "Krill <tag> is
-// available." The checker throttles manual checks to one a minute, and
+// WaitAvailable clicks "check now" until the page offers "Krill <tag> is
+// available." (update.available) The checker throttles manual checks to one a minute, and
 // GitHub's releases/latest redirect can lag a release edit, so it retries
 // within timeout.
 func (c *Client) WaitAvailable(ctx context.Context, orgID int64, tag string, timeout time.Duration) (Response, error) {
-	want := "Krill " + tag + " is available."
+	want := ui("update.available", tag)
 	deadline := time.Now().Add(timeout)
 	for {
 		resp, err := c.CheckNow(ctx, orgID)

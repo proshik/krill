@@ -84,7 +84,8 @@ templ observabilityTarget(name, title, hint, url, user string, hasPassword bool)
 			<div class="field">
 				<label for={ name + "_password" }>{ i18n.T(ctx, "obs.password") }</label>
 				if hasPassword {
-					<input class="input input--mono" id={ name + "_password" } name={ name + "_password" } type="password" autocomplete="new-password" placeholder={ i18n.T(ctx, "obs.password_keep") }/>
+					<input class="input input--mono" id={ name + "_password" } name={ name + "_password" } type="password" autocomplete="new-password" placeholder={ i18n.T(ctx, "obs.password_keep") } aria-describedby={ name + "_password_hint" }/>
+					<p class="field-hint" id={ name + "_password_hint" }>{ i18n.T(ctx, "obs.password_keep_hint") }</p>
 				} else {
 					<input class="input input--mono" id={ name + "_password" } name={ name + "_password" } type="password" autocomplete="new-password"/>
 				}

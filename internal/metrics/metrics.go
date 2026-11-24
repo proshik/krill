@@ -1,12 +1,18 @@
 package metrics
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	GroupControl = "control"
 	GroupInfra   = "infra"
 	GroupApp     = "app"
 	GroupDB      = "db"
+	// GroupOther is a container Krill did not start (no krill- name): the
+	// host's own, counted in the node's figures but not listed one by one.
+	GroupOther = "other"
 )
 
 // Point is one (time, value) sample for a chart series.
@@ -81,6 +87,9 @@ func Classify(component string, self bool, apps, dbs map[string]Labeled) (group,
 	}
 	if l, ok := dbs[component]; ok {
 		return GroupDB, l.Name
+	}
+	if !strings.HasPrefix(component, "krill-") {
+		return GroupOther, component
 	}
 	return GroupInfra, component
 }

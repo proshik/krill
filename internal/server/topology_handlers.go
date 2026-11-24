@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/proshik/krill/internal/auth"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -92,10 +93,17 @@ func (s *Server) topologyGraph(w http.ResponseWriter, r *http.Request, orgID int
 func topoView(ctx context.Context, orgID int64, g topology.Graph, project string) templates.TopoView {
 	elem := func(serviceID string) string { return "t-" + serviceID }
 	dbOwner := map[string]string{}
+	dbHidden := map[string]bool{} // chips another project's filter leaves out
 	holds := map[string][]templates.TopoHold{}
 	for _, d := range g.Dbs {
 		id := strconv.FormatInt(d.ID, 10)
 		dbOwner[id] = d.ServiceID
+		// Narrowed to a project, a server shows only that project's
+		// databases: another project's chips do not belong to the view.
+		if project != "" && strconv.FormatInt(d.ProjectID, 10) != project {
+			dbHidden[id] = true
+			continue
+		}
 		holds[d.ServiceID] = append(holds[d.ServiceID], templates.TopoHold{ElemID: elem("ldb-" + id), Name: d.Name, Env: d.Env})
 	}
 	to := map[string][]string{}
@@ -117,6 +125,11 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 		target, owner := l.ToID, l.ToID
 		if l.ToKind == "logical" {
 			target, owner = "ldb-"+l.ToID, dbOwner[l.ToID]
+			// A chip the project filter left out (an app's DSN to another
+			// project's database): the wire ends at its server's card.
+			if dbHidden[l.ToID] {
+				target = owner
+			}
 		}
 		if owner == "" {
 			continue
@@ -346,6 +359,28 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			domsByApp[d.ApplicationID] = append(domsByApp[d.ApplicationID], d)
 		}
 	}
+	// An app with no running task is either stopped or was never deployed;
+	// only Swarm can tell them apart (see deploy.DisplayStatus).
+	var idle []string
+	for _, a := range apps {
+		if svc := docker.ServiceName(a.ID); len(running[svc]) == 0 {
+			idle = append(idle, svc)
+		}
+	}
+	var idleStates map[string]docker.ServiceState
+	var deployed map[int64]bool
+	if s.engine != nil && len(idle) > 0 {
+		if st, err := s.engine.ServiceStates(ctx, idle); err != nil {
+			slog.Warn("topology: service states", "err", err)
+		} else {
+			idleStates = st
+			ids := make([]int64, 0, len(apps))
+			for _, a := range apps {
+				ids = append(ids, a.ID)
+			}
+			deployed = s.deployedApps(ctx, ids)
+		}
+	}
 	for _, a := range apps {
 		sid := "app-" + strconv.FormatInt(a.ID, 10)
 		svcName := docker.ServiceName(a.ID)
@@ -366,6 +401,8 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		status := a.Status
 		if len(running[svcName]) > 0 {
 			status = deploy.StatusRunning
+		} else if idleStates != nil {
+			status = deploy.DisplayStatus(idleStates[svcName], a.Status, deployed[a.ID])
 		}
 		m := envMeta[a.EnvironmentID]
 		services = append(services, topology.ServiceInput{
@@ -436,7 +473,7 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 			status = deploy.StatusRunning
 		}
 		services = append(services, topology.ServiceInput{
-			ID: sid, Kind: "db", NodeID: node, Label: in.Name, Sub: titleEngine(in.Engine), Engine: in.Engine, Status: status,
+			ID: sid, Kind: "db", NodeID: node, Label: in.Name, Sub: engineLabel(in.Engine), Engine: in.Engine, Status: status,
 		})
 		envInstances = append(envInstances, topology.EnvInstance{ServiceID: sid, AppName: in.AppName, Engine: in.Engine})
 	}
@@ -457,8 +494,22 @@ func (s *Server) buildTopology(ctx context.Context, orgID int64, live []docker.S
 		}
 		for _, ld := range lds {
 			isid := "db-" + strconv.FormatInt(ld.InstanceID, 10)
-			dbs = append(dbs, topology.DBInput{ID: ld.ID, ServiceID: isid, Name: ld.Name, Env: envMeta[eid].Env, NodeID: instNode[isid]})
+			dbs = append(dbs, topology.DBInput{ID: ld.ID, ServiceID: isid, Name: ld.Name, Env: envMeta[eid].Env, NodeID: instNode[isid], ProjectID: envMeta[eid].ProjID})
 			envLogicals = append(envLogicals, topology.EnvLogical{ID: ld.ID, InstanceAppName: ld.InstanceAppName, DbName: ld.DbName})
+		}
+	}
+
+	// ---- app->bucket links: drawn to the bucket's S3 server ----
+	if len(appIDs) > 0 {
+		bls, err := s.q.ListBucketLinkTargetsByApplicationIDs(ctx, appIDs)
+		if err != nil {
+			return topology.Graph{}, fmt.Errorf("topology: list bucket links failed: %w", err)
+		}
+		for _, l := range bls {
+			dbLinks = append(dbLinks, topology.LinkInput{
+				From: "app-" + strconv.FormatInt(l.ApplicationID, 10), ToKind: "instance",
+				ToID: "db-" + strconv.FormatInt(l.InstanceID, 10), Kind: "db", Engine: "minio", VarName: l.VarName,
+			})
 		}
 	}
 
@@ -511,21 +562,4 @@ func firstCSV(s string) string {
 		return s[:i]
 	}
 	return s
-}
-
-func titleEngine(e string) string {
-	switch e {
-	case "postgres":
-		return "Postgres"
-	case "redis":
-		return "Redis"
-	case "valkey":
-		return "Valkey"
-	case "dragonfly":
-		return "DragonFly"
-	case "minio":
-		return "MinIO"
-	default:
-		return e
-	}
 }

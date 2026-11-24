@@ -32,3 +32,29 @@ func TestDeriveStatus(t *testing.T) {
 		}
 	}
 }
+
+// A never-deployed app read "stopped" everywhere in the UI while its
+// deployments tab said it was never deployed. DisplayStatus tells the two
+// apart by the app's deployment history: a missing service alone proves
+// nothing, since stopping a global app removes its service.
+func TestDisplayStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    docker.ServiceState
+		db       string
+		deployed bool
+		want     string
+	}{
+		{"no service, no deployment", docker.ServiceState{Found: false}, "idle", false, StatusNotDeployed},
+		{"stopped global app: no service, deployed", docker.ServiceState{Found: false}, "idle", true, "idle"},
+		{"no service, failed first deploy", docker.ServiceState{Found: false}, "error", true, "error"},
+		{"stopped", docker.ServiceState{Found: true, Desired: 0}, "idle", true, "idle"},
+		{"stopped through the API", docker.ServiceState{Found: true, Desired: 0}, "running", true, "idle"},
+		{"running", docker.ServiceState{Found: true, Running: 1, Desired: 1}, "idle", true, "running"},
+	}
+	for _, tt := range tests {
+		if got := DisplayStatus(tt.state, tt.db, tt.deployed); got != tt.want {
+			t.Errorf("%s: DisplayStatus = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

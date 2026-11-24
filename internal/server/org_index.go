@@ -106,7 +106,34 @@ func (s *Server) liveIndexStatuses(ctx context.Context, apps []indexApp) {
 		slog.Error("liveIndexStatuses: service states", "err", err)
 		return
 	}
-	for i := range apps {
-		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
+	ids := make([]int64, len(apps))
+	for i, a := range apps {
+		ids[i] = a.ID
 	}
+	deployed := s.deployedApps(ctx, ids)
+	for i := range apps {
+		apps[i].Status = deploy.DisplayStatus(states[dockerName(apps[i].ID)], apps[i].Status, deployed[apps[i].ID])
+	}
+}
+
+// deployedApps reports which of the apps have at least one deployment. On a
+// query error every app counts as deployed: the UI then says "stopped" for
+// an app without a service, as it did before "not deployed" existed.
+func (s *Server) deployedApps(ctx context.Context, ids []int64) map[int64]bool {
+	out := map[int64]bool{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := s.q.ListDeployedApplicationIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("deployedApps: list deployed applications", "err", err)
+		for _, id := range ids {
+			out[id] = true
+		}
+		return out
+	}
+	for _, id := range rows {
+		out[id] = true
+	}
+	return out
 }

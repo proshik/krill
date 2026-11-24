@@ -66,7 +66,7 @@ func serverGlyph(engine string) string {
 
 templ DBServers(org db.Organization, role string, v DBServersView) {
 	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "dbi.title")), Org: org, Role: role, Tab: "db-servers", Body: dashBody(v.New || v.Sheet != nil)}) {
-		<main class="wrap">
+		<main class="wrap wrap--wide">
 			<div class="page-head">
 				<h1>{ i18n.T(ctx, "dbi.title") }</h1>
 				if isAdmin(role) {
@@ -314,7 +314,7 @@ templ serverConnection(c DBServerCtx) {
 		for i, f := range c.Conn {
 			@ui.CopyField("conn-"+itoa(int64(i)), i18n.T(ctx, f.Label), f.Value, f.Secret, i18n.T(ctx, "common.copy"), i18n.T(ctx, "common.reveal"))
 		}
-		<p class="hint">{ i18n.T(ctx, "dbi.conn_hint") }</p>
+		<p class="hint">{ i18n.T(ctx, connHintKey(c.Inst.Engine)) }</p>
 	</section>
 	<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/external-port") } aria-labelledby="ex-h">
 		<div class="sec-head">
@@ -334,6 +334,9 @@ templ serverConnection(c DBServerCtx) {
 		</div>
 		if c.Inst.ExternalPort != nil {
 			<p class="hint"><code>{ c.Host + ":" + itoa(int64(*c.Inst.ExternalPort)) }</code></p>
+		}
+		if c.Inst.ConsoleExternalPort != nil {
+			<p class="hint">{ i18n.T(ctx, "dbi.console_port") + ": " }<code>{ c.Host + ":" + itoa(int64(*c.Inst.ConsoleExternalPort)) }</code></p>
 		}
 		<p class="hint">{ i18n.T(ctx, "dbinst.external.hint") }</p>
 	</form>
@@ -357,7 +360,13 @@ templ serverBackups(c DBServerCtx) {
 						<span class="run-meta">{ b.Detail }</span>
 						@ui.State(b.BackupKind, b.BackupText)
 					</div>
-					<div class="deploy-keys"><a class="pill" href={ templ.SafeURL(b.BackupHref) }>{ i18n.T(ctx, "dbi.open_backups") }</a></div>
+					<div class="deploy-keys">
+						if b.BackupNone {
+							<a class="pill" href={ templ.SafeURL(b.BackupHref) }>{ i18n.T(ctx, "dbi.setup_backups") }</a>
+						} else {
+							<a class="pill" href={ templ.SafeURL(b.BackupHref) }>{ i18n.T(ctx, "dbi.open_backups") }</a>
+						}
+					</div>
 				</li>
 			}
 		</ul>
@@ -376,7 +385,8 @@ templ serverSettings(c DBServerCtx) {
 		</div>
 		<p class="hint">{ i18n.T(ctx, "dbi.version_warning") }</p>
 	</form>
-	if len(c.Nodes) > 0 {
+	// A move needs somewhere to move to: another node, or away from a removed one.
+	if len(c.Nodes) > 1 || (c.Inst.NodeHostname != "" && !hostnameInNodes(c.Nodes, c.Inst.NodeHostname)) {
 		<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(c.Base + "/node") } data-confirm={ i18n.Tf(ctx, "confirm.migrate_dbi", c.Inst.Name) } data-ok={ i18n.T(ctx, "dbnode.migrate") } data-kind="primary" onsubmit="return krillConfirm(this)" aria-labelledby="mv-h">
 			<h3 id="mv-h">{ i18n.T(ctx, "dbnode.label") }</h3>
 			<div class="add-row">

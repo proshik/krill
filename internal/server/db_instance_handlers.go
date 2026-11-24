@@ -380,9 +380,10 @@ func (s *Server) dbInstanceDetail(w http.ResponseWriter, r *http.Request) {
 		for _, l := range ldbs {
 			href := envURL(o.ID, l.ProjectID, l.EnvironmentID) + "/databases/" + strconv.FormatInt(l.ID, 10)
 			row := templates.EnvResourceRow{Name: l.Name, Href: href, Detail: l.ProjectName + " " + l.EnvName, BackupHref: href + "#backups"}
-			row.BackupKind, row.BackupText = "idle", i18n.T(ctx, "envdb.no_backups")
+			row.BackupKind, row.BackupText, row.BackupNone = "idle", i18n.T(ctx, "envdb.no_backups"), true
 			if bks, err := s.q.ListBackupsByLogicalDB(ctx, l.ID); err == nil && len(bks) > 0 {
 				row.BackupKind, row.BackupText = backupSummary(ctx, dbBackupConfigs(bks))
+				row.BackupNone = false
 			}
 			c.Backups = append(c.Backups, row)
 		}
@@ -695,6 +696,35 @@ func (s *Server) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.dbi_has_buckets")
 		return
 	}
+	// As with one logical database, a server is not deleted while apps link
+	// to it or to its databases: the links would vanish with it. The
+	// databases' locks are held from the check through the removal, so no
+	// link to them can commit in between (see oplock.LogicalDB).
+	ldbs, err := s.q.ListLogicalDatabasesByInstance(r.Context(), inst.ID)
+	if err != nil {
+		logFrom(r).Error("deleteDBInstance: list dbs failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	// A link creator holds one such lock at a time, so the order is free.
+	for _, ld := range ldbs {
+		key := oplock.LogicalDB(ld.ID)
+		if err := oplock.Acquire(r.Context(), key); err != nil {
+			return
+		}
+		defer oplock.Release(key)
+	}
+	instID := inst.ID
+	linked, err := s.q.ListDBLinkAppNamesByInstance(r.Context(), &instID)
+	if err != nil {
+		logFrom(r).Error("deleteDBInstance: list links failed", "err", err, "instance_id", inst.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	if len(linked) > 0 {
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.dbi_linked", strings.Join(linked, ", ")))
+		return
+	}
 	destroy := r.FormValue("destroy_data") == "on"
 
 	// Remove the instance's containers FIRST — the real-failure point — before
@@ -772,14 +802,10 @@ func (s *Server) dbInstanceLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(context.Background())
-	rc, err := s.engine.ServiceLogs(ctx, appName, true, 200) // 200: the viewer's live-tail window, unchanged from before tail was parameterized
-	if err != nil {
+	if err := s.streamServiceLogsToWS(ctx, conn, appName, i18n.T(r.Context(), "log.gap")); err != nil {
 		logFrom(r).Error("dbInstanceLogs: engine service logs failed", "err", err, "instance_id", inst.ID, "app_name", appName)
 		conn.Close(websocket.StatusInternalError, "logs unavailable")
-		return
 	}
-	defer rc.Close()
-	streamParsedLogsToWS(ctx, conn, rc)
 }
 
 // dbInstanceDeployLogs streams the in-memory deploy-log feed over a WebSocket.

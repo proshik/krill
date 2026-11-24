@@ -76,6 +76,9 @@ type AppCtx struct {
 	Deployment *db.Deployment
 	// NodeNames maps a Swarm node id to the name the canvas shows for it.
 	NodeNames map[string]string
+	// Running is the app's running replicas, read for the terminal tab; -1
+	// when unknown (another tab, or Swarm did not answer).
+	Running int
 	// VolumeBlocks are the volumes' backup sections (settings tab).
 	VolumeBlocks map[int64]BackupBlock
 }
@@ -137,7 +140,7 @@ templ AppDetail(c AppCtx, tab string) {
 				<div class="sheet-title">
 					@ui.Glyph("i-app")
 					<h2>{ c.App.Name }</h2>
-					@AppStateBadge(c.App.Status, c.base()+"/status")
+					@AppStateBadge(c.App.Status, c.base()+"/status", c.Running)
 				</div>
 				<a class="pill pill--icon" href={ templ.SafeURL(c.envURL()) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
 					@ui.Icon("i-close")
@@ -149,6 +152,8 @@ templ AppDetail(c AppCtx, tab string) {
 						@ui.Icon("i-link")
 						{ trimScheme(u) }
 					</a>
+				} else if len(c.Domains) > 0 {
+					<span class="run-meta">{ i18n.T(ctx, "app.internal_not_exposed") }</span>
 				} else {
 					<span class="run-meta">{ i18n.T(ctx, "app.internal_no_domain") }</span>
 				}
@@ -188,9 +193,11 @@ templ AppDetail(c AppCtx, tab string) {
 }
 
 // AppStateBadge is the app's live state in the sheet head; it refreshes itself.
-templ AppStateBadge(status, pollURL string) {
+// running (-1 when unknown) lets the terminal tab follow its replicas: see
+// krillTermState in app.js.
+templ AppStateBadge(status, pollURL string, running int) {
 	{{ kind, text := AppState(ctx, status) }}
-	<span class={ "state", "state--" + kind } id="app-state" hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML">
+	<span class={ "state", "state--" + kind } id="app-state" hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML" data-running={ itoa(int64(running)) }>
 		@ui.Sig(kind)
 		{ text }
 	</span>
@@ -214,13 +221,11 @@ templ deploymentsTab(c AppCtx) {
 								{ i18n.T(ctx, "app.not_placed") }
 							}
 						</span>
-						<span class="run-meta">
-							if t.Desired != "" && t.Desired != t.State {
-								{ t.State + " → " + t.Desired }
-							} else {
-								{ t.State }
-							}
-						</span>
+						if t.Desired != "" && taskLabel(ctx, t.Desired) != taskLabel(ctx, t.State) {
+							<span class="run-meta">{ "→ " + taskLabel(ctx, t.Desired) }</span>
+						} else {
+							<span class="run-meta"></span>
+						}
 						@ui.State(taskKind(t.State), taskLabel(ctx, t.State))
 					</div>
 				}
@@ -250,7 +255,7 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 			<section class="deploy" aria-label={ i18n.T(ctx, "deploy.running") }>
 				<div class="deploy-top">
 					<span class="tag">{ i18n.T(ctx, "deploy.running") }</span>
-					<code>{ running.ImageTag }</code>
+					<code title={ running.ImageTag }>{ shortImageRef(running.ImageTag) }</code>
 					<span class="when">{ deployWhen(ctx, *running) }</span>
 				</div>
 				<p class="deploy-msg">{ i18n.T(ctx, "deploy.in_progress") }</p>
@@ -263,7 +268,7 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 			<section class="deploy deploy--failed" aria-label={ i18n.T(ctx, "deploy.failed") }>
 				<div class="deploy-top">
 					<span class="tag tag--failed">{ i18n.T(ctx, "deploy.failed") }</span>
-					<code>{ failed.ImageTag }</code>
+					<code title={ failed.ImageTag }>{ shortImageRef(failed.ImageTag) }</code>
 					<span class="when">{ deployWhen(ctx, *failed) }</span>
 				</div>
 				if failed.ErrorMessage != "" {
@@ -287,7 +292,7 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 					<span class="tag">{ i18n.T(ctx, "deploy.never") }</span>
 				}
 				if active != nil {
-					<code>{ active.ImageTag }</code>
+					<code title={ active.ImageTag }>{ shortImageRef(active.ImageTag) }</code>
 					<span class="when">{ deployWhen(ctx, *active) }</span>
 				}
 			</div>
@@ -296,17 +301,27 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 			}
 			<div class="deploy-keys">
 				if active != nil {
+					// No rollback to the release that runs now; older eligible
+					// releases in the history below keep theirs. A stopped app
+					// keeps it: Start deploys the current settings again, so
+					// restoring is its only way back to this release's snapshot.
 					<a class="pill" href={ templ.SafeURL(c.base() + "/deployments/" + itoa(active.ID)) }>{ i18n.T(ctx, "deploy.view_log") }</a>
-					if active.RollbackEligible && secret.Enabled() && c.admin() {
+					if c.App.Status == "idle" && active.RollbackEligible && secret.Enabled() && c.admin() {
 						<form method="post" action={ templ.SafeURL(c.base() + "/deployments/" + itoa(active.ID) + "/rollback") } hx-boost="false" data-confirm={ i18n.T(ctx, "confirm.rollback_app") } data-ok={ i18n.T(ctx, "deploy.rollback") } data-kind="primary" onsubmit="return krillConfirm(this)">
 							<button type="submit" class="pill">{ i18n.T(ctx, "deploy.restore_release") }</button>
 						</form>
 					}
 				}
-				<a class="pill" href={ templ.SafeURL(c.base() + "?tab=logs") }>{ i18n.T(ctx, "app.view_logs") }</a>
+				if active != nil {
+					<a class="pill" href={ templ.SafeURL(c.base() + "?tab=logs") }>{ i18n.T(ctx, "app.view_logs") }</a>
+				}
 				if c.admin() {
-					if c.App.Status == "idle" {
-						<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.start") }</button>
+					if c.App.Status == "idle" || c.App.Status == "not_deployed" {
+						if c.App.Status == "not_deployed" {
+							<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.deploy_first") }</button>
+						} else {
+							<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.start") }</button>
+						}
 						if c.App.SourceType == "dockerfile" {
 							<button type="submit" form="rebuild-form" class="pill" title={ i18n.T(ctx, "app.rebuild_hint") }>{ i18n.T(ctx, "app.rebuild") }</button>
 						}
@@ -328,7 +343,7 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 					<li class="deploy">
 						<div class="deploy-top">
 							<span class={ "tag", templ.KV("tag--failed", dp.Status == "error"), templ.KV("tag--removed", dp.Status == "done") }>{ historyTagLabel(ctx, dp.Status) }</span>
-							<code>{ dp.ImageTag }</code>
+							<code title={ dp.ImageTag }>{ shortImageRef(dp.ImageTag) }</code>
 							<span class="when">{ deployWhen(ctx, dp) }</span>
 							if dp.RollbackSourceID != nil {
 								<span class="run-meta">{ i18n.Tf(ctx, "deploy.rollback_source", *dp.RollbackSourceID) }</span>
@@ -349,9 +364,11 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 				}
 			</ol>
 		}
-		<p class="hint">{ i18n.T(ctx, "deploy.rollback_hint") }</p>
-		if !secret.Enabled() {
-			<p class="hint">{ i18n.T(ctx, "deploy.rollback_key_required") }</p>
+		if len(deps) > 0 {
+			<p class="hint">{ i18n.T(ctx, "deploy.rollback_hint") }</p>
+			if !secret.Enabled() {
+				<p class="hint">{ i18n.T(ctx, "deploy.rollback_key_required") }</p>
+			}
 		}
 	</div>
 }
@@ -407,12 +424,14 @@ templ terminalTab(c AppCtx) {
 	<section class="sec" aria-labelledby="term-h">
 		<div class="sec-head"><h3 id="term-h">{ i18n.T(ctx, "tab.terminal") }</h3></div>
 		<p class="hint">{ i18n.T(ctx, "term.hint") }</p>
+		{{ noReplica := c.Running == 0 || (c.Running < 0 && (c.App.Status == "idle" || c.App.Status == "not_deployed")) }}
+		<p class="callout" id="term-noreplica" hidden?={ !noReplica }>{ i18n.T(ctx, "term.no_replica") }</p>
 		<div class="add-row">
 			<div class="field">
 				<label for="term-cmd">{ i18n.T(ctx, "term.command") }</label>
 				<input id="term-cmd" class="input input--mono" value="/bin/sh" autocomplete="off" spellcheck="false"/>
 			</div>
-			<button type="button" class="pill" onclick="krillExecConnect()">
+			<button type="button" class="pill" id="term-connect" onclick="krillExecConnect()" disabled?={ noReplica }>
 				@ui.Icon("i-term")
 				{ i18n.T(ctx, "term.connect") }
 			</button>

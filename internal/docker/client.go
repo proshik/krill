@@ -563,6 +563,9 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 		Follow:     follow,
 		Tail:       strconv.Itoa(tail),
 		Timestamps: true,
+		// Each line carries its task: the log viewer keeps its place per task
+		// (logparse.Cursor), and logparse.ParseLogLine strips the attributes.
+		Details: true,
 	})
 	if err != nil {
 		return nil, err

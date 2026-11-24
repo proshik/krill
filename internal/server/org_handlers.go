@@ -7,6 +7,7 @@ import (
 
 	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/orgnet"
 	"github.com/proshik/krill/internal/web/i18n"
 	"github.com/proshik/krill/internal/web/templates"
@@ -151,7 +152,7 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.deriveCardStatuses(ctx, apps, nil)
-	type tally struct{ apps, failed, stopped, deploying int }
+	type tally struct{ apps, failed, stopped, notDeployed, deploying int }
 	byEnv := map[int64]*tally{}
 	mini := map[int64][]string{}
 	for _, a := range apps {
@@ -168,7 +169,11 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 		case "warn":
 			t.deploying++
 		case "idle":
-			t.stopped++
+			if a.Status == deploy.StatusNotDeployed {
+				t.notDeployed++
+			} else {
+				t.stopped++
+			}
 		}
 		mini[a.EnvironmentID] = append(mini[a.EnvironmentID], kind)
 	}
@@ -196,6 +201,8 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 				row.StateKind, row.StateText = "warn", i18n.Tf(ctx, "projects.n_deploying", t.deploying)
 			case t.stopped > 0:
 				row.StateKind, row.StateText = "idle", i18n.Tf(ctx, "projects.n_stopped", t.stopped)
+			case t.notDeployed > 0:
+				row.StateKind, row.StateText = "idle", i18n.Tf(ctx, "projects.n_not_deployed", t.notDeployed)
 			default:
 				row.StateKind, row.StateText = "ok", i18n.T(ctx, "projects.all_online")
 			}
@@ -219,7 +226,7 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 			case cn.Mem >= 85:
 				cn.StateKind, cn.StateText = "warn", i18n.Tf(ctx, "canvas.memory_pct", cn.Mem)
 			default:
-				cn.StateKind, cn.StateText = "ok", i18n.T(ctx, "projects.node_healthy")
+				cn.StateKind, cn.StateText = "ok", i18n.T(ctx, "nodes.state_ready")
 			}
 			cluster = append(cluster, cn)
 		}

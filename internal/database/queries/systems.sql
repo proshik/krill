@@ -30,3 +30,14 @@ DELETE FROM system_members WHERE application_id = $1;
 -- (org-wide, across environments), for the "shared" badge.
 SELECT (SELECT count(*) FROM logical_databases ld WHERE ld.instance_id = $1)
      + (SELECT count(*) FROM s3_buckets b WHERE b.instance_id = $1) AS total;
+
+-- name: SearchSystemsByOrg :many
+-- The command palette's system search, as SearchS3BucketsByOrg.
+SELECT s.id, s.name, s.environment_id
+FROM systems s
+JOIN environments e ON e.id = s.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = @organization_id
+  AND s.name ILIKE @pattern
+ORDER BY s.name, s.id
+LIMIT @max_rows;

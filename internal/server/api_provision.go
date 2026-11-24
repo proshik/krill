@@ -481,6 +481,17 @@ func (p apiProvisioner) LinkDatabase(ctx context.Context, app db.Application, in
 		if !slices.Contains(drv.LinkFields(), field) {
 			return api.Invalid(fmt.Sprintf("field %q does not apply here; one of: %s", field, strings.Join(drv.LinkFields(), ", ")))
 		}
+		if ldbID != nil {
+			// Deleting the database checks its links under this lock.
+			key := oplock.LogicalDB(*ldbID)
+			if err := oplock.Acquire(ctx, key); err != nil {
+				return err
+			}
+			defer oplock.Release(key)
+			if _, err := p.s.q.GetLogicalDatabase(ctx, *ldbID); err != nil {
+				return api.NotFound("database")
+			}
+		}
 		links, err := p.s.q.ListDBLinksByApplication(ctx, app.ID)
 		if err != nil {
 			return fmt.Errorf("list links: %w", err)

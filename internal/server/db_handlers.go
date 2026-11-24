@@ -272,6 +272,26 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer oplock.Release(key)
+	// Like a bucket, a database an app is linked to is not deleted under it:
+	// the link would vanish with it and the app lose its variable at the
+	// next deploy. Link creation holds the same lock, so none can commit
+	// between this check and the drop.
+	ldKey := oplock.LogicalDB(ld.ID)
+	if err := oplock.Acquire(r.Context(), ldKey); err != nil {
+		return
+	}
+	defer oplock.Release(ldKey)
+	ldID := ld.ID
+	linked, err := s.q.ListDBLinkAppNamesByLogicalDatabase(r.Context(), &ldID)
+	if err != nil {
+		logFrom(r).Error("deleteLogicalDatabase: list links", "err", err, "ldb_id", ld.ID)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	if len(linked) > 0 {
+		s.flashErr(w, r, i18n.Tf(r.Context(), "flash.err.ldb_linked", strings.Join(linked, ", ")))
+		return
+	}
 	inst, err := s.q.GetDBInstance(r.Context(), ld.InstanceID)
 	if err != nil {
 		logFrom(r).Error("deleteLogicalDatabase: instance missing", "err", err, "ldb_id", ld.ID)
@@ -289,12 +309,16 @@ func (s *Server) deleteLogicalDatabase(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.ldb_instance_down")
 		return
 	}
-	if err := s.dbsvc.DropLogicalDB(r.Context(), di, dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username}); err != nil {
+	// Once the drop starts, the request going away must not split it from the
+	// row delete: a row left for a dropped database would accept new links.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+	defer cancel()
+	if err := s.dbsvc.DropLogicalDB(dctx, di, dbservice.LogicalDB{DBName: ld.DbName, Username: ld.Username}); err != nil {
 		logFrom(r).Error("deleteLogicalDatabase: drop failed", "err", err, "ldb_id", ld.ID)
 		s.flashErrErr(w, r, "flash.err.delete_database", err)
 		return
 	}
-	if err := s.q.DeleteLogicalDatabase(r.Context(), ld.ID); err != nil {
+	if err := s.q.DeleteLogicalDatabase(dctx, ld.ID); err != nil {
 		logFrom(r).Error("deleteLogicalDatabase: row delete failed", "err", err, "ldb_id", ld.ID)
 		s.flashErrT(w, r, "flash.err.delete_database")
 		return

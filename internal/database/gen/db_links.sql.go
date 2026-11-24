@@ -100,6 +100,65 @@ func (q *Queries) GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	return i, err
 }
 
+const listDBLinkAppNamesByInstance = `-- name: ListDBLinkAppNamesByInstance :many
+SELECT DISTINCT a.name
+FROM app_db_links l
+JOIN applications a ON a.id = l.application_id
+LEFT JOIN logical_databases ld ON ld.id = l.logical_database_id
+WHERE l.instance_id = $1 OR ld.instance_id = $1
+ORDER BY a.name
+`
+
+// The apps linked to a database server, directly or through one of its
+// logical databases: the server cannot be deleted while any link remains.
+func (q *Queries) ListDBLinkAppNamesByInstance(ctx context.Context, instanceID *int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDBLinkAppNamesByInstance, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDBLinkAppNamesByLogicalDatabase = `-- name: ListDBLinkAppNamesByLogicalDatabase :many
+SELECT DISTINCT a.name
+FROM app_db_links l JOIN applications a ON a.id = l.application_id
+WHERE l.logical_database_id = $1 ORDER BY a.name
+`
+
+// The apps a logical database is linked into: it cannot be deleted while any
+// link remains (the same rule as buckets).
+func (q *Queries) ListDBLinkAppNamesByLogicalDatabase(ctx context.Context, logicalDatabaseID *int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDBLinkAppNamesByLogicalDatabase, logicalDatabaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDBLinksByApplication = `-- name: ListDBLinksByApplication :many
 SELECT id, application_id, logical_database_id, instance_id, var_name, scheme, field, created_at
 FROM app_db_links WHERE application_id = $1 ORDER BY var_name

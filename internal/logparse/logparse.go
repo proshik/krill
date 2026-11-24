@@ -19,6 +19,9 @@ type LogLine struct {
 	Time  string `json:"t"`   // docker RFC3339 timestamp, or "" if absent
 	Level string `json:"lvl"` // normalized level, or "" if unknown
 	Msg   string `json:"msg"` // the application's line, verbatim
+	// Task is the Swarm task the line came from, when the stream carries
+	// docker's log details (see docker.Engine.ServiceLogs); not sent on.
+	Task string `json:"-"`
 }
 
 var (
@@ -30,7 +33,8 @@ var (
 // log level heuristically, and returns the remainder as the message.
 func ParseLogLine(raw string) LogLine {
 	ts, rest := splitDockerTimestamp(raw)
-	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest}
+	task, rest := splitDockerDetails(rest)
+	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest, Task: task}
 }
 
 // splitDockerTimestamp peels a leading "2026-06-07T19:31:52.307218Z " token
@@ -104,4 +108,33 @@ func ScanEndNotice(err error) (LogLine, bool) {
 	// underlying error can name a docker socket path or a host. Callers log the
 	// real cause.
 	return LogLine{Level: "error", Msg: "log stream stopped unexpectedly"}, true
+}
+
+// splitDockerDetails strips the attributes docker puts before a line when a
+// service's logs are read with details and returns the task ID. Swarm adds
+// com.docker.swarm.node.id, .service.id and .task.id; a logging driver's
+// env/labels options add more (an app's environment values among them), and
+// docker sorts all keys, so the Swarm ones need not come first. The whole
+// block is one token of comma-separated key=value pairs (values are
+// URL-encoded: no spaces or commas), and it is stripped whatever it holds, so
+// none of it can reach a reader as message text. A line without the task key
+// in its first token is returned as it is.
+func splitDockerDetails(s string) (task, rest string) {
+	attrs, rest, ok := strings.Cut(s, " ")
+	if !ok {
+		attrs, rest = s, ""
+	}
+	if !strings.Contains(attrs, "com.docker.swarm.task.id=") {
+		return "", s
+	}
+	for _, kv := range strings.Split(attrs, ",") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || k == "" {
+			return "", s // not docker's attribute list after all
+		}
+		if k == "com.docker.swarm.task.id" {
+			task = v
+		}
+	}
+	return task, rest
 }

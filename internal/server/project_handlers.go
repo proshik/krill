@@ -240,8 +240,13 @@ func (s *Server) deriveCardStatuses(ctx context.Context, apps []db.Application, 
 		slog.Error("deriveCardStatuses: bulk service states", "err", err)
 		return
 	}
+	ids := make([]int64, len(apps))
+	for i, a := range apps {
+		ids[i] = a.ID
+	}
+	deployed := s.deployedApps(ctx, ids)
 	for i := range apps {
-		apps[i].Status = deploy.DeriveStatus(states[dockerName(apps[i].ID)], apps[i].Status)
+		apps[i].Status = deploy.DisplayStatus(states[dockerName(apps[i].ID)], apps[i].Status, deployed[apps[i].ID])
 	}
 	for i := range ldbs {
 		ldbs[i].InstanceStatus = deploy.DeriveStatus(states[ldbs[i].InstanceAppName], ldbs[i].InstanceStatus)

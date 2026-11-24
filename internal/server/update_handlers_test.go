@@ -719,3 +719,25 @@ func TestUpdateBadge(t *testing.T) {
 		t.Errorf("unwired server: the sidebar shows the badge")
 	}
 }
+
+// The settings overview called a build from source "up to date" in green:
+// such a build is never offered an update, so nothing was checked.
+func TestSettingsOverviewUpdatesRow(t *testing.T) {
+	f := newUpdateFixture(t)
+	base, cookie, _ := nodesOrg(t, f.q, f.orgSvc, "upd-ov@k.local", "OrgUpdOv")
+	for _, tc := range []struct {
+		name, current, want, notWant string
+	}{
+		{"release up to date", updLatest, ">latest<", "development build"},
+		{"build from source", "v0.2.0-3-gabcdef1", "development build", ">latest<"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, i := newUpdateFakes()
+			c.current, c.newer = tc.current, false
+			body := getPage(t, f.handler(c, i), base+"/settings", cookie, nil).Body.String()
+			if !strings.Contains(body, tc.want) || strings.Contains(body, tc.notWant) {
+				t.Errorf("updates row: want %q and not %q", tc.want, tc.notWant)
+			}
+		})
+	}
+}
