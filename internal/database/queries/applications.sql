@@ -114,3 +114,22 @@ UPDATE applications SET domain = $2, updated_at = now() WHERE id = $1;
 -- Taken before any domains row: deleting an application locks it first and
 -- then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 SELECT id FROM applications WHERE id = $1 FOR UPDATE;
+
+-- name: ListStuckDeployingApplications :many
+-- Apps whose stored status says a deploy is under way while no deployment of
+-- theirs is: a deploy interrupted by a shutdown or a crash leaves the status
+-- behind, and nothing else ever rewrites it. last_finished is when the app's
+-- latest deployment ended, or its row last changed when it has none.
+SELECT a.id,
+       COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished
+FROM applications a
+WHERE a.status = 'deploying'
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');
+
+-- name: HealApplicationStatus :execrows
+-- Rewrites a stuck 'deploying' status, but only while it is still stuck: a
+-- deploy that started since the list was read has a running deployment and
+-- keeps its status.
+UPDATE applications a SET status = @status, updated_at = now()
+WHERE a.id = @id AND a.status = 'deploying'
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');

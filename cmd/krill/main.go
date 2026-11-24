@@ -284,6 +284,12 @@ func run() error {
 	stopCleanup := deploy.StartLogCleanup(ctx, store, 10*time.Minute)
 	defer stopCleanup()
 
+	// A deploy interrupted by a shutdown or a crash leaves its app "deploying"
+	// with nothing left to finish it; set such a status from the live service,
+	// now (after FailOrphanedDeployments above) and once a minute after that.
+	stopHeal := deploy.StartStatusHeal(ctx, store, engine, time.Minute)
+	defer stopHeal()
+
 	// Session GC: expired rows are otherwise only reaped lazily when the exact
 	// token is re-presented (never, once the browser drops the cookie).
 	go func() {

@@ -276,8 +276,8 @@ func (d *Deployer) drainQueue() {
 }
 
 // failQueued marks a never-run queued job's deployment failed (detached ctx) and
-// closes its log feed. App status is left "deploying" — the live status poll
-// reconciles it after restart, matching enqueue's shutdown branch.
+// closes its log feed. App status is left "deploying" — StartStatusHeal sets
+// it from the service after restart, matching enqueue's shutdown branch.
 func (d *Deployer) failQueued(j job, reason string) {
 	if !d.claimFinish(j.deployID) {
 		return // a stop cancelled it and records it
@@ -472,8 +472,8 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "server shutting down", "")
-		// Leave the app deploying (not error) on shutdown — it never ran; the
-		// live status poll reconciles after restart.
+		// Leave the app deploying (not error) on shutdown — it never ran;
+		// StartStatusHeal sets it from the service after restart.
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
 		return 0, ErrDeployerStopped
 	}
@@ -1023,7 +1023,8 @@ func (d *Deployer) startSettle(deployID, appID int64, rollback bool, imageTag, s
 
 // finishInterrupted records a deploy that Krill stopped waiting for because it
 // is shutting down: the deployment failed (its outcome is unknown), while the
-// app is left deploying for the live status poll to reconcile after restart.
+// app is left deploying, and StartStatusHeal sets it from the service after
+// restart.
 func (d *Deployer) finishInterrupted(deployID, appID int64, imageTag string) {
 	d.finishAs(deployID, appID, "error", StatusDeploying, imageTag, "interrupted: krill stopped before the service converged")
 }

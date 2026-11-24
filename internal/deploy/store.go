@@ -614,3 +614,24 @@ func TraefikDomains(rows []db.Domain) []traefik.Domain {
 	}
 	return out
 }
+
+// ListStuckDeployingApps lists the apps left "deploying" with no deployment
+// running (see HealStuckStatuses).
+func (s *DBStore) ListStuckDeployingApps(ctx context.Context) ([]StuckApp, error) {
+	rows, err := s.q.ListStuckDeployingApplications(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StuckApp, len(rows))
+	for i, r := range rows {
+		out[i] = StuckApp{ID: r.ID, LastFinished: r.LastFinished}
+	}
+	return out, nil
+}
+
+// HealAppStatus sets a stuck app's status, unless a deploy has started (or the
+// status changed) since it was listed.
+func (s *DBStore) HealAppStatus(ctx context.Context, appID int64, status string) (bool, error) {
+	n, err := s.q.HealApplicationStatus(ctx, db.HealApplicationStatusParams{ID: appID, Status: status})
+	return n > 0, err
+}

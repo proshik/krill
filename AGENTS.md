@@ -197,7 +197,8 @@ Expanded in [deploy.md](docs/internals/deploy.md#deploy-invariants).
 - **A deploy is done only when Swarm is:** after `KRILL_CONVERGE_TIMEOUT` a still-converging
   service goes to `Deployer.startSettle` (up to 20m, in `d.wg`), which records the real outcome;
   the deployment stays `running`, so the per-app and per-org caps and the self-update busy check
-  still count it. A shutdown records "interrupted" and leaves the app `deploying`.
+  still count it. A shutdown records "interrupted" and leaves the app `deploying`;
+  `deploy.StartStatusHeal` later sets such a status from the live service.
 - **Stop cancels an unfinished deploy:** both Stops (UI and API) go through `Deployer.StopApp`,
   which cancels queued/preparing deploys under `admitMu` and scales under `oplock.AppRouting` — the
   lock the deployer holds from `enterApply` through `ServiceDeploy` — so exactly one of them wins.

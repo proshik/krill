@@ -824,7 +824,7 @@ func TestDeploySlowStartTimesOutHonestly(t *testing.T) {
 
 // Stopping Krill while a deploy settles in the background must not hang Stop
 // and must not leave the deployment looking finished: it is recorded as
-// interrupted (error), the app left deploying for the status poll.
+// interrupted (error), the app left deploying for StartStatusHeal.
 func TestStopDuringSettleRecordsInterrupted(t *testing.T) {
 	shortSettle(t, time.Minute)
 	eng := &mockEngine{partialRunning: true}
