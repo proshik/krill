@@ -1099,6 +1099,62 @@ function krillCardNodes(c) {
   return ((where || c).dataset.nodes || "").split(" ").filter(Boolean);
 }
 
+// routeAround keeps a wire between two lanes off every other lane. The plain
+// curve runs straight across, under whatever lane sits between its ends (a
+// database server's lane between the ingress lane and the apps it routes to
+// made the gateway's wires look like they came out of that server's card). A
+// wire whose curve would enter another lane instead leaves its own lane into
+// the gutter beside it, runs along the gap above the target's row, and comes
+// down the gutter beside the target lane. It returns the path, or null when
+// the plain curve is clear (or the ends share a lane).
+function routeAround(l, lanes, colGap, rowGap, box) {
+  const la = lanes.find(function (x) { return x.el.contains(l.from); });
+  const lb = lanes.find(function (x) { return x.el.contains(l.to); });
+  if (!la || !lb || la === lb) return null;
+  const a = box(l.from), b = box(l.to);
+  const ya = (a.top + a.bottom) / 2, yb = (b.top + b.bottom) / 2;
+  const dir = b.left >= a.right ? 1 : b.right <= a.left ? -1 : 0;
+  const x1 = dir < 0 ? a.left : a.right, x2 = dir > 0 ? b.left : b.right;
+  const dx = Math.max(40, Math.abs(x2 - x1) / 2) * (dir || 1);
+  const c1x = dir === 0 ? x1 + 48 : x1 + dx, c2x = dir === 0 ? x2 + 48 : x2 - dx;
+  const others = lanes.filter(function (x) { return x !== la && x !== lb; });
+  let blocked = false;
+  for (let i = 1; i < 24 && !blocked; i++) {
+    const t = i / 24, u = 1 - t;
+    const x = u * u * u * x1 + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * x2;
+    const y = u * u * u * ya + 3 * u * u * t * ya + 3 * u * t * t * yb + t * t * t * yb;
+    blocked = others.some(function (o) { return x > o.left + 1 && x < o.right - 1 && y > o.top + 1 && y < o.bottom - 1; });
+  }
+  if (!blocked) return null;
+  // Gateway wires and database wires keep apart where both detour, so a
+  // dashed database link never merges into a gateway's line.
+  const shift = l.from.hasAttribute("data-gateway") ? 0 : 6;
+  const out = dir < 0 ? la.left - colGap / 2 - shift : la.right + colGap / 2 + shift;
+  const r = 10;
+  // Rounded orthogonal segments through the given points.
+  const pts = [[x1, ya], [out, ya]];
+  if (dir === 0) {
+    pts.push([out, yb], [x2, yb]);
+  } else {
+    const into = dir > 0 ? lb.left - colGap / 2 + shift : lb.right + colGap / 2 - shift;
+    // Close above the row: a first row has only the page's own margin above
+    // it (the topology legend sits there), not a full row gap.
+    const yc = Math.max(la.top, lb.top) - Math.min(rowGap / 2, 12) + shift;
+    pts.push([out, yc], [into, yc], [into, yb], [x2, yb]);
+  }
+  let d = "M" + pts[0][0] + " " + pts[0][1];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+    const l1 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), l2 = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+    const q = Math.min(r, l1 / 2, l2 / 2);
+    if (q < 0.5) { d += "L" + p1[0] + " " + p1[1]; continue; }
+    const sx = p1[0] - (p1[0] - p0[0]) / l1 * q, sy = p1[1] - (p1[1] - p0[1]) / l1 * q;
+    const ex = p1[0] + (p2[0] - p1[0]) / l2 * q, ey = p1[1] + (p2[1] - p1[1]) / l2 * q;
+    d += "L" + sx + " " + sy + "Q" + p1[0] + " " + p1[1] + " " + ex + " " + ey;
+  }
+  return d + "L" + pts[pts.length - 1][0] + " " + pts[pts.length - 1][1];
+}
+
 function mountWiredMap(map) {
   // A JS property, not an attribute: htmx's history cache restores a page from
   // its serialized HTML, which would carry an attribute but not the listeners.
@@ -1123,6 +1179,13 @@ function mountWiredMap(map) {
     if (getComputedStyle(svg).display === "none") return;
     const host = map.getBoundingClientRect();
     const k = host.width / map.offsetWidth || 1;
+    const box = function (el) {
+      const r = el.getBoundingClientRect();
+      return { el: el, left: (r.left - host.left) / k, right: (r.right - host.left) / k, top: (r.top - host.top) / k, bottom: (r.bottom - host.top) / k };
+    };
+    const lanes = Array.from(map.querySelectorAll(".lane")).filter(function (e) { return e.offsetParent; }).map(box);
+    const cs = getComputedStyle(map);
+    const colGap = parseFloat(cs.columnGap) || 24, rowGap = parseFloat(cs.rowGap) || colGap;
     links.forEach(function (l) {
       l.path = null;
       if (!l.from.offsetParent || !l.to.offsetParent || l.from.hidden || l.to.hidden) return;
@@ -1146,6 +1209,8 @@ function mountWiredMap(map) {
         const dx = Math.max(40, Math.abs(x2 - x1) / 2) * dir;
         p.setAttribute("d", "M" + x1 + " " + ya + "C" + (x1 + dx) + " " + ya + " " + (x2 - dx) + " " + yb + " " + x2 + " " + yb);
       }
+      const routed = routeAround(l, lanes, colGap, rowGap, box);
+      if (routed) p.setAttribute("d", routed);
       if (l.from.hasAttribute("data-gateway")) p.classList.add("w-ingress");
       else if (l.detected) p.classList.add("w-detected");
       else if (l.from.closest(".lane") && l.from.closest(".lane") !== l.to.closest(".lane")) p.classList.add("w-cross");
