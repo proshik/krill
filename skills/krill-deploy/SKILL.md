@@ -19,7 +19,7 @@ Krill exposes sixteen tools. Twelve **operate apps that already exist**; four mo
 | `krill_deploy` | write | Queue a deploy; optional `tag` retags an `image` app first |
 | `krill_rebuild` | write | `--no-cache` build, `dockerfile` apps only |
 | `krill_reload` | write | Restart the running tasks in place — same image, no build, no pull. A stopped app is deployed instead (`action: "deploy"` + a deployment id to poll) |
-| `krill_stop` | write | Scale to zero replicas; `krill_deploy` brings it back |
+| `krill_stop` | write | Scale to zero replicas, cancelling a deploy that has not applied yet (a tag it carried stays the app's tag); `krill_deploy` brings it back |
 | `krill_set_env` | write | Set, add or remove one variable, leaving the rest of the file untouched |
 | `krill_create_database` | provision | Create a logical Postgres database in `environment` (`project/env`) on an existing `server` |
 | `krill_create_app` | provision | Create an image app in `environment` — not deployed; primary `domain` optional (default internal, no HTTPS) |

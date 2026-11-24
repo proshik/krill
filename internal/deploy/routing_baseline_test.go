@@ -44,7 +44,7 @@ func TestDeployBaselineIncludesRestartBeforeFinalApply(t *testing.T) {
 	st := &routingBaselineStore{fakeStore: newFakeStore(imageApp()), refresh: func() { e.task = "restarted-old-image" }}
 	d := newDeployer(e, &mockBuilder{}, st)
 	id := d.Enqueue(1, TriggerManual)
-	d.run(t.Context(), <-d.queue)
+	d.run(t.Context(), d.nextJob())
 	if st.depStatus(id) != "error" {
 		t.Fatalf("old-image restart counted as new release: %s", st.depStatus(id))
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"time"
@@ -116,15 +117,30 @@ func writeLogLine(ctx context.Context, conn *websocket.Conn, l logparse.LogLine)
 }
 
 // endWithNotice sends the reader a notice and closes conn when scanErr says
-// the stream broke; it reports whether it did.
+// the stream broke; it reports whether it did. A stream ended because the
+// viewer left (the tab closed or navigated away) is not broken: it is closed
+// quietly.
 func endWithNotice(ctx context.Context, conn *websocket.Conn, scanErr error) bool {
 	notice, ok := logparse.ScanEndNotice(scanErr)
 	if !ok {
 		return false
+	}
+	if viewerGone(ctx, scanErr) {
+		conn.Close(websocket.StatusNormalClosure, "")
+		return true
 	}
 	// The notice handed to the reader is generic; the cause belongs here.
 	slog.Error("log stream scan ended with an error", "err", scanErr)
 	writeLogLine(ctx, conn, notice)
 	conn.Close(websocket.StatusInternalError, "log stream broken")
 	return true
+}
+
+// viewerGone reports whether err only says the viewer left. The streams'
+// context is the WebSocket's (CloseRead), which ends when the browser closes
+// it — leaving a logs tab does — and every read and write bound to it then
+// fails with context.Canceled. That is the normal end of a stream, not an
+// error worth an ERROR line.
+func viewerGone(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.Is(err, context.Canceled)
 }

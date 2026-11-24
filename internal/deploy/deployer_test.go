@@ -896,14 +896,14 @@ func TestEnqueueQueueFullRejectsImmediately(t *testing.T) {
 	// That cap is the point — it is what stops one caller from starving every
 	// other tenant — so this test fills the queue the only way that remains.
 	var lastID int64
-	for i := 0; i < cap(d.queue); i++ {
+	for i := 0; i < d.queue.max; i++ {
 		if lastID = d.Enqueue(int64(i+1), "manual"); lastID == 0 {
 			t.Fatalf("enqueue %d rejected before the queue was full", i)
 		}
 	}
 
 	done := make(chan int64, 1)
-	go func() { done <- d.Enqueue(int64(cap(d.queue)+1), "manual") }()
+	go func() { done <- d.Enqueue(int64(d.queue.max+1), "manual") }()
 	select {
 	case got := <-done:
 		if got != 0 {

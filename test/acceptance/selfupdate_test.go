@@ -459,16 +459,20 @@ func (s *suite) waitDeployStatus(t *testing.T, ev *Evidence, timeout time.Durati
 // since a deploy that has not converged by its window is watched for up to 20
 // more minutes before it is recorded (deploy "settle", v0.13.0), waiting for it
 // to end on its own takes over half an hour. Stopping it is deterministic: a
-// deploy past its window ends within a poll ("stopped before the service
-// converged"); one still inside its window (start period 720s + 60s) ends when
-// the window does ("service did not converge"). Either way it is bounded by
-// busyDeployWindow from the deploy's start.
+// deploy that applied its spec ends within a poll once it sees the service
+// scaled to zero ("stopped by … before the service converged" since v0.13.2;
+// before that, one still inside its window, start period 720s + 60s, ran until
+// the window ended with "service did not converge"). Either way it is bounded
+// by busyDeployWindow from the deploy's start.
 //
-// The stop only works once the deploy has applied its spec: a stop pressed
-// before the deployer created or updated the service scales nothing, and the
-// deploy then brings the app up anyway. So it first waits for the service to
-// carry the deploy's one replica (a stopped app's spec has zero, and only the
-// deploy sets it back), unless the deploy has already ended.
+// It first waits for the service to carry the deploy's one replica (a stopped
+// app's spec has zero, and only the deploy sets it back), unless the deploy
+// has already ended. Since v0.13.2 a stop pressed before that cancels the
+// deploy instead ("stopped by … before it was applied"), which would end it
+// too, but this run is about a deploy that holds the app busy, so the stop
+// still meets the applied one. Up to v0.13.1 the wait was required: a stop
+// pressed before the deployer created or updated the service scaled nothing,
+// and the deploy then brought the app up anyway.
 func (s *suite) endBusyDeploy(t *testing.T, ev *Evidence) {
 	t.Helper()
 	svc := fmt.Sprintf("krill-%d", s.app.appID)

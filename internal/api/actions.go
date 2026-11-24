@@ -159,8 +159,10 @@ func (s *Service) Reload(ctx context.Context, id Identity, ref string) (ReloadRe
 	return ReloadResult{Action: "restart", Status: "ok"}, nil
 }
 
-// Stop scales the application's service to zero replicas. The service
-// definition and its history are untouched — Deploy brings it back up.
+// Stop scales the application's service to zero replicas and marks the app
+// idle. The service definition and its history are untouched — Deploy brings
+// it back up. A deploy of the app that has not applied its service spec yet is
+// cancelled first, exactly as the UI's Stop does (deploy.Deployer.StopApp).
 func (s *Service) Stop(ctx context.Context, id Identity, ref string) error {
 	if err := requireWrite(id); err != nil {
 		return err
@@ -172,10 +174,30 @@ func (s *Service) Stop(ctx context.Context, id Identity, ref string) error {
 	if s.engine == nil {
 		return fmt.Errorf("stop: no docker engine configured")
 	}
-	if err := s.engine.ServiceScale(ctx, docker.ServiceName(app.ID), 0); err != nil {
+	scale := func(ctx context.Context) error {
+		return s.engine.ServiceScale(ctx, docker.ServiceName(app.ID), 0)
+	}
+	if s.dep != nil {
+		_, err = s.dep.StopApp(ctx, app.ID, s.actorName(ctx, id), scale)
+	} else {
+		err = scale(ctx)
+	}
+	if err != nil {
 		return fmt.Errorf("stop: service scale: %w", err)
 	}
+	if err := s.q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: app.ID, Status: deploy.StatusIdle}); err != nil {
+		return fmt.Errorf("stop: record the app stopped: %w", err)
+	}
 	return nil
+}
+
+// actorName names the token's owner in deploy logs and deployment errors.
+func (s *Service) actorName(ctx context.Context, id Identity) string {
+	u, err := s.q.GetUserByID(ctx, id.UserID)
+	if err != nil || u.Email == "" {
+		return fmt.Sprintf("user %d (API token %d)", id.UserID, id.TokenID)
+	}
+	return fmt.Sprintf("%s (API token %d)", u.Email, id.TokenID)
 }
 
 // inFlightConflict reports a deploy that cannot start because one is already

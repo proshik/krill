@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/proshik/krill/internal/auth"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
@@ -823,25 +824,55 @@ func (s *Server) reloadApp(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
 }
 
-// stopApp scales the app's service to zero replicas and marks it idle.
+// stopApp scales the app's service to zero replicas and marks it idle. A
+// deploy of the app that has not applied its service spec yet is cancelled
+// first (deploy.Deployer.StopApp), so it cannot bring the app back up.
 func (s *Server) stopApp(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.loadAppCtx(w, r)
 	if !ok {
 		return
 	}
-	if s.engine != nil {
-		if err := s.engine.ServiceScale(r.Context(), dockerName(c.App.ID), 0); err != nil {
-			logFrom(r).Error("stopApp: failed to scale to zero", "err", err, "app_id", c.App.ID)
-			s.flashErrT(w, r, "flash.err.stop_application")
-			return
+	scale := func(ctx context.Context) error {
+		if s.engine == nil {
+			return nil
 		}
+		return s.engine.ServiceScale(ctx, dockerName(c.App.ID), 0)
+	}
+	var cancelled []int64
+	var err error
+	if s.deployer != nil {
+		cancelled, err = s.deployer.StopApp(r.Context(), c.App.ID, s.actorName(r.Context(), auth.UserID(r.Context())), scale)
+	} else {
+		err = scale(r.Context())
+	}
+	if err != nil {
+		logFrom(r).Error("stopApp: failed to scale to zero", "err", err, "app_id", c.App.ID, "cancelled_deploys", cancelled)
+		s.flashErrT(w, r, "flash.err.stop_application")
+		return
 	}
 	if err := s.q.UpdateApplicationStatus(r.Context(), db.UpdateApplicationStatusParams{ID: c.App.ID, Status: deploy.StatusIdle}); err != nil {
 		logFrom(r).Error("stopApp: failed to update status", "err", err, "app_id", c.App.ID)
 	}
-	logFrom(r).Info("application stopped", "app_id", c.App.ID, "app_name", c.App.Name)
-	s.flashOK(w, r, "flash.ok.app_stopped")
+	logFrom(r).Info("application stopped", "app_id", c.App.ID, "app_name", c.App.Name, "cancelled_deploys", cancelled)
+	if len(cancelled) > 0 {
+		s.flashOK(w, r, "flash.ok.stop_cancelled_deploy")
+	} else {
+		s.flashOK(w, r, "flash.ok.app_stopped")
+	}
 	http.Redirect(w, r, appURL(c), http.StatusSeeOther)
+}
+
+// actorName names a user in deploy logs and deployment errors (their email);
+// the user id when the account cannot be read.
+func (s *Server) actorName(ctx context.Context, uid int64) string {
+	if uid == 0 {
+		return ""
+	}
+	u, err := s.q.GetUserByID(ctx, uid)
+	if err != nil || u.Email == "" {
+		return fmt.Sprintf("user %d", uid)
+	}
+	return u.Email
 }
 
 func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request) {

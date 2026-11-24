@@ -795,17 +795,7 @@ func (s *Server) dbInstanceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	conn, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		logFrom(r).Error("dbInstanceLogs: websocket accept failed", "err", err, "instance_id", inst.ID, "app_name", appName)
-		return
-	}
-	defer conn.CloseNow()
-	ctx := conn.CloseRead(context.Background())
-	if err := s.streamServiceLogsToWS(ctx, conn, appName, i18n.T(r.Context(), "log.gap")); err != nil {
-		logFrom(r).Error("dbInstanceLogs: engine service logs failed", "err", err, "instance_id", inst.ID, "app_name", appName)
-		conn.Close(websocket.StatusInternalError, "logs unavailable")
-	}
+	s.serveServiceLogs(w, r, appName, "instance_id", inst.ID, "app_name", appName)
 }
 
 // dbInstanceDeployLogs streams the in-memory deploy-log feed over a WebSocket.

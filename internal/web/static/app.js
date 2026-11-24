@@ -286,7 +286,7 @@ function mountMonitoring(el) {
       cols += '<section class="nodecol' + (warn ? " nodecol--warn" : "") + '" aria-label="' + esc(n.node) + '">' +
         '<div class="nodecol-head"><h2>' + esc(n.node) + "</h2>" + st + "</div>" +
         '<div class="figs"><div class="fig"><b>' + Math.round(n.cpu_pct || 0) + "%</b><span>" + esc((t.i18nCores || "%d").replace("%d", n.ncpu || 0)) + "</span>" + spark(cpuPts) + "</div>" +
-        '<div class="fig"><b>' + gib(n.mem_used || 0) + "<small> " + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
+        '<div class="fig"><b><span class="fig-v">' + gib(n.mem_used || 0) + "</span> <small>" + esc(t.i18nOf) + " " + gib(n.mem_total || 0) + "</small></b><span>" + esc(t.i18nMemory) + "</span>" + meter(memPct, warn) + "</div></div>" +
         '<h3 class="list-head">' + esc((t.i18nContainers || "%d").replace("%d", n.containers != null ? n.containers : comps.length)) + "</h3><ul class=\"comps\">" +
         comps.map((r) => {
           const name = r.href ? '<a href="' + esc(r.href) + '">' + esc(r.name) + "</a>" : "<span>" + esc(r.name) + "</span>";

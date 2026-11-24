@@ -207,7 +207,7 @@ func OrgSwitcher(orgs []db.Organization, currentID int64) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, ariaCurrent(o.ID == currentID, "page"))
+			templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, ariaCurrent(o.ID == currentID, "true"))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

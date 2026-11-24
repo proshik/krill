@@ -82,7 +82,7 @@ func TestPredeployGatesServiceMutation(t *testing.T) {
 			} else {
 				id = d.Enqueue(a.ID, TriggerManual)
 			}
-			j := <-d.queue
+			j := d.nextJob()
 			d.run(context.Background(), j)
 			if tc.skip {
 				if len(e.calls) != 0 {

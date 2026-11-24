@@ -430,7 +430,7 @@ func registerReload(srv *mcp.Server, svc *api.Service) {
 func registerStop(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStop,
-		Description: "Scale the application's service to zero replicas. krill_deploy brings it back up.",
+		Description: "Scale the application's service to zero replicas. A deploy of it that has not applied its service spec yet is cancelled first. krill_deploy brings it back up.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {

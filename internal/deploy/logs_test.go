@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // TestSubscribeCapsPerFeed verifies a single feed rejects subscribers past the
@@ -134,5 +135,25 @@ func readWithTimeout(t *testing.T, ch <-chan string) string {
 	case <-time.After(time.Second):
 		t.Fatal("timeout reading subscriber")
 		return ""
+	}
+}
+
+// A cut inside a multi-byte character (the head/tail caps cut by bytes) and
+// a NUL printed by a command made PostgreSQL refuse the whole deployment
+// update, status included.
+func TestLogSnapshotIsStorable(t *testing.T) {
+	h := NewLogHub()
+	h.Open(1)
+	w := h.Writer(1)
+	nul := "nul\x00byte\n"
+	w.Write([]byte(nul))
+	w.Write([]byte(strings.Repeat("a", logHeadCap-len(nul)-1) + "ж")) // the cap cuts "ж" in half
+	w.Write([]byte(strings.Repeat("я", logTailCap))) // the tail drops a byte of one
+	got := h.Close(1)
+	if !utf8.ValidString(got) || strings.ContainsRune(got, 0) {
+		t.Fatalf("log is not storable: valid=%v nul=%v", utf8.ValidString(got), strings.ContainsRune(got, 0))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Fatal("the test did not reach the truncation")
 	}
 }

@@ -127,6 +127,7 @@ type job struct {
 	rollbackID       int64
 	rollbackExpected *RuntimeSettings
 	noCache          bool // force docker build --no-cache (Rebuild)
+	system           bool // EnqueueSystem: the network migration moving the app
 
 	// image and tag, when set, are the image reference this deploy ships
 	// (image apps only). They travel with the job rather than through the
@@ -153,7 +154,7 @@ type Deployer struct {
 	hub       *DeployLogHub
 	network   string
 	notifier  Notifier
-	queue     chan job
+	queue     *jobQueue
 	done      chan struct{}
 	stopOnce  sync.Once
 	wg        sync.WaitGroup
@@ -175,6 +176,12 @@ type Deployer struct {
 	// overlapping requests for one app (a double click, a retrying agent) both
 	// count zero in flight and both queue a deploy.
 	admitMu sync.Mutex
+
+	// tracked holds every accepted deploy, by deployment id, until its outcome
+	// is recorded: what StopApp needs to cancel the ones that have not applied
+	// their service spec yet (see stop.go).
+	trackMu sync.Mutex
+	tracked map[int64]*tracked
 }
 
 // SetMaxBuildsPerOrg wires the per-organization in-flight-deploy cap (wired
@@ -218,7 +225,7 @@ func New(engine docker.Engine, b builder.Builder, store Store, hub *DeployLogHub
 		store:     store,
 		hub:       hub,
 		network:   network,
-		queue:     make(chan job, 64),
+		queue:     newJobQueue(queueCapacity),
 		done:      make(chan struct{}),
 		runCtx:    runCtx,
 		runCancel: runCancel,
@@ -241,24 +248,21 @@ func (d *Deployer) Start(ctx context.Context) {
 	go func() {
 		defer d.wg.Done()
 		for {
-			select {
-			case <-d.done:
+			if d.stopping() {
 				d.drainQueue()
 				return
-			case j := <-d.queue:
-				// select picks randomly when both channels are ready, so a job can
-				// be dequeued exactly as we stop — re-check before running it.
+			}
+			j, ok := d.queue.pop()
+			if !ok {
 				select {
 				case <-d.done:
-					d.failQueued(j, "server shutting down")
-					d.drainQueue()
-					return
-				default:
+				case <-d.queue.wake:
 				}
-				jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
-				d.run(jobCtx, j)
-				cancel()
+				continue
 			}
+			jobCtx, cancel := context.WithTimeout(runCtx, jobTimeout)
+			d.run(jobCtx, j)
+			cancel()
 		}
 	}()
 }
@@ -266,13 +270,8 @@ func (d *Deployer) Start(ctx context.Context) {
 // drainQueue fails every job still sitting in the queue at shutdown so its
 // deployment row isn't orphaned as 'running' forever.
 func (d *Deployer) drainQueue() {
-	for {
-		select {
-		case j := <-d.queue:
-			d.failQueued(j, "server shutting down")
-		default:
-			return
-		}
+	for _, j := range d.queue.takeAll() {
+		d.failQueued(j, "server shutting down")
 	}
 }
 
@@ -280,6 +279,9 @@ func (d *Deployer) drainQueue() {
 // closes its log feed. App status is left "deploying" — the live status poll
 // reconciles it after restart, matching enqueue's shutdown branch.
 func (d *Deployer) failQueued(j job, reason string) {
+	if !d.claimFinish(j.deployID) {
+		return // a stop cancelled it and records it
+	}
 	wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = d.store.FinishDeployment(wctx, j.deployID, "error", "", reason, "")
@@ -368,7 +370,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 		full := d.queueFull()
 		var id int64
 		if !full {
-			id, _ = d.submit(appID, TriggerSystem, job{skipPredeploy: true})
+			id, _ = d.submit(appID, TriggerSystem, job{skipPredeploy: true, system: true})
 		}
 		d.admitMu.Unlock()
 		if id != 0 {
@@ -391,7 +393,7 @@ func (d *Deployer) EnqueueSystem(ctx context.Context, appID int64) int64 {
 }
 
 // queueFull reports whether the shared job queue has no room left.
-func (d *Deployer) queueFull() bool { return len(d.queue) >= cap(d.queue) }
+func (d *Deployer) queueFull() bool { return d.queue.full() }
 
 func (d *Deployer) enqueue(appID int64, trigger string, opts job) (int64, error) {
 	select {
@@ -458,23 +460,15 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 	}
 	_ = d.store.SetStatus(context.Background(), appID, StatusDeploying)
 	d.hub.Open(deployID)
-	select {
-	case d.queue <- job{deployID: deployID, appID: appID, noCache: opts.noCache, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}:
-		if opts.tag != "" {
-			// After the send, not before: a refused job must not leave its tag
-			// on the application. The worker never reads it from the row, so
-			// writing it now cannot change what this deploy ships. Should the
-			// write fail, the deploy still ships the tag it carries; only the
-			// next deploy without one falls back to the old tag.
-			wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := d.store.SetApplicationImage(wctx, appID, opts.image, opts.tag); err != nil {
-				slog.Error("record deployed image on the application failed", "app", appID, "deploy", deployID, "image", opts.image, "tag", opts.tag, "err", err)
-			}
-		}
-	case <-d.done:
+	// Tracked before the send: the worker may pick the job up at once, and a
+	// stop must find it either way.
+	d.track(deployID, appID)
+	if d.stopping() {
 		// Server shutting down before the job was queued: mark the deployment
 		// failed with a detached context so it isn't orphaned as 'deploying'.
+		if !d.claimFinish(deployID) {
+			return 0, ErrDeployerStopped // a stop cancelled it and records it
+		}
 		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "server shutting down", "")
@@ -482,17 +476,31 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 		// live status poll reconciles after restart.
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
 		return 0, ErrDeployerStopped
-	default:
+	}
+	if !d.queue.push(job{deployID: deployID, appID: appID, noCache: opts.noCache, system: opts.system, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}) {
 		// Queue full (a full queue is hours of backlog with one worker): fail the
 		// deployment immediately instead of blocking the HTTP handler goroutine
 		// until a slot frees up.
 		slog.Warn("deploy queue full, rejecting deployment", "app", appID, "deploy", deployID)
+		d.claimFinish(deployID) // under admitMu: no stop can have cancelled it
 		d.hub.Close(deployID)
 		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = d.store.FinishDeployment(wctx, deployID, "error", "", "deploy queue full, try again later", "")
 		_ = d.store.SetStatus(wctx, appID, StatusError)
 		return 0, ErrQueueFull
+	}
+	if opts.tag != "" {
+		// After the send, not before: a refused job must not leave its tag
+		// on the application. The worker never reads it from the row, so
+		// writing it now cannot change what this deploy ships. Should the
+		// write fail, the deploy still ships the tag it carries; only the
+		// next deploy without one falls back to the old tag.
+		wctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := d.store.SetApplicationImage(wctx, appID, opts.image, opts.tag); err != nil {
+			slog.Error("record deployed image on the application failed", "app", appID, "deploy", deployID, "image", opts.image, "tag", opts.tag, "err", err)
+		}
 	}
 	return deployID, nil
 }
@@ -509,6 +517,16 @@ func (d *Deployer) Stop() {
 
 func (d *Deployer) run(ctx context.Context, j job) {
 	deployID, noCache := j.deployID, j.noCache
+	// A stop of the app cancels this context while the deploy has not applied
+	// its service spec yet (see StopApp).
+	ctx, cancelJob := context.WithCancelCause(ctx)
+	defer cancelJob(nil)
+	if !d.begin(deployID, cancelJob) {
+		slog.Info("deploy dropped, the app was stopped while it was queued", "deploy", deployID, "app", j.appID)
+		return
+	}
+	// A deploy its stop recorded as cancelled is left without a word more.
+	defer d.abandon(deployID)
 	var app App
 	var err error
 	var imageTag string
@@ -715,6 +733,15 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			if prev.Found {
 				baseline = prev.TaskIDs
 			}
+			// The migration chose this app while it ran, but it may have been
+			// stopped since (this deploy can wait long for a queue slot):
+			// moving it now would start it again.
+			// A global service is removed rather than scaled to zero, so a
+			// missing service counts as stopped too (the migration never moves
+			// an app that was not deployed).
+			if j.system && (!prev.Found || (!prev.Global && prev.Desired == 0)) {
+				return errStoppedMeanwhile
+			}
 			if expected != nil {
 				if err := d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes); err != nil {
 					return err
@@ -724,11 +751,25 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			// system deploy can get here meanwhile) is superseded now, just
 			// before its service is replaced — not earlier, so a deploy that
 			// fails while preparing leaves that rollout's watch alone.
+			if err := d.enterApply(deployID); err != nil {
+				return err
+			}
 			d.supersedeSettle(app.ID, deployID)
 			return d.engine.ServiceDeploy(ctx, d.buildSpec(app, imageTag))
 		}()
 	}
 
+	if err != nil && d.stopRecorded(deployID) {
+		// Stopped before it applied anything: StopApp records it.
+		slog.Info("deploy ended by a stop of the app", "deploy", deployID, "app", app.ID, "err", err)
+		return
+	}
+	if errors.Is(err, errStoppedMeanwhile) {
+		fmt.Fprintf(out, "⏹ %v\n", err)
+		slog.Info("system deploy skipped, the app was stopped", "deploy", deployID, "app", app.ID)
+		d.finishAs(deployID, app.ID, "error", "", imageTag, err.Error())
+		return
+	}
 	if err != nil {
 		fmt.Fprintf(out, "❌ %v\n", err)
 		slog.Error("deploy failed", "deploy", deployID, "err", err)
@@ -747,10 +788,16 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	}
 	cctx, ccancel := context.WithTimeout(ctx, timeout)
 	defer ccancel()
-	converged, crashed, rolledBack := false, false, false
+	converged, crashed, rolledBack, stopped := false, false, false, false
 	firstPoll := true
 	for {
 		st, serr := d.engine.ServiceProgress(cctx, docker.ServiceName(app.ID), baseline)
+		// The app was stopped after this deploy applied its spec: the service
+		// is down on purpose, nothing is left to wait for.
+		if serr == nil && (!st.Found || (st.Desired == 0 && !st.Global)) && d.stoppedBy(deployID) != "" {
+			stopped = true
+			break
+		}
 		// Swarm rolled the update back (FailureAction=Rollback): the new version
 		// failed and the old one is being restored — that is a failed deploy, and
 		// it must be checked first (the restored old-image task is "new" relative
@@ -786,6 +833,12 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	}
 	if converged {
 		complete(ctx)
+		return
+	}
+	if stopped {
+		msg := "stopped by " + d.stoppedBy(deployID) + " before the service converged"
+		fmt.Fprintf(out, "⏹ %s\n", msg)
+		d.finishAs(deployID, app.ID, "error", "", imageTag, msg)
 		return
 	}
 	if rolledBack {
@@ -987,6 +1040,16 @@ func (d *Deployer) finish(_ context.Context, deployID, appID int64, status, imag
 // finishAs records a deployment's outcome (depStatus: done or error) and the
 // app's status separately; an empty appStatus leaves the app's status alone.
 func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTag, errMsg string) {
+	record, stopped := d.settleRecord(deployID)
+	if !record {
+		return // a stop cancelled it and records it
+	}
+	defer d.finished(deployID)
+	if stopped {
+		// The app was stopped while this deploy was open: the stop owns the
+		// app's status, and the deploy's outcome is no alert.
+		appStatus = ""
+	}
 	full := d.hub.Close(deployID)
 	status := appStatus
 	// Detached context: persist the final status even if the job ctx was canceled
