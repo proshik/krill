@@ -1,0 +1,10 @@
+{{- /*
+Why Krill: the two figures from the README, set large, and the paragraph that explains them.
+The body holds landing/figure shortcodes followed by Markdown.
+
+@param {string} title The section heading.
+*/ -}}
+<section class="krill-section krill-why" id="why" aria-labelledby="why-title">
+  <h2 id="why-title" class="krill-h2">{{ .Get "title" }}</h2>
+  {{ .Inner }}
+</section>

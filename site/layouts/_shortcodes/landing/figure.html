@@ -1,0 +1,10 @@
+{{- /*
+One figure in the Why section. Only numbers the README states.
+
+@param {string} value The number with its unit.
+@param {string} label What the number measures.
+*/ -}}
+<div class="krill-figure">
+  <p class="krill-figure__value">{{ .Get "value" }}</p>
+  <p class="krill-figure__label">{{ .Get "label" | markdownify }}</p>
+</div>

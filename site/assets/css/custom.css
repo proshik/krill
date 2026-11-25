@@ -1,0 +1,385 @@
+/* Hallmark · v2.0.0 · redesign: full · genre: modern-minimal · theme: brand (Krill UI violet, Outfit / Onest / JetBrains Mono) · built: Hextra theme · shape: Feature Stack · hero: Banner, the environment canvas · signature: the product's own screens · imagery: screenshots 6 (the running product, light and dark) · copy: README */
+/* critique: the old page was Hextra's demo layout (a badge, a twelve-card grid); the screens now carry the features, and the rest is a list */
+/* waive 44b: the headline is the README's eight-word tagline, kept verbatim */
+/* waive 10a, 33, 48, 74 in the HTML: Hextra's own navbar, code-copy button and icons, outside this page's code */
+/* waive 26b: the page has no control that can be disabled */
+/* note 58: 496 words; the hero sentence is the README's, kept verbatim */
+
+/* Krill landing on top of Hextra's compiled styles. Hextra owns the chrome (navbar, footer,
+   theme switch, code blocks); this file owns the home page's sections. The faces are Krill's
+   own, served from internal/web/static/fonts through a module mount. */
+
+@font-face { font-family: "Outfit"; font-style: normal; font-weight: 300 600; font-display: swap; src: url("../../fonts/outfit-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Outfit"; font-style: normal; font-weight: 300 600; font-display: swap; src: url("../../fonts/outfit-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Onest"; font-style: normal; font-weight: 300 600; font-display: swap; src: url("../../fonts/onest-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Onest"; font-style: normal; font-weight: 300 600; font-display: swap; src: url("../../fonts/onest-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../../fonts/jetbrains-mono-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* Tokens. Hextra derives its primary scale from --primary-*; the rest is the page's own. Hextra's
+   theme switch sets color-scheme on <html>, which picks each light-dark() pair. */
+:root,
+.dark {
+  --primary-hue: 262deg;
+  --primary-saturation: 83%;
+  --primary-lightness: 58%;
+}
+:root {
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Onest", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-ink: light-dark(#16131f, #f1effa);
+  --color-ink-muted: light-dark(#5b5670, #a7a2bb);
+  --color-rule: light-dark(#e4e1ee, #2a2733);
+  --color-paper-2: light-dark(#f5f3fb, #17151e);
+  --color-frame: light-dark(rgb(22 19 31 / 0.08), rgb(241 239 250 / 0.1));
+  --color-accent: light-dark(hsl(262deg 83% 52%), hsl(262deg 83% 66%));
+  --color-accent-hover: light-dark(hsl(262deg 70% 44%), hsl(262deg 83% 74%));
+  --color-accent-ink: light-dark(#ffffff, #120f1a);
+  --color-focus: light-dark(hsl(262deg 83% 58%), hsl(262deg 90% 76%));
+  --color-selection: light-dark(hsl(262deg 83% 58% / 0.22), hsl(262deg 83% 66% / 0.3));
+
+  --text-display: clamp(2.5rem, 1.4rem + 3.6vw, 4.75rem);
+  --text-section: clamp(2rem, 1.3rem + 2.2vw, 3.25rem);
+  --text-figure: clamp(3rem, 1.8rem + 4vw, 5.5rem);
+  --text-title: 1.25rem;
+  --text-lead: clamp(1.125rem, 1rem + 0.45vw, 1.3125rem);
+  --text-md: 1.0625rem;
+  --text-sm: 0.9375rem;
+
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 3.5rem;
+  --space-hero-top: clamp(1.5rem, 1rem + 3vw, 4.5rem);
+  --space-hero-shot: clamp(2.5rem, 1.5rem + 3vw, 4.5rem);
+  --space-band: clamp(2rem, 1rem + 4vw, 4.5rem);
+  --section-gap: clamp(5rem, 3rem + 6vw, 9rem);
+  --gap-columns: 2rem;
+  --radius-shot: 0.875rem;
+  --radius-pill: 9999px;
+  --radius-band: 1.5rem;
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+html {
+  scrollbar-color: var(--color-rule) transparent;
+}
+body {
+  font-family: var(--font-body);
+}
+::selection {
+  background: var(--color-selection);
+}
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+/* Shared */
+.krill-section {
+  width: 100%;
+  margin-top: var(--section-gap);
+}
+.krill-h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-section);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.krill-prose {
+  margin-top: var(--space-lg);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  color: var(--color-ink-muted);
+}
+.krill-prose p + p {
+  margin-top: var(--space-md);
+}
+.krill-prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+.krill-prose a:hover {
+  color: var(--color-accent-hover);
+}
+.krill-prose a:focus-visible,
+.krill-btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+  transition: none;
+}
+.krill-prose code {
+  font-size: 0.9em;
+}
+
+/* Product screenshots: one image per theme */
+.krill-shot {
+  display: block;
+  min-width: 0;
+}
+.krill-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-shot);
+  outline: 1px solid var(--color-frame);
+  outline-offset: -1px;
+  background: var(--color-paper-2);
+}
+.krill-shot .krill-shot__dark,
+.dark .krill-shot .krill-shot__light {
+  display: none;
+}
+.dark .krill-shot .krill-shot__dark {
+  display: block;
+}
+
+/* Hero */
+.krill-hero {
+  width: 100%;
+  padding-top: var(--space-hero-top);
+}
+.krill-hero__title {
+  max-width: 20ch;
+  text-wrap: balance;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  color: var(--color-ink);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.krill-nowrap {
+  white-space: nowrap;
+}
+.krill-hero__lead {
+  max-width: 34ch;
+  margin-top: var(--space-lg);
+  font-size: var(--text-lead);
+  line-height: 1.5;
+  color: var(--color-ink-muted);
+}
+.krill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-xl);
+}
+.krill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 3rem;
+  padding: 0 var(--space-lg);
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  font-size: 1rem;
+  line-height: 1;
+  border: 1px solid transparent;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.krill-btn--primary {
+  color: var(--color-accent-ink);
+  background: var(--color-accent);
+}
+.krill-btn--primary:hover {
+  background: var(--color-accent-hover);
+}
+.krill-btn--secondary {
+  color: var(--color-ink);
+  border-color: var(--color-rule);
+}
+.krill-btn--secondary:hover {
+  border-color: var(--color-ink-muted);
+}
+.krill-btn:active {
+  transform: translateY(1px);
+}
+.krill-hero__shot {
+  margin-top: var(--space-hero-shot);
+}
+
+/* Why Krill: the README's two figures */
+.krill-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: var(--space-2xl);
+  border-top: 1px solid var(--color-rule);
+}
+.krill-figure {
+  padding: var(--space-xl) var(--gap-columns) 0 0;
+  min-width: 0;
+}
+.krill-figure + .krill-figure {
+  padding-left: var(--gap-columns);
+  border-left: 1px solid var(--color-rule);
+}
+.krill-figure__value {
+  font-family: var(--font-display);
+  font-size: var(--text-figure);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+}
+.krill-figure:last-child .krill-figure__value {
+  color: var(--color-accent);
+}
+.krill-figure__label {
+  max-width: 32ch;
+  margin-top: var(--space-md);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--color-ink-muted);
+}
+.krill-why__note {
+  max-width: 60ch;
+  margin-top: var(--space-2xl);
+  font-size: var(--text-lead);
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+
+/* Features with a screenshot */
+.krill-feature {
+  display: grid;
+  gap: var(--space-xl) var(--space-2xl);
+  align-items: center;
+}
+.krill-feature--split {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+}
+.krill-feature--split-reverse {
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+}
+.krill-feature--split-reverse .krill-feature__shot {
+  order: -1;
+}
+.krill-feature--showcase {
+  grid-template-columns: minmax(0, 1fr);
+}
+.krill-feature--showcase .krill-feature__text {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--space-lg) var(--space-2xl);
+  align-items: end;
+}
+.krill-feature--showcase .krill-prose {
+  margin-top: 0;
+}
+
+/* The rest of the features */
+.krill-also__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--space-2xl);
+  margin-top: var(--space-2xl);
+}
+.krill-also__item {
+  padding: var(--space-lg) 0;
+  border-top: 1px solid var(--color-rule);
+  min-width: 0;
+}
+.krill-also__item dt {
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.krill-also__item dd {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--color-ink-muted);
+}
+
+/* Quick start: the close, on a band */
+.krill-start {
+  margin-bottom: var(--space-xl);
+  padding: var(--space-band);
+  border-radius: var(--radius-band);
+  background: var(--color-paper-2);
+}
+.krill-start__inner {
+  max-width: 48rem;
+}
+/* Keep the end of the long command clear of the always-visible copy button. */
+.krill-start .hextra-code-block pre {
+  padding-right: 3.25rem;
+}
+
+/* Footer links */
+.krill-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-xs) var(--space-lg);
+  padding-top: var(--space-2xl);
+  font-size: var(--text-sm);
+}
+.krill-footer-links a:hover {
+  text-decoration: underline;
+}
+.krill-footer-links a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+  .krill-footer-links {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 60rem) {
+  .krill-feature--split,
+  .krill-feature--split-reverse,
+  .krill-feature--showcase .krill-feature__text,
+  .krill-also__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .krill-feature--split-reverse .krill-feature__shot {
+    order: 0;
+  }
+}
+@media (max-width: 40rem) {
+  .krill-figures {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .krill-figure,
+  .krill-figure + .krill-figure {
+    padding: var(--space-lg) 0;
+    border-left: 0;
+  }
+  .krill-figure + .krill-figure {
+    border-top: 1px solid var(--color-rule);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .krill-btn {
+    transition: none;
+  }
+  .krill-btn:active {
+    transform: none;
+  }
+}

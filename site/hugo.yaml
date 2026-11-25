@@ -1,0 +1,109 @@
+# Landing page for Krill, built with Hugo and the Hextra theme (a Hugo module, pinned in go.mod).
+# Build: `make site` (output in site/public); preview: `make site-serve`.
+# The GitHub Pages workflow overrides baseURL with the URL Pages reports.
+baseURL: "http://localhost:1313/"
+title: Krill
+locale: en-US
+defaultContentLanguage: en
+enableRobotsTXT: true
+
+# A landing page only: no blog, taxonomies or feeds yet.
+disableKinds: [taxonomy, term, rss]
+outputs:
+  home: [html]
+
+module:
+  hugoVersion:
+    min: "0.146.0"
+  imports:
+    - path: github.com/imfing/hextra
+      # Everything but static/: the theme's favicons and logos are Hextra's own.
+      mounts:
+        - source: layouts
+          target: layouts
+        - source: assets
+          target: assets
+        - source: data
+          target: data
+        - source: i18n
+          target: i18n
+  # Declaring any mount replaces the defaults, so the standard folders are listed again.
+  # Screenshots, the logo and the UI's fonts come straight from the repository instead of being
+  # copied here.
+  # A docs/ mount for rendered documentation can be added next to these later.
+  mounts:
+    - source: content
+      target: content
+    - source: layouts
+      target: layouts
+    - source: assets
+      target: assets
+    - source: i18n
+      target: i18n
+    - source: ../docs/images
+      target: static/images
+    - source: ../internal/web/static/fonts
+      target: static/fonts
+    - source: ../internal/web/static/favicon.svg
+      target: static/favicon.svg
+    - source: ../internal/web/static/favicon.svg
+      target: static/images/logo.svg
+
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    noClasses: false
+
+menu:
+  main:
+    - name: Install
+      url: "https://github.com/proshik/krill/blob/master/docs/install.md"
+      weight: 1
+    - name: Docs
+      url: "https://github.com/proshik/krill#documentation"
+      weight: 2
+    - name: GitHub
+      url: "https://github.com/proshik/krill"
+      weight: 4
+      params:
+        icon: github
+
+params:
+  description: A lightweight self-hosted PaaS on Docker Swarm. Deploy apps and managed databases to your own servers from a single Go binary.
+
+  externalLinkDecoration: false
+
+  navbar:
+    displayTitle: true
+    displayLogo: true
+    logo:
+      path: images/logo.svg
+      width: 28
+      height: 28
+    width: normal
+
+  theme:
+    default: system
+    displayToggle: true
+
+  footer:
+    enable: true
+    displayCopyright: true
+    displayPoweredBy: false
+    width: normal
+
+  search:
+    enable: false
+
+  editURL:
+    enable: false
+
+  highlight:
+    copy:
+      enable: true
+      display: always
+
+  page:
+    width: normal

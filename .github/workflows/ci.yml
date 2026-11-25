@@ -7,11 +7,20 @@
 #   drift in the committed generated files.
 name: ci
 
+# Changes to the landing site alone (built and deployed by pages.yml) skip this workflow.
 on:
   push:
     branches:
       - "**" # all branches: feature branches AND master
+    paths-ignore:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+      - "tools/get-hugo.sh"
   pull_request:
+    paths-ignore:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+      - "tools/get-hugo.sh"
   workflow_dispatch:
 
 # Cancel superseded runs on the same ref (branch/PR); keep only the latest.
