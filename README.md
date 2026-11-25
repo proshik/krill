@@ -24,8 +24,8 @@ Deploy apps and managed databases to your own servers from a single Go binary.
 ## Why Krill
 
 Krill started as a way to host a Telegram bot and a few small apps on a 2 vCPU / 2 GB VPS.
-Existing self-hosted platforms do the job, but their control planes are heavy: Dokploy alone
-took about **760 MB** of RAM on that box, more than any app it was running.
+Existing self-hosted platforms do the job, but their control planes are heavy: hundreds of
+megabytes of RAM before the first app is deployed, more than any app on that box.
 
 Krill is the same idea at a fraction of the weight: one compiled Go binary of under 40 MB, with
 no Node.js, no SSR runtime and no agents on your servers. It uses Docker Swarm for scheduling
