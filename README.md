@@ -27,7 +27,7 @@ Krill started as a way to host a Telegram bot and a few small apps on a 2 vCPU /
 Existing self-hosted platforms do the job, but their control planes are heavy: Dokploy alone
 took about **760 MB** of RAM on that box, more than any app it was running.
 
-Krill is the same idea at a fraction of the weight: one compiled Go binary of about 20 MB, with
+Krill is the same idea at a fraction of the weight: one compiled Go binary of under 40 MB, with
 no Node.js, no SSR runtime and no agents on your servers. It uses Docker Swarm for scheduling
 and Traefik for routing, and stores its state in Postgres.
 
