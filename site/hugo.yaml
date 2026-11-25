@@ -40,6 +40,8 @@ module:
       target: assets
     - source: i18n
       target: i18n
+    - source: static
+      target: static
     - source: ../docs/images
       target: static/images
     - source: ../internal/web/static/fonts
@@ -75,6 +77,10 @@ menu:
         icon: github
 
 params:
+  # Open Graph / Twitter card image (Hextra's opengraph partial and Hugo's twitter_cards make it
+  # absolute with baseURL). Rendered at 1200x630 from the logo, the tagline and a screenshot.
+  images:
+    - og.png
   description: A lightweight self-hosted PaaS on Docker Swarm. Deploy apps and managed databases to your own servers from a single Go binary.
 
   externalLinkDecoration: false

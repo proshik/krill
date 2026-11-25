@@ -252,7 +252,10 @@ from `internal/web/static/favicon.svg` and the UI's fonts from `internal/web/sta
 Every screenshot exists as `<name>-light.png` and `<name>-dark.png`, taken from a local Krill
 with sample data in each theme; the page shows the one matching the active theme. Links to the
 documentation point at the Markdown files on GitHub. Keep the page's claims to what the README
-and the guides already say.
+and the guides already say. The one file kept in `site/static/` is `og.png`, the 1200×630 link
+preview (`params.images` in `site/hugo.yaml`): the logo, the tagline and a crop of
+`overview-dark.png`, rendered in a browser from a small HTML page; redo it when the tagline
+changes.
 
 [`pages.yml`](../.github/workflows/pages.yml) builds the site and deploys it to GitHub Pages on
 every push to `master` that touches it (or by hand); it takes `baseURL` from the Pages settings,
