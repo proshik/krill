@@ -1,0 +1,34 @@
+{{- /*
+One phase of landing/phases: the benefit, a sentence or two, landing/detail entries in the body,
+a link to its guide and its video (one take per theme, WebM and MP4, with a poster).
+
+@param {string} id    Anchor of the panel.
+@param {string} label The tab's name.
+@param {string} icon  A Hextra icon name for the tab.
+@param {string} title The benefit, as a heading.
+@param {string} lead  One or two plain sentences (Markdown).
+@param {string} link  URL for "Learn more".
+@param {string} video Base name under video/: <video>-light|dark.{webm,mp4,jpg}.
+@param {string} alt   What the video shows.
+*/ -}}
+{{- .Parent.Store.Add "phases" (slice (dict "id" (.Get "id") "label" (.Get "label") "icon" (.Get "icon"))) -}}
+<div class="krill-phase" id="{{ .Get "id" }}">
+  <div class="krill-phase__text">
+    <p class="krill-phase__label">{{ .Get "label" }}</p>
+    <h3 class="krill-phase__title">{{ .Get "title" }}</h3>
+    <p class="krill-phase__lead">{{ .Get "lead" | markdownify }}</p>
+    <dl class="krill-details krill-details--stack">{{ .Inner }}</dl>
+    {{- with .Get "link" }}
+    <a class="krill-more" href="{{ . }}">Learn more</a>
+    {{- end }}
+  </div>
+  <div class="krill-phase__media">
+    {{- range slice "light" "dark" }}
+    <video class="krill-video__clip krill-video__clip--{{ . }}" muted playsinline loop controls preload="none"
+      width="1600" height="1100" poster="{{ printf "video/%s-%s.jpg" ($.Get "video") . | relURL }}" aria-label="{{ $.Get "alt" }}">
+      <source src="{{ printf "video/%s-%s.webm" ($.Get "video") . | relURL }}" type="video/webm">
+      <source src="{{ printf "video/%s-%s.mp4" ($.Get "video") . | relURL }}" type="video/mp4">
+    </video>
+    {{- end }}
+  </div>
+</div>

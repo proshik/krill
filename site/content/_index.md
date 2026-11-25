@@ -9,8 +9,6 @@ description: A lightweight self-hosted PaaS on Docker Swarm. Deploy apps and man
   subtitle="Deploy apps and managed databases to your own servers from a single Go binary."
   shot="overview" w="2000" h="1376"
   alt="A Krill environment canvas: apps grouped into systems, wired to the Postgres databases, Redis server and S3 bucket they use"
-  video="hero" vw="1600" vh="1100"
-  videoalt="Krill in use: a new app is created from an image, deployed with a live log, exposed on its domain and opened in the browser"
 >}}
 
 {{< landing/why id="self-hosted" title="Your servers, your data"
@@ -59,32 +57,49 @@ Traefik routes each request by host, with a Let's Encrypt certificate for each d
 {{< /landing/step >}}
 {{< /landing/flow >}}
 
-{{< landing/pillar id="deploy" title="Ship from Git or an image"
-  lead="Point an app at a Git repository with a Dockerfile, or at a public or private image. Krill builds it, rolls it out and keeps the history."
+{{< landing/phases id="phases" title="From a fresh VPS to a cluster"
+  lead="Each step as it looks in Krill. Pick one, or let them play in turn."
+>}}
+{{< landing/phase id="install" label="Install" icon="download" video="install"
+  title="One command on any VPS"
+  lead="Run the installer on a fresh Linux server. It sets up Docker and Swarm, Postgres for Krill's state and a systemd service, then prints the URL and a one-time password."
+  link="https://github.com/proshik/krill/blob/master/docs/install.md"
+  alt="A terminal replays a real install.sh run, then the Krill sign-in page opens"
+>}}
+{{< landing/detail title="Small servers welcome" >}}
+amd64 or arm64; Krill is built to fit a box as small as 2 vCPU / 2 GB RAM.
+{{< /landing/detail >}}
+{{< landing/detail title="Verified binary" >}}
+The download is checked against the release checksums before it runs.
+{{< /landing/detail >}}
+{{< landing/detail title="Upgrade the same way" >}}
+Run the installer again, or update from Settings → Updates.
+{{< /landing/detail >}}
+{{< /landing/phase >}}
+{{< landing/phase id="deploy" label="Deploy" icon="cube" video="deploy"
+  title="Ship from Git or an image"
+  lead="Point an app at a public or private image, or at a Git repository with a Dockerfile. Krill rolls it out with a live log and keeps the history."
   link="https://github.com/proshik/krill/blob/master/docs/guides/deployments.md"
-  shot="deployments" w="784" h="1374" side="true"
-  alt="An app's deployments: the active release and the history, including an update Swarm rolled back"
+  alt="A new app is created from the nginx image, deployed with a live log, exposed on its domain and opened in the browser"
 >}}
 {{< landing/detail title="Zero-downtime updates" >}}
 Rolling updates, with an automatic rollback when the new version does not come up.
 {{< /landing/detail >}}
 {{< landing/detail title="Roll back a release" >}}
-Pick a confirmed release in the history: its image and runtime settings come back as a new
-deployment.
+Pick a confirmed release in the history: its image and runtime settings come back.
 {{< /landing/detail >}}
 {{< landing/detail title="Deploy on push" >}}
 A GitHub webhook, a deploy hook for your CI, or `krill-cli` to build on your machine.
 {{< /landing/detail >}}
-{{< /landing/pillar >}}
-
-{{< landing/pillar id="databases" title="Databases next to your apps"
-  lead="Run Postgres, Redis, Valkey, DragonFly or S3 (Silo) on your own nodes. One Postgres server holds a separate database for each environment."
+{{< /landing/phase >}}
+{{< landing/phase id="connect" label="Connect" icon="database" video="connect"
+  title="Databases next to your apps"
+  lead="Create a Postgres database, a Redis, Valkey or DragonFly server, or an S3 bucket, and link it to an app: its connection values reach the app on every deploy."
   link="https://github.com/proshik/krill/blob/master/docs/guides/backups.md"
-  shot="db-servers" w="1400" h="480"
-  alt="Database servers: a Postgres server holding databases for several projects and environments, a Redis server and an S3 server"
+  alt="A database is created in the environment and linked into an app's variables; the canvas draws the link"
 >}}
-{{< landing/detail title="Connections injected" >}}
-Link an app to a database or bucket, and its connection values reach the app on every deploy.
+{{< landing/detail title="A database per environment" >}}
+One Postgres server holds a separate database for each environment.
 {{< /landing/detail >}}
 {{< landing/detail title="Buckets with their own keys" >}}
 Per-environment buckets on an S3 server, each with a key restricted to that bucket.
@@ -92,31 +107,28 @@ Per-environment buckets on an S3 server, each with a key restricted to that buck
 {{< landing/detail title="Backups to S3" >}}
 Scheduled Postgres and volume backups with retention, restored from the UI.
 {{< /landing/detail >}}
-{{< /landing/pillar >}}
-
-{{< landing/pillar id="networking" title="Domains and HTTPS without the wiring"
-  lead="Apps reach each other on their organization's private network. Give an app a domain when it should be public."
+{{< /landing/phase >}}
+{{< landing/phase id="expose" label="Expose" icon="globe-alt" video="expose"
+  title="Public when you say so"
+  lead="Apps stay internal until you expose a domain. Add your own domains with Let's Encrypt certificates, and protect them with basic auth or an IP allowlist."
   link="https://github.com/proshik/krill/blob/master/docs/guides/domains.md"
-  shot="domains" w="1400" h="690"
-  alt="An app's domains: its primary domain, internal until exposed, with public paths and HTTPS"
+  alt="A domain is added to an app and protected with basic auth; curl gets 401 without the password and 200 with it"
 >}}
 {{< landing/detail title="A certificate per domain" >}}
-Custom domains with their own Let's Encrypt certificates, the Krill UI's included: it moves to
-its domain only after you confirm it works, so a broken domain cannot lock you out.
-{{< /landing/detail >}}
-{{< landing/detail title="Internal until exposed" >}}
-Publish only some paths, or put a domain behind basic auth and an IP allowlist.
+The Krill UI's own domain too: it moves there only after you confirm it works.
 {{< /landing/detail >}}
 {{< landing/detail title="Several apps on one host" >}}
-Share a host between apps by path, and redirect an old domain to the app's primary one.
+Share a host by path, or redirect an old domain to the app's primary one.
 {{< /landing/detail >}}
-{{< /landing/pillar >}}
-
-{{< landing/pillar id="servers" title="Grow from one server to several"
-  lead="Start on one box. When it gets tight, join more servers over SSH and decide what runs where. The topology map shows which app runs on which node and which database it talks to."
+{{< landing/detail title="TCP and UDP ports" >}}
+Raw published ports for what is not HTTP.
+{{< /landing/detail >}}
+{{< /landing/phase >}}
+{{< landing/phase id="grow" label="Grow" icon="server" video="grow"
+  title="From one server to several"
+  lead="Join more servers over SSH and decide what runs where. The topology map shows which app runs on which node and which database it talks to."
   link="https://github.com/proshik/krill/blob/master/docs/architecture.md#nodes"
-  shot="topology" w="1400" h="1250" crop="16/9"
-  alt="Topology: the ingress lane and a node with its apps and database servers, linked to the databases they use"
+  alt="The Nodes page with its add-node form, the topology map, and a database server's node setting"
 >}}
 {{< landing/detail title="Placement and replicas" >}}
 Pin an app to a node or run it on every node, with as many replicas as it needs.
@@ -127,47 +139,39 @@ Move a database server to another node together with its data.
 {{< landing/detail title="Locked-down nodes" >}}
 Lock every node down with a firewall managed from the UI.
 {{< /landing/detail >}}
-{{< /landing/pillar >}}
-
-{{< landing/pillar id="observe" title="See what is running"
-  lead="Logs, a terminal and resource charts are in the UI from the first deploy. Alerts come to Telegram."
+{{< /landing/phase >}}
+{{< landing/phase id="observe" label="Observe" icon="chart-bar" video="observe"
+  title="See what is running"
+  lead="Live logs with search and level filters, CPU and memory per node, and Telegram alerts with a daily digest."
   link="https://github.com/proshik/krill/blob/master/docs/guides/notifications.md"
-  shot="monitoring" w="1400" h="460"
-  alt="Monitoring: CPU and memory charts per node"
+  alt="Live logs of an app under real traffic filtered to errors, the monitoring charts, and the Telegram notification settings"
 >}}
-{{< landing/detail title="Live logs and a terminal" >}}
-Structured live logs with search and level filters, and a web terminal into a running container.
-{{< /landing/detail >}}
-{{< landing/detail title="Alerts and a daily digest" >}}
-Failures, successful deploys, node disk and memory thresholds, and a daily summary in Telegram.
+{{< landing/detail title="A web terminal" >}}
+A shell in a running container, from the browser.
 {{< /landing/detail >}}
 {{< landing/detail title="Your own metrics stack" >}}
-An optional Grafana Alloy agent ships host metrics and container logs to your Prometheus and
-Loki, and the [Metrics tab](https://github.com/proshik/krill/blob/master/docs/guides/metrics.md)
-collects your apps' own Prometheus metrics. Krill keeps none of it.
+An optional Grafana Alloy agent ships host metrics, container logs and your apps' own metrics to
+your Prometheus and Loki. Krill keeps none of it.
 {{< /landing/detail >}}
-{{< /landing/pillar >}}
-
-{{< landing/pillar id="teams" title="Environments for every stage"
-  lead="Organize apps into projects and environments, clone production into staging, and give each person the role they need."
-  link="https://github.com/proshik/krill/blob/master/docs/guides/environments.md"
-  shot="app" w="1400" h="1187" crop="16/10"
-  alt="An app's panel over the canvas: the databases, Redis server and bucket linked into its environment variables"
->}}
-{{< landing/detail title="Clone an environment" >}}
-Copies the configuration, not the data; secret values are left empty in the copy.
+{{< landing/detail title="Alerts that matter" >}}
+Failures, successful deploys, node disk and memory thresholds, and a daily summary.
 {{< /landing/detail >}}
-{{< landing/detail title="Roles and isolation" >}}
-Owner, admin and member roles. Every organization runs on its own network, and stored
-credentials are encrypted at rest.
-{{< /landing/detail >}}
-{{< landing/detail title="An API for agents and CI" >}}
-A REST API and an MCP server with organization-scoped tokens, so an AI agent or a pipeline can
-deploy and read logs.
-{{< /landing/detail >}}
-{{< /landing/pillar >}}
+{{< /landing/phase >}}
+{{< /landing/phases >}}
 
 {{< landing/list id="more" title="Also built in" >}}
+{{< landing/detail title="Environments" >}}
+Projects with production, staging and more; clone an environment's configuration, not its data,
+with secret values left empty. [Environments](https://github.com/proshik/krill/blob/master/docs/guides/environments.md)
+{{< /landing/detail >}}
+{{< landing/detail title="Teams and isolation" >}}
+Owner, admin and member roles. Every organization runs on its own network; stored credentials
+are encrypted at rest.
+{{< /landing/detail >}}
+{{< landing/detail title="An API for agents and CI" >}}
+A REST API and an MCP server with organization-scoped tokens.
+[Agent and CI API](https://github.com/proshik/krill/blob/master/docs/guides/agent-api.md)
+{{< /landing/detail >}}
 {{< landing/detail title="Container settings" >}}
 CPU and memory limits, healthchecks, volumes, command override, raw TCP and UDP ports, build
 arguments and secrets.
