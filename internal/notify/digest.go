@@ -698,7 +698,7 @@ func attention(ctx context.Context, d digestData) []attItem {
 	for _, a := range d.Apps {
 		add(a.memLevel(), "tg.dg.att_app_mem", a.Path, pct(a.Peak, a.Limit))
 		if a.Restarts > 0 {
-			add(lvlCrit, "tg.dg.att_app_restarts", a.Path, a.Restarts)
+			add(lvlCrit, "tg.dg.att_app_restarts", a.Path, countOf(ctx, d.Lang, "tg.dg.n_crashes", a.Restarts))
 		}
 	}
 	for _, a := range d.Down {
@@ -717,7 +717,7 @@ func attention(ctx context.Context, d digestData) []attItem {
 		}
 		add(d.limitsLevel(n), "tg.dg.att_limits", n.Name, pct(n.Limits, n.MemTotal))
 		add(memUsedLevel(n), "tg.dg.att_mem", n.Name, pct(n.MemUsed, n.MemTotal))
-		add(cpuLevel(n), "tg.dg.att_cpu", n.Name, n.CPUAvg)
+		add(cpuLevel(n), "tg.dg.att_cpu", n.Name, n.CPUAvg, countOf(ctx, d.Lang, "tg.dg.n_cores_of", n.NCPU))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].lvl > out[j].lvl })
 	return out

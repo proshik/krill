@@ -386,11 +386,11 @@ func renderNodes(ctx context.Context, b *digestLines, d digestData) {
 		}
 		mem := i18n.Tf(ctx, "tg.dg.node_mem", bytesPair(ctx, "tg.pair", n.MemUsed, n.MemTotal), humanBytes(n.Limits), pct(n.Limits, n.MemTotal))
 		if n.Unlimited > 0 {
-			mem += " · " + i18n.Tf(ctx, "tg.dg.unlimited", n.Unlimited)
+			mem += " · " + i18n.Tf(ctx, "tg.dg.unlimited", countOf(ctx, d.Lang, "tg.dg.n_containers", n.Unlimited))
 		}
 		metric(worst(d.limitsLevel(n), memUsedLevel(n)), mem)
 		if n.CPUKnown {
-			metric(cpuLevel(n), i18n.Tf(ctx, "tg.dg.node_cpu", n.CPUAvg, n.CPUPeak, n.NCPU))
+			metric(cpuLevel(n), i18n.Tf(ctx, "tg.dg.node_cpu", n.CPUAvg, n.CPUPeak, countOf(ctx, d.Lang, "tg.dg.n_cores_of", n.NCPU)))
 		}
 	}
 	if len(details) == 0 {
@@ -479,7 +479,7 @@ func renderApps(ctx context.Context, b *digestLines, d digestData) {
 				text = i18n.Tf(ctx, "tg.dg.app_mem", humanBytes(a.Now), humanBytes(a.Peak))
 			}
 			if d.RestartsKnown && a.Restarts > 0 {
-				text += " · " + i18n.Tf(ctx, "tg.dg.app_restarts", a.Restarts)
+				text += " · " + countOf(ctx, d.Lang, "tg.dg.n_crashes", a.Restarts)
 			}
 			b.add("%s %s — %s", a.level().mark(), linkName(a.URL, clip(a.Name)), esc(text))
 		}

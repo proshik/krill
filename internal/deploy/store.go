@@ -635,3 +635,24 @@ func (s *DBStore) HealAppStatus(ctx context.Context, appID int64, status string,
 	n, err := s.q.HealApplicationStatus(ctx, db.HealApplicationStatusParams{ID: appID, Status: status, Seen: seen})
 	return n > 0, err
 }
+
+// ListStaleStoppedCandidates lists the apps stored "running" or "error" with
+// no deployment running (see healStopped).
+func (s *DBStore) ListStaleStoppedCandidates(ctx context.Context) ([]StaleApp, error) {
+	rows, err := s.q.ListStaleStoppedCandidateApplications(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StaleApp, len(rows))
+	for i, r := range rows {
+		out[i] = StaleApp{ID: r.ID, Status: r.Status, Seen: r.UpdatedAt, LastFinished: r.LastFinished}
+	}
+	return out, nil
+}
+
+// HealStoppedAppStatus sets a stopped app idle, unless its row changed since
+// it was listed (from, seen) or a deploy of it is running.
+func (s *DBStore) HealStoppedAppStatus(ctx context.Context, appID int64, from string, seen time.Time) (bool, error) {
+	n, err := s.q.HealStoppedApplicationStatus(ctx, db.HealStoppedApplicationStatusParams{ID: appID, FromStatus: from, Seen: seen})
+	return n > 0, err
+}

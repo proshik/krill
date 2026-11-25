@@ -11,6 +11,7 @@ import (
 
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/testutil"
 )
 
@@ -31,6 +32,12 @@ type mockVolEngine struct {
 
 	// state is returned by ServiceState; defaults to Running:0.
 	state docker.ServiceState
+
+	// restoreLockHeld records, per ServiceScale call, whether the app's
+	// restore marker (oplock.AppRestore(lockApp)) was set and its lock free;
+	// lockApp 0 = off.
+	lockApp         int64
+	restoreLockHeld []bool
 }
 
 func (m *mockVolEngine) record(s string) {
@@ -70,6 +77,10 @@ func (m *mockVolEngine) VolumeRestore(_ context.Context, _ string, in io.Reader,
 
 func (m *mockVolEngine) ServiceScale(_ context.Context, name string, replicas uint64) error {
 	m.mu.Lock()
+	if m.lockApp != 0 {
+		name := oplock.AppRestore(m.lockApp)
+		m.restoreLockHeld = append(m.restoreLockHeld, oplock.Marked(name) && !oplock.Held(name))
+	}
 	if replicas == 0 {
 		m.calls = append(m.calls, "scale0")
 	} else {
@@ -282,7 +293,7 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 	key := objs[0].Key
 
 	// Fresh engine to record the restore call order cleanly.
-	eng2 := &mockVolEngine{} // state Running:0 → restore proceeds immediately
+	eng2 := &mockVolEngine{lockApp: 42} // state Running:0 → restore proceeds immediately
 	svc2 := New(eng2, store, true)
 	if err := svc2.RestoreByID(ctx, 1, key); err != nil {
 		t.Fatalf("RestoreByID: %v", err)
@@ -290,6 +301,16 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 	seq := eng2.callSeq()
 	// Expect: scale0, (one or more) state, restore, scaleUp.
 	assertOrder(t, seq, "scale0", "restore", "scaleUp")
+	// The app's restore marker spans the scale-down and the scale-back, so the
+	// status heal never takes this zero for a stop; the lock is not held
+	// meanwhile (another restore of the app need not wait), and both are free
+	// afterwards.
+	if len(eng2.restoreLockHeld) != 2 || !eng2.restoreLockHeld[0] || !eng2.restoreLockHeld[1] {
+		t.Fatalf("restore marked (lock free) at the scale calls: %v; want at both", eng2.restoreLockHeld)
+	}
+	if oplock.Held(oplock.AppRestore(42)) || oplock.Marked(oplock.AppRestore(42)) {
+		t.Fatal("restore lock or marker left after the restore")
+	}
 
 	// Variant: the scale-up's first two attempts fail, then succeed (defer retries).
 	eng3 := &mockVolEngine{scaleUpFailFirst: 2}

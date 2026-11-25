@@ -76,3 +76,22 @@ func TestAcquireCancellationAndRelease(t *testing.T) {
 		t.Fatal("canceled acquisition leaked lock")
 	}
 }
+
+// A marker counts its holders, releases each holder once, and is apart from
+// the lock of the same name.
+func TestMarkCountsHolders(t *testing.T) {
+	const name = "mark-test"
+	a, b := Mark(name), Mark(name)
+	if !Marked(name) || Held(name) {
+		t.Fatal("marked twice: want marked, lock free")
+	}
+	a()
+	a() // a second release of the same holder is a no-op
+	if !Marked(name) {
+		t.Fatal("one holder left: want still marked")
+	}
+	b()
+	if Marked(name) {
+		t.Fatal("no holder left: want unmarked")
+	}
+}

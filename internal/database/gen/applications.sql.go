@@ -258,6 +258,28 @@ func (q *Queries) HealApplicationStatus(ctx context.Context, arg HealApplication
 	return result.RowsAffected(), nil
 }
 
+const healStoppedApplicationStatus = `-- name: HealStoppedApplicationStatus :execrows
+UPDATE applications a SET status = 'idle', updated_at = now()
+WHERE a.id = $1 AND a.status = $2::text AND a.updated_at = $3
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running')
+`
+
+type HealStoppedApplicationStatusParams struct {
+	ID         int64     `json:"id"`
+	FromStatus string    `json:"from_status"`
+	Seen       time.Time `json:"seen"`
+}
+
+// Sets a stopped app idle, as Stop does, but only while the row is exactly as
+// listed (status and updated_at) and no deployment of it is running.
+func (q *Queries) HealStoppedApplicationStatus(ctx context.Context, arg HealStoppedApplicationStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, healStoppedApplicationStatus, arg.ID, arg.FromStatus, arg.Seen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const listAppIndexByEnvironmentIDs = `-- name: ListAppIndexByEnvironmentIDs :many
 SELECT id, name, environment_id, status, registry_id, git_credential_id
 FROM applications WHERE environment_id = ANY($1::bigint[]) ORDER BY created_at DESC
@@ -484,6 +506,53 @@ func (q *Queries) ListPinnedApplications(ctx context.Context) ([]ListPinnedAppli
 			&i.Name,
 			&i.PlacementMode,
 			&i.PlacementNodes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleStoppedCandidateApplications = `-- name: ListStaleStoppedCandidateApplications :many
+SELECT a.id, a.status, a.updated_at,
+       COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished
+FROM applications a
+WHERE a.status IN ('running', 'error')
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running')
+`
+
+type ListStaleStoppedCandidateApplicationsRow struct {
+	ID           int64     `json:"id"`
+	Status       string    `json:"status"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	LastFinished time.Time `json:"last_finished"`
+}
+
+// Apps whose stored status says they run (or that their last deploy failed)
+// while no deployment of theirs is running. The heal checks each against its
+// service: a Stop through the agent API before v0.13.2 scaled the service to
+// zero without writing the status, so such a row read "running" for good.
+// last_finished is when the app's latest deployment ended (its row's last
+// change when it has none): a stop older than that is not what the status
+// describes.
+func (q *Queries) ListStaleStoppedCandidateApplications(ctx context.Context) ([]ListStaleStoppedCandidateApplicationsRow, error) {
+	rows, err := q.db.Query(ctx, listStaleStoppedCandidateApplications)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStaleStoppedCandidateApplicationsRow
+	for rows.Next() {
+		var i ListStaleStoppedCandidateApplicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.LastFinished,
 		); err != nil {
 			return nil, err
 		}

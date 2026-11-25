@@ -106,7 +106,8 @@ anything but a whole-tag `vX.Y.Z[-suffix]` or a 7+ hex commit hash — gets ` (<
 source's; written once known through the optional `versionStore` (best-effort, before the service
 update, so failed deploys after that point carry it too); "" → `shortImage` as before. The digest
 (`digest_render.go`) collapses deploys per app (count via `countOf`/`pluralForm` — `.one/.few/.many`
-keys; success and failure lines have separate caps of `digestListMax`, the same for backup runs, so
+keys, as is every count next to a noun in the digest: `tg.dg.n_cores_of`, `n_backups`, `n_containers`,
+`n_crashes`, since v0.13.5 ("of all cores (1)" read wrong on a one-core node); success and failure lines have separate caps of `digestListMax`, the same for backup runs, so
 successes never crowd a failure out; a successful `system` deploy is not counted but can supply the
 shown version), groups (by `groupKey` — names plus project/env ids) deploys/backups/apps under a bold
 `project · env`, gives each node a short line (+ `↳ nodeWhy`) and puts the full node lines in one

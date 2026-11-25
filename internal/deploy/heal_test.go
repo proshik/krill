@@ -8,6 +8,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/testutil"
 )
 
@@ -32,6 +33,29 @@ func (f *fakeStore) HealAppStatus(_ context.Context, app int64, status string, _
 		return false, nil
 	}
 	f.status[app] = status
+	return true, nil
+}
+
+// The fake store keeps no row timestamps; the DB test covers the seen check.
+func (f *fakeStore) ListStaleStoppedCandidates(context.Context) ([]StaleApp, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []StaleApp
+	for app, st := range f.status {
+		if (st == StatusRunning || st == StatusError) && !f.runningFor(app) {
+			out = append(out, StaleApp{ID: app, Status: st})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) HealStoppedAppStatus(_ context.Context, app int64, from string, _ time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.status[app] != from || f.runningFor(app) {
+		return false, nil
+	}
+	f.status[app] = StatusIdle
 	return true, nil
 }
 
@@ -135,10 +159,33 @@ func (e progressEngine) ServiceProgress(_ context.Context, name string, _ []stri
 	return e[name], nil
 }
 
+func (e progressEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
+	out := map[string]docker.ServiceState{}
+	for _, n := range names {
+		if p, ok := e[n]; ok && p.Found {
+			out[n] = docker.ServiceState{Found: true, Desired: p.Desired, Running: p.Running, Global: p.Global}
+		}
+	}
+	return out, nil
+}
+
+// countingEngine counts the detailed lookups per service.
+type countingEngine struct {
+	progressEngine
+	reads map[string]int
+}
+
+func (e *countingEngine) ServiceProgress(ctx context.Context, name string, ex []string) (docker.ServiceProgress, error) {
+	e.reads[name]++
+	return e.progressEngine.ServiceProgress(ctx, name, ex)
+}
+
 // scriptedHealer lists fixed apps and records the writes.
 type scriptedHealer struct {
-	apps   []StuckApp
-	writes map[int64]string
+	apps           []StuckApp
+	stale          []StaleApp
+	writes         map[int64]string
+	unlockedWrites []int64
 }
 
 func (h *scriptedHealer) ListStuckDeployingApps(context.Context) ([]StuckApp, error) {
@@ -148,6 +195,147 @@ func (h *scriptedHealer) ListStuckDeployingApps(context.Context) ([]StuckApp, er
 func (h *scriptedHealer) HealAppStatus(_ context.Context, app int64, status string, _ time.Time) (bool, error) {
 	h.writes[app] = status
 	return true, nil
+}
+
+func (h *scriptedHealer) ListStaleStoppedCandidates(context.Context) ([]StaleApp, error) {
+	return h.stale, nil
+}
+
+func (h *scriptedHealer) HealStoppedAppStatus(_ context.Context, app int64, _ string, _ time.Time) (bool, error) {
+	// The heal holds the app's restore lock through its write: a restore
+	// cannot start between the heal's read of the service and this write.
+	if oplock.TryAcquire(oplock.AppRestore(app)) {
+		oplock.Release(oplock.AppRestore(app))
+		h.unlockedWrites = append(h.unlockedWrites, app)
+	}
+	h.writes[app] = StatusIdle
+	return true, nil
+}
+
+func TestStoppedLongEnough(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	longAgo := now.Add(-5 * 24 * time.Hour)                           // an app stopped through MCP: 0/0 for days
+	deployed := StaleApp{LastFinished: now.Add(-40 * 24 * time.Hour)} // its last deploy, weeks before the stop
+	cases := []struct {
+		name string
+		p    docker.ServiceProgress
+		last StaleApp
+		want bool
+	}{
+		// Started after the stop, the deploy failed before it touched the
+		// service: the error is the deploy's, not the stop's.
+		{"a deploy failed after the stop", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusError, LastFinished: now.Add(-time.Minute)}, false},
+		{"a stored error, the stop after its deploy", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusError, LastFinished: now.Add(-40 * 24 * time.Hour)}, true},
+		// A deploy that wrote "running" left replicas behind: a service at
+		// zero was stopped since, even when Postgres's clock says the deploy
+		// ended later (an old API stop racing the deploy's finish, or clocks
+		// apart).
+		{"a stored running, its deploy recorded after the stop", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusRunning, LastFinished: longAgo.Add(30 * time.Second)}, true},
+		{"scaled to zero days ago (an old API stop)", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, deployed, true},
+		{"scaled to zero after a rollback", docker.ServiceProgress{Found: true, UpdateState: "rollback_completed", UpdatedAt: longAgo}, deployed, true},
+		{"scaled to zero exactly the age ago", docker.ServiceProgress{Found: true, UpdatedAt: now.Add(-stoppedHealAge)}, deployed, true},
+		// A volume restore holds the app at zero for up to 30 minutes.
+		{"scaled to zero minutes ago (a volume restore)", docker.ServiceProgress{Found: true, UpdatedAt: now.Add(-10 * time.Minute)}, deployed, false},
+		{"no change time", docker.ServiceProgress{Found: true}, deployed, false},
+		{"no service", docker.ServiceProgress{UpdatedAt: longAgo}, deployed, false},
+		{"runs", docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdatedAt: longAgo}, deployed, false},
+		{"replica still shutting down", docker.ServiceProgress{Found: true, Running: 1, UpdatedAt: longAgo}, deployed, false},
+		{"update in progress", docker.ServiceProgress{Found: true, UpdateState: "updating", UpdatedAt: longAgo}, deployed, false},
+		{"global, no eligible node", docker.ServiceProgress{Found: true, Global: true, UpdatedAt: longAgo}, deployed, false},
+	}
+	for _, c := range cases {
+		if got := stoppedLongEnough(c.p, c.last, now); got != c.want {
+			t.Errorf("%s: stoppedLongEnough = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// Only the services the bulk lookup reports at zero are read in detail, and
+// only the one stopped long enough is set idle.
+func TestHealStoppedReadsOnlyServicesAtZero(t *testing.T) {
+	now := time.Now()
+	eng := &countingEngine{progressEngine: progressEngine{
+		docker.ServiceName(1): {Found: true, Desired: 1, Running: 1, UpdateState: "completed", UpdatedAt: now.Add(-48 * time.Hour)},
+		docker.ServiceName(2): {Found: true, UpdateState: "completed", UpdatedAt: now.Add(-48 * time.Hour)},
+		docker.ServiceName(3): {Found: true, UpdatedAt: now.Add(-time.Minute)},
+	}, reads: map[string]int{}}
+	h := &scriptedHealer{stale: []StaleApp{{ID: 1, Status: StatusRunning}, {ID: 2, Status: StatusRunning}, {ID: 3, Status: StatusError}, {ID: 4, Status: StatusRunning}}, writes: map[int64]string{}}
+	n, err := HealStuckStatuses(context.Background(), h, eng, now)
+	if err != nil || n != 1 {
+		t.Fatalf("HealStuckStatuses = %d, %v; want 1, nil", n, err)
+	}
+	if len(h.writes) != 1 || h.writes[2] != StatusIdle {
+		t.Fatalf("writes %v; want app 2 idle only", h.writes)
+	}
+	if eng.reads[docker.ServiceName(1)] != 0 || eng.reads[docker.ServiceName(4)] != 0 {
+		t.Errorf("detailed reads %v; a running or missing service must not be read", eng.reads)
+	}
+}
+
+// A volume restore holds the app at zero: while it marks the app, and while
+// it takes the lock to mark it, the heal neither reads nor writes that app; a
+// global service the bulk lookup reports at zero (waiting for an eligible
+// node) is not read in detail either; and the heal's own write happens under
+// the app's restore lock.
+func TestHealStoppedSkipsARestoreAndGlobalServices(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	eng := &countingEngine{progressEngine: progressEngine{
+		docker.ServiceName(1): {Found: true, UpdateState: "completed", UpdatedAt: old},
+		docker.ServiceName(2): {Found: true, Global: true, UpdatedAt: old},
+	}, reads: map[string]int{}}
+	h := &scriptedHealer{stale: []StaleApp{{ID: 1, Status: StatusRunning}, {ID: 2, Status: StatusRunning}}, writes: map[int64]string{}}
+	name := oplock.AppRestore(1)
+	unmark := oplock.Mark(name)
+	n, err := HealStuckStatuses(context.Background(), h, eng, time.Now())
+	unmark()
+	if err != nil || n != 0 || len(h.writes) != 0 {
+		t.Fatalf("during a restore: healed %d, %v, writes %v; want nothing", n, err, h.writes)
+	}
+	if !oplock.TryAcquire(name) {
+		t.Fatal("restore lock already held")
+	}
+	n, err = HealStuckStatuses(context.Background(), h, eng, time.Now())
+	oplock.Release(name)
+	if err != nil || n != 0 || len(h.writes) != 0 {
+		t.Fatalf("while a restore takes its lock: healed %d, %v, writes %v; want nothing", n, err, h.writes)
+	}
+	if len(eng.reads) != 0 {
+		t.Errorf("detailed reads %v; want none", eng.reads)
+	}
+	if n, err := HealStuckStatuses(context.Background(), h, eng, time.Now()); err != nil || n != 1 || h.writes[1] != StatusIdle {
+		t.Fatalf("after the restore: healed %d, %v, writes %v; want app 1 idle", n, err, h.writes)
+	}
+	if eng.reads[docker.ServiceName(2)] != 0 {
+		t.Error("a global service at zero was read in detail")
+	}
+	if len(h.unlockedWrites) != 0 {
+		t.Errorf("written without the restore lock: %v", h.unlockedWrites)
+	}
+	if !oplock.TryAcquire(name) {
+		t.Fatal("the heal left the restore lock held")
+	}
+	oplock.Release(name)
+}
+
+// A failed detailed lookup leaves that app for the next pass and the apps
+// after it are still healed.
+func TestHealStoppedContinuesPastAFailedLookup(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	eng := progressEngine{
+		docker.ServiceName(1): {Found: true, UpdateState: "lookup-fails"},
+		docker.ServiceName(2): {Found: true, UpdatedAt: old},
+	}
+	h := &scriptedHealer{stale: []StaleApp{{ID: 1, Status: StatusRunning}, {ID: 2, Status: StatusRunning}}, writes: map[int64]string{}}
+	n, err := HealStuckStatuses(context.Background(), h, eng, time.Now())
+	if err == nil {
+		t.Error("the failed lookup must still be reported")
+	}
+	if n != 1 || h.writes[2] != StatusIdle {
+		t.Fatalf("healed %d, writes %v; want app 2 idle", n, h.writes)
+	}
+	if _, wrote := h.writes[1]; wrote {
+		t.Fatal("app 1 must be left for the next pass")
+	}
 }
 
 // One app whose service lookup fails (removed between Docker's two requests)
@@ -282,6 +470,146 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 	}
 	if got := status(ended); got != StatusRunning {
 		t.Errorf("ended app status = %q, want running", got)
+	}
+}
+
+// The stopped-app queries against a real schema, with an app stopped through MCP: the
+// row says "running" from its last deploy while the service has stood at 0/0
+// for days (stopped through the agent API before v0.13.2). It heals to idle;
+// an app whose service runs, one scaled to zero minutes ago, one with a deploy
+// running and one whose row changed after the listing keep their status.
+func TestHealStoppedStatusesOnDB(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	ctx := context.Background()
+	u, _ := q.CreateUser(ctx, db.CreateUserParams{Email: "stopped@k.local", PasswordHash: "h"})
+	o, _ := q.CreateOrganization(ctx, db.CreateOrganizationParams{Name: "Org", Slug: "org-stopped", OwnerID: u.ID})
+	p, _ := q.CreateProject(ctx, db.CreateProjectParams{OrganizationID: o.ID, Name: "P", Slug: "p-stopped", Description: ""})
+	e, _ := q.CreateEnvironment(ctx, db.CreateEnvironmentParams{ProjectID: p.ID, Name: "prod", Slug: "prod"})
+	newApp := func(name, status, lastDeploy string) int64 {
+		t.Helper()
+		a, err := q.CreateApplication(ctx, db.CreateApplicationParams{
+			EnvironmentID: e.ID, Name: name, Image: "nginx", Tag: "alpine",
+			Domain: name + ".stopped", Port: 80, SourceType: "image", DockerfilePath: "Dockerfile",
+		})
+		if err != nil {
+			t.Fatalf("create app: %v", err)
+		}
+		d, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: a.ID, Trigger: "manual"})
+		if err != nil {
+			t.Fatalf("create deployment: %v", err)
+		}
+		if lastDeploy != "" {
+			if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{ID: d.ID, Status: lastDeploy}); err != nil {
+				t.Fatalf("finish deployment: %v", err)
+			}
+		}
+		if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: a.ID, Status: status}); err != nil {
+			t.Fatalf("set status: %v", err)
+		}
+		return a.ID
+	}
+	status := func(app int64) string {
+		t.Helper()
+		a, err := q.GetApplication(ctx, app)
+		if err != nil {
+			t.Fatalf("get app: %v", err)
+		}
+		return a.Status
+	}
+
+	stoppedApp := newApp("stopped-app", StatusRunning, "done")
+	failedStopped := newApp("failed-stopped", StatusError, "error")
+	// Their last deploys ended long before the stop (the app stopped
+	// through MCP: weeks before); "failed-start" was stopped as long ago, then a
+	// start failed before it touched the service.
+	if _, err := pool.Exec(ctx, "UPDATE deployments SET finished_at = now() - interval '40 days' WHERE application_id = ANY($1)", []int64{stoppedApp, failedStopped}); err != nil {
+		t.Fatalf("age deployments: %v", err)
+	}
+	failedStart := newApp("failed-start", StatusError, "error")
+	serving := newApp("serving", StatusRunning, "done")
+	restoring := newApp("restoring", StatusRunning, "done")
+	inFlight := newApp("inflight", StatusRunning, "")
+	raced := newApp("raced", StatusRunning, "done")
+	idle := newApp("idle", StatusIdle, "done")
+
+	s := NewDBStore(q)
+	listed, err := s.ListStaleStoppedCandidates(ctx)
+	if err != nil {
+		t.Fatalf("ListStaleStoppedCandidates: %v", err)
+	}
+	byID := map[int64]StaleApp{}
+	for _, a := range listed {
+		byID[a.ID] = a
+		if a.Seen.IsZero() {
+			t.Errorf("app %d listed without its row's change time", a.ID)
+		}
+	}
+	if _, ok := byID[inFlight]; ok {
+		t.Error("an app with a deploy running must not be listed")
+	}
+	if _, ok := byID[idle]; ok {
+		t.Error("an idle app must not be listed")
+	}
+	if len(byID) != 6 || byID[failedStopped].Status != StatusError || byID[stoppedApp].Status != StatusRunning {
+		t.Fatalf("listed %v, want stopped-app, failed-stopped, failed-start, serving, restoring and raced with their statuses", byID)
+	}
+
+	if byID[stoppedApp].LastFinished.IsZero() {
+		t.Errorf("stopped-app listed without its last deployment's end: %v", byID[stoppedApp].LastFinished)
+	}
+
+	// After the listing a deploy of "raced" starts: its row first, so for a
+	// moment only the running deployment guards the unchanged app row ...
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: raced, Trigger: "manual"}); err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	if ok, err := s.HealStoppedAppStatus(ctx, raced, StatusRunning, byID[raced].Seen); err != nil || ok {
+		t.Fatalf("HealStoppedAppStatus with a deployment running = %v, %v; want false", ok, err)
+	}
+	// ... then its status.
+	if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: raced, Status: StatusDeploying}); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if ok, err := s.HealStoppedAppStatus(ctx, raced, StatusRunning, byID[raced].Seen); err != nil || ok {
+		t.Fatalf("HealStoppedAppStatus on a row changed since the listing = %v, %v; want false", ok, err)
+	}
+	// A row rewritten with the same status since the listing (a deploy that
+	// started and ended "running") is refused on updated_at alone.
+	if err := q.UpdateApplicationStatus(ctx, db.UpdateApplicationStatusParams{ID: restoring, Status: StatusRunning}); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if ok, err := s.HealStoppedAppStatus(ctx, restoring, StatusRunning, byID[restoring].Seen); err != nil || ok {
+		t.Fatalf("HealStoppedAppStatus from a listing older than the row = %v, %v; want false", ok, err)
+	}
+	if ok, err := s.HealStoppedAppStatus(ctx, serving, StatusError, byID[serving].Seen); err != nil || ok {
+		t.Fatalf("HealStoppedAppStatus from a status the row does not hold = %v, %v; want false", ok, err)
+	}
+
+	now := time.Now()
+	days := now.Add(-5 * 24 * time.Hour)
+	eng := progressEngine{
+		docker.ServiceName(stoppedApp):    {Found: true, UpdateState: "completed", UpdatedAt: days},
+		docker.ServiceName(failedStopped): {Found: true, UpdateState: "rollback_completed", UpdatedAt: days},
+		docker.ServiceName(serving):       {Found: true, Desired: 1, Running: 1, UpdateState: "completed", UpdatedAt: days},
+		docker.ServiceName(restoring):     {Found: true, UpdateState: "completed", UpdatedAt: now.Add(-5 * time.Minute)},
+		docker.ServiceName(inFlight):      {Found: true, UpdatedAt: days},
+		docker.ServiceName(raced):         {Found: true, UpdatedAt: days},
+		docker.ServiceName(idle):          {Found: true, UpdatedAt: days},
+		docker.ServiceName(failedStart):   {Found: true, UpdateState: "completed", UpdatedAt: days},
+	}
+	if n, err := HealStuckStatuses(ctx, s, eng, now); err != nil || n != 2 {
+		t.Fatalf("HealStuckStatuses = %d, %v; want 2", n, err)
+	}
+	want := map[int64]string{
+		stoppedApp: StatusIdle, failedStopped: StatusIdle, serving: StatusRunning,
+		restoring: StatusRunning, inFlight: StatusRunning, raced: StatusDeploying, idle: StatusIdle,
+		failedStart: StatusError,
+	}
+	for app, st := range want {
+		if got := status(app); got != st {
+			t.Errorf("app %d status = %q, want %q", app, got, st)
+		}
 	}
 }
 

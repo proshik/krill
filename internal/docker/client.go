@@ -495,6 +495,7 @@ func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude
 	return ServiceProgress{
 		Found: true, Desired: desired, Running: running, Failed: failed,
 		UpdateState: updateState, TaskIDs: ids, Global: svc.Spec.Mode.Global != nil,
+		UpdatedAt: svc.UpdatedAt,
 	}, nil
 }
 
@@ -526,7 +527,7 @@ func (e *dockerEngine) ServiceStates(ctx context.Context, names []string) (map[s
 		if s.Spec.Mode.Global != nil {
 			global[s.Spec.Name] = true
 		}
-		out[s.Spec.Name] = ServiceState{Found: true, Desired: desired}
+		out[s.Spec.Name] = ServiceState{Found: true, Desired: desired, Global: s.Spec.Mode.Global != nil}
 	}
 	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{
 		Filters: filters.NewArgs(filters.Arg("desired-state", "running")),
