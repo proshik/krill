@@ -8,6 +8,7 @@ import (
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
+	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -40,6 +41,21 @@ func (s *Server) pendingChanges(ctx context.Context, apps []db.Application) map[
 		out[id] = templates.PendingView{Changed: p.Changed, CanApply: p.CanApply}
 	}
 	return out
+}
+
+// markPending finds which running apps on the canvas v have saved settings
+// that are not live yet and marks their cards. Only pages that render the
+// markers call it: the canvas status poll does not, as each app costs a
+// settings load.
+func (s *Server) markPending(ctx context.Context, v *templates.CanvasView, apps []db.Application) {
+	v.PendingApps = s.pendingChanges(ctx, apps)
+	for _, a := range apps {
+		key := topology.AppKey(a.ID)
+		if c, ok := v.Cards[key]; ok {
+			c.Pending = v.PendingApps[a.ID].Any()
+			v.Cards[key] = c
+		}
+	}
 }
 
 // applyAppSettings deploys the app's saved settings on the image it runs now,

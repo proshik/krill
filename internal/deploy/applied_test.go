@@ -98,7 +98,7 @@ func TestConfigFingerprintChangesExactlyOneSection(t *testing.T) {
 		{"volume owner", func(a *App) { a.Mounts[0].Owner = "1000:1000" }, SectionVolumes},
 		{"port published", func(a *App) { a.Ports[0].Published = 2223 }, SectionPorts},
 		{"port protocol", func(a *App) { a.Ports[0].UDP = true }, SectionPorts},
-		{"placement mode", func(a *App) { a.PlacementMode = "global" }, SectionPlacement},
+		{"placement mode", func(a *App) { a.PlacementMode = "any" }, SectionPlacement},
 		{"placement nodes", func(a *App) { a.PlacementNodes = []string{"n1"} }, SectionPlacement},
 	}
 	base := d.configFingerprint(fingerprintApp())
@@ -130,11 +130,32 @@ func TestConfigFingerprintDockerfileSource(t *testing.T) {
 			t.Errorf("%s: changed %v", name, got)
 		}
 	}
+	// The builder's defaults are the same settings as their explicit form.
+	a0 := base
+	a0.DockerfilePath, a0.GitBranch = "", ""
+	explicit := base
+	explicit.DockerfilePath, explicit.GitBranch = "Dockerfile", "main"
+	if got := changedSections(d.configFingerprint(a0), d.configFingerprint(explicit)); len(got) != 0 {
+		t.Errorf("default Dockerfile path or branch changed %v", got)
+	}
 	// Credentials in the URL are not settings of the build.
 	a := base
 	a.GitURL = "https://" + "user:pw" + "@" + "github.com/x/y.git" // credentials embedded in the URL
 	if got := changedSections(fp, d.configFingerprint(a)); len(got) != 0 {
 		t.Errorf("credentials in the git URL changed %v", got)
+	}
+}
+
+// A global service runs one task per node: its replica count is not applied.
+func TestConfigFingerprintIgnoresReplicasOfAGlobalService(t *testing.T) {
+	secret.Init("")
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	a := fingerprintApp()
+	a.PlacementMode = "global"
+	b := a
+	b.Replicas = 5
+	if got := changedSections(d.configFingerprint(a), d.configFingerprint(b)); len(got) != 0 {
+		t.Fatalf("replicas of a global service changed %v", got)
 	}
 }
 
@@ -465,5 +486,96 @@ func TestApplySettingsOnALocalBuildSkipsTheBuild(t *testing.T) {
 	}
 	if dep, _ := q.GetDeployment(ctx, id); dep.ImageTag != local {
 		t.Fatalf("applied image %q, want %q", dep.ImageTag, local)
+	}
+}
+
+// History can differ from Swarm (a newer same-tag deploy finished between the
+// lookup and the queue, a rollout Swarm completed after Krill stopped
+// watching): an apply changes nothing unless the service runs the image it
+// was queued for.
+func TestApplySettingsRefusedWhenTheServiceRunsAnotherImage(t *testing.T) {
+	q, st, d, e, appID, _ := configFixture(t)
+	ctx := t.Context()
+	if _, err := st.pool.Exec(ctx, "UPDATE applications SET predeploy_command='migrate' WHERE id=$1", appID); err != nil {
+		t.Fatal(err)
+	}
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	requireDeployment(t, q, first, "done")
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.EnqueueApplySettings(ctx, appID, TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.liveImage = "nginx@sha256:" + strings.Repeat("7", 64)
+	predeploys, deploys := len(e.calls), len(e.deployed)
+	runReleaseJob(t, d, id)
+	requireDeployment(t, q, id, "error")
+	if dep, _ := q.GetDeployment(ctx, id); dep.ErrorMessage != ErrApplyTargetMoved.Error() {
+		t.Fatalf("error = %q", dep.ErrorMessage)
+	}
+	if len(e.calls) != predeploys || len(e.deployed) != deploys {
+		t.Fatal("a refused apply ran its predeploy command or changed the service")
+	}
+}
+
+// A Stop that ends after the apply handler saw the app running finds no apply
+// to cancel: the apply must not bring the app back, nor change its status.
+func TestApplySettingsLeavesAStoppedAppStopped(t *testing.T) {
+	q, st, d, e, appID, _ := configFixture(t)
+	ctx := t.Context()
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.EnqueueApplySettings(ctx, appID, TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.digestMockEngine.mu.Lock()
+	e.stopped = true
+	deploys := len(e.deployed)
+	e.digestMockEngine.mu.Unlock()
+	if err := st.SetStatus(ctx, appID, StatusIdle); err != nil {
+		t.Fatal(err)
+	}
+	runReleaseJob(t, d, id)
+	requireDeployment(t, q, id, "error")
+	if len(e.deployed) != deploys {
+		t.Fatal("an apply of a stopped app changed its service")
+	}
+	if a, _ := q.GetApplication(ctx, appID); a.Status != StatusIdle {
+		t.Fatalf("app status = %q, want the stop's idle", a.Status)
+	}
+}
+
+// A local build that is not on every node the app may run on is refused
+// before the predeploy command or the volume chown act.
+func TestApplySettingsChecksALocalImageBeforePredeploy(t *testing.T) {
+	q, st, d, e, appID, _ := configFixture(t)
+	ctx := t.Context()
+	if _, err := st.pool.Exec(ctx, "UPDATE applications SET source_type='dockerfile', git_url='https://github.com/x/y.git', git_branch='main', predeploy_command='migrate' WHERE id=$1", appID); err != nil {
+		t.Fatal(err)
+	}
+	e.localID = "sha256:" + strings.Repeat("c", 64)
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	requireDeployment(t, q, first, "done")
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	e.validateErr = errors.New("release image unavailable on placement node")
+	predeploys := len(e.calls)
+	id, err := d.EnqueueApplySettings(ctx, appID, TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runReleaseJob(t, d, id)
+	requireDeployment(t, q, id, "error")
+	if len(e.calls) != predeploys {
+		t.Fatal("the predeploy command ran before the image check")
 	}
 }

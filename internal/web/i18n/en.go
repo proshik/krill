@@ -1690,7 +1690,7 @@ var en = map[string]string{
 	"pending.section.ports":            "published ports",
 	"pending.section.placement":        "placement",
 	"app.apply_settings":               "apply settings",
-	"app.apply_hint":                   "deploy the saved settings on the image that runs now: no pull, no build",
+	"app.apply_hint":                   "deploy the saved settings on the image that runs now, pinned by digest: no pull of its tag, no build",
 	"flash.ok.apply_queued":            "applying the saved settings, deployment queued",
 	"flash.err.apply_nothing":          "nothing to apply: the running deployment has the saved settings",
 	"flash.err.apply_needs_deploy":     "the image or build settings changed, or the running image is not pinned: deploy again instead",

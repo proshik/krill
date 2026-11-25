@@ -683,6 +683,18 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	if err == nil && j.rollbackID == 0 {
 		err = d.ensurePlacement(ctx, app)
 	}
+	// An apply changes nothing before it knows the service still runs, settled,
+	// the image it was queued for, and that a local build is on every node it
+	// may run on: the predeploy command and the volume chown below already act.
+	if err == nil && j.applyImage != "" {
+		var p docker.ServiceProgress
+		if p, err = d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil); err == nil {
+			err = checkApplyTarget(p, imageTag)
+		}
+		if err == nil {
+			err = d.validateApplyImage(ctx, app, imageTag)
+		}
+	}
 
 	if err == nil && app.PredeployCommand != "" && !j.skipPredeploy {
 		err = d.predeploy(ctx, app, deployID, imageTag, out)
@@ -775,7 +787,12 @@ func (d *Deployer) run(ctx context.Context, j job) {
 					return err
 				}
 			}
+			// Again under the lock a Stop scales under: a Stop that ended
+			// before this apply was admitted found nothing to cancel.
 			if j.applyImage != "" {
+				if err := checkApplyTarget(prev, imageTag); err != nil {
+					return err
+				}
 				if err := d.validateApplyImage(ctx, app, imageTag); err != nil {
 					return err
 				}

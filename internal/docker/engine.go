@@ -161,6 +161,8 @@ type ServiceProgress struct {
 	// UpdatedAt is when the service object last changed: a spec update, a
 	// scale, Swarm's own update status. Zero when Swarm did not say.
 	UpdatedAt time.Time
+	// Image is the image reference of the service's current spec.
+	Image string
 }
 
 // UpdateSettled reports whether a service's last rolling update has come to

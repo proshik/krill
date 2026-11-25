@@ -286,6 +286,9 @@ type Querier interface {
 	// The newest successful deployment of each listed app, with the configuration
 	// fingerprint it applied (NULL before it was recorded) and whether a deploy of
 	// the app is in flight (queued deploys have a running row too).
+	// One ordered index lookup per app (deployments_app_idx, stopping at the first
+	// done row) and the partial running index, so the cost does not grow with the
+	// history the deployments poll keeps asking about.
 	ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)

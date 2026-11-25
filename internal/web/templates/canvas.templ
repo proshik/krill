@@ -190,6 +190,11 @@ templ CanvasRefresh(v CanvasView) {
 			@ui.StateID(c.StateID, c.StateKind, c.StateText, true)
 		}
 		@canvasWhere(c, true)
+		// The poll does not look pending changes up (each costs a settings
+		// load); it only clears the marker of an app that stopped meanwhile.
+		if c.App && c.NotRunning {
+			@canvasPending(c.ElemID, false, true)
+		}
 	}
 	for _, n := range v.Nodes {
 		@canvasNodeCount(n, true)

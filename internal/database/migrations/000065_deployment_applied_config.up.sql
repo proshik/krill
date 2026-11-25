@@ -5,3 +5,7 @@
 -- NULL for failed deployments and for those made before it was recorded,
 -- which read as "unknown", not as changed.
 ALTER TABLE deployments ADD COLUMN applied_config JSONB;
+
+-- Deploys in flight per app: the pending-changes check and the enqueue guard
+-- ask for them on every poll and deploy; history only grows.
+CREATE INDEX deployments_running_idx ON deployments (application_id) WHERE status = 'running';

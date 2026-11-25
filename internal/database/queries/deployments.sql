@@ -39,7 +39,9 @@ WHERE finished_at IS NOT NULL AND finished_at < now() - interval '1 hour' AND lo
 UPDATE deployments
 SET status = 'error',
     error_message = 'interrupted: krill restarted while this deploy was running',
-    finished_at = now()
+    finished_at = now(),
+    -- A deploy that recorded what it applied but died before writing done.
+    applied_config = NULL
 WHERE status = 'running';
 
 -- name: CountRunningDeploymentsByApplication :one
@@ -97,8 +99,15 @@ SELECT applied_config FROM deployments WHERE id = $1;
 -- The newest successful deployment of each listed app, with the configuration
 -- fingerprint it applied (NULL before it was recorded) and whether a deploy of
 -- the app is in flight (queued deploys have a running row too).
-SELECT DISTINCT ON (d.application_id) d.application_id, d.id, d.image_tag, d.applied_config,
-    EXISTS (SELECT 1 FROM deployments r WHERE r.application_id = d.application_id AND r.status = 'running') AS in_flight
-FROM deployments d
-WHERE d.application_id = ANY(@ids::bigint[]) AND d.status = 'done'
-ORDER BY d.application_id, d.started_at DESC, d.id DESC;
+-- One ordered index lookup per app (deployments_app_idx, stopping at the first
+-- done row) and the partial running index, so the cost does not grow with the
+-- history the deployments poll keeps asking about.
+SELECT a.id::bigint AS application_id, d.id, d.image_tag, d.applied_config,
+    EXISTS (SELECT 1 FROM deployments r WHERE r.application_id = a.id AND r.status = 'running') AS in_flight
+FROM unnest(@ids::bigint[]) AS a(id)
+JOIN LATERAL (
+    SELECT dd.id, dd.image_tag, dd.applied_config FROM deployments dd
+    WHERE dd.application_id = a.id AND dd.status = 'done'
+    ORDER BY dd.started_at DESC, dd.id DESC
+    LIMIT 1
+) d ON true;

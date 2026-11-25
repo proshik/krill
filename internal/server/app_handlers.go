@@ -422,6 +422,7 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 	c.Shell = s.envShell(ctx, c.Org, c.Role, c.Project, c.Env, envs, c.App.Name+", "+c.Project.Name+" "+c.Env.Name, "canvas", "is-canvas has-sheet")
 	d := s.loadEnvData(ctx, c.Org.ID, c.Project.ID, c.Env)
 	c.Canvas = s.canvasFor(ctx, c.Org, c.Role, c.Project, c.Env, d, topology.AppKey(c.App.ID), false)
+	s.markPending(ctx, &c.Canvas, d.apps)
 	for _, a := range d.apps {
 		if a.ID == c.App.ID {
 			c.App.Status = a.Status // live, as on the canvas

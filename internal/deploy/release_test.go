@@ -24,6 +24,8 @@ type releaseEngine struct {
 	afterDeploy func()
 	stateMu     sync.Mutex
 	updateState string
+	liveImage   string // overrides the image of the last deploy
+	stopped     bool   // the service stands at zero (guarded by digestMockEngine.mu)
 }
 
 func (e *releaseEngine) setUpdateState(v string) {
@@ -45,7 +47,16 @@ func (e *releaseEngine) ServiceDeploy(ctx context.Context, s docker.ServiceSpec)
 func (e *releaseEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
-	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: e.updateState, TaskIDs: []string{"new"}}, nil
+	p := docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: e.updateState, TaskIDs: []string{"new"}, Image: e.liveImage}
+	e.digestMockEngine.mu.Lock()
+	if p.Image == "" && len(e.deployed) > 0 {
+		p.Image = e.deployed[len(e.deployed)-1].Image
+	}
+	if e.stopped {
+		p.Desired, p.Running = 0, 0
+	}
+	e.digestMockEngine.mu.Unlock()
+	return p, nil
 }
 
 func releaseFixture(t *testing.T) (*db.Queries, *DBStore, *Deployer, *releaseEngine, int64) {

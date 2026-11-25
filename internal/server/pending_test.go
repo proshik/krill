@@ -20,6 +20,22 @@ type pendingEngine struct {
 	noopEngine
 	resolves atomic.Int32
 	stopped  atomic.Bool
+	image    atomic.Value // the image of the last ServiceDeploy
+}
+
+func (e *pendingEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
+	e.image.Store(s.Image)
+	return nil
+}
+func (e *pendingEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
+	p := docker.ServiceProgress{Found: true, Running: 1, Desired: 1}
+	if e.stopped.Load() {
+		p.Running, p.Desired = 0, 0
+	}
+	if img, ok := e.image.Load().(string); ok {
+		p.Image = img
+	}
+	return p, nil
 }
 
 const pendingDigest = "nginx@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -198,10 +214,20 @@ func TestPendingChangesOnTheAppSheet(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The canvas status poll looks nothing up and leaves a running app's marker.
+	envBase := base[:strings.Index(base, "/apps/")]
+	if poll := getWithCookie(t, h, envBase+"/statuses", cookie).Body.String(); strings.Contains(poll, `id="cp-s-app-`) {
+		t.Fatal("the status poll touched the marker of a running app")
+	}
+
 	// A stopped app shows nothing and cannot apply.
 	eng.stopped.Store(true)
 	if body := page(cookie, ""); pendingMarker.MatchString(body) || canvasDot(body, appID) {
 		t.Fatal("marker on a stopped app")
+	}
+	// The status poll clears the marker an open canvas still shows.
+	if poll := getWithCookie(t, h, envBase+"/statuses", cookie).Body.String(); !strings.Contains(poll, `id="cp-s-app-`+i64(appID)+`" hx-swap-oob="true"></span>`) {
+		t.Fatal("the status poll does not clear the marker of a stopped app")
 	}
 	before, _ := q.ListDeploymentSummariesByApplication(ctx, appID)
 	if rec := postForm(t, h, base+"/apply-settings", cookie, url.Values{}); !hasErrFlash(rec) {

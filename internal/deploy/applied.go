@@ -78,10 +78,19 @@ func configSections(a App) map[string]any {
 			u.User = nil
 			gitURL = u.String()
 		}
+		// The builder's defaults: an empty branch clones main, an empty path
+		// builds ./Dockerfile.
+		branch, dockerfile := a.GitBranch, a.DockerfilePath
+		if branch == "" {
+			branch = "main"
+		}
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
 		source = struct {
 			Type, GitURL, Branch, Dockerfile string
 			BuildArgs, BuildSecrets          map[string]string
-		}{a.SourceType, gitURL, a.GitBranch, a.DockerfilePath, nonNil(a.BuildArgs), nonNil(a.BuildSecrets)}
+		}{a.SourceType, gitURL, branch, dockerfile, nonNil(a.BuildArgs), nonNil(a.BuildSecrets)}
 	} else {
 		source = struct{ Type, Image, Tag string }{a.SourceType, a.Image, a.Tag}
 	}
@@ -89,6 +98,9 @@ func configSections(a App) map[string]any {
 	replicas := a.Replicas
 	if replicas == 0 {
 		replicas = 1 // as buildSpec deploys it
+	}
+	if a.PlacementMode == "global" && len(a.PlacementNodes) > 0 {
+		replicas = 0 // a global service runs one task per node; buildSpec ignores the count
 	}
 	runtime := struct {
 		Args               []string
@@ -305,7 +317,25 @@ var (
 	// ErrApplyNeedsDeploy: the image or build settings changed, or the running
 	// image is not pinned by digest, so only a deploy can apply them.
 	ErrApplyNeedsDeploy = errors.New("the image or build settings changed or the running image is not pinned: deploy instead")
+	// ErrApplyTargetMoved: the service no longer runs, settled, the image the
+	// apply was queued for (a newer deploy, a rollout Swarm finished after
+	// Krill stopped watching, a rollback in progress).
+	ErrApplyTargetMoved = errors.New("the service no longer runs the image this apply was queued for: deploy instead")
 )
+
+// checkApplyTarget reports whether an apply may replace the service p: it
+// must run (a stopped app is the stop's: errStoppedMeanwhile), its last update
+// must be settled and its spec must name exactly image. Deployment history can
+// differ from Swarm, so only the live service says which image runs.
+func checkApplyTarget(p docker.ServiceProgress, image string) error {
+	if !p.Found || (!p.Global && p.Desired == 0) {
+		return errStoppedMeanwhile
+	}
+	if !docker.UpdateSettled(p.UpdateState) || p.Image != image {
+		return ErrApplyTargetMoved
+	}
+	return nil
+}
 
 // EnqueueApplySettings deploys the app's current settings on the image its
 // latest successful deployment runs, pinned by digest: no pull of a tag, no
