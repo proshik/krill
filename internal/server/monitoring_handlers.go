@@ -52,6 +52,7 @@ type monNode struct {
 	MemUsed    int64   `json:"mem_used"`
 	MemTotal   int64   `json:"mem_total"`
 	NCPU       int     `json:"ncpu"`
+	CoresText  string  `json:"cores_text"` // "CPU of N cores" in the viewer's locale, plural included
 	Containers int     `json:"containers"`
 	Stale      bool    `json:"stale"`
 }
@@ -189,6 +190,9 @@ func (s *Server) monitoringData(w http.ResponseWriter, r *http.Request) {
 
 	caps, _ := s.metrics.ListCapacity(r.Context())
 	nodes := summarizeNodes(latest, caps, now.Add(-freshness))
+	for i := range nodes {
+		nodes[i].CoresText = i18n.Tn(r.Context(), "mon.cpu_of_cores", nodes[i].NCPU)
+	}
 
 	body, err := json.Marshal(monData{Nodes: nodes, X: x, Series: series, Rows: rows})
 	if err != nil {

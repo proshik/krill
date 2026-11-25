@@ -1012,7 +1012,7 @@ func observabilityState(orgID int64, v ObservabilityView) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var58 string
-			templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tf(ctx, "obs.coverage.partial", v.CoverageDeployed, v.CoverageExpected, strings.Join(v.CoverageMissing, ", ")))
+			templ_7745c5c3_Var58, templ_7745c5c3_Err = templ.JoinStringErrs(i18n.Tn(ctx, "obs.coverage.partial", v.CoverageExpected, v.CoverageDeployed, strings.Join(v.CoverageMissing, ", ")))
 			if templ_7745c5c3_Err != nil {
 				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/templates/observability.templ`, Line: 155, Col: 125}
 			}

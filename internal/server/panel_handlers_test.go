@@ -683,6 +683,58 @@ func TestPanelDirectPortDriftShown(t *testing.T) {
 	if body := page(); !strings.Contains(body, "lets it in from everywhere") {
 		t.Fatal("a closed stored state over an open host must be shown")
 	}
+
+	// Krill's own table is gone (msk: the port is closed by a hand-made table
+	// Krill does not read). The page says what Krill actually knows, and the
+	// action only corrects the record: nothing is applied on the host.
+	e.fw.mu.Lock()
+	e.fw.locked = false
+	applied := len(e.fw.rulesets)
+	e.fw.mu.Unlock()
+	body = page()
+	if !strings.Contains(body, "(inet krill) is not on this host") || !strings.Contains(body, "record as open") {
+		t.Fatalf("a missing Krill table must be named, with a record-only action:\n%s", body)
+	}
+	if strings.Contains(body, "lets it in from everywhere") || strings.Contains(body, "reopen direct access") {
+		t.Fatal("without a Krill table the page must not claim the host lets the port in or offer to reopen it")
+	}
+	if !strings.Contains(body, "/panel-domain/direct-port/record") || strings.Contains(body, "/panel-domain/direct-port/open") {
+		t.Fatal("record as open must post to its own route, never to reopen")
+	}
+	// Posted after Krill's table came back (a stale form), or while nft
+	// cannot list the tables: refused, nothing recorded or applied.
+	for _, c := range []struct{ locked, listErr bool }{{true, false}, {false, true}} {
+		e.fw.mu.Lock()
+		e.fw.locked, e.fw.listErr = c.locked, c.listErr
+		e.fw.mu.Unlock()
+		if rec := e.post(t, base+"/panel-domain/direct-port/record", cookie, url.Values{}, true); !hasErrFlash(rec) {
+			t.Fatalf("record with locked=%v listErr=%v must be refused", c.locked, c.listErr)
+		}
+		e.fw.mu.Lock()
+		changed := len(e.fw.rulesets) != applied
+		e.fw.mu.Unlock()
+		if changed || !e.row(t).DirectPortClosed {
+			t.Fatalf("a refused record (locked=%v listErr=%v) must change nothing", c.locked, c.listErr)
+		}
+	}
+	e.fw.mu.Lock()
+	e.fw.locked, e.fw.listErr = false, false
+	e.fw.mu.Unlock()
+	rec := e.post(t, base+"/panel-domain/direct-port/record", cookie, url.Values{}, true)
+	if hasErrFlash(rec) {
+		t.Fatalf("record as open: %q", flashCookieValue(rec))
+	}
+	if v, _ := url.QueryUnescape(flashCookieValue(rec)); !strings.Contains(v, "recorded as open") || strings.Contains(v, "reopened") {
+		t.Fatalf("recording must say it only recorded, not that access was reopened: %q", v)
+	}
+	e.fw.mu.Lock()
+	defer e.fw.mu.Unlock()
+	if len(e.fw.rulesets) != applied || e.fw.locked {
+		t.Fatalf("recording must not touch the host: %d rulesets (was %d), locked=%v", len(e.fw.rulesets), applied, e.fw.locked)
+	}
+	if e.row(t).DirectPortClosed {
+		t.Fatal("the stored state must now say open")
+	}
 }
 
 // A close that nobody confirmed reverts on the host; the page notices and the

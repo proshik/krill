@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const countApplicationsByProject = `-- name: CountApplicationsByProject :one
@@ -231,6 +232,30 @@ func (q *Queries) GetApplicationPlacement(ctx context.Context, id int64) (GetApp
 	var i GetApplicationPlacementRow
 	err := row.Scan(&i.PlacementMode, &i.PlacementNodes)
 	return i, err
+}
+
+const healApplicationStatus = `-- name: HealApplicationStatus :execrows
+UPDATE applications a SET status = $1, updated_at = now()
+WHERE a.id = $2 AND a.status = 'deploying' AND a.updated_at = $3
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running')
+`
+
+type HealApplicationStatusParams struct {
+	Status string    `json:"status"`
+	ID     int64     `json:"id"`
+	Seen   time.Time `json:"seen"`
+}
+
+// Rewrites a stuck 'deploying' status, but only while the row is exactly as
+// listed: every status write sets updated_at, so a deploy that started (or
+// started and ended) since the listing keeps what it wrote — including one the
+// statement's snapshot of deployments cannot see yet.
+func (q *Queries) HealApplicationStatus(ctx context.Context, arg HealApplicationStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, healApplicationStatus, arg.Status, arg.ID, arg.Seen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const listAppIndexByEnvironmentIDs = `-- name: ListAppIndexByEnvironmentIDs :many
@@ -459,6 +484,56 @@ func (q *Queries) ListPinnedApplications(ctx context.Context) ([]ListPinnedAppli
 			&i.Name,
 			&i.PlacementMode,
 			&i.PlacementNodes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStuckDeployingApplications = `-- name: ListStuckDeployingApplications :many
+SELECT a.id, a.updated_at,
+       COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished,
+       COALESCE((SELECT d.status FROM deployments d WHERE d.application_id = a.id ORDER BY d.id DESC LIMIT 1), '')::text AS last_status,
+       COALESCE((SELECT d.error_message FROM deployments d WHERE d.application_id = a.id ORDER BY d.id DESC LIMIT 1), '')::text AS last_error
+FROM applications a
+WHERE a.status = 'deploying'
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running')
+`
+
+type ListStuckDeployingApplicationsRow struct {
+	ID           int64     `json:"id"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	LastFinished time.Time `json:"last_finished"`
+	LastStatus   string    `json:"last_status"`
+	LastError    string    `json:"last_error"`
+}
+
+// Apps whose stored status says a deploy is under way while no deployment of
+// theirs is: a deploy interrupted by a shutdown or a crash leaves the status
+// behind, and nothing else ever rewrites it. last_finished is when the app's
+// latest deployment ended, or its row last changed when it has none;
+// last_status/last_error are that deployment's (” when none); updated_at lets the
+// write tell whether anything touched the row since.
+func (q *Queries) ListStuckDeployingApplications(ctx context.Context) ([]ListStuckDeployingApplicationsRow, error) {
+	rows, err := q.db.Query(ctx, listStuckDeployingApplications)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStuckDeployingApplicationsRow
+	for rows.Next() {
+		var i ListStuckDeployingApplicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UpdatedAt,
+			&i.LastFinished,
+			&i.LastStatus,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}

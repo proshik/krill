@@ -297,6 +297,9 @@ func (s *Server) panelDomainPage(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Connection", "close")
 		} else if st.Available && !st.Pending {
 			v.HostDirectClosed, v.DirectDrift = s.directPortDrift(r, st.Locked, v.DirectPortClosed)
+			// Krill reads only its own table: with none on the host it cannot
+			// tell whether some other firewall closes the port.
+			v.KrillTableMissing = v.DirectDrift && !st.Locked
 		}
 	}
 	render(w, r, http.StatusOK, templates.PanelDomain(o, role, v))
@@ -319,8 +322,13 @@ func (s *Server) directPortDrift(r *http.Request, locked, stored bool) (hostClos
 		hostClosed = closed
 	}
 	if hostClosed != stored {
-		logFrom(r).Warn("panel direct port: host ruleset disagrees with stored state",
-			"host_closed", hostClosed, "stored_closed", stored)
+		if !locked {
+			logFrom(r).Warn("panel direct port: stored state says closed, but Krill's own firewall table (inet krill) is not on the host; a firewall Krill does not manage is not checked",
+				"stored_closed", stored)
+		} else {
+			logFrom(r).Warn("panel direct port: host ruleset disagrees with stored state",
+				"host_closed", hostClosed, "stored_closed", stored)
+		}
 		return hostClosed, true
 	}
 	return hostClosed, false
@@ -707,6 +715,47 @@ func (s *Server) confirmPanelDirectPort(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
 }
 
+// recordPanelDirectPortOpen clears a stored "closed" while Krill's own
+// firewall table is not on the host, so nothing of Krill's closes the port and
+// there is nothing to rewrite. It is its own route, not a flag on "reopen": a
+// form left open across a rollback must reach a handler that refuses it, not
+// one that would apply a ruleset. The table's absence is checked again here,
+// under fwMu, and only a positive listing counts — an nft that cannot read the
+// ruleset says nothing about it.
+func (s *Server) recordPanelDirectPortOpen(w http.ResponseWriter, r *http.Request) {
+	o, _, ok := s.loadOrg(w, r)
+	if !ok {
+		return
+	}
+	if !s.lockFirewall(w, r) {
+		return
+	}
+	defer s.fwMu.Unlock()
+	if s.cpFirewall == nil {
+		http.NotFound(w, r)
+		return
+	}
+	absent, err := firewall.TableAbsent(r.Context(), s.cpFirewall)
+	if err != nil {
+		logFrom(r).Warn("recordPanelDirectPortOpen: could not list the host's firewall tables; nothing recorded", "err", err)
+		s.flashErrT(w, r, "flash.err.panel_firewall_unavailable")
+		return
+	}
+	if !absent {
+		logFrom(r).Warn("recordPanelDirectPortOpen: Krill's firewall table is on the host; nothing recorded")
+		s.flashErrT(w, r, "flash.err.panel_record_stale")
+		return
+	}
+	if err := s.q.SetPanelDirectPort(r.Context(), db.SetPanelDirectPortParams{}); err != nil {
+		logFrom(r).Error("recordPanelDirectPortOpen: save failed", "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	}
+	logFrom(r).Info("panel direct port recorded as open; no Krill firewall table, nothing changed on the host")
+	s.flashOK(w, r, "flash.ok.panel_direct_recorded")
+	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
+}
+
 // openPanelDirectPort makes the UI port public again. Loosening a ruleset
 // cannot lock anyone out, so it is confirmed right away.
 func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
@@ -760,7 +809,13 @@ func (s *Server) openPanelDirectPort(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.internal")
 		return
 	}
-	logFrom(r).Info("panel direct port opened")
-	s.flashOK(w, r, "flash.ok.panel_direct_opened")
+	if !locked {
+		// Nothing was applied: without Krill's table only the record changed.
+		logFrom(r).Info("panel direct port recorded as open; no Krill firewall table, nothing changed on the host")
+		s.flashOK(w, r, "flash.ok.panel_direct_recorded")
+	} else {
+		logFrom(r).Info("panel direct port opened")
+		s.flashOK(w, r, "flash.ok.panel_direct_opened")
+	}
 	http.Redirect(w, r, panelBack(o.ID), http.StatusSeeOther)
 }

@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -136,6 +137,7 @@ func TestMonitoringDataPerNode(t *testing.T) {
 			Node     string `json:"node"`
 			NCPU     int    `json:"ncpu"`
 			MemTotal int64  `json:"mem_total"`
+			Cores    string `json:"cores_text"`
 		} `json:"nodes"`
 		Rows []struct {
 			Node string `json:"node"`
@@ -147,9 +149,43 @@ func TestMonitoringDataPerNode(t *testing.T) {
 	nodes := map[string]bool{}
 	for _, n := range d.Nodes {
 		nodes[n.Node] = true
+		// The node card's "CPU of N cores" is formatted on the server, so
+		// its plural form follows the catalog ("из 1 ядер" before).
+		if want := fmt.Sprintf("CPU of %d cores", n.NCPU); n.Cores != want {
+			t.Errorf("node %s cores_text = %q, want %q", n.Node, n.Cores, want)
+		}
 	}
 	if !nodes["cp"] || !nodes["w1"] {
 		t.Fatalf("expected both nodes in summary, got %v", nodes)
+	}
+
+	// The handler formats it in the viewer's locale: a 1-CPU node in Russian.
+	seedCapacity(t, q, "solo", 1, 1<<30)
+	req := httptest.NewRequest(http.MethodGet, base+"/monitoring/data?range=1h", nil)
+	req.AddCookie(cookie)
+	req.AddCookie(&http.Cookie{Name: "krill_lang", Value: "ru"})
+	ruRec := httptest.NewRecorder()
+	h.ServeHTTP(ruRec, req)
+	var ru struct {
+		Nodes []struct {
+			Node  string `json:"node"`
+			Cores string `json:"cores_text"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(ruRec.Body.Bytes(), &ru); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range ru.Nodes {
+		if n.Node == "solo" {
+			found = true
+			if n.Cores != "CPU из 1 ядра" {
+				t.Errorf("ru cores_text = %q, want %q", n.Cores, "CPU из 1 ядра")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("node solo missing from %+v", ru.Nodes)
 	}
 	rowNodes := map[string]bool{}
 	for _, r := range d.Rows {

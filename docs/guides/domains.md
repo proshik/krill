@@ -189,6 +189,16 @@ If the ruleset on the host ever disagrees with what Krill has recorded (the port
 the host while Krill says it is open, or the reverse), the page says so and offers
 **Reopen direct access**, which rewrites the ruleset from the recorded state.
 
+Krill reads only its own table, `inet krill`. If Krill has recorded direct access as closed
+but that table is not on the host at all (removed by hand, or never restored after a reboot),
+the page says the table is missing instead, and offers **Record as open**. That button only
+corrects Krill's record: it applies nothing on the host, and it is refused if `inet krill` is
+back by the time you press it or if `nft` cannot list the tables. A firewall Krill does not
+manage (UFW, a hand-written nftables table) may still close `:8080` after that, so check the
+direct address from outside before relying on it, for example before removing the panel
+domain. To have Krill close the port itself, turn the lockdown on again on the Firewall page
+and close direct access.
+
 While direct access is closed, the domain can't be changed or removed. Reopen direct access
 first. **Open cluster** on the Firewall page reopens it too, and a lockdown started afterwards
 leaves `:8080` open until you close it again.

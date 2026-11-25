@@ -196,7 +196,7 @@ func (s *Server) orgDashboard(w http.ResponseWriter, r *http.Request) {
 			case t == nil:
 				row.StateKind, row.StateText = "idle", i18n.T(ctx, "projects.no_apps")
 			case t.failed > 0:
-				row.StateKind, row.StateText = "err", i18n.Tf(ctx, "projects.n_failed", t.failed)
+				row.StateKind, row.StateText = "err", i18n.Tn(ctx, "projects.n_failed", t.failed)
 			case t.deploying > 0:
 				row.StateKind, row.StateText = "warn", i18n.Tf(ctx, "projects.n_deploying", t.deploying)
 			case t.stopped > 0:
