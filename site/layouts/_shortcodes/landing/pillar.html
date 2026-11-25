@@ -1,0 +1,31 @@
+{{- /*
+One product area, presented as a benefit: the heading, one or two sentences, a link to its guide,
+the product's screen (optional) and three landing/detail entries in the body.
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading: what the visitor gets.
+@param {string} lead  One or two plain sentences (Markdown).
+@param {string} link  URL of the guide for "Learn more".
+@param {string} shot  Optional screenshot base name (see partials/landing/shot.html), with w, h,
+                      alt and an optional crop ratio such as "16/9" (cut from the top).
+@param {string} side   Put a tall screenshot beside the text instead of under it.
+*/ -}}
+{{- $id := .Get "id" -}}
+{{- $side := eq (.Get "side") "true" -}}
+<section class="krill-section krill-pillar{{ if $side }} krill-pillar--side{{ end }}" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <div class="krill-pillar__head">
+    <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+    <div class="krill-pillar__lead">
+      <p>{{ .Get "lead" | markdownify }}</p>
+      {{- with .Get "link" }}
+      <a class="krill-more" href="{{ . }}">Learn more</a>
+      {{- end }}
+    </div>
+  </div>
+  {{- with .Get "shot" }}
+  <div class="krill-pillar__shot">
+    {{ partial "landing/shot.html" (dict "name" . "alt" ($.Get "alt") "w" ($.Get "w") "h" ($.Get "h") "crop" ($.Get "crop")) }}
+  </div>
+  {{- end }}
+  <dl class="krill-details">{{ .Inner }}</dl>
+</section>

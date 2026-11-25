@@ -1,9 +1,9 @@
-/* Hallmark · v2.0.0 · redesign: full · genre: modern-minimal · theme: brand (Krill UI violet, Outfit / Onest / JetBrains Mono) · built: Hextra theme · shape: Feature Stack · hero: Banner, the environment canvas · signature: the product's own screens · imagery: screenshots 6 (the running product, light and dark) · copy: README */
-/* critique: the old page was Hextra's demo layout (a badge, a twelve-card grid); the screens now carry the features, and the rest is a list */
+/* Hallmark · v2.0.0 · redesign: full · genre: modern-minimal · theme: brand (Krill UI violet, Outfit / Onest / JetBrains Mono) · built: Hextra theme · shape: Feature Stack (benefit, screen, three facts) · hero: Banner, the environment canvas · signature: the product's own screens · imagery: screenshots 6 (the running product, light and dark) · copy: README */
+/* critique: the old page was Hextra's demo layout (a badge, a twelve-card grid); six product areas now each state a benefit, show the product and give three facts, Railway's order */
 /* waive 44b: the headline is the README's eight-word tagline, kept verbatim */
 /* waive 10a, 33, 48, 74 in the HTML: Hextra's own navbar, code-copy button and icons, outside this page's code */
 /* waive 26b: the page has no control that can be disabled */
-/* note 58: 496 words; the hero sentence is the README's, kept verbatim */
+/* note 58: about 900 words, by request (more detail, plainly put); the hero sentence is the README's */
 
 /* Krill landing on top of Hextra's compiled styles. Hextra owns the chrome (navbar, footer,
    theme switch, code blocks); this file owns the home page's sections. The faces are Krill's
@@ -41,7 +41,7 @@
 
   --text-display: clamp(2.5rem, 1.4rem + 3.6vw, 4.75rem);
   --text-section: clamp(2rem, 1.3rem + 2.2vw, 3.25rem);
-  --text-figure: clamp(3rem, 1.8rem + 4vw, 5.5rem);
+  --text-figure: clamp(2.5rem, 1.6rem + 3vw, 4.5rem);
   --text-title: 1.25rem;
   --text-lead: clamp(1.125rem, 1rem + 0.45vw, 1.3125rem);
   --text-md: 1.0625rem;
@@ -87,6 +87,7 @@ samp {
 .krill-section {
   width: 100%;
   margin-top: var(--section-gap);
+  scroll-margin-top: calc(var(--hextra-navbar-height, 3.5rem) + var(--space-lg));
 }
 .krill-h2 {
   margin: 0;
@@ -118,6 +119,9 @@ samp {
   color: var(--color-accent-hover);
 }
 .krill-prose a:focus-visible,
+.krill-more:focus-visible,
+.krill-detail a:focus-visible,
+.krill-why__note a:focus-visible,
 .krill-btn:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 3px;
@@ -253,62 +257,110 @@ samp {
 }
 .krill-why__note {
   max-width: 60ch;
-  margin-top: var(--space-2xl);
-  font-size: var(--text-lead);
+  margin-top: var(--space-lg);
+  font-size: var(--text-sm);
   line-height: 1.5;
-  color: var(--color-ink);
+  color: var(--color-ink-muted);
 }
 
-/* Features with a screenshot */
-.krill-feature {
-  display: grid;
-  gap: var(--space-xl) var(--space-2xl);
-  align-items: center;
-}
-.krill-feature--split {
-  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-}
-.krill-feature--split-reverse {
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-}
-.krill-feature--split-reverse .krill-feature__shot {
-  order: -1;
-}
-.krill-feature--showcase {
-  grid-template-columns: minmax(0, 1fr);
-}
-.krill-feature--showcase .krill-feature__text {
+/* Product areas, presented as benefits */
+.krill-pillar__head {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
   gap: var(--space-lg) var(--space-2xl);
   align-items: end;
 }
-.krill-feature--showcase .krill-prose {
-  margin-top: 0;
+.krill-pillar__lead p {
+  font-size: var(--text-lead);
+  line-height: 1.5;
+  color: var(--color-ink-muted);
 }
-
-/* The rest of the features */
-.krill-also__list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: var(--space-2xl);
+.krill-more {
+  display: inline-block;
+  margin-top: var(--space-sm);
+  font-weight: 500;
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+.krill-more:hover {
+  color: var(--color-accent-hover);
+}
+.krill-pillar__shot {
   margin-top: var(--space-2xl);
 }
-.krill-also__item {
+.krill-shot--crop img {
+  aspect-ratio: var(--shot-ratio);
+  object-fit: cover;
+  object-position: top left;
+}
+
+/* A tall screen beside the text: the head, the lead and the details stack on the left */
+.krill-pillar--side {
+  display: grid;
+  grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+  grid-template-areas: "head shot" "details shot";
+  grid-template-rows: auto 1fr;
+  column-gap: var(--space-2xl);
+}
+.krill-pillar--side .krill-pillar__head {
+  grid-area: head;
+  grid-template-columns: minmax(0, 1fr);
+}
+.krill-pillar--side .krill-pillar__shot {
+  grid-area: shot;
+  margin-top: 0;
+}
+.krill-pillar--side .krill-details {
+  grid-area: details;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+}
+
+/* Details: a short name and one line, set in type */
+.krill-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: var(--space-2xl);
+  margin-top: var(--space-xl);
+}
+.krill-details--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.krill-detail {
   padding: var(--space-lg) 0;
   border-top: 1px solid var(--color-rule);
   min-width: 0;
 }
-.krill-also__item dt {
+.krill-detail dt {
   font-family: var(--font-display);
   font-size: var(--text-title);
   font-weight: 600;
+  line-height: 1.3;
   color: var(--color-ink);
 }
-.krill-also__item dd {
+.krill-detail dd {
   margin: var(--space-xs) 0 0;
   font-size: var(--text-md);
   line-height: 1.6;
+  color: var(--color-ink-muted);
+}
+.krill-detail a,
+.krill-why__note a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+.krill-detail code {
+  font-size: 0.9em;
+}
+.krill-list__lead {
+  max-width: 48ch;
+  margin-top: var(--space-lg);
+  font-size: var(--text-lead);
+  line-height: 1.5;
   color: var(--color-ink-muted);
 }
 
@@ -351,14 +403,18 @@ samp {
 }
 
 @media (max-width: 60rem) {
-  .krill-feature--split,
-  .krill-feature--split-reverse,
-  .krill-feature--showcase .krill-feature__text,
-  .krill-also__list {
+  .krill-pillar__head,
+  .krill-details,
+  .krill-details--two {
     grid-template-columns: minmax(0, 1fr);
   }
-  .krill-feature--split-reverse .krill-feature__shot {
-    order: 0;
+  .krill-pillar--side {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "head" "shot" "details";
+    grid-template-rows: auto;
+  }
+  .krill-pillar--side .krill-pillar__shot {
+    margin-top: var(--space-2xl);
   }
 }
 @media (max-width: 40rem) {

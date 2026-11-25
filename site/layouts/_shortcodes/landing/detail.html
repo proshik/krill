@@ -1,0 +1,9 @@
+{{- /*
+One detail of a landing/pillar or landing/list: a short name and one line (Markdown body).
+
+@param {string} title The name.
+*/ -}}
+<div class="krill-detail">
+  <dt>{{ .Get "title" }}</dt>
+  <dd>{{ .Inner | strings.TrimSpace | markdownify }}</dd>
+</div>

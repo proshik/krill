@@ -9,9 +9,10 @@ the light and dark captures of a screen share their size.
 @param {int}    w     Width of the capture in pixels.
 @param {int}    h     Height of the capture in pixels.
 @param {bool}   eager Load eagerly (the hero's picture).
+@param {string} crop  Optional aspect ratio such as "16/9": the frame shows the top of the capture.
 */ -}}
 {{- $eager := .eager | default false -}}
-<span class="krill-shot">
+<span class="krill-shot{{ with .crop }} krill-shot--crop{{ end }}"{{ with .crop }} style="--shot-ratio: {{ . | safeCSS }}"{{ end }}>
   <img class="krill-shot__light" src="{{ printf "images/%s-light.png" .name | relURL }}" alt="{{ .alt }}" width="{{ .w }}" height="{{ .h }}"{{ if $eager }} fetchpriority="high"{{ else }} loading="lazy"{{ end }} />
   <img class="krill-shot__dark" src="{{ printf "images/%s-dark.png" .name | relURL }}" alt="{{ .alt }}" width="{{ .w }}" height="{{ .h }}"{{ if not $eager }} loading="lazy"{{ end }} />
 </span>

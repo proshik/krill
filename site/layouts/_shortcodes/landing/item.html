@@ -1,9 +1,0 @@
-{{- /*
-One entry of landing/also. The body is one line of Markdown.
-
-@param {string} title The feature's name.
-*/ -}}
-<div class="krill-also__item">
-  <dt>{{ .Get "title" }}</dt>
-  <dd>{{ .Inner | strings.TrimSpace | markdownify }}</dd>
-</div>
