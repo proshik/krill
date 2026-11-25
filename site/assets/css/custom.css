@@ -379,6 +379,14 @@ samp {
   padding-right: 3.25rem;
 }
 
+/* The theme switch lives in the navbar (a theme-toggle menu item). Hextra 0.13 also prints one
+   above the footer on pages without a sidebar, and its displayToggle param cannot turn that off
+   (false | default true is true), so that copy and its rule are hidden. */
+.hextra-footer > div:has(.hextra-theme-toggle),
+.hextra-footer > div:has(.hextra-theme-toggle) + hr {
+  display: none;
+}
+
 /* Footer links */
 .krill-footer-links {
   display: flex;
