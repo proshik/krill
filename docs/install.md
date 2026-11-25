@@ -533,8 +533,8 @@ docker volume rm krill-alloy-node-data 2>/dev/null || true   # on every node, on
 
 The control plane is also published as a multi-arch image, `ghcr.io/proshik/krill`, tagged
 with the release version without the leading `v` (`0.1.1`), the minor version (`0.1`) and
-`latest`. It is a static binary on a distroless base, about 25 MB, and needs
-only a reachable Postgres and a Swarm-enabled Docker daemon:
+`latest`. It is a static binary on a distroless base, about 13 MB compressed and
+under 45 MB unpacked, and needs only a reachable Postgres and a Swarm-enabled Docker daemon:
 
 ```sh
 docker run -d --name krill -p 8080:8080 \
