@@ -198,7 +198,10 @@ The interface is in English and Russian, chosen in Settings or taken from the br
 {{< /landing/detail >}}
 {{< /landing/list >}}
 
-{{< landing/faq id="faq" title="Questions" >}}
+{{< landing/faq id="faq" title="Questions"
+  lead="Short answers here; the guides on GitHub go into the detail."
+  link="https://github.com/proshik/krill#documentation" linktext="All guides"
+>}}
 {{< landing/qa q="What server do I need?" >}}
 A Linux server, amd64 or arm64, with root access; Krill is built to fit a box as small as
 2 vCPU / 2 GB RAM. Ports 80 and 443 carry app traffic, and 8080 serves the UI until it has a
@@ -238,9 +241,9 @@ databases and networks Krill created stay until you delete them.
 {{< /landing/qa >}}
 {{< /landing/faq >}}
 
-{{< landing/quickstart title="Quick start" actions="true" >}}
-On a fresh Linux server (amd64 or arm64):
-
+{{< landing/quickstart title="Quick start"
+  lead="One command on a fresh Linux server, amd64 or arm64."
+>}}
 ```sh
 curl -sSL https://raw.githubusercontent.com/proshik/krill/master/install.sh | sudo sh
 ```

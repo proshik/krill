@@ -1,11 +1,23 @@
 {{- /*
-Frequently asked questions: landing/qa entries as native <details> disclosures (no script).
+Frequently asked questions: the heading with a line and a link on the left, landing/qa entries
+as native <details> disclosures (no script) on the right.
 
 @param {string} id    Anchor of the section.
 @param {string} title The heading.
+@param {string} lead  Optional line under the heading (Markdown).
+@param {string} link  Optional URL, shown as linktext under the line.
+@param {string} linktext The link's text.
 */ -}}
 {{- $id := .Get "id" -}}
 <section class="krill-section krill-faq" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
-  <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+  <div class="krill-faq__head">
+    <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+    {{- with .Get "lead" }}
+    <p class="krill-faq__lead">{{ . | markdownify }}</p>
+    {{- end }}
+    {{- with .Get "link" }}
+    <a class="krill-more" href="{{ . }}">{{ $.Get "linktext" }}</a>
+    {{- end }}
+  </div>
   <div class="krill-faq__list">{{ .Inner }}</div>
 </section>

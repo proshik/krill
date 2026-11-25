@@ -571,10 +571,22 @@ samp {
   33%, 100% { opacity: 0; transform: translateY(calc(var(--flow-gap) - 14px)); }
 }
 
-/* Questions: native disclosures */
-.krill-faq__list {
-  max-width: 52rem;
-  margin-top: var(--space-xl);
+/* Questions: the head on the left, native disclosures on the right */
+.krill-faq {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: var(--space-xl) var(--space-2xl);
+  align-items: start;
+}
+.krill-faq__lead {
+  max-width: 30ch;
+  margin-top: var(--space-md);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--color-ink-muted);
+}
+.krill-faq__head .krill-more {
+  margin-top: var(--space-md);
 }
 .krill-qa {
   border-top: 1px solid var(--color-rule);
@@ -586,11 +598,11 @@ samp {
   display: flex;
   justify-content: space-between;
   gap: var(--space-lg);
-  padding: var(--space-lg) 0;
+  padding: var(--space-md) 0;
   list-style: none;
   cursor: pointer;
   font-family: var(--font-display);
-  font-size: var(--text-title);
+  font-size: 1.125rem;
   font-weight: 600;
   color: var(--color-ink);
 }
@@ -615,7 +627,7 @@ samp {
 }
 .krill-qa__a {
   max-width: 44rem;
-  padding-bottom: var(--space-lg);
+  padding-bottom: var(--space-md);
   font-size: var(--text-md);
   line-height: 1.65;
   color: var(--color-ink-muted);
@@ -634,22 +646,46 @@ samp {
   font-size: 0.9em;
 }
 
-/* Quick start: the close, on a band */
+/* Quick start: the close, a band with the actions on the left and the command on the right */
 .krill-start {
-  margin-bottom: var(--space-xl);
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: var(--space-xl) var(--space-2xl);
+  align-items: center;
+  margin-bottom: var(--space-2xl);
   padding: var(--space-band);
   border-radius: var(--radius-band);
   background: var(--color-paper-2);
 }
-.krill-start__inner {
-  max-width: 48rem;
+.krill-start__lead {
+  margin-top: var(--space-md);
+  font-size: var(--text-lead);
+  line-height: 1.45;
+  color: var(--color-ink-muted);
 }
 .krill-start .krill-actions {
-  margin-top: var(--space-xl);
+  margin-top: var(--space-lg);
 }
-/* Keep the end of the long command clear of the always-visible copy button. */
+.krill-start__body {
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--color-ink-muted);
+}
+.krill-start__body p {
+  margin-top: var(--space-md);
+}
+.krill-start__body > .hextra-code-block:first-child {
+  margin-top: 0;
+}
+/* The install command wraps instead of scrolling under the always-visible copy button. */
 .krill-start .hextra-code-block pre {
   padding-right: 3.25rem;
+}
+.krill-start .hextra-code-block pre code {
+  display: block;
+  padding-right: 2.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* The theme switch lives in the navbar (a theme-toggle menu item). Hextra 0.13 also prints one
@@ -660,30 +696,93 @@ samp {
   display: none;
 }
 
-/* Footer links */
-.krill-footer-links {
+/* Footer: the wordmark and tagline, two columns of links, the license line */
+.hextra-footer {
+  border-top: 1px solid var(--color-rule);
+}
+.krill-footer {
+  padding: var(--space-2xl) 0 var(--space-xl);
+}
+.krill-footer__top {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-xs) var(--space-lg);
-  padding-top: var(--space-2xl);
-  font-size: var(--text-sm);
+  justify-content: space-between;
+  gap: var(--space-xl) var(--space-2xl);
 }
-.krill-footer-links a:hover {
+.krill-footer__mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.krill-footer__mark img {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.krill-footer__brand p {
+  max-width: 28ch;
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-ink-muted);
+}
+.krill-footer__cols {
+  display: flex;
+  gap: var(--space-2xl);
+}
+.krill-footer__heading {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.krill-footer__cols ul {
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.krill-footer__cols li + li {
+  margin-top: var(--space-xs);
+}
+.krill-footer a {
+  transition: color 150ms ease-out;
+}
+.krill-footer__cols a,
+.krill-footer__legal a {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+.krill-footer__cols a:hover,
+.krill-footer__legal a:hover {
+  color: var(--color-ink);
   text-decoration: underline;
 }
-.krill-footer-links a:focus-visible {
+.krill-footer a:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
-
-@media (min-width: 768px) {
-  .krill-footer-links {
-    justify-content: flex-start;
-  }
+.krill-footer__legal {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-rule);
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+.krill-footer__legal a {
+  text-decoration: underline;
 }
 
 @media (max-width: 60rem) {
+  .krill-faq,
+  .krill-start {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .krill-start {
+    row-gap: var(--space-lg);
+  }
   .krill-pillar__head,
   .krill-details,
   .krill-details--two {
