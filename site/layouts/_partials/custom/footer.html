@@ -1,7 +1,34 @@
-{{- /* Project links above the license line. */ -}}
-<nav class="krill-footer-links" aria-label="Project">
-  <a href="https://github.com/proshik/krill">GitHub</a>
-  <a href="https://github.com/proshik/krill/releases">Releases</a>
-  <a href="https://github.com/proshik/krill/blob/master/ROADMAP.md">Roadmap</a>
-  <a href="https://github.com/proshik/krill/blob/master/CONTRIBUTING.md">Contributing</a>
-</nav>
+{{- /* The site footer: the wordmark and tagline, the project's links, then the license line.
+   Hextra's own copyright block is off (params.footer.displayCopyright) so this is the whole of it. */ -}}
+<div class="krill-footer">
+  <div class="krill-footer__top">
+    <div class="krill-footer__brand">
+      <a class="krill-footer__mark" href="{{ "" | relURL }}">
+        <img src="{{ "images/logo.svg" | relURL }}" alt="" width="32" height="32">
+        <span>Krill</span>
+      </a>
+      <p>{{ site.Params.tagline }}</p>
+    </div>
+    <nav class="krill-footer__cols" aria-label="Footer">
+      <div>
+        <p class="krill-footer__heading">Product</p>
+        <ul>
+          <li><a href="https://github.com/proshik/krill/blob/master/docs/install.md">Install</a></li>
+          <li><a href="https://github.com/proshik/krill#documentation">Documentation</a></li>
+          <li><a href="https://github.com/proshik/krill/blob/master/ROADMAP.md">Roadmap</a></li>
+          <li><a href="https://github.com/proshik/krill/releases">Releases</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="krill-footer__heading">Project</p>
+        <ul>
+          <li><a href="https://github.com/proshik/krill">GitHub</a></li>
+          <li><a href="https://github.com/proshik/krill/blob/master/CONTRIBUTING.md">Contributing</a></li>
+          <li><a href="https://github.com/proshik/krill/blob/master/SECURITY.md">Security</a></li>
+          <li><a href="https://github.com/proshik/krill/blob/master/LICENSE">License</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+  <p class="krill-footer__legal">Krill is open source under the <a href="https://github.com/proshik/krill/blob/master/LICENSE">MIT License</a>.</p>
+</div>

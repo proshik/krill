@@ -1,0 +1,94 @@
+{{- /*
+The product, phase by phase: a strip of tabs and one panel per landing/phase. Without script
+every phase is shown in turn, each video playing on request. With script (the small inline
+module below) the strip becomes tabs: only the active phase's video loads and plays, its tab
+fills as it plays, and the next phase follows when it ends, until the visitor picks a tab.
+Under prefers-reduced-motion nothing plays or advances on its own; the poster shows instead.
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading.
+@param {string} lead  One sentence under the heading (Markdown).
+*/ -}}
+{{- $id := .Get "id" -}}
+<section class="krill-section krill-phases" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <div class="krill-pillar__head">
+    <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+    <div class="krill-pillar__lead"><p>{{ .Get "lead" | markdownify }}</p></div>
+  </div>
+  <div class="krill-phases__tabs" role="tablist" aria-label="{{ .Get "title" }}" hidden>
+    {{- range $i, $p := .Store.Get "phases" }}
+    <button class="krill-phases__tab" type="button" role="tab" id="{{ $p.id }}-tab" aria-controls="{{ $p.id }}"
+      aria-selected="{{ if eq $i 0 }}true{{ else }}false{{ end }}" tabindex="{{ if eq $i 0 }}0{{ else }}-1{{ end }}">
+      {{- partial "utils/icon.html" (dict "name" $p.icon "attributes" "height=18 aria-hidden=true") -}}
+      <span>{{ $p.label }}</span>
+      <span class="krill-phases__progress" aria-hidden="true"></span>
+    </button>
+    {{- end }}
+  </div>
+  <div class="krill-phases__panels">{{ .Inner }}</div>
+  <script>
+  (() => {
+    const root = document.currentScript.closest('.krill-phases');
+    const tabs = [...root.querySelectorAll('[role=tab]')];
+    const panels = [...root.querySelectorAll('.krill-phase')];
+    if (!tabs.length || tabs.length !== panels.length) return;
+    const calm = matchMedia('(prefers-reduced-motion: reduce)');
+    let current = 0, chosen = false, inView = false;
+    root.classList.add('is-tabs');
+    root.querySelector('[role=tablist]').hidden = false;
+    panels.forEach((p, i) => {
+      p.setAttribute('role', 'tabpanel');
+      p.setAttribute('aria-labelledby', tabs[i].id);
+      p.tabIndex = 0;
+      p.hidden = i !== 0;
+      p.querySelectorAll('video').forEach(v => { v.loop = false; v.controls = false; });
+    });
+    // The take matching the active theme is the one CSS displays.
+    const clip = i => [...panels[i].querySelectorAll('video')].find(v => getComputedStyle(v).display !== 'none');
+    const stopAll = () => root.querySelectorAll('video').forEach(v => v.pause());
+    const play = () => {
+      stopAll();
+      const v = clip(current);
+      if (!v) return;
+      if (calm.matches) { v.controls = true; return; }
+      v.controls = false;
+      v.loop = chosen;
+      if (inView) v.play().catch(() => {});
+    };
+    const select = (i, byUser) => {
+      if (byUser) chosen = true;
+      current = (i + tabs.length) % tabs.length;
+      tabs.forEach((t, j) => {
+        const on = j === current;
+        t.setAttribute('aria-selected', on);
+        t.tabIndex = on ? 0 : -1;
+        t.style.setProperty('--p', 0);
+        panels[j].hidden = !on;
+      });
+      const list = tabs[current].parentElement;
+      list.scrollTo({ left: tabs[current].offsetLeft - list.clientWidth / 2 + tabs[current].offsetWidth / 2, behavior: calm.matches ? 'auto' : 'smooth' });
+      root.querySelectorAll('video').forEach(v => { v.currentTime = 0; });
+      play();
+    };
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => select(i, true));
+      t.addEventListener('keydown', e => {
+        const k = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+        if (k === undefined) return;
+        e.preventDefault();
+        select(k, true);
+        tabs[current].focus();
+      });
+    });
+    root.querySelectorAll('video').forEach(v => {
+      v.addEventListener('timeupdate', () => {
+        if (v === clip(current) && v.duration) tabs[current].style.setProperty('--p', v.currentTime / v.duration);
+      });
+      v.addEventListener('ended', () => { if (!chosen && !calm.matches) select(current + 1, false); });
+    });
+    new IntersectionObserver(es => { inView = es[0].isIntersecting; inView ? play() : stopAll(); }, { threshold: 0.35 }).observe(root);
+    new MutationObserver(play).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    calm.addEventListener('change', play);
+  })();
+  </script>
+</section>

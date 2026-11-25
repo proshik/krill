@@ -1,12 +1,18 @@
 {{- /*
-The close: the install command and what it does. The body is Markdown, rendered with Hextra's
-render hooks so the code block gets its copy button.
+The close: the heading, a line and the two actions on the left; the install command and what it
+does on the right. The body is Markdown, rendered with Hextra's render hooks so the code block
+gets its copy button.
 
 @param {string} title The section heading.
+@param {string} lead  One line under the heading.
 */ -}}
 <section class="krill-section krill-start" id="quick-start" aria-labelledby="quick-start-title">
-  <div class="krill-start__inner">
+  <div class="krill-start__head">
     <h2 id="quick-start-title" class="krill-h2">{{ .Get "title" }}</h2>
-    <div class="content krill-prose">{{ .Inner | $.Page.RenderString (dict "display" "block") }}</div>
+    {{- with .Get "lead" }}
+    <p class="krill-start__lead">{{ . }}</p>
+    {{- end }}
+    {{ partial "landing/actions.html" . }}
   </div>
+  <div class="content krill-prose krill-start__body">{{ .Inner | $.Page.RenderString (dict "display" "block") }}</div>
 </section>

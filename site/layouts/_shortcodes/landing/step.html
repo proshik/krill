@@ -1,0 +1,14 @@
+{{- /*
+One box of landing/flow. The body is one or two sentences of Markdown.
+
+@param {string} title The box's name.
+@param {string} note  Optional label on the arrow that leaves this box.
+*/ -}}
+<li class="krill-flow__step">
+  <p class="krill-flow__title">{{ .Get "title" }}</p>
+  <p class="krill-flow__text">{{ .Inner | strings.TrimSpace | markdownify }}</p>
+  <span class="krill-flow__packet" aria-hidden="true"></span>
+  {{- with .Get "note" }}
+  <p class="krill-flow__note">{{ . }}</p>
+  {{- end }}
+</li>

@@ -8,13 +8,7 @@ The first screen: the headline, one sentence, the two actions and the product it
 <section class="krill-hero" aria-labelledby="krill-hero-title">
   <h1 id="krill-hero-title" class="krill-hero__title">{{ .Get "title" | safeHTML }}</h1>
   <p class="krill-hero__lead">{{ .Get "subtitle" }}</p>
-  <div class="krill-actions">
-    <a class="krill-btn krill-btn--primary" href="https://github.com/proshik/krill/blob/master/docs/install.md">Install</a>
-    <a class="krill-btn krill-btn--secondary" href="https://github.com/proshik/krill">
-      {{- partial "utils/icon.html" (dict "name" "github" "attributes" "height=18 aria-hidden=true") -}}
-      <span>GitHub</span>
-    </a>
-  </div>
+  {{ partial "landing/actions.html" . }}
   <div class="krill-hero__shot">
     {{ partial "landing/shot.html" (dict "name" (.Get "shot") "alt" (.Get "alt") "w" (.Get "w") "h" (.Get "h") "eager" true) }}
   </div>

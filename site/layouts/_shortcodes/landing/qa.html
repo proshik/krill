@@ -1,0 +1,9 @@
+{{- /*
+One question of landing/faq. The body is the answer in Markdown, with a link to its guide.
+
+@param {string} q The question.
+*/ -}}
+<details class="krill-qa">
+  <summary class="krill-qa__q">{{ .Get "q" }}</summary>
+  <div class="krill-qa__a">{{ .Inner | strings.TrimSpace | $.Page.RenderString }}</div>
+</details>
