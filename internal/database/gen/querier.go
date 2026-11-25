@@ -208,6 +208,9 @@ type Querier interface {
 	// started and ended) since the listing keeps what it wrote — including one the
 	// statement's snapshot of deployments cannot see yet.
 	HealApplicationStatus(ctx context.Context, arg HealApplicationStatusParams) (int64, error)
+	// Sets a stopped app idle, as Stop does, but only while the row is exactly as
+	// listed (status and updated_at) and no deployment of it is running.
+	HealStoppedApplicationStatus(ctx context.Context, arg HealStoppedApplicationStatusParams) (int64, error)
 	// Enabled channels of EVERY organization that an instance operator opted into
 	// node-level alerts. Used only by the internal resource monitor.
 	InfraChannels(ctx context.Context) ([]NotificationChannel, error)
@@ -302,6 +305,11 @@ type Querier interface {
 	ListRegistriesByOrg(ctx context.Context, organizationID int64) ([]Registry, error)
 	ListS3BucketsByEnvironment(ctx context.Context, environmentID int64) ([]ListS3BucketsByEnvironmentRow, error)
 	ListS3BucketsByInstance(ctx context.Context, instanceID int64) ([]S3Bucket, error)
+	// Apps whose stored status says they run (or that their last deploy failed)
+	// while no deployment of theirs is running. The heal checks each against its
+	// service: a Stop through the agent API before v0.13.2 scaled the service to
+	// zero without writing the status, so such a row read "running" for good.
+	ListStaleStoppedCandidateApplications(ctx context.Context) ([]ListStaleStoppedCandidateApplicationsRow, error)
 	ListStateBackupRuns(ctx context.Context, limit int32) ([]StateBackupRun, error)
 	ListStateBackupRunsSince(ctx context.Context, finishedAt time.Time) ([]StateBackupRun, error)
 	// Apps whose stored status says a deploy is under way while no deployment of

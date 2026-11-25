@@ -138,3 +138,20 @@ WHERE a.status = 'deploying'
 UPDATE applications a SET status = @status, updated_at = now()
 WHERE a.id = @id AND a.status = 'deploying' AND a.updated_at = @seen
   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');
+
+-- name: ListStaleStoppedCandidateApplications :many
+-- Apps whose stored status says they run (or that their last deploy failed)
+-- while no deployment of theirs is running. The heal checks each against its
+-- service: a Stop through the agent API before v0.13.2 scaled the service to
+-- zero without writing the status, so such a row read "running" for good.
+SELECT a.id, a.status, a.updated_at
+FROM applications a
+WHERE a.status IN ('running', 'error')
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');
+
+-- name: HealStoppedApplicationStatus :execrows
+-- Sets a stopped app idle, as Stop does, but only while the row is exactly as
+-- listed (status and updated_at) and no deployment of it is running.
+UPDATE applications a SET status = 'idle', updated_at = now()
+WHERE a.id = @id AND a.status = @from_status::text AND a.updated_at = @seen
+  AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');

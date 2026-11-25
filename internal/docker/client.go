@@ -495,6 +495,7 @@ func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude
 	return ServiceProgress{
 		Found: true, Desired: desired, Running: running, Failed: failed,
 		UpdateState: updateState, TaskIDs: ids, Global: svc.Spec.Mode.Global != nil,
+		UpdatedAt: svc.UpdatedAt,
 	}, nil
 }
 

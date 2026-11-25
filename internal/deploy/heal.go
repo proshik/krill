@@ -21,22 +21,43 @@ type StuckApp struct {
 	LastError    string    // and its error message
 }
 
+// StaleApp is an application whose stored status says it runs, or that its
+// last deploy failed, while none of its deployments is running: a candidate
+// for "stopped" when its service turns out to be scaled to zero.
+type StaleApp struct {
+	ID     int64
+	Status string    // the stored status as listed
+	Seen   time.Time // the row's updated_at when listed
+}
+
 // StatusHealer is the store side of HealStuckStatuses.
 type StatusHealer interface {
 	ListStuckDeployingApps(ctx context.Context) ([]StuckApp, error)
 	// HealAppStatus writes status only while the app is still stuck and its
 	// row unchanged since it was listed (seen), and reports whether it did.
 	HealAppStatus(ctx context.Context, appID int64, status string, seen time.Time) (bool, error)
+	ListStaleStoppedCandidates(ctx context.Context) ([]StaleApp, error)
+	// HealStoppedAppStatus sets the app idle only while its row still holds
+	// from and is unchanged since it was listed (seen), and no deployment of
+	// it is running; it reports whether it did.
+	HealStoppedAppStatus(ctx context.Context, appID int64, from string, seen time.Time) (bool, error)
 }
 
-// ServiceProgressReader is the engine side of HealStuckStatuses.
-type ServiceProgressReader interface {
+// HealEngine is the engine side of HealStuckStatuses.
+type HealEngine interface {
 	ServiceProgress(ctx context.Context, name string, exclude []string) (docker.ServiceProgress, error)
+	ServiceStates(ctx context.Context, names []string) (map[string]docker.ServiceState, error)
 }
 
 // healLookupTimeout bounds each Docker and database call of a pass: one that
 // never answers must not hold back the apps after it, or every later pass.
 const healLookupTimeout = 5 * time.Second
+
+// stoppedHealAge is how long a service must have been scaled to zero, without
+// any change, before a stored "running" or "error" is taken for a stop. A
+// volume restore scales the app to zero for its duration (at most 30 minutes)
+// and back up; an app inside that window is not stopped.
+const stoppedHealAge = time.Hour
 
 // stoppedOutcome reports whether a deployment's error records a stop of its
 // app (the stop owns the app's status) rather than a failure. A shutdown's
@@ -89,10 +110,27 @@ func healedStatus(p docker.ServiceProgress, last StuckApp, now time.Time) string
 }
 
 // HealStuckStatuses rewrites the stored status of every stuck app from what
-// Swarm reports for its service, and returns how many it changed. Nothing is
-// notified: the deploy's own outcome was already recorded (or failed at
-// startup), and the health watcher reports a service that is down.
-func HealStuckStatuses(ctx context.Context, s StatusHealer, eng ServiceProgressReader, now time.Time) (int, error) {
+// Swarm reports for its service — the apps left "deploying" with no deploy
+// running, then the apps stored "running" or "error" whose service has stood
+// at zero replicas for stoppedHealAge (healStopped) — and returns how many it
+// changed. Nothing is notified: the deploy's own outcome was already recorded
+// (or failed at startup), the health watcher reports a service that is down,
+// and every reader of a stopped app's status already derives "idle" from its
+// service.
+func HealStuckStatuses(ctx context.Context, s StatusHealer, eng HealEngine, now time.Time) (int, error) {
+	healed, err := healDeploying(ctx, s, eng, now)
+	if ctx.Err() != nil {
+		return healed, ctx.Err()
+	}
+	n, serr := healStopped(ctx, s, eng, now)
+	if err == nil {
+		err = serr
+	}
+	return healed + n, err
+}
+
+// healDeploying sets the status of the apps left "deploying".
+func healDeploying(ctx context.Context, s StatusHealer, eng HealEngine, now time.Time) (int, error) {
 	lctx, lcancel := context.WithTimeout(ctx, healLookupTimeout)
 	stuck, err := s.ListStuckDeployingApps(lctx)
 	lcancel()
@@ -139,10 +177,82 @@ func HealStuckStatuses(ctx context.Context, s StatusHealer, eng ServiceProgressR
 	return healed, firstErr
 }
 
+// stoppedLongEnough reports whether a service is a stopped replicated one:
+// scaled to zero, no replica left, its last update settled, and unchanged for
+// stoppedHealAge. A global service at zero is waiting for an eligible node.
+func stoppedLongEnough(p docker.ServiceProgress, now time.Time) bool {
+	return p.Found && !p.Global && p.Desired == 0 && p.Running == 0 &&
+		docker.UpdateSettled(p.UpdateState) &&
+		!p.UpdatedAt.IsZero() && now.Sub(p.UpdatedAt) >= stoppedHealAge
+}
+
+// healStopped sets idle — what Stop writes — the apps stored "running" or
+// "error" whose service has been scaled to zero for stoppedHealAge with no
+// deploy of theirs running. A Stop through the agent API before v0.13.2
+// scaled the service without writing the status (lets-project on msk read
+// "running" at 0/0 for good). One bulk lookup picks the services at zero; only
+// those are read in detail.
+func healStopped(ctx context.Context, s StatusHealer, eng HealEngine, now time.Time) (int, error) {
+	lctx, lcancel := context.WithTimeout(ctx, healLookupTimeout)
+	apps, err := s.ListStaleStoppedCandidates(lctx)
+	lcancel()
+	if err != nil || len(apps) == 0 {
+		return 0, err
+	}
+	names := make([]string, len(apps))
+	for i, a := range apps {
+		names[i] = docker.ServiceName(a.ID)
+	}
+	sctx, scancel := context.WithTimeout(ctx, healLookupTimeout)
+	states, err := eng.ServiceStates(sctx, names)
+	scancel()
+	if err != nil {
+		return 0, err
+	}
+	healed := 0
+	var firstErr error
+	for _, a := range apps {
+		if ctx.Err() != nil {
+			return healed, ctx.Err()
+		}
+		if st := states[docker.ServiceName(a.ID)]; !st.Found || st.Desired != 0 {
+			continue
+		}
+		pctx, pcancel := context.WithTimeout(ctx, healLookupTimeout)
+		p, err := eng.ServiceProgress(pctx, docker.ServiceName(a.ID), nil)
+		pcancel()
+		if err != nil {
+			slog.Warn("heal: could not read the service of an app scaled to zero", "app", a.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if !stoppedLongEnough(p, now) {
+			continue
+		}
+		wctx, wcancel := context.WithTimeout(ctx, healLookupTimeout)
+		ok, err := s.HealStoppedAppStatus(wctx, a.ID, a.Status, a.Seen)
+		wcancel()
+		if err != nil {
+			slog.Warn("heal: could not write the status of an app scaled to zero", "app", a.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if ok {
+			healed++
+			slog.Info("application status contradicted its service scaled to zero with no deploy running; set idle", "app", a.ID, "was", a.Status)
+		}
+	}
+	return healed, firstErr
+}
+
 // StartStatusHeal runs HealStuckStatuses now and then every interval until ctx
 // ends or the returned stop is called. Call it after FailOrphanedDeployments,
 // so the deploys a crash left running count as ended.
-func StartStatusHeal(ctx context.Context, s StatusHealer, eng ServiceProgressReader, interval time.Duration) (stop func()) {
+func StartStatusHeal(ctx context.Context, s StatusHealer, eng HealEngine, interval time.Duration) (stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		t := time.NewTicker(interval)

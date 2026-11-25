@@ -155,6 +155,9 @@ type ServiceProgress struct {
 	// tasks Swarm created so far: 0 while no eligible node is up yet, which is
 	// not a stop.
 	Global bool
+	// UpdatedAt is when the service object last changed: a spec update, a
+	// scale, Swarm's own update status. Zero when Swarm did not say.
+	UpdatedAt time.Time
 }
 
 // UpdateSettled reports whether a service's last rolling update has come to
