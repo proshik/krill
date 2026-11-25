@@ -134,6 +134,9 @@ type ServiceState struct {
 	Running int
 	Desired int
 	Failed  int // tasks (desired=running) currently failed/rejected — crash-loop signal
+	// Global is set for a global service, whose Desired is its count of
+	// desired-running tasks (0 while no eligible node is up).
+	Global bool
 }
 
 // ServiceProgress is rolling-update progress relative to a baseline task set

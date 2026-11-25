@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/client"
+
 	"github.com/proshik/krill/internal/docker"
 )
 
@@ -49,6 +52,29 @@ func TestServiceProgressUpdatedAtFollowsAScale(t *testing.T) {
 		if p.Desired == 0 && p.Running == 0 {
 			if !p.UpdatedAt.After(created.UpdatedAt) || p.UpdatedAt.Before(before.Add(-2*time.Second)) {
 				t.Fatalf("UpdatedAt after the scale = %v, created %v, scaled at %v", p.UpdatedAt, created.UpdatedAt, before)
+			}
+			// It is the service object's own time, not the time of the read:
+			// it equals what Docker reports and does not move while nothing
+			// changes.
+			cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+			if err != nil {
+				t.Fatalf("docker client: %v", err)
+			}
+			defer cli.Close()
+			raw, _, err := cli.ServiceInspectWithRaw(ctx, svc, swarm.ServiceInspectOptions{})
+			if err != nil {
+				t.Fatalf("inspect: %v", err)
+			}
+			if !p.UpdatedAt.Equal(raw.UpdatedAt) {
+				t.Fatalf("UpdatedAt = %v, Docker's service UpdatedAt = %v", p.UpdatedAt, raw.UpdatedAt)
+			}
+			time.Sleep(1100 * time.Millisecond)
+			again, err := e.ServiceProgress(ctx, svc, nil)
+			if err != nil {
+				t.Fatalf("ServiceProgress: %v", err)
+			}
+			if !again.UpdatedAt.Equal(p.UpdatedAt) {
+				t.Fatalf("UpdatedAt moved without a change: %v then %v", p.UpdatedAt, again.UpdatedAt)
 			}
 			return
 		}

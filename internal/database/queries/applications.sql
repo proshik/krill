@@ -144,7 +144,11 @@ WHERE a.id = @id AND a.status = 'deploying' AND a.updated_at = @seen
 -- while no deployment of theirs is running. The heal checks each against its
 -- service: a Stop through the agent API before v0.13.2 scaled the service to
 -- zero without writing the status, so such a row read "running" for good.
-SELECT a.id, a.status, a.updated_at
+-- last_finished is when the app's latest deployment ended (its row's last
+-- change when it has none): a stop older than that is not what the status
+-- describes.
+SELECT a.id, a.status, a.updated_at,
+       COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished
 FROM applications a
 WHERE a.status IN ('running', 'error')
   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running');

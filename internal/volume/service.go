@@ -13,6 +13,7 @@ import (
 
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/docker"
+	"github.com/proshik/krill/internal/oplock"
 )
 
 var (
@@ -275,6 +276,13 @@ func (s *VolumeService) Restore(ctx context.Context, dst backup.Destination, t V
 // restore is Restore with the volume backup id the alert of a failed
 // scale-up is filed under (0: no alert target known).
 func (s *VolumeService) restore(ctx context.Context, volBackupID int64, dst backup.Destination, t VolTarget, key string) error {
+	// Held until the scale-back below has run (defers run last-in first-out),
+	// so the status heal never reads this zero as a stop.
+	lock := oplock.AppRestore(t.AppID)
+	if err := oplock.Acquire(ctx, lock); err != nil {
+		return err
+	}
+	defer oplock.Release(lock)
 	if err := s.eng.ServiceScale(ctx, t.ServiceName, 0); err != nil {
 		return err
 	}

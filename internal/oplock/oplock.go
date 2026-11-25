@@ -90,6 +90,11 @@ func LogicalDB(id int64) string { return "ldb:" + strconv.FormatInt(id, 10) }
 // AppRouting serializes final spec application with current routing updates.
 func AppRouting(id int64) string { return "app-routing:" + strconv.FormatInt(id, 10) }
 
+// AppRestore is held by a volume restore of the app from its scale-down to the
+// end of its scale-back: the status heal does not take a service at zero for a
+// stop while a restore owns that zero.
+func AppRestore(id int64) string { return "app-restore:" + strconv.FormatInt(id, 10) }
+
 // CloneProject serializes environment cloning with project/environment deletion.
 func CloneProject(id int64) string { return "clone-project:" + strconv.FormatInt(id, 10) }
 

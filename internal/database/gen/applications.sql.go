@@ -518,22 +518,27 @@ func (q *Queries) ListPinnedApplications(ctx context.Context) ([]ListPinnedAppli
 }
 
 const listStaleStoppedCandidateApplications = `-- name: ListStaleStoppedCandidateApplications :many
-SELECT a.id, a.status, a.updated_at
+SELECT a.id, a.status, a.updated_at,
+       COALESCE((SELECT max(d.finished_at) FROM deployments d WHERE d.application_id = a.id), a.updated_at)::timestamptz AS last_finished
 FROM applications a
 WHERE a.status IN ('running', 'error')
   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND d.status = 'running')
 `
 
 type ListStaleStoppedCandidateApplicationsRow struct {
-	ID        int64     `json:"id"`
-	Status    string    `json:"status"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           int64     `json:"id"`
+	Status       string    `json:"status"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	LastFinished time.Time `json:"last_finished"`
 }
 
 // Apps whose stored status says they run (or that their last deploy failed)
 // while no deployment of theirs is running. The heal checks each against its
 // service: a Stop through the agent API before v0.13.2 scaled the service to
 // zero without writing the status, so such a row read "running" for good.
+// last_finished is when the app's latest deployment ended (its row's last
+// change when it has none): a stop older than that is not what the status
+// describes.
 func (q *Queries) ListStaleStoppedCandidateApplications(ctx context.Context) ([]ListStaleStoppedCandidateApplicationsRow, error) {
 	rows, err := q.db.Query(ctx, listStaleStoppedCandidateApplications)
 	if err != nil {
@@ -543,7 +548,12 @@ func (q *Queries) ListStaleStoppedCandidateApplications(ctx context.Context) ([]
 	var items []ListStaleStoppedCandidateApplicationsRow
 	for rows.Next() {
 		var i ListStaleStoppedCandidateApplicationsRow
-		if err := rows.Scan(&i.ID, &i.Status, &i.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.LastFinished,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

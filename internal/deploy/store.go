@@ -645,7 +645,7 @@ func (s *DBStore) ListStaleStoppedCandidates(ctx context.Context) ([]StaleApp, e
 	}
 	out := make([]StaleApp, len(rows))
 	for i, r := range rows {
-		out[i] = StaleApp{ID: r.ID, Status: r.Status, Seen: r.UpdatedAt}
+		out[i] = StaleApp{ID: r.ID, Status: r.Status, Seen: r.UpdatedAt, LastFinished: r.LastFinished}
 	}
 	return out, nil
 }

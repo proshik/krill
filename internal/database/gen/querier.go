@@ -309,6 +309,9 @@ type Querier interface {
 	// while no deployment of theirs is running. The heal checks each against its
 	// service: a Stop through the agent API before v0.13.2 scaled the service to
 	// zero without writing the status, so such a row read "running" for good.
+	// last_finished is when the app's latest deployment ended (its row's last
+	// change when it has none): a stop older than that is not what the status
+	// describes.
 	ListStaleStoppedCandidateApplications(ctx context.Context) ([]ListStaleStoppedCandidateApplicationsRow, error)
 	ListStateBackupRuns(ctx context.Context, limit int32) ([]StateBackupRun, error)
 	ListStateBackupRunsSince(ctx context.Context, finishedAt time.Time) ([]StateBackupRun, error)
