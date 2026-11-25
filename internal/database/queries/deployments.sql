@@ -85,3 +85,20 @@ SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);
 -- is "not deployed" in the UI only when it has none (a stopped global app has
 -- no service either, see docker ServiceScale).
 SELECT DISTINCT application_id FROM deployments WHERE application_id = ANY(@ids::bigint[]);
+
+-- name: SetDeploymentAppliedConfig :exec
+-- The configuration fingerprint a successful deployment applied.
+UPDATE deployments SET applied_config = @applied_config WHERE id = @id;
+
+-- name: GetDeploymentAppliedConfig :one
+SELECT applied_config FROM deployments WHERE id = $1;
+
+-- name: ListLatestAppliedDeployments :many
+-- The newest successful deployment of each listed app, with the configuration
+-- fingerprint it applied (NULL before it was recorded) and whether a deploy of
+-- the app is in flight (queued deploys have a running row too).
+SELECT DISTINCT ON (d.application_id) d.application_id, d.id, d.image_tag, d.applied_config,
+    EXISTS (SELECT 1 FROM deployments r WHERE r.application_id = d.application_id AND r.status = 'running') AS in_flight
+FROM deployments d
+WHERE d.application_id = ANY(@ids::bigint[]) AND d.status = 'done'
+ORDER BY d.application_id, d.started_at DESC, d.id DESC;

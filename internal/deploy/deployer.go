@@ -54,6 +54,10 @@ type App struct {
 	// collector (see observability.ContainerLabels).
 	ContainerLabels map[string]string
 
+	// MetricsTokenEnv names the env variable that carries the metrics token,
+	// "" when none is injected.
+	MetricsTokenEnv string
+
 	Replicas           uint64
 	MemoryLimitBytes   int64
 	NanoCPUs           int64
@@ -128,6 +132,15 @@ type job struct {
 	rollbackExpected *RuntimeSettings
 	noCache          bool // force docker build --no-cache (Rebuild)
 	system           bool // EnqueueSystem: the network migration moving the app
+
+	// applyImage, when set, makes this an "apply settings" deploy: the
+	// current settings on this content-addressed image, which deployment
+	// applyFrom runs. Nothing is pulled by tag or built. applySource is the
+	// source-section digest it was accepted for; the worker refuses the
+	// deploy when the image or build settings changed meanwhile.
+	applyImage  string
+	applyFrom   int64
+	applySource string
 
 	// image and tag, when set, are the image reference this deploy ships
 	// (image apps only). They travel with the job rather than through the
@@ -477,7 +490,9 @@ func (d *Deployer) submit(appID int64, trigger string, opts job) (int64, error) 
 		_ = d.store.SetStatus(wctx, appID, StatusDeploying)
 		return 0, ErrDeployerStopped
 	}
-	if !d.queue.push(job{deployID: deployID, appID: appID, noCache: opts.noCache, system: opts.system, image: opts.image, tag: opts.tag, skipPredeploy: opts.skipPredeploy, rollbackID: opts.rollbackID, rollbackExpected: opts.rollbackExpected}) {
+	queued := opts
+	queued.deployID, queued.appID = deployID, appID
+	if !d.queue.push(queued) {
 		// Queue full (a full queue is hours of backlog with one worker): fail the
 		// deployment immediately instead of blocking the HTTP handler goroutine
 		// until a slot frees up.
@@ -558,6 +573,15 @@ func (d *Deployer) run(ctx context.Context, j job) {
 				}
 			}
 		}
+	} else if j.applyImage != "" {
+		// Loaded with the build settings (not SkipBuild), so its source
+		// fingerprint is comparable; the registry credential is checked
+		// against the pinned image actually deployed.
+		app, err = d.store.GetDeploymentApp(ctx, deployID, ImageRef{CredentialImage: j.applyImage})
+		if err == nil && d.configFingerprint(app).Sections[SectionSource] != j.applySource {
+			err = ErrApplyNeedsDeploy
+		}
+		imageTag = j.applyImage
 	} else {
 		app, err = d.store.GetDeploymentApp(ctx, deployID, ImageRef{Image: j.image, Tag: j.tag})
 	}
@@ -577,6 +601,9 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	if j.rollbackID != 0 {
 		fmt.Fprintf(out, "→ rollback to deployment %d (%s)\n", j.rollbackID, imageTag)
 		version = d.sourceVersion(ctx, j.rollbackID)
+	} else if j.applyImage != "" {
+		fmt.Fprintf(out, "→ apply settings on image %s of deployment %d (no pull of a tag, no build)\n", imageTag, j.applyFrom)
+		version = d.sourceVersion(ctx, j.applyFrom)
 	} else if app.SourceType == "dockerfile" {
 		imageTag = docker.BuildImageTag(app.ID, deployID)
 		var res builder.BuildResult
@@ -609,7 +636,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 
 	// Resolve local builds once. The same immutable image goes into predeploy,
 	// the service and the encrypted release snapshot.
-	if err == nil && j.rollbackID == 0 && app.SourceType == "dockerfile" && ((app.PredeployCommand != "" && !j.skipPredeploy) || (releaseCapable && secret.Enabled())) {
+	if err == nil && j.rollbackID == 0 && j.applyImage == "" && app.SourceType == "dockerfile" && ((app.PredeployCommand != "" && !j.skipPredeploy) || (releaseCapable && secret.Enabled())) {
 		if runner, ok := d.engine.(docker.PredeployRunner); ok {
 			imageTag, err = runner.LocalImageID(ctx, imageTag)
 		} else if app.PredeployCommand != "" && !j.skipPredeploy {
@@ -690,6 +717,7 @@ func (d *Deployer) run(ctx context.Context, j job) {
 				return
 			}
 		}
+		d.recordAppliedConfig(deployID, j, app)
 		fmt.Fprintf(out, "✅ deployed %s\n", imageTag)
 		d.finish(ctx, deployID, app.ID, StatusRunning, imageTag, "")
 	}
@@ -744,6 +772,11 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			}
 			if expected != nil {
 				if err := d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes); err != nil {
+					return err
+				}
+			}
+			if j.applyImage != "" {
+				if err := d.validateApplyImage(ctx, app, imageTag); err != nil {
 					return err
 				}
 			}

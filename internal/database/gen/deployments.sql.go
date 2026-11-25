@@ -79,7 +79,7 @@ func (q *Queries) CountRunningDeploymentsByOrg(ctx context.Context, id int64) (i
 }
 
 const createDeployment = `-- name: CreateDeployment :one
-INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version
+INSERT INTO deployments (application_id, trigger) VALUES ($1, $2) RETURNING id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version, applied_config
 `
 
 type CreateDeploymentParams struct {
@@ -102,6 +102,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.FinishedAt,
 		&i.RollbackSourceID,
 		&i.Version,
+		&i.AppliedConfig,
 	)
 	return i, err
 }
@@ -151,7 +152,7 @@ func (q *Queries) FinishDeployment(ctx context.Context, arg FinishDeploymentPara
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version FROM deployments WHERE id = $1
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version, applied_config FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, error) {
@@ -169,8 +170,20 @@ func (q *Queries) GetDeployment(ctx context.Context, id int64) (Deployment, erro
 		&i.FinishedAt,
 		&i.RollbackSourceID,
 		&i.Version,
+		&i.AppliedConfig,
 	)
 	return i, err
+}
+
+const getDeploymentAppliedConfig = `-- name: GetDeploymentAppliedConfig :one
+SELECT applied_config FROM deployments WHERE id = $1
+`
+
+func (q *Queries) GetDeploymentAppliedConfig(ctx context.Context, id int64) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getDeploymentAppliedConfig, id)
+	var applied_config []byte
+	err := row.Scan(&applied_config)
+	return applied_config, err
 }
 
 const getDeploymentVersion = `-- name: GetDeploymentVersion :one
@@ -297,7 +310,7 @@ func (q *Queries) ListDeploymentSummariesByApplication(ctx context.Context, appl
 }
 
 const listDeploymentsByApplication = `-- name: ListDeploymentsByApplication :many
-SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
+SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version, applied_config FROM deployments WHERE application_id = $1 ORDER BY started_at DESC LIMIT 50
 `
 
 func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationID int64) ([]Deployment, error) {
@@ -321,6 +334,7 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationI
 			&i.FinishedAt,
 			&i.RollbackSourceID,
 			&i.Version,
+			&i.AppliedConfig,
 		); err != nil {
 			return nil, err
 		}
@@ -330,6 +344,66 @@ func (q *Queries) ListDeploymentsByApplication(ctx context.Context, applicationI
 		return nil, err
 	}
 	return items, nil
+}
+
+const listLatestAppliedDeployments = `-- name: ListLatestAppliedDeployments :many
+SELECT DISTINCT ON (d.application_id) d.application_id, d.id, d.image_tag, d.applied_config,
+    EXISTS (SELECT 1 FROM deployments r WHERE r.application_id = d.application_id AND r.status = 'running') AS in_flight
+FROM deployments d
+WHERE d.application_id = ANY($1::bigint[]) AND d.status = 'done'
+ORDER BY d.application_id, d.started_at DESC, d.id DESC
+`
+
+type ListLatestAppliedDeploymentsRow struct {
+	ApplicationID int64  `json:"application_id"`
+	ID            int64  `json:"id"`
+	ImageTag      string `json:"image_tag"`
+	AppliedConfig []byte `json:"applied_config"`
+	InFlight      bool   `json:"in_flight"`
+}
+
+// The newest successful deployment of each listed app, with the configuration
+// fingerprint it applied (NULL before it was recorded) and whether a deploy of
+// the app is in flight (queued deploys have a running row too).
+func (q *Queries) ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestAppliedDeployments, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestAppliedDeploymentsRow
+	for rows.Next() {
+		var i ListLatestAppliedDeploymentsRow
+		if err := rows.Scan(
+			&i.ApplicationID,
+			&i.ID,
+			&i.ImageTag,
+			&i.AppliedConfig,
+			&i.InFlight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setDeploymentAppliedConfig = `-- name: SetDeploymentAppliedConfig :exec
+UPDATE deployments SET applied_config = $1 WHERE id = $2
+`
+
+type SetDeploymentAppliedConfigParams struct {
+	AppliedConfig []byte `json:"applied_config"`
+	ID            int64  `json:"id"`
+}
+
+// The configuration fingerprint a successful deployment applied.
+func (q *Queries) SetDeploymentAppliedConfig(ctx context.Context, arg SetDeploymentAppliedConfigParams) error {
+	_, err := q.db.Exec(ctx, setDeploymentAppliedConfig, arg.AppliedConfig, arg.ID)
+	return err
 }
 
 const setDeploymentVersion = `-- name: SetDeploymentVersion :exec

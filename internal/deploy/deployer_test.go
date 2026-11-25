@@ -23,9 +23,13 @@ type digestMockEngine struct {
 	digestErr error
 	deployed  []docker.ServiceSpec
 	mu        sync.Mutex
+	onResolve func() // called on every ResolveDigest
 }
 
 func (f *digestMockEngine) ResolveDigest(_ context.Context, ref, _ string) (string, error) {
+	if f.onResolve != nil {
+		f.onResolve()
+	}
 	if f.digestErr != nil {
 		return "", f.digestErr
 	}

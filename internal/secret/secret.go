@@ -31,10 +31,12 @@ var gcm cipher.AEAD // nil when no key is configured
 // Init configures the cipher from the key. An empty key disables encryption.
 func Init(key string) {
 	gcm = nil
+	initFingerprint(nil)
 	if key == "" {
 		return
 	}
 	sum := sha256.Sum256([]byte(key))
+	initFingerprint(sum[:])
 	block, err := aes.NewCipher(sum[:])
 	if err != nil {
 		return

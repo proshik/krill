@@ -173,6 +173,7 @@ type Querier interface {
 	GetDBInstance(ctx context.Context, id int64) (DbInstance, error)
 	GetDBLink(ctx context.Context, id int64) (GetDBLinkRow, error)
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
+	GetDeploymentAppliedConfig(ctx context.Context, id int64) ([]byte, error)
 	GetDeploymentRelease(ctx context.Context, arg GetDeploymentReleaseParams) (DeploymentRelease, error)
 	GetDeploymentVersion(ctx context.Context, id int64) (string, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
@@ -282,6 +283,10 @@ type Querier interface {
 	ListGitCredentialsByOrg(ctx context.Context, organizationID int64) ([]GitCredential, error)
 	// For each domain of an app, the other apps of the same environment on its host.
 	ListHostSharesByApplication(ctx context.Context, applicationID int64) ([]ListHostSharesByApplicationRow, error)
+	// The newest successful deployment of each listed app, with the configuration
+	// fingerprint it applied (NULL before it was recorded) and whether a deploy of
+	// the app is in flight (queued deploys have a running row too).
+	ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
@@ -402,6 +407,8 @@ type Querier interface {
 	SetClusterNodeHostKey(ctx context.Context, arg SetClusterNodeHostKeyParams) error
 	SetClusterNodeSwarmID(ctx context.Context, arg SetClusterNodeSwarmIDParams) error
 	SetDBInstanceNode(ctx context.Context, arg SetDBInstanceNodeParams) error
+	// The configuration fingerprint a successful deployment applied.
+	SetDeploymentAppliedConfig(ctx context.Context, arg SetDeploymentAppliedConfigParams) error
 	SetDeploymentRollbackSource(ctx context.Context, arg SetDeploymentRollbackSourceParams) error
 	// Records the version a deployment ships, once the deployer knows it (after
 	// the build or the image's digest lookup).
