@@ -9,6 +9,8 @@ description: A lightweight self-hosted PaaS on Docker Swarm. Deploy apps and man
   subtitle="Deploy apps and managed databases to your own servers from a single Go binary."
   shot="overview" w="2000" h="1376"
   alt="A Krill environment canvas: apps grouped into systems, wired to the Postgres databases, Redis server and S3 bucket they use"
+  video="hero" vw="1600" vh="1100"
+  videoalt="Krill in use: a new app is created from an image, deployed with a live log, exposed on its domain and opened in the browser"
 >}}
 
 {{< landing/why id="self-hosted" title="Your servers, your data"
@@ -41,7 +43,7 @@ Node.js, no SSR runtime and no agents on your servers.
   lead="One Go binary runs the control plane. Docker Swarm runs your workloads, and Traefik routes traffic to them."
   link="https://github.com/proshik/krill/blob/master/docs/architecture.md#overview"
 >}}
-{{< landing/step title="You" >}}
+{{< landing/step title="You" note="git push" >}}
 The web UI, a REST API and an MCP server, for people, CI and AI agents.
 {{< /landing/step >}}
 {{< landing/step title="Krill" note="Docker API" >}}

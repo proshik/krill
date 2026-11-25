@@ -4,12 +4,19 @@ The first screen: the headline, one sentence, the two actions and the product it
 @param {string} title    The headline (HTML allowed, for a no-wrap span).
 @param {string} subtitle The sentence under it.
 @param {string} shot     Screenshot base name (see partials/landing/shot.html), with w, h and alt.
+@param {string} video    Optional video base name (see partials/landing/video.html), with vw, vh
+                         and videoalt; the screenshot becomes its poster and its reduced-motion
+                         still, keeping its own alt.
 */ -}}
 <section class="krill-hero" aria-labelledby="krill-hero-title">
   <h1 id="krill-hero-title" class="krill-hero__title">{{ .Get "title" | safeHTML }}</h1>
   <p class="krill-hero__lead">{{ .Get "subtitle" }}</p>
   {{ partial "landing/actions.html" . }}
   <div class="krill-hero__shot">
+    {{- with .Get "video" }}
+    {{ partial "landing/video.html" (dict "name" . "poster" ($.Get "shot") "alt" ($.Get "videoalt") "stillalt" ($.Get "alt") "w" ($.Get "vw") "h" ($.Get "vh") "pw" ($.Get "w") "ph" ($.Get "h")) }}
+    {{- else }}
     {{ partial "landing/shot.html" (dict "name" (.Get "shot") "alt" (.Get "alt") "w" (.Get "w") "h" (.Get "h") "eager" true) }}
+    {{- end }}
   </div>
 </section>

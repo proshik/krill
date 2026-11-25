@@ -255,7 +255,10 @@ documentation point at the Markdown files on GitHub. Keep the page's claims to w
 and the guides already say. The one file kept in `site/static/` is `og.png`, the 1200×630 link
 preview (`params.images` in `site/hugo.yaml`): the logo, the tagline and a crop of
 `overview-dark.png`, rendered in a browser from a small HTML page; redo it when the tagline
-changes.
+changes. `site/static/video/` holds the hero video, one take per theme as WebM (VP9) and MP4
+(H.264): frames captured from a local Krill while an app is created, deployed and opened, put
+together with ffmpeg. The overview screenshot is its poster and replaces it under
+`prefers-reduced-motion`.
 
 [`pages.yml`](../.github/workflows/pages.yml) builds the site and deploys it to GitHub Pages on
 every push to `master` that touches it (or by hand); it takes `baseURL` from the Pages settings,

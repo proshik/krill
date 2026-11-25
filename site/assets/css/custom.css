@@ -154,6 +154,26 @@ samp {
   display: block;
 }
 
+/* The hero video: one take per theme; under reduced motion the still screenshot instead */
+.krill-video__clip {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-shot);
+  outline: 1px solid var(--color-frame);
+  outline-offset: -1px;
+  background: var(--color-paper-2);
+  object-fit: cover;
+}
+.krill-video .krill-video__clip--dark,
+.dark .krill-video .krill-video__clip--light,
+.krill-video__still {
+  display: none;
+}
+.dark .krill-video .krill-video__clip--dark {
+  display: block;
+}
+
 /* Hero */
 .krill-hero {
   width: 100%;
@@ -426,6 +446,41 @@ samp {
   color: var(--color-ink-muted);
 }
 
+/* A packet travels along the arrows in turn: git push, the Docker API, then Traefik */
+.krill-flow__packet {
+  position: absolute;
+  top: calc(50% - 5px);
+  left: 100%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 4px var(--color-selection);
+  opacity: 0;
+  animation: krill-packet-x 6s linear infinite;
+}
+.krill-flow__step:last-child .krill-flow__packet {
+  display: none;
+}
+.krill-flow__step:nth-child(2) .krill-flow__packet {
+  animation-delay: 2s;
+}
+.krill-flow__step:nth-child(3) .krill-flow__packet {
+  animation-delay: 4s;
+}
+@keyframes krill-packet-x {
+  0% { opacity: 0; transform: translateX(0); }
+  4% { opacity: 1; }
+  28% { opacity: 1; transform: translateX(calc(var(--flow-gap) - 14px)); }
+  33%, 100% { opacity: 0; transform: translateX(calc(var(--flow-gap) - 14px)); }
+}
+@keyframes krill-packet-y {
+  0% { opacity: 0; transform: translateY(0); }
+  4% { opacity: 1; }
+  28% { opacity: 1; transform: translateY(calc(var(--flow-gap) - 14px)); }
+  33%, 100% { opacity: 0; transform: translateY(calc(var(--flow-gap) - 14px)); }
+}
+
 /* Questions: native disclosures */
 .krill-faq__list {
   max-width: 52rem;
@@ -571,6 +626,11 @@ samp {
     border-block: 0;
     border-top: 9px solid var(--color-accent);
   }
+  .krill-flow__packet {
+    top: 100%;
+    left: calc(var(--space-xl) - 5px);
+    animation-name: krill-packet-y;
+  }
   .krill-flow__note {
     top: 100%;
     left: calc(var(--space-xl) + var(--space-md));
@@ -597,6 +657,16 @@ samp {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .krill-video .krill-video__clip {
+    display: none !important;
+  }
+  .krill-video .krill-video__still {
+    display: block;
+  }
+  .krill-flow__packet {
+    display: none;
+    animation: none;
+  }
   .krill-btn {
     transition: none;
   }
