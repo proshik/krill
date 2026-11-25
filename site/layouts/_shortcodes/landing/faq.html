@@ -1,0 +1,11 @@
+{{- /*
+Frequently asked questions: landing/qa entries as native <details> disclosures (no script).
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading.
+*/ -}}
+{{- $id := .Get "id" -}}
+<section class="krill-section krill-faq" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+  <div class="krill-faq__list">{{ .Inner }}</div>
+</section>

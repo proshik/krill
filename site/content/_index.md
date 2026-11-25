@@ -16,9 +16,9 @@ description: A lightweight self-hosted PaaS on Docker Swarm. Deploy apps and man
 >}}
 {{< landing/figures >}}
 {{< landing/figure value="Hundreds of MB" label="of RAM for the control plane alone, on a typical self-hosted PaaS, before your first app" >}}
-{{< landing/figure value="~35 MB" label="of RAM for the Krill process, measured idle on a small test install" >}}
+{{< landing/figure value="~34 MB" label="of RAM for the Krill process, measured idle on a fresh install on a 2 vCPU / 2 GB Linux server" >}}
 {{< /landing/figures >}}
-<p class="krill-why__note">The Krill binary itself is about 38 MB (linux-amd64) or 34 MB (linux-arm64) in release v0.13.4.</p>
+<p class="krill-why__note">Krill itself is one compiled Go binary of under 40 MB.</p>
 {{< landing/points >}}
 {{< landing/detail title="Any Linux server" >}}
 amd64 or arm64, with root access. Krill is built to fit a box as small as 2 vCPU / 2 GB RAM.
@@ -36,6 +36,26 @@ Node.js, no SSR runtime and no agents on your servers.
 {{< /landing/detail >}}
 {{< /landing/points >}}
 {{< /landing/why >}}
+
+{{< landing/flow id="how-it-works" title="How it works"
+  lead="One Go binary runs the control plane. Docker Swarm runs your workloads, and Traefik routes traffic to them."
+  link="https://github.com/proshik/krill/blob/master/docs/architecture.md#overview"
+>}}
+{{< landing/step title="You" >}}
+The web UI, a REST API and an MCP server, for people, CI and AI agents.
+{{< /landing/step >}}
+{{< landing/step title="Krill" note="Docker API" >}}
+One Go binary on your server. It keeps its state in Postgres and runs the deploy queue,
+schedules and alerts.
+{{< /landing/step >}}
+{{< landing/step title="Docker Swarm" note="routed by Traefik" >}}
+Your apps and databases as Swarm services, each organization on its own overlay network, on one
+node or several joined over SSH.
+{{< /landing/step >}}
+{{< landing/step title="Your domains" >}}
+Traefik routes each request by host, with a Let's Encrypt certificate for each domain.
+{{< /landing/step >}}
+{{< /landing/flow >}}
 
 {{< landing/pillar id="deploy" title="Ship from Git or an image"
   lead="Point an app at a Git repository with a Dockerfile, or at a public or private image. Krill builds it, rolls it out and keeps the history."
@@ -79,18 +99,19 @@ Scheduled Postgres and volume backups with retention, restored from the UI.
   alt="An app's domains: its primary domain, internal until exposed, with public paths and HTTPS"
 >}}
 {{< landing/detail title="A certificate per domain" >}}
-Custom domains with their own Let's Encrypt certificates.
+Custom domains with their own Let's Encrypt certificates, the Krill UI's included: it moves to
+its domain only after you confirm it works, so a broken domain cannot lock you out.
 {{< /landing/detail >}}
 {{< landing/detail title="Internal until exposed" >}}
 Publish only some paths, or put a domain behind basic auth and an IP allowlist.
 {{< /landing/detail >}}
-{{< landing/detail title="TCP and UDP ports" >}}
-Raw published ports for what is not HTTP.
+{{< landing/detail title="Several apps on one host" >}}
+Share a host between apps by path, and redirect an old domain to the app's primary one.
 {{< /landing/detail >}}
 {{< /landing/pillar >}}
 
 {{< landing/pillar id="servers" title="Grow from one server to several"
-  lead="Start on one box. When it gets tight, join more servers over SSH and decide what runs where."
+  lead="Start on one box. When it gets tight, join more servers over SSH and decide what runs where. The topology map shows which app runs on which node and which database it talks to."
   link="https://github.com/proshik/krill/blob/master/docs/architecture.md#nodes"
   shot="topology" w="1400" h="1250" crop="16/9"
   alt="Topology: the ingress lane and a node with its apps and database servers, linked to the databases they use"
@@ -120,7 +141,8 @@ Failures, successful deploys, node disk and memory thresholds, and a daily summa
 {{< /landing/detail >}}
 {{< landing/detail title="Your own metrics stack" >}}
 An optional Grafana Alloy agent ships host metrics and container logs to your Prometheus and
-Loki. Krill keeps none of it.
+Loki, and the [Metrics tab](https://github.com/proshik/krill/blob/master/docs/guides/metrics.md)
+collects your apps' own Prometheus metrics. Krill keeps none of it.
 {{< /landing/detail >}}
 {{< /landing/pillar >}}
 
@@ -145,7 +167,13 @@ deploy and read logs.
 
 {{< landing/list id="more" title="Also built in" >}}
 {{< landing/detail title="Container settings" >}}
-CPU and memory limits, healthchecks, volumes, command override, build arguments and secrets.
+CPU and memory limits, healthchecks, volumes, command override, raw TCP and UDP ports, build
+arguments and secrets.
+{{< /landing/detail >}}
+{{< landing/detail title="Private images and repositories" >}}
+Registry credentials for private images and access tokens for private Git repositories, each
+bound to its own host.
+[Private images and repositories](https://github.com/proshik/krill/blob/master/docs/guides/registries.md)
 {{< /landing/detail >}}
 {{< landing/detail title="Backups of Krill itself" >}}
 Encrypted backups of Krill's own configuration database, scheduled and before every update.
@@ -159,9 +187,52 @@ automatically.
 Group an environment's apps by product and see which resources each group uses.
 [Systems](https://github.com/proshik/krill/blob/master/docs/guides/systems.md)
 {{< /landing/detail >}}
+{{< landing/detail title="English and Russian" >}}
+The interface is in English and Russian, chosen in Settings or taken from the browser's language.
+{{< /landing/detail >}}
 {{< /landing/list >}}
 
-{{< landing/quickstart title="Quick start" >}}
+{{< landing/faq id="faq" title="Questions" >}}
+{{< landing/qa q="What server do I need?" >}}
+A Linux server, amd64 or arm64, with root access; Krill is built to fit a box as small as
+2 vCPU / 2 GB RAM. Ports 80 and 443 carry app traffic, and 8080 serves the UI until it has a
+domain. [Requirements](https://github.com/proshik/krill/blob/master/docs/install.md#requirements)
+{{< /landing/qa >}}
+{{< landing/qa q="What does it cost?" >}}
+Nothing: Krill is open source under the
+[MIT license](https://github.com/proshik/krill/blob/master/LICENSE). You pay only for the servers
+you run it on.
+{{< /landing/qa >}}
+{{< landing/qa q="Where does Krill keep its state?" >}}
+In Postgres: a local container the installer sets up, or a managed Postgres you point it at with
+`KRILL_DATABASE_URL`. Krill can also back that database up, encrypted, to your S3.
+[External Postgres](https://github.com/proshik/krill/blob/master/docs/install.md#use-a-managed--external-postgres)
+{{< /landing/qa >}}
+{{< landing/qa q="How are secrets and teams kept apart?" >}}
+Stored credentials are encrypted at rest with AES-256-GCM under a key the installer generates.
+Every organization runs on its own network, apps stay internal until you expose them, and nodes
+can be locked down with a firewall.
+[Networking and tenancy](https://github.com/proshik/krill/blob/master/docs/architecture.md#networking-and-tenancy)
+{{< /landing/qa >}}
+{{< landing/qa q="What happens to my apps if Krill stops?" >}}
+They keep running: apps are Docker Swarm services, and Traefik reads their routes from Swarm
+itself. The UI, the API, deploys, backups and alerts wait until Krill is back. There is no high
+availability: if the server that runs Krill goes down, the UI and the ingress go with it.
+[Architecture](https://github.com/proshik/krill/blob/master/docs/architecture.md#overview)
+{{< /landing/qa >}}
+{{< landing/qa q="How do I update it?" >}}
+From Settings → Updates, or by running the installer again. If a new release does not come up
+within 10 minutes, the previous binary is put back automatically.
+[Upgrade](https://github.com/proshik/krill/blob/master/docs/install.md#upgrade)
+{{< /landing/qa >}}
+{{< landing/qa q="How do I remove it?" >}}
+Stop and remove the systemd service and the binary, then Krill's own Postgres container. The apps,
+databases and networks Krill created stay until you delete them.
+[Uninstall](https://github.com/proshik/krill/blob/master/docs/install.md#uninstall)
+{{< /landing/qa >}}
+{{< /landing/faq >}}
+
+{{< landing/quickstart title="Quick start" actions="true" >}}
 On a fresh Linux server (amd64 or arm64):
 
 ```sh

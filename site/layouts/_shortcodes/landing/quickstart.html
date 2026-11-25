@@ -2,11 +2,15 @@
 The close: the install command and what it does. The body is Markdown, rendered with Hextra's
 render hooks so the code block gets its copy button.
 
-@param {string} title The section heading.
+@param {string} title   The section heading.
+@param {string} actions "true" repeats the Install and GitHub buttons under the text.
 */ -}}
 <section class="krill-section krill-start" id="quick-start" aria-labelledby="quick-start-title">
   <div class="krill-start__inner">
     <h2 id="quick-start-title" class="krill-h2">{{ .Get "title" }}</h2>
     <div class="content krill-prose">{{ .Inner | $.Page.RenderString (dict "display" "block") }}</div>
+    {{- if eq (.Get "actions") "true" }}
+    {{ partial "landing/actions.html" . }}
+    {{- end }}
   </div>
 </section>

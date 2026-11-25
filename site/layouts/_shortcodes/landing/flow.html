@@ -1,0 +1,22 @@
+{{- /*
+How it works: a static diagram of landing/step boxes joined by arrows, left to right on wide
+screens and top to bottom on narrow ones. HTML and CSS only.
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading.
+@param {string} lead  One sentence under the heading (Markdown).
+@param {string} link  URL for "Learn more".
+*/ -}}
+{{- $id := .Get "id" -}}
+<section class="krill-section krill-flow" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <div class="krill-pillar__head">
+    <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+    <div class="krill-pillar__lead">
+      <p>{{ .Get "lead" | markdownify }}</p>
+      {{- with .Get "link" }}
+      <a class="krill-more" href="{{ . }}">Learn more</a>
+      {{- end }}
+    </div>
+  </div>
+  <ol class="krill-flow__steps">{{ .Inner }}</ol>
+</section>

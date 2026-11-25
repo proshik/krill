@@ -58,6 +58,7 @@
   --space-band: clamp(2rem, 1rem + 4vw, 4.5rem);
   --section-gap: clamp(5rem, 3rem + 6vw, 9rem);
   --gap-columns: 2rem;
+  --flow-gap: 5rem;
   --radius-shot: 0.875rem;
   --radius-pill: 9999px;
   --radius-band: 1.5rem;
@@ -364,6 +365,130 @@ samp {
   color: var(--color-ink-muted);
 }
 
+/* How it works: boxes joined by arrows (left to right, or top to bottom on narrow screens) */
+.krill-flow__steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: var(--flow-gap);
+  margin: var(--space-2xl) 0 0;
+  padding: 0;
+}
+.krill-flow__step {
+  position: relative;
+  min-width: 0;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-shot);
+  background: var(--color-paper-2);
+}
+.krill-flow__step:nth-child(2) {
+  border-color: var(--color-accent);
+}
+.krill-flow__title {
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.krill-flow__text {
+  margin-top: var(--space-xs);
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--color-ink-muted);
+}
+.krill-flow__step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: var(--flow-gap);
+  height: 0;
+  border-top: 2px solid var(--color-accent);
+}
+.krill-flow__step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: calc(50% - 5px);
+  left: calc(100% + var(--flow-gap) - 9px);
+  border-block: 6px solid transparent;
+  border-left: 9px solid var(--color-accent);
+}
+.krill-flow__note {
+  position: absolute;
+  top: calc(50% + var(--space-xs));
+  left: 100%;
+  width: var(--flow-gap);
+  padding-inline: 0.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--color-ink-muted);
+}
+
+/* Questions: native disclosures */
+.krill-faq__list {
+  max-width: 52rem;
+  margin-top: var(--space-xl);
+}
+.krill-qa {
+  border-top: 1px solid var(--color-rule);
+}
+.krill-qa:last-child {
+  border-bottom: 1px solid var(--color-rule);
+}
+.krill-qa__q {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-lg) 0;
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.krill-qa__q::-webkit-details-marker {
+  display: none;
+}
+.krill-qa__q::after {
+  content: "+";
+  flex: none;
+  font-weight: 400;
+  color: var(--color-accent);
+}
+.krill-qa[open] > .krill-qa__q::after {
+  content: "\2212";
+}
+.krill-qa__q:hover {
+  color: var(--color-accent);
+}
+.krill-qa__q:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+.krill-qa__a {
+  max-width: 44rem;
+  padding-bottom: var(--space-lg);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  color: var(--color-ink-muted);
+}
+.krill-qa__a a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+.krill-qa__a a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+.krill-qa__a code {
+  font-size: 0.9em;
+}
+
 /* Quick start: the close, on a band */
 .krill-start {
   margin-bottom: var(--space-xl);
@@ -373,6 +498,9 @@ samp {
 }
 .krill-start__inner {
   max-width: 48rem;
+}
+.krill-start .krill-actions {
+  margin-top: var(--space-xl);
 }
 /* Keep the end of the long command clear of the always-visible copy button. */
 .krill-start .hextra-code-block pre {
@@ -423,6 +551,35 @@ samp {
   }
   .krill-pillar--side .krill-pillar__shot {
     margin-top: var(--space-2xl);
+  }
+  .krill-flow__steps {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--flow-gap);
+  }
+  .krill-flow__step:not(:last-child)::after {
+    top: 100%;
+    left: var(--space-xl);
+    width: 0;
+    height: var(--flow-gap);
+    border-top: 0;
+    border-left: 2px solid var(--color-accent);
+  }
+  .krill-flow__step:not(:last-child)::before {
+    top: calc(100% + var(--flow-gap) - 9px);
+    left: calc(var(--space-xl) - 5px);
+    border-inline: 6px solid transparent;
+    border-block: 0;
+    border-top: 9px solid var(--color-accent);
+  }
+  .krill-flow__note {
+    top: 100%;
+    left: calc(var(--space-xl) + var(--space-md));
+    width: auto;
+    height: var(--flow-gap);
+    display: flex;
+    align-items: center;
+    padding: 0;
+    text-align: left;
   }
 }
 @media (max-width: 40rem) {
