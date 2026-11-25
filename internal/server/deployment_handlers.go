@@ -37,7 +37,8 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Warn("listDeployments: service state", "err", err, "app_id", c.App.ID)
 		}
 	}
-	render(w, r, http.StatusOK, templates.DeploymentsList(c, deps))
+	c.Pending = s.pendingChanges(r.Context(), []db.Application{c.App})[c.App.ID]
+	render(w, r, http.StatusOK, templates.DeploymentsPoll(c, deps))
 }
 
 // deploymentLogPage — xterm page for a specific deployment.

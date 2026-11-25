@@ -254,6 +254,7 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 		}
 	}
 	elem := func(key string) string { return "s-" + strings.ReplaceAll(key, ":", "-") }
+	v.PendingApps = s.pendingChanges(ctx, d.apps)
 	for _, a := range d.apps {
 		key := topology.AppKey(a.ID)
 		kind, text := templates.AppState(ctx, a.Status)
@@ -263,6 +264,7 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 			StateID: "cs-app-" + strconv.FormatInt(a.ID, 10), StateKind: kind, StateText: text,
 			Nodes: running[dockerName(a.ID)], NodeIDs: runningIDs[dockerName(a.ID)],
 			Href: base + "/apps/" + strconv.FormatInt(a.ID, 10),
+			App:  true, Pending: v.PendingApps[a.ID].Any(),
 		}
 		if dm, ok := primary[a.ID]; ok && dm.Exposed {
 			c.Sub, c.SubLink = dm.Host+firstCSV(dm.Paths), true

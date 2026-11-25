@@ -136,6 +136,9 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			<span class="svc-head">
 				@ui.Glyph(c.Glyph)
 				<span class="svc-name">{ c.Name }</span>
+				if c.App {
+					@canvasPending(c.ElemID, c.Pending, false)
+				}
 				if c.Shared {
 					<span class="tag tag--small" title={ i18n.T(ctx, "canvas.shared_hint") }>{ i18n.T(ctx, "system.shared") }</span>
 				}
@@ -147,6 +150,17 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			</span>
 		</a>
 	}
+}
+
+// canvasPending marks an app card whose saved settings are not live yet. The
+// slot is always there so the app sheet's deployments poll can replace it.
+templ canvasPending(elemID string, pending bool, oob bool) {
+	<span class="svc-pending" id={ "cp-" + elemID } { swapOOB(oob)... }>
+		if pending {
+			<span class="pending-dot" title={ i18n.T(ctx, "pending.marker") } aria-hidden="true"></span>
+			<span class="visually-hidden">{ i18n.T(ctx, "pending.marker") }</span>
+		}
+	</span>
 }
 
 // canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
