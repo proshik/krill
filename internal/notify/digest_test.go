@@ -199,7 +199,7 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 		"🔴 <b>Требует внимания</b>",
 		"🔴 деплой упал: p/prod/bot",
 		"🔴 бэкап упал: бакет p/prod/assets",
-		"🔴 p/prod/bot: падений 3",
+		"🔴 p/prod/bot: 3 падения",
 		"🟡 p/prod/bot: пик памяти 94% от лимита",
 		"🔴 p/prod/worker: не запущено",
 		"🔴 нода control-plane, диск /: занято 88%",
@@ -211,19 +211,19 @@ func TestDigestBuildInfraChannel(t *testing.T) {
 		"🔴 бакет assets · 03:00 · list bucket: denied",
 		"🔴 <b>control-plane</b> — диск 88% · память 12%, лимиты 25% · CPU 50% (пик 80%)\n↳ диск / занят 88%\n",
 		"🟢 <b>worker-1</b> — диск 25% · память 23%, лимиты 25% · CPU 25% (пик 40%)\n<blockquote expandable><b>control-plane</b>\n🔴 диск /: занято 88% (44.0 из 50.0 GiB), свободно 6.0 GiB",
-		"\nпамять: контейнеры занимают 250 MiB из 2.0 GiB · сумма лимитов 512 MiB — 25% памяти ноды · контейнеров без лимита: 1",
-		"\nCPU: в среднем 50%, пик 80% — от мощности всех ядер (2)",
-		"(2)</blockquote>\n\n📦 <b>Приложения</b>\n",
+		"\nпамять: контейнеры занимают 250 MiB из 2.0 GiB · сумма лимитов 512 MiB — 25% памяти ноды · 1 контейнер без лимита",
+		"\nCPU: в среднем 50%, пик 80% — от мощности всех 2 ядер",
+		"всех 2 ядер</blockquote>\n\n📦 <b>Приложения</b>\n",
 		"🟢 api — 200 MiB, пик 300 из 512 MiB (59%)\n",
-		"🔴 bot — 240 MiB, пик 240 из 256 MiB (94%) · падений 3",
+		"🔴 bot — 240 MiB, пик 240 из 256 MiB (94%) · 3 падения",
 		"📦 <b>Приложения</b>\n<b>p · dev</b>\n⚪ Остановлены или не развёрнуты: old, never\n<b>p · prod</b>\n",
-		"· падений 3\n🔴 Не запущены: worker",
+		"· 3 падения\n🔴 Не запущены: worker",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("digest lacks %q", want)
 		}
 	}
-	for _, leak := range []string{"other-org", "system", "падений 0"} {
+	for _, leak := range []string{"other-org", "system", "0 падений"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("digest shows %q", leak)
 		}
@@ -765,5 +765,59 @@ func TestDigestReadsOnlyTheOrgSamplesWithoutInfra(t *testing.T) {
 	}
 	if all != 1 {
 		t.Fatalf("an infrastructure digest must read every component (Since calls %d)", all)
+	}
+}
+
+// "от мощности всех ядер (1)" in the msk digest: every count next to a noun
+// takes the noun's plural form, for one core and for several, in both
+// languages — the node line, the attention block and the app line.
+func TestDigestCountsAgree(t *testing.T) {
+	const gib = int64(1) << 30
+	disk := metrics.DiskUsage{Mount: "/", Total: 100 * gib, Used: 10 * gib, Avail: 90 * gib}
+	node := func(name string, ncpu, unlimited int) nodeRow {
+		return nodeRow{Name: name, MemTotal: 10 * gib, MemUsed: gib, Limits: gib, NCPU: ncpu, CPUKnown: true,
+			CPUAvg: 95, CPUPeak: 99, Unlimited: unlimited, Disks: []metrics.DiskUsage{disk}}
+	}
+	cases := []struct {
+		lang string
+		want []string
+		not  []string
+	}{
+		{"ru", []string{
+			"CPU: в среднем 95%, пик 99% — от мощности 1 ядра",
+			"CPU: в среднем 95%, пик 99% — от мощности всех 4 ядер",
+			"нода cp: CPU в среднем 95% от мощности 1 ядра",
+			"нода db: CPU в среднем 95% от мощности всех 4 ядер",
+			"· 1 контейнер без лимита", "· 5 контейнеров без лимита",
+			"p/prod/bot: 1 падение", "bot — ", "· 1 падение", "p/prod/api: 2 падения",
+		}, []string{"всех ядер (", "падений 1"}},
+		{"en", []string{
+			"CPU: 95% on average, 99% at peak — of 1 core",
+			"CPU: 95% on average, 99% at peak — of all 4 cores",
+			"node cp: CPU at 95% of 1 core on average",
+			"node db: CPU at 95% of all 4 cores on average",
+			"· 1 container without a limit", "· 5 containers without a limit",
+			"p/prod/bot: 1 crash", "· 1 crash", "p/prod/api: 2 crashes",
+		}, []string{"all cores (", "crashed 1 times", "1 containers"}},
+	}
+	for _, c := range cases {
+		d := digestData{DiskThreshold: 85, MemThreshold: 100, Lang: c.lang, Infra: true, Loc: time.UTC, Now: time.Now(),
+			Nodes:         []nodeRow{node("cp", 1, 1), node("db", 4, 5)},
+			RestartsKnown: true,
+			Apps: []appRow{
+				{Path: "p/prod/bot", Name: "bot", Project: "p", Env: "prod", Peak: 1, Limit: 100, Restarts: 1},
+				{Path: "p/prod/api", Name: "api", Project: "p", Env: "prod", Peak: 1, Limit: 100, Restarts: 2},
+			}}
+		got := strings.Join(renderDigest(d), "\n")
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s digest lacks %q:\n%s", c.lang, w, got)
+			}
+		}
+		for _, w := range c.not {
+			if strings.Contains(got, w) {
+				t.Errorf("%s digest shows %q:\n%s", c.lang, w, got)
+			}
+		}
 	}
 }

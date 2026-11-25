@@ -197,7 +197,7 @@ func stateLines(ctx context.Context, d digestData) []stateLine {
 		last = whenLabel(st.LastSuccess, d.Now, d.Loc, d.Lang)
 	}
 	if okN > 0 {
-		out = append(out, stateLine{mk(lvlOK), i18n.Tf(ctx, "tg.dg.state_ok", okN, humanBytes(lastOK.Size), whenLabel(lastOK.At, d.Now, d.Loc, d.Lang))})
+		out = append(out, stateLine{mk(lvlOK), i18n.Tf(ctx, "tg.dg.state_ok", countOf(ctx, d.Lang, "tg.dg.n_backups", okN), humanBytes(lastOK.Size), whenLabel(lastOK.At, d.Now, d.Loc, d.Lang))})
 		// Earlier successes in the window do not make a missed schedule fine.
 		if b.Overdue {
 			out = append(out, stateLine{mk(lvlWarn), i18n.Tf(ctx, "tg.dg.state_overdue", last)})

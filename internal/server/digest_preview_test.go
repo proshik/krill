@@ -95,3 +95,50 @@ func TestDigestPreviewInstanceAdminBoundary(t *testing.T) {
 		t.Fatal("SECURITY: an organization admin's preview shows node data or Krill's state backup")
 	}
 }
+
+// The notifications page's digest preview names a node's cores in the right
+// plural form for one core and for several, in the channel's language: msk's
+// one-core nodes read "от мощности всех ядер (1)".
+func TestDigestPreviewCoreCounts(t *testing.T) {
+	h, q, orgSvc := newServerWithDigest(t)
+	ctx := context.Background()
+	operator := mkUser(t, q, "cores-operator@k.local")
+	if err := q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: operator, IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	o, _ := orgSvc.CreateOrg(ctx, operator, "Cores")
+	for node, ncpu := range map[string]int32{"node-one": 1, "node-four": 4} {
+		if err := q.UpsertNodeCapacity(ctx, db.UpsertNodeCapacityParams{Node: node, Ncpu: ncpu, MemTotalBytes: 8 << 30}); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.InsertMetricSample(ctx, db.InsertMetricSampleParams{Node: node, Component: "krill-1", CpuPct: 40, MemBytes: 1 << 20}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/orgs/" + i64(o.ID) + "/notifications"
+	cookie := loginAs(t, q, "cores-operator@k.local")
+	for lang, want := range map[string][]string{
+		"ru": {"от мощности 1 ядра", "от мощности всех 4 ядер"},
+		"en": {"of 1 core", "of all 4 cores"},
+	} {
+		if _, err := q.UpsertNotificationChannel(ctx, db.UpsertNotificationChannelParams{
+			OrgID: o.ID, Type: "telegram", BotToken: "000000:local-test", ChatID: "1",
+			NotifyDeploy: true, NotifyInfra: true, DiskThresholdPct: 85, MemThresholdPct: 100,
+			DigestEnabled: true, DigestMinute: 660, DigestTz: "UTC", Lang: lang,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		body := getWithCookie(t, h, path, cookie).Body.String()
+		preview := excerpt(body, "tg-bubble")
+		for _, w := range want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s preview lacks %q:\n%s", lang, w, preview)
+			}
+		}
+		for _, bad := range []string{"всех ядер (", "all cores ("} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s preview still shows %q", lang, bad)
+			}
+		}
+	}
+}

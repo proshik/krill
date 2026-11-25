@@ -104,7 +104,7 @@ names link to their pages as in the messages above.
   ▸ krill-penpot-msk
     disk /: 10% used (12.9 of 148 GiB), 128 GiB free
     🔴 memory: containers use 2.6 of 7.3 GiB · limits add up to 7.8 GiB — 107% of the node’s memory
-    CPU: 1% on average, 3% at peak — of all cores (2)
+    CPU: 1% on average, 3% at peak — of all 2 cores
   ```
 
   An app is one line and every figure that colours it is on that line, so its mark has no
@@ -180,7 +180,7 @@ reporting into one chat can be told apart.
 - **Memory** ("memory: containers use 2.6 of 7.3 GiB") and **CPU** add up the containers on the
   node, as the **Monitoring** page does: the operating system and the Krill process itself (a host
   binary on the control-plane node) are not included. CPU is a share of all the node's cores
-  together ("— of all cores (2)").
+  together ("— of all 2 cores", "— of 1 core").
 - **Memory limits** ("limits add up to 7.8 GiB — 107% of the node's memory") count every
   container with a limit; over 100 % means the containers may ask for more than the node has. A
   container without one is counted apart ("containers without a limit"): it can use the whole

@@ -135,7 +135,7 @@ func TestDigestStateBlock(t *testing.T) {
 		{"off", StateStatus{}, []string{"🟡 not backed up: state backup is not set up"}, []string{"🟡 нет бэкапа: бэкап состояния не настроен"}, nil},
 		{"paused", with(func(s *StateStatus) { s.Paused = true }), []string{"🟡 not backed up: state backup is paused"}, []string{"🟡 нет бэкапа: бэкап состояния на паузе"}, nil},
 		{"ok", with(func(s *StateStatus) { s.Runs = []StateRun{ok(3), ok(2), ok(1)} }),
-			[]string{"🟢 3 backups, the last one 2.0 KiB at 03:00"}, []string{"🟢 бэкапов: 3, последний — 2.0 KiB в 03:00"}, nil},
+			[]string{"🟢 3 backups, the last one 2.0 KiB at 03:00"}, []string{"🟢 3 бэкапа, последний — 2.0 KiB в 03:00"}, nil},
 		{"failed", with(func(s *StateStatus) {
 			s.Runs = []StateRun{bad(1, "schedule"), bad(2, "schedule"), bad(3, "pre_update"), bad(4, "schedule"), bad(5, "schedule")}
 		}), []string{"🔴 backup failed: 01:00 · scheduled · boom", "before an update · v0.9.3 → v0.9.4", "🔴 …and 2 more"},
@@ -145,7 +145,7 @@ func TestDigestStateBlock(t *testing.T) {
 		{"ok but overdue", with(func(s *StateStatus) {
 			s.LastSuccess = at(3).AddDate(0, 0, -2)
 			s.Runs = []StateRun{{Trigger: "manual", Status: "ok", Size: 2048, At: at(1)}}
-		}), []string{"🟢 1 backups", "🟡 a scheduled backup is overdue, the last one was at Nov 18 03:00"}, nil, nil},
+		}), []string{"🟢 1 backup, the last one", "🟡 a scheduled backup is overdue, the last one was at Nov 18 03:00"}, nil, nil},
 		{"nothing due", base, []string{"\nlast backup 03:00"}, []string{"\nпоследний бэкап: 03:00"}, []string{"🟢 last", "🟡 last"}},
 		{"on demand", with(func(s *StateStatus) { s.Schedule = ""; s.LastSuccess = time.Time{} }),
 			[]string{"\non demand only, last backup never"}, []string{"\nтолько по запросу, последний бэкап: не было"}, []string{"🟡 on demand"}},
