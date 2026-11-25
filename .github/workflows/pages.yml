@@ -1,0 +1,76 @@
+# Pages: builds the landing site (site/, Hugo + the Hextra theme) and deploys it to GitHub Pages.
+# - Screenshots, the logo and the fonts are mounted from docs/images and internal/web/static.
+# - Hugo is the version pinned and checksum-verified by tools/get-hugo.sh; the theme is a Hugo
+#   module pinned in site/go.mod, fetched through Go modules.
+# - baseURL comes from actions/configure-pages, so a custom domain set in the repository's Pages
+#   settings is picked up without a config change.
+# Requires Settings -> Pages -> Source: GitHub Actions.
+name: pages
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "site/**"
+      - "docs/images/**"
+      - "internal/web/static/favicon.svg"
+      - "internal/web/static/fonts/**"
+      - ".github/workflows/pages.yml"
+      - "tools/get-hugo.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits instead of cancelling one in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          # Hugo fetches the theme module with the go command.
+          go-version-file: site/go.mod
+          cache: false
+
+      - name: Download Hugo
+        run: ./tools/get-hugo.sh
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      - name: Build
+        env:
+          HUGO_ENVIRONMENT: production
+          HUGO_BASEURL: ${{ steps.pages.outputs.base_url }}/
+        run: make site
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/public
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

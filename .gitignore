@@ -13,5 +13,9 @@ internal/database/schema.sql
 .revust/
 /tools/tailwindcss
 /tools/squawk
+/tools/hugo
+/site/public/
+/site/resources/
+.hugo_build.lock
 # Maintainer design specs/plans and Russian planning notes: local-only, never published
 /docs/superpowers/

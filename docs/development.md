@@ -5,6 +5,7 @@
 - [Generated code](#generated-code)
 - [Tests](#tests)
 - [Make targets](#make-targets)
+- [Landing site](#landing-site)
 - [CI and releases](#ci-and-releases)
 
 Contribution rules — conventions, what a pull request needs — are in
@@ -222,6 +223,7 @@ settings work as above.
 | `make css` / `make css-watch` | Rebuild CSS once / on change. |
 | `make db-up` / `make db-down` | Start / stop the development Postgres. |
 | `make tidy` | `go mod tidy`. |
+| `make site` / `make site-serve` | Build the landing site into `site/public` / preview it locally. |
 
 `make build` stamps the output of `git describe --tags --always --dirty` into
 `internal/buildinfo.Version`, so a binary built from a checkout — anything short of the
@@ -229,11 +231,39 @@ release workflow's own build — reports a development version, and **Settings �
 never offers it an update. To exercise that page itself, point `KRILL_UPDATE_REPO` at a fork
 and publish a real tagged release there.
 
+## Landing site
+
+`site/` is the project's landing page, built with [Hugo](https://gohugo.io) and the
+[Hextra](https://github.com/imfing/hextra) theme. Hextra is a Hugo module pinned in
+`site/go.mod`, a module of its own that the repository's `go build ./...` does not see; Hugo
+fetches it with the `go` command, so Go must be installed. No Node.js is needed.
+
+```sh
+./tools/get-hugo.sh   # once: downloads the pinned, checksum-verified Hugo to tools/hugo
+make site-serve       # preview at http://localhost:1313 (in memory), rebuilds on change
+make site             # production build into site/public
+```
+
+The page is `site/content/_index.md`; its sections are small shortcodes under
+`site/layouts/_shortcodes/landing/`, and `site/assets/css/custom.css` holds the page's own
+styles (Hextra keeps the navbar, footer, theme switch and code blocks). Nothing is copied into
+`site/`: module mounts in `site/hugo.yaml` serve the screenshots from `docs/images/`, the logo
+from `internal/web/static/favicon.svg` and the UI's fonts from `internal/web/static/fonts/`.
+Every screenshot exists as `<name>-light.png` and `<name>-dark.png`, taken from a local Krill
+with sample data in each theme; the page shows the one matching the active theme. Links to the
+documentation point at the Markdown files on GitHub. Keep the page's claims to what the README
+and the guides already say.
+
+[`pages.yml`](../.github/workflows/pages.yml) builds the site and deploys it to GitHub Pages on
+every push to `master` that touches it (or by hand); it takes `baseURL` from the Pages settings,
+so a custom domain needs no config change. Pages has to be enabled once under
+**Settings → Pages → Source: GitHub Actions**.
+
 ## CI and releases
 
 - [`ci.yml`](../.github/workflows/ci.yml) runs on every push and pull request: `go build`,
   `go vet`, `go test`, a Docker image build without pushing, and a check that generated code
-  is up to date.
+  is up to date. A change that touches only the landing site skips it.
 - [`release.yml`](../.github/workflows/release.yml) runs on a `v*.*.*` tag. It pushes a
   multi-arch image to `ghcr.io/proshik/krill` (tags without the leading `v`, plus `latest`) and
   creates a GitHub Release with static `krill-linux-amd64` / `krill-linux-arm64` binaries,

@@ -400,6 +400,11 @@ Full notes: [operations.md](docs/internals/operations.md#release-image-and-insta
 - **`release.yml`:** on a `v*.*.*` tag, a multi-arch image to `ghcr.io/<owner>/krill`, static
   `krill-linux-amd64`/`-arm64` + `checksums.txt` on the GitHub Release; both stamped via
   `-X github.com/proshik/krill/internal/buildinfo.Version=<tag>` / `VERSION=<tag>`.
+- **`site/` + `pages.yml`:** the landing page — Hugo + the Hextra theme as a Hugo module pinned in
+  `site/go.mod` (a nested module the root `go ./...` ignores), Hugo pinned by `tools/get-hugo.sh`,
+  `make site`/`make site-serve`; deployed to GitHub Pages on pushes to master that touch it, and
+  `ci.yml` skips site-only changes. Landing only: docs links point at GitHub, claims must come
+  from the README and docs. See [Landing site](docs/development.md#landing-site).
 - **`install.sh`:** host binary + systemd (not a container), idempotent (re-run = upgrade),
   checksum-verified and fail-closed (`KRILL_SKIP_VERIFY=1` overrides), loopback-only
   `krill-postgres` on its own `krill-state` network, `/etc/krill/krill.env` generated once.

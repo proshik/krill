@@ -1,0 +1,16 @@
+{{- /*
+The self-hosted case: the heading, a sentence, the memory figures and landing/detail entries.
+The body holds a landing/figures block, a line on what was measured and landing/points.
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading.
+@param {string} lead  The sentence under it (Markdown).
+*/ -}}
+{{- $id := .Get "id" -}}
+<section class="krill-section krill-why" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+  {{- with .Get "lead" }}
+  <p class="krill-list__lead">{{ . | markdownify }}</p>
+  {{- end }}
+  {{ .Inner }}
+</section>

@@ -1,0 +1,15 @@
+{{- /*
+A titled section of landing/detail entries in two columns, set in type.
+
+@param {string} id    Anchor of the section.
+@param {string} title The heading.
+@param {string} lead  Optional sentence under the heading (Markdown).
+*/ -}}
+{{- $id := .Get "id" -}}
+<section class="krill-section krill-list" id="{{ $id }}" aria-labelledby="{{ $id }}-title">
+  <h2 id="{{ $id }}-title" class="krill-h2">{{ .Get "title" }}</h2>
+  {{- with .Get "lead" }}
+  <p class="krill-list__lead">{{ . | markdownify }}</p>
+  {{- end }}
+  <dl class="krill-details krill-details--two">{{ .Inner }}</dl>
+</section>

@@ -1,7 +1,8 @@
-.PHONY: generate build build-cli run test test-integration acceptance-selfupdate acceptance-vm-smoke acceptance-statebackup lint-migrations tidy db-up db-down css css-watch
+.PHONY: generate build build-cli run test test-integration acceptance-selfupdate acceptance-vm-smoke acceptance-statebackup lint-migrations tidy db-up db-down css css-watch site site-serve
 
 TAILWIND = ./tools/tailwindcss
 SQUAWK = ./tools/squawk
+HUGO = $(CURDIR)/tools/hugo
 
 # Shared by both binaries: internal/buildinfo.Version, stamped via ldflags so
 # `krill --version` and `krill-cli version` report the same thing a release
@@ -97,3 +98,14 @@ db-up:
 
 db-down:
 	docker compose -f docker-compose.dev.yml down
+
+# Landing site (site/, Hugo + the Hextra theme as a Hugo module). Hugo is pinned by
+# tools/get-hugo.sh; the theme is fetched through Go modules, so Go must be installed.
+# HUGO_BASEURL overrides the configured baseURL (the Pages workflow sets it).
+site:
+	@test -x $(HUGO) || { echo "site: $(HUGO) not found; run ./tools/get-hugo.sh" >&2; exit 1; }
+	cd site && $(HUGO) build --gc --minify --panicOnWarning $(if $(HUGO_BASEURL),--baseURL "$(HUGO_BASEURL)")
+
+site-serve:
+	@test -x $(HUGO) || { echo "site-serve: $(HUGO) not found; run ./tools/get-hugo.sh" >&2; exit 1; }
+	cd site && $(HUGO) server --renderToMemory --panicOnWarning
