@@ -182,9 +182,10 @@ func (e *countingEngine) ServiceProgress(ctx context.Context, name string, ex []
 
 // scriptedHealer lists fixed apps and records the writes.
 type scriptedHealer struct {
-	apps   []StuckApp
-	stale  []StaleApp
-	writes map[int64]string
+	apps           []StuckApp
+	stale          []StaleApp
+	writes         map[int64]string
+	unlockedWrites []int64
 }
 
 func (h *scriptedHealer) ListStuckDeployingApps(context.Context) ([]StuckApp, error) {
@@ -201,14 +202,20 @@ func (h *scriptedHealer) ListStaleStoppedCandidates(context.Context) ([]StaleApp
 }
 
 func (h *scriptedHealer) HealStoppedAppStatus(_ context.Context, app int64, _ string, _ time.Time) (bool, error) {
+	// The heal holds the app's restore lock through its write: a restore
+	// cannot start between the heal's read of the service and this write.
+	if oplock.TryAcquire(oplock.AppRestore(app)) {
+		oplock.Release(oplock.AppRestore(app))
+		h.unlockedWrites = append(h.unlockedWrites, app)
+	}
 	h.writes[app] = StatusIdle
 	return true, nil
 }
 
 func TestStoppedLongEnough(t *testing.T) {
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	longAgo := now.Add(-5 * 24 * time.Hour)                           // lets-project on msk: 0/0 since 2026-11-20
-	deployed := StaleApp{LastFinished: now.Add(-40 * 24 * time.Hour)} // its last deploy, 2026-10-12
+	longAgo := now.Add(-5 * 24 * time.Hour)                           // an app stopped through MCP: 0/0 for days
+	deployed := StaleApp{LastFinished: now.Add(-40 * 24 * time.Hour)} // its last deploy, weeks before the stop
 	cases := []struct {
 		name string
 		p    docker.ServiceProgress
@@ -217,7 +224,13 @@ func TestStoppedLongEnough(t *testing.T) {
 	}{
 		// Started after the stop, the deploy failed before it touched the
 		// service: the error is the deploy's, not the stop's.
-		{"a deploy failed after the stop", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{LastFinished: now.Add(-time.Minute)}, false},
+		{"a deploy failed after the stop", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusError, LastFinished: now.Add(-time.Minute)}, false},
+		{"a stored error, the stop after its deploy", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusError, LastFinished: now.Add(-40 * 24 * time.Hour)}, true},
+		// A deploy that wrote "running" left replicas behind: a service at
+		// zero was stopped since, even when Postgres's clock says the deploy
+		// ended later (an old API stop racing the deploy's finish, or clocks
+		// apart).
+		{"a stored running, its deploy recorded after the stop", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, StaleApp{Status: StatusRunning, LastFinished: longAgo.Add(30 * time.Second)}, true},
 		{"scaled to zero days ago (an old API stop)", docker.ServiceProgress{Found: true, UpdateState: "completed", UpdatedAt: longAgo}, deployed, true},
 		{"scaled to zero after a rollback", docker.ServiceProgress{Found: true, UpdateState: "rollback_completed", UpdatedAt: longAgo}, deployed, true},
 		{"scaled to zero exactly the age ago", docker.ServiceProgress{Found: true, UpdatedAt: now.Add(-stoppedHealAge)}, deployed, true},
@@ -259,9 +272,11 @@ func TestHealStoppedReadsOnlyServicesAtZero(t *testing.T) {
 	}
 }
 
-// A volume restore holds the app at zero: while it does, the heal neither reads
-// nor writes that app, and a global service the bulk lookup reports at zero
-// (waiting for an eligible node) is not read in detail either.
+// A volume restore holds the app at zero: while it marks the app, and while
+// it takes the lock to mark it, the heal neither reads nor writes that app; a
+// global service the bulk lookup reports at zero (waiting for an eligible
+// node) is not read in detail either; and the heal's own write happens under
+// the app's restore lock.
 func TestHealStoppedSkipsARestoreAndGlobalServices(t *testing.T) {
 	old := time.Now().Add(-48 * time.Hour)
 	eng := &countingEngine{progressEngine: progressEngine{
@@ -269,14 +284,20 @@ func TestHealStoppedSkipsARestoreAndGlobalServices(t *testing.T) {
 		docker.ServiceName(2): {Found: true, Global: true, UpdatedAt: old},
 	}, reads: map[string]int{}}
 	h := &scriptedHealer{stale: []StaleApp{{ID: 1, Status: StatusRunning}, {ID: 2, Status: StatusRunning}}, writes: map[int64]string{}}
-	lock := oplock.AppRestore(1)
-	if !oplock.TryAcquire(lock) {
-		t.Fatal("restore lock already held")
-	}
+	name := oplock.AppRestore(1)
+	unmark := oplock.Mark(name)
 	n, err := HealStuckStatuses(context.Background(), h, eng, time.Now())
-	oplock.Release(lock)
+	unmark()
 	if err != nil || n != 0 || len(h.writes) != 0 {
 		t.Fatalf("during a restore: healed %d, %v, writes %v; want nothing", n, err, h.writes)
+	}
+	if !oplock.TryAcquire(name) {
+		t.Fatal("restore lock already held")
+	}
+	n, err = HealStuckStatuses(context.Background(), h, eng, time.Now())
+	oplock.Release(name)
+	if err != nil || n != 0 || len(h.writes) != 0 {
+		t.Fatalf("while a restore takes its lock: healed %d, %v, writes %v; want nothing", n, err, h.writes)
 	}
 	if len(eng.reads) != 0 {
 		t.Errorf("detailed reads %v; want none", eng.reads)
@@ -287,6 +308,13 @@ func TestHealStoppedSkipsARestoreAndGlobalServices(t *testing.T) {
 	if eng.reads[docker.ServiceName(2)] != 0 {
 		t.Error("a global service at zero was read in detail")
 	}
+	if len(h.unlockedWrites) != 0 {
+		t.Errorf("written without the restore lock: %v", h.unlockedWrites)
+	}
+	if !oplock.TryAcquire(name) {
+		t.Fatal("the heal left the restore lock held")
+	}
+	oplock.Release(name)
 }
 
 // A failed detailed lookup leaves that app for the next pass and the apps
@@ -445,7 +473,7 @@ func TestHealStuckStatusesOnDB(t *testing.T) {
 	}
 }
 
-// The stopped-app queries against a real schema, with msk's lets-project: the
+// The stopped-app queries against a real schema, with an app stopped through MCP: the
 // row says "running" from its last deploy while the service has stood at 0/0
 // for days (stopped through the agent API before v0.13.2). It heals to idle;
 // an app whose service runs, one scaled to zero minutes ago, one with a deploy
@@ -490,12 +518,12 @@ func TestHealStoppedStatusesOnDB(t *testing.T) {
 		return a.Status
 	}
 
-	letsProject := newApp("lets-project", StatusRunning, "done")
+	stoppedApp := newApp("stopped-app", StatusRunning, "done")
 	failedStopped := newApp("failed-stopped", StatusError, "error")
-	// Their last deploys ended long before the stop (lets-project: 2026-10-12,
-	// stopped 2026-11-20); "failed-start" was stopped as long ago, then a
+	// Their last deploys ended long before the stop (the app stopped
+	// through MCP: weeks before); "failed-start" was stopped as long ago, then a
 	// start failed before it touched the service.
-	if _, err := pool.Exec(ctx, "UPDATE deployments SET finished_at = now() - interval '40 days' WHERE application_id = ANY($1)", []int64{letsProject, failedStopped}); err != nil {
+	if _, err := pool.Exec(ctx, "UPDATE deployments SET finished_at = now() - interval '40 days' WHERE application_id = ANY($1)", []int64{stoppedApp, failedStopped}); err != nil {
 		t.Fatalf("age deployments: %v", err)
 	}
 	failedStart := newApp("failed-start", StatusError, "error")
@@ -523,12 +551,12 @@ func TestHealStoppedStatusesOnDB(t *testing.T) {
 	if _, ok := byID[idle]; ok {
 		t.Error("an idle app must not be listed")
 	}
-	if len(byID) != 6 || byID[failedStopped].Status != StatusError || byID[letsProject].Status != StatusRunning {
-		t.Fatalf("listed %v, want lets-project, failed-stopped, failed-start, serving, restoring and raced with their statuses", byID)
+	if len(byID) != 6 || byID[failedStopped].Status != StatusError || byID[stoppedApp].Status != StatusRunning {
+		t.Fatalf("listed %v, want stopped-app, failed-stopped, failed-start, serving, restoring and raced with their statuses", byID)
 	}
 
-	if byID[letsProject].LastFinished.IsZero() {
-		t.Errorf("lets-project listed without its last deployment's end: %v", byID[letsProject].LastFinished)
+	if byID[stoppedApp].LastFinished.IsZero() {
+		t.Errorf("stopped-app listed without its last deployment's end: %v", byID[stoppedApp].LastFinished)
 	}
 
 	// After the listing a deploy of "raced" starts: its row first, so for a
@@ -561,7 +589,7 @@ func TestHealStoppedStatusesOnDB(t *testing.T) {
 	now := time.Now()
 	days := now.Add(-5 * 24 * time.Hour)
 	eng := progressEngine{
-		docker.ServiceName(letsProject):   {Found: true, UpdateState: "completed", UpdatedAt: days},
+		docker.ServiceName(stoppedApp):    {Found: true, UpdateState: "completed", UpdatedAt: days},
 		docker.ServiceName(failedStopped): {Found: true, UpdateState: "rollback_completed", UpdatedAt: days},
 		docker.ServiceName(serving):       {Found: true, Desired: 1, Running: 1, UpdateState: "completed", UpdatedAt: days},
 		docker.ServiceName(restoring):     {Found: true, UpdateState: "completed", UpdatedAt: now.Add(-5 * time.Minute)},
@@ -574,7 +602,7 @@ func TestHealStoppedStatusesOnDB(t *testing.T) {
 		t.Fatalf("HealStuckStatuses = %d, %v; want 2", n, err)
 	}
 	want := map[int64]string{
-		letsProject: StatusIdle, failedStopped: StatusIdle, serving: StatusRunning,
+		stoppedApp: StatusIdle, failedStopped: StatusIdle, serving: StatusRunning,
 		restoring: StatusRunning, inFlight: StatusRunning, raced: StatusDeploying, idle: StatusIdle,
 		failedStart: StatusError,
 	}

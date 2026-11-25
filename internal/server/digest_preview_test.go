@@ -97,8 +97,8 @@ func TestDigestPreviewInstanceAdminBoundary(t *testing.T) {
 }
 
 // The notifications page's digest preview names a node's cores in the right
-// plural form for one core and for several, in the channel's language: msk's
-// one-core nodes read "от мощности всех ядер (1)".
+// plural form for one core and for several, in the channel's language: a one-core
+// node read "от мощности всех ядер (1)".
 func TestDigestPreviewCoreCounts(t *testing.T) {
 	h, q, orgSvc := newServerWithDigest(t)
 	ctx := context.Background()

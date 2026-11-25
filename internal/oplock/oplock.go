@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	mu   sync.Mutex
-	held = map[string]chan struct{}{}
+	mu     sync.Mutex
+	held   = map[string]chan struct{}{}
+	marked = map[string]int{}
 )
 
 // TryAcquire takes the named lock if free; false when already held.
@@ -90,9 +91,37 @@ func LogicalDB(id int64) string { return "ldb:" + strconv.FormatInt(id, 10) }
 // AppRouting serializes final spec application with current routing updates.
 func AppRouting(id int64) string { return "app-routing:" + strconv.FormatInt(id, 10) }
 
-// AppRestore is held by a volume restore of the app from its scale-down to the
-// end of its scale-back: the status heal does not take a service at zero for a
-// stop while a restore owns that zero.
+// Mark registers one more holder of the named marker and returns its release.
+// Unlike a lock a marker has any number of holders; it lives in its own name
+// space, so a lock and a marker may share a name.
+func Mark(name string) (unmark func()) {
+	mu.Lock()
+	marked[name]++
+	mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			mu.Lock()
+			if marked[name]--; marked[name] <= 0 {
+				delete(marked, name)
+			}
+			mu.Unlock()
+		})
+	}
+}
+
+// Marked reports whether the named marker has a holder.
+func Marked(name string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	return marked[name] > 0
+}
+
+// AppRestore names an app's volume restores. Each restore marks it (Mark)
+// from its scale-down to the end of its scale-back, taking the lock of the
+// same name only while it marks; the status heal holds the lock from its read
+// of the service to its write and skips a marked app, so it never takes a
+// restore's zero for a stop. Restores of one app do not wait for each other.
 func AppRestore(id int64) string { return "app-restore:" + strconv.FormatInt(id, 10) }
 
 // CloneProject serializes environment cloning with project/environment deletion.

@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -186,23 +187,27 @@ func healDeploying(ctx context.Context, s StatusHealer, eng HealEngine, now time
 }
 
 // stoppedLongEnough reports whether a service is a stopped replicated one:
-// scaled to zero, no replica left, its last update settled, unchanged for
-// stoppedHealAge, and changed after the app's latest deployment ended — a
-// deploy that failed before it touched a service stopped long ago recorded an
-// error the stop does not explain. A global service at zero is waiting for an
-// eligible node.
+// scaled to zero, no replica left, its last update settled and unchanged for
+// stoppedHealAge. A stored "error" also needs the service to have changed after
+// the app's latest deployment ended: a start that failed before it touched a
+// service stopped long ago recorded an error the stop does not explain. A
+// stored "running" does not — a deploy that wrote it left replicas behind, so
+// a service at zero was stopped since, whatever the two clocks say. A global
+// service at zero is waiting for an eligible node.
 func stoppedLongEnough(p docker.ServiceProgress, last StaleApp, now time.Time) bool {
+	if last.Status == StatusError && !p.UpdatedAt.After(last.LastFinished) {
+		return false
+	}
 	return p.Found && !p.Global && p.Desired == 0 && p.Running == 0 &&
 		docker.UpdateSettled(p.UpdateState) &&
-		!p.UpdatedAt.IsZero() && now.Sub(p.UpdatedAt) >= stoppedHealAge &&
-		p.UpdatedAt.After(last.LastFinished)
+		!p.UpdatedAt.IsZero() && now.Sub(p.UpdatedAt) >= stoppedHealAge
 }
 
 // healStopped sets idle — what Stop writes — the apps stored "running" or
 // "error" whose service has been scaled to zero for stoppedHealAge with no
 // deploy of theirs running. A Stop through the agent API before v0.13.2
-// scaled the service without writing the status (lets-project on msk read
-// "running" at 0/0 for good). One bulk lookup picks the replicated services at
+// scaled the service without writing the status (an app stopped through
+// MCP on v0.9.4 read "running" at 0/0 for good). One bulk lookup picks the replicated services at
 // zero; only those are read in detail. An app a volume restore holds at zero
 // (oplock.AppRestore) is skipped, the lock held from the read to the write.
 func healStopped(ctx context.Context, s StatusHealer, eng HealEngine, now time.Time) (int, error) {
@@ -214,6 +219,8 @@ func healStopped(ctx context.Context, s StatusHealer, eng HealEngine, now time.T
 	if err != nil || len(apps) == 0 {
 		return 0, err
 	}
+	// A pass the budget cuts short must not keep missing the same apps.
+	rand.Shuffle(len(apps), func(i, j int) { apps[i], apps[j] = apps[j], apps[i] })
 	names := make([]string, len(apps))
 	for i, a := range apps {
 		names[i] = docker.ServiceName(a.ID)
@@ -249,13 +256,18 @@ func healStopped(ctx context.Context, s StatusHealer, eng HealEngine, now time.T
 }
 
 // healStoppedApp reads one app's service and sets the app idle when it is
-// stopped long enough, unless a volume restore of the app is under way.
+// stopped long enough, unless a volume restore of the app is under way. The
+// app's restore lock is held from the read to the write, so no restore can
+// start in between.
 func healStoppedApp(ctx context.Context, s StatusHealer, eng HealEngine, a StaleApp, now time.Time) (bool, error) {
-	lock := oplock.AppRestore(a.ID)
-	if !oplock.TryAcquire(lock) {
+	name := oplock.AppRestore(a.ID)
+	if !oplock.TryAcquire(name) {
 		return false, nil
 	}
-	defer oplock.Release(lock)
+	defer oplock.Release(name)
+	if oplock.Marked(name) {
+		return false, nil
+	}
 	pctx, pcancel := context.WithTimeout(ctx, healLookupTimeout)
 	p, err := eng.ServiceProgress(pctx, docker.ServiceName(a.ID), nil)
 	pcancel()

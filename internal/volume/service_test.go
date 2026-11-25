@@ -34,7 +34,8 @@ type mockVolEngine struct {
 	state docker.ServiceState
 
 	// restoreLockHeld records, per ServiceScale call, whether the app's
-	// restore lock (oplock.AppRestore(lockApp)) was held; lockApp 0 = off.
+	// restore marker (oplock.AppRestore(lockApp)) was set and its lock free;
+	// lockApp 0 = off.
 	lockApp         int64
 	restoreLockHeld []bool
 }
@@ -77,7 +78,8 @@ func (m *mockVolEngine) VolumeRestore(_ context.Context, _ string, in io.Reader,
 func (m *mockVolEngine) ServiceScale(_ context.Context, name string, replicas uint64) error {
 	m.mu.Lock()
 	if m.lockApp != 0 {
-		m.restoreLockHeld = append(m.restoreLockHeld, oplock.Held(oplock.AppRestore(m.lockApp)))
+		name := oplock.AppRestore(m.lockApp)
+		m.restoreLockHeld = append(m.restoreLockHeld, oplock.Marked(name) && !oplock.Held(name))
 	}
 	if replicas == 0 {
 		m.calls = append(m.calls, "scale0")
@@ -299,13 +301,15 @@ func TestRestoreQuiescesAndScalesBack(t *testing.T) {
 	seq := eng2.callSeq()
 	// Expect: scale0, (one or more) state, restore, scaleUp.
 	assertOrder(t, seq, "scale0", "restore", "scaleUp")
-	// The app's restore lock spans the scale-down and the scale-back, so the
-	// status heal never takes this zero for a stop, and is free afterwards.
+	// The app's restore marker spans the scale-down and the scale-back, so the
+	// status heal never takes this zero for a stop; the lock is not held
+	// meanwhile (another restore of the app need not wait), and both are free
+	// afterwards.
 	if len(eng2.restoreLockHeld) != 2 || !eng2.restoreLockHeld[0] || !eng2.restoreLockHeld[1] {
-		t.Fatalf("restore lock held at the scale calls: %v; want held at both", eng2.restoreLockHeld)
+		t.Fatalf("restore marked (lock free) at the scale calls: %v; want at both", eng2.restoreLockHeld)
 	}
-	if oplock.Held(oplock.AppRestore(42)) {
-		t.Fatal("restore lock still held after the restore")
+	if oplock.Held(oplock.AppRestore(42)) || oplock.Marked(oplock.AppRestore(42)) {
+		t.Fatal("restore lock or marker left after the restore")
 	}
 
 	// Variant: the scale-up's first two attempts fail, then succeed (defer retries).

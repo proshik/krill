@@ -768,7 +768,7 @@ func TestDigestReadsOnlyTheOrgSamplesWithoutInfra(t *testing.T) {
 	}
 }
 
-// "от мощности всех ядер (1)" in the msk digest: every count next to a noun
+// "от мощности всех ядер (1)" in a one-core node's digest: every count next to a noun
 // takes the noun's plural form, for one core and for several, in both
 // languages — the node line, the attention block and the app line.
 func TestDigestCountsAgree(t *testing.T) {
