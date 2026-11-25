@@ -213,6 +213,12 @@ Expanded in [deploy.md](docs/internals/deploy.md#deploy-invariants).
   upgrade.
 - **Build logs are bounded** (128 KB head + 128 KB tail) and made storable (`storable`: no cut
   multi-byte characters, no NUL) before any write — PostgreSQL otherwise refuses the whole update.
+- **A successful deploy records what it applied** (`deployments.applied_config`, per-section
+  HMAC digests): stored and current fingerprints come from one function,
+  `Deployer.configFingerprint` over `configSections` — add a new deploy input there, never in a
+  second list. "Apply settings" redeploys the running content-addressed image with the current
+  settings (no tag pull, no build). See
+  [deploy.md](docs/internals/deploy.md#saved-settings-that-are-not-live-yet-and-apply-settings).
 - **A service with a host-mode published port deploys StopFirst** (`buildSwarmSpec`): StartFirst
   deadlocks on the port without any error. A change of `UpdateConfig.Order` applies in the very
   rollout that makes it.

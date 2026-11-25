@@ -42,6 +42,12 @@ A domain card holds several small forms (exposure + paths with their own Save, T
 
 Destructive forms carry `hx-boost="false"` + `data-confirm` (server-rendered i18n message) and call `krillConfirm(this)` (the `#confirm` dialog; `data-more` adds what is lost, `data-ok` the verb, `data-kind="primary"` a non-destructive button) — native `confirm()` is broken under hx-boost. Log terminals are `<div class="term" data-term-log=...>` (xterm.js/addon-fit.js loaded per tab, lazy); `krillEnhance` (on `DOMContentLoaded`+`htmx:afterSettle`) auto-mounts them and inits the env editor — so do NOT add inline mount calls or per-tab `app.js`. `.term` has an explicit height in CSS, or FitAddon computes 0 rows on a boosted swap.
 
+### An out-of-band swap needs an explicit `hx-swap-oob="true"`
+
+*(2026-11-25)*
+
+htmx 2 reads `hx-swap-oob` through `getAttribute(...) || getAttribute("data-…")`, so a bare attribute (what templ renders for `hx-swap-oob?={ oob }`) is the empty string, read as "no oob": the element is swapped in with the rest of the response instead. In the deployments poll that left duplicate ids inside the polled list. Use `{ swapOOB(oob)... }` (`templates/app_sheet.go`), which renders `hx-swap-oob="true"`. The canvas status poll's `canvasWhere` and node-chip counts still use the bare form (its badges use `ui.StateID`, which writes `"true"`). Swap the smallest element that changes: the pending-change dots are per-tab slots (`tab-dot-<tab>`), because replacing the whole tab bar every 3 s would undo the user's sideways scroll of it on a phone.
+
 ### templ component-on-its-own-line gotcha
 
 A `@Component(...)` call inline after text renders as literal `@Component` text. Put component calls on their own node:

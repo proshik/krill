@@ -1,5 +1,24 @@
 # Deployments
 
+## Settings that are not deployed yet
+
+Variables, database and bucket links, the metrics token, resources, the command,
+the healthcheck, volumes, published ports and placement take effect at the next
+deploy. Once you save one of them while the app runs, the app's header shows
+**changes not applied**, the tab that holds the setting and the app's card on the
+environment canvas get a dot, and the current deployment on the **Deployments**
+tab names what changed after it. Domains apply at once and are not marked.
+
+**Reload** restarts the containers on the settings they run with; it never
+applies saved changes. **Apply settings** deploys the saved settings on the image
+the app runs now: it does not pull the image's tag again or rebuild the source.
+It is offered when the image or build settings themselves did not change and the
+running image is pinned by digest (registry images whose digest Krill resolved,
+and Dockerfile builds when `KRILL_SECRET_KEY` is set or a pre-deploy command
+exists). Otherwise **deploy again** is the highlighted action. A stopped app shows
+nothing: starting it deploys the current settings. Apps deployed before Krill
+recorded what a deploy applies show nothing until their next deploy.
+
 ## Run a command before deployment
 
 Organization admins can set the app's **Settings** tab → **Resources** → **pre-deploy command**,
@@ -29,7 +48,7 @@ local images to workers. Registry images are pinned by digest before the command
 runs; inability to resolve the digest fails this deployment instead of falling
 back to a mutable tag. The service uses the same immutable image reference.
 
-Deploy, Rebuild, deploy webhooks and API-triggered deployments share this step.
+Deploy, Rebuild, Apply settings, deploy webhooks and API-triggered deployments share this step.
 Reload of a running service does not deploy a new image and does not run it.
 The internal organization-network migration skips it.
 
