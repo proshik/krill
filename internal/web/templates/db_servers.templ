@@ -209,16 +209,14 @@ func serverTabs(ctx context.Context, c DBServerCtx) []OrgTab {
 }
 
 templ serverSheet(c DBServerCtx) {
-	<aside class="sheet" aria-label={ c.Inst.Name }>
+	<aside class="sheet sheet--wide" aria-label={ c.Inst.Name }>
 		<div class="sheet-head">
 			<div class="sheet-title">
 				@ui.Glyph(serverGlyph(c.Inst.Engine))
 				<h2>{ c.Inst.Name }</h2>
 				@ServerStateBadge(c.Status, c.Base+"/status")
 			</div>
-			<a class="pill pill--icon" href={ templ.SafeURL(orgURL(c.Org.ID) + "/db-servers") } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
-				@ui.Icon("i-close")
-			</a>
+			@sheetActs(orgURL(c.Org.ID) + "/db-servers")
 		</div>
 		<p class="sheet-sub">
 			<code>{ c.Inst.Image }</code>

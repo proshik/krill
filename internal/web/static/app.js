@@ -1070,10 +1070,40 @@ function krillSyncBodyClass() {
 document.addEventListener("htmx:afterSwap", krillSyncBodyClass);
 document.addEventListener("htmx:historyRestore", krillSyncBodyClass);
 
-// Per page: the theme button's name, server toasts' timers, conditional fields.
+// A resource sheet (.sheet--wide) spans the page unless the stored
+// krill-sheet is "compact"; the head script puts that on <html> before the
+// first paint, and CSS keys the width and the toggle's icon off it.
+function krillSheetCompact() {
+  return document.documentElement.dataset.sheet === "compact";
+}
+function krillSheetSize() {
+  const compact = krillSheetCompact();
+  document.querySelectorAll("[data-sheet-expand]").forEach(function (b) {
+    const label = compact ? b.dataset.labelExpand : b.dataset.labelCollapse;
+    b.setAttribute("aria-pressed", compact ? "false" : "true");
+    if (label) { b.setAttribute("aria-label", label); b.setAttribute("title", label); }
+  });
+}
+document.addEventListener("click", function (e) {
+  const b = e.target.closest && e.target.closest("[data-sheet-expand]");
+  if (!b) return;
+  const compact = !krillSheetCompact();
+  if (compact) document.documentElement.dataset.sheet = "compact";
+  else delete document.documentElement.dataset.sheet;
+  try {
+    if (compact) localStorage.setItem("krill-sheet", "compact");
+    else localStorage.removeItem("krill-sheet");
+  } catch (_) { /* storage blocked: the choice lasts until the next full load */ }
+  krillSheetSize();
+  document.querySelectorAll(".plane").forEach(function (m) { if (m.__krillFit) m.__krillFit(); });
+});
+
+// Per page: the theme button's name, the sheet toggle's name, server toasts'
+// timers, conditional fields.
 function krillShellEnhance() {
   krillSyncBodyClass();
   krillModeName();
+  krillSheetSize();
   document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
     el.removeAttribute("data-toast-auto");
     krillToastLater(el);
@@ -1294,8 +1324,11 @@ function mountWiredMap(map) {
     const fit = function () {
       if (getComputedStyle(svg).display === "none") return;
       map.setAttribute("data-zoomed", "");
+      // A wide resource sheet covers the whole canvas: fit to the canvas then,
+      // and again when the sheet turns compact (the toggle's click handler).
       const sheet = document.querySelector(".sheet");
-      const cw = canvas.clientWidth - (sheet ? sheet.offsetWidth + 24 : 0);
+      const beside = sheet && !(sheet.classList.contains("sheet--wide") && !krillSheetCompact());
+      const cw = canvas.clientWidth - (beside ? sheet.offsetWidth + 24 : 0);
       const top = 84, ch = canvas.clientHeight - top - 24;
       zoom = Math.max(0.3, Math.min(1, (cw - 48) / map.offsetWidth, ch / map.offsetHeight));
       px = Math.max(24, (cw - map.offsetWidth * zoom) / 2);

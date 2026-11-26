@@ -165,7 +165,7 @@ func (c AppCtx) appTabs(ctx context.Context) []OrgTab {
 templ AppDetail(c AppCtx, tab string) {
 	@Page(c.Shell) {
 		@canvasView(c.Canvas)
-		<aside class="sheet" aria-label={ c.App.Name }>
+		<aside class="sheet sheet--wide" aria-label={ c.App.Name }>
 			<div class="sheet-head">
 				<div class="sheet-title">
 					@ui.Glyph("i-app")
@@ -173,9 +173,7 @@ templ AppDetail(c AppCtx, tab string) {
 					@AppStateBadge(c.headStatus(), c.headPollURL(tab), c.Running, false)
 					@PendingMarker(c.Pending, false)
 				</div>
-				<a class="pill pill--icon" href={ templ.SafeURL(c.envURL()) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
-					@ui.Icon("i-close")
-				</a>
+				@sheetActs(c.envURL())
 			</div>
 			<p class="sheet-sub">
 				if u := primaryPublicURL(c.Domains, c.Exposed); u != "" {

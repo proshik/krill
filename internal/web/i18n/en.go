@@ -84,6 +84,8 @@ var en = map[string]string{
 	"orgs.empty":                           "no organizations.",
 	"orgs.new_label":                       "new organization",
 	"common.close":                         "close",
+	"sheet.collapse":                       "collapse panel",
+	"sheet.expand":                         "expand panel",
 	"common.copy":                          "copy",
 	"common.reveal":                        "reveal",
 	"common.stop":                          "stop",

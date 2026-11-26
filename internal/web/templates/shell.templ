@@ -11,8 +11,10 @@ import (
 
 // themeScript picks the theme before the first paint: the stored choice, or
 // the system's while there is none. It follows the system's changes whenever
-// no choice is stored, also after the toggle has gone back to "system".
-const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode')}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
+// no choice is stored, also after the toggle has gone back to "system". It
+// also marks a compact resource sheet (krill-sheet), so a sheet does not open
+// wide and then shrink.
+const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode');if(localStorage.getItem('krill-sheet')==='compact')d.dataset.sheet='compact'}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
 
 // docHead is the shared <head>: metadata, the theme script, styles and scripts.
 templ docHead(title string) {

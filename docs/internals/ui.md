@@ -36,7 +36,7 @@ A domain card holds several small forms (exposure + paths with their own Save, T
 
 ### The page frame lives in `shell.templ`
 
-`Page(Shell)` draws the bar (organization or environment variant, tabs by role and instance gate), the confirm dialog, the toasts (the flash message) and the palette; `SettingsPage` adds the settings sub-navigation; `Sheet` is the panel over a page (`?new=…` or a resource's sheet). Pages use the design system's classes (`sec`, `field`, `pill`, `btn`, `state`, …), not inline styles.
+`Page(Shell)` draws the bar (organization or environment variant, tabs by role and instance gate), the confirm dialog, the toasts (the flash message) and the palette; `SettingsPage` adds the settings sub-navigation; `Sheet` is the panel over a page (`?new=…` or a resource's sheet). An existing resource's sheet (`AppDetail`, `serverSheet`) is `sheet--wide`: full width above 60rem by default, with a head toggle (`sheetActs`, `data-sheet-expand`) back to the compact `--sheet-w` panel; the choice is `krill-sheet=compact` in localStorage, put on `<html data-sheet>` by `themeScript` before the first paint, and the canvas fit subtracts the sheet only when it is compact. Pages use the design system's classes (`sec`, `field`, `pill`, `btn`, `state`, …), not inline styles.
 
 ### Confirm dialogs + log terminals: `app.js` loads ONCE in the layout `<head>` (deferred), NOT per-tab
 

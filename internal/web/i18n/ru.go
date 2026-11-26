@@ -84,6 +84,8 @@ var ru = map[string]string{
 	"orgs.empty":                           "нет организаций.",
 	"orgs.new_label":                       "новая организация",
 	"common.close":                         "закрыть",
+	"sheet.collapse":                       "свернуть панель",
+	"sheet.expand":                         "развернуть панель",
 	"common.copy":                          "копировать",
 	"common.reveal":                        "показать",
 	"common.stop":                          "остановить",
