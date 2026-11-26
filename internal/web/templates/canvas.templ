@@ -165,10 +165,17 @@ templ canvasPending(elemID string, pending bool, oob bool) {
 
 // canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
 // what the node filter matches; the status poll replaces it (oob) with the
-// placement of the same snapshot as the badges.
+// placement of the same snapshot as the badges. On several nodes it shows
+// their count (the names in its tooltip) so the footer stays one line, and
+// its where--2/where--3 class draws the card as a stack: one edge behind it
+// for two nodes, two for three or more.
 templ canvasWhere(c CanvasCard, oob bool) {
-	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { swapOOB(oob)... }>
-		if len(c.Nodes) > 0 {
+	<span class={ "where", templ.KV("where--2", len(c.Nodes) == 2), templ.KV("where--3", len(c.Nodes) > 2) } id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { whereTitle(c.Nodes)... } { swapOOB(oob)... }>
+		if len(c.Nodes) > 1 {
+			@ui.Icon("i-node")
+			<span aria-hidden="true">{ i18n.Tn(ctx, "canvas.node_count", len(c.Nodes)) }</span>
+			<span class="visually-hidden">{ joinComma(c.Nodes) }</span>
+		} else if len(c.Nodes) > 0 {
 			@ui.Icon("i-node")
 			{ joinComma(c.Nodes) }
 		} else {

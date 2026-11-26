@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/a-h/templ"
+	db"github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -126,6 +127,15 @@ func ghostOnlyStyle(c topology.Canvas) string {
 func nodeCountLabel(n CanvasNode) string { return strconv.Itoa(n.Count) }
 
 func joinSpace(s []string) string { return strings.Join(s, " ") }
+
+// whereTitle names the nodes in a tooltip when the card shows only their
+// count.
+func whereTitle(nodes []string) templ.Attributes {
+	if len(nodes) < 2 {
+		return nil
+	}
+	return templ.Attributes{"title": joinComma(nodes)}
+}
 
 // ago is a short relative time: "just now", "12 min ago", "3 h ago", "2 d ago".
 func ago(ctx context.Context, t time.Time) string {

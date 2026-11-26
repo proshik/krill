@@ -169,7 +169,7 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .svc { position: absolute; left: var(--x); top: var(--y); z-index: var(--z-raised); display: grid; gap: var(--space-2xs); width: var(--card-w); padding: var(--space-sm) var(--space-md) var(--space-sm); border-radius: var(--radius-card); background: var(--color-card); box-shadow: var(--shadow-card); color: inherit; text-decoration: none; transition: opacity var(--dur-short) var(--ease-out), background-color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out); }
 /* A running card (its status badge is ok, live after every poll swap) is
    tinted green; hover, .is-lit and the selected card come after and win. */
-.svc:has(.state--ok) { background: var(--color-card-run); box-shadow: inset 0 0 0 1px var(--color-card-run-ring); }
+.svc:has(.state--ok) { --svc-edge: var(--color-card-run); background: var(--color-card-run); box-shadow: inset 0 0 0 1px var(--color-card-run-ring); }
 .svc:hover { box-shadow: inset 0 0 0 1.5px var(--color-rule-2); }
 .svc.is-lit { box-shadow: inset 0 0 0 1.5px var(--color-accent); }
 .svc[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--color-accent); background: color-mix(in oklab, var(--color-accent) 10%, var(--color-card)); }
@@ -201,6 +201,12 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .svc-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-xs); padding-top: var(--space-xs); border-top: 1px solid var(--color-rule); }
 .where { display: inline-flex; align-items: center; gap: var(--space-2xs); min-width: 0; color: var(--color-muted); font: 400 0.8125rem/1.2 var(--font-outlier); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .where .ico { width: 13px; height: 13px; }
+/* A card on several nodes is a stack: card edges behind it, drawn as outer
+   shadows of an empty layer the card's size, so they never paint over the
+   card and leave its height and the wire anchors as they are. The class
+   comes with the placement the status poll swaps in. */
+.svc:has(.where--2, .where--3)::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; box-shadow: 5px 5px 0 0 var(--svc-edge, var(--color-card)), 5px 5px 0 1px var(--color-rule); }
+.svc:has(.where--3)::before { box-shadow: 5px 5px 0 0 var(--svc-edge, var(--color-card)), 5px 5px 0 1px var(--color-rule), 10px 10px 0 0 var(--svc-edge, var(--color-card)), 10px 10px 0 1px var(--color-rule); }
 
 .float { position: absolute; z-index: var(--z-dropdown); display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-2xs); border-radius: var(--radius-card); background: var(--color-paper-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
 .float--nodes { top: 20px; left: var(--space-lg); padding-left: var(--space-md); }
@@ -335,7 +341,10 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
   .grp { position: static; width: auto; height: auto; display: grid; gap: var(--space-xs); padding: var(--space-md); }
   .grp--loose { padding: 0; }
   .grp-name { position: static; margin-bottom: var(--space-2xs); }
-  .svc { position: static; width: auto; }
+  /* in the flow, but still the box a stack's back edges (::before) are drawn from */
+  .svc { position: relative; left: auto; top: auto; width: auto; }
+  /* the stack's back edges need room in the list (its gap is 8px) */
+  .canvas .svc:has(.where--3) { margin-bottom: var(--space-2xs); }
   /* Static here, so a long name can wrap without covering the next card. */
   .canvas .svc-head .svc-name { min-width: 0; overflow-wrap: anywhere; }
   .plane.is-focus .svc:not(.is-lit) { opacity: 0.35; }
