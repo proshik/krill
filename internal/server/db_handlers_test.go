@@ -146,3 +146,36 @@ func TestDatabaseCrossTenantIsolation(t *testing.T) {
 		t.Fatalf("SECURITY FINDING: org-A logical database row (id=%d) was deleted by cross-tenant request: %v", aDBID, err)
 	}
 }
+
+// TestEnvDatabasesNewServerLink checks that an environment's databases tab
+// offers admins a way to create an org-level server, and hides it from members.
+func TestEnvDatabasesNewServerLink(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	memberID := mkUser(t, q, "m@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	target := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/databases"
+	link := `href="/orgs/` + i64(o.ID) + `/db-servers?new=server"`
+
+	rec := getWithCookie(t, h, target, loginAs(t, q, "o@k.local"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin GET want 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), link) {
+		t.Fatalf("admin page lacks the new-server link %s", link)
+	}
+
+	rec = getWithCookie(t, h, target, loginAs(t, q, "m@k.local"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member GET want 200, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), link) {
+		t.Fatalf("member page shows the new-server link %s", link)
+	}
+}
