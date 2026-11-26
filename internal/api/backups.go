@@ -185,8 +185,10 @@ func (s *Service) backupRows(ctx context.Context, orgID int64) ([]backupRow, err
 		if lastRun.Valid {
 			b.LastRunAt = formatMicro(lastRun.Time)
 		}
+		// The row's own time when its last run succeeded (stable while the
+		// notifier journals the same run); the journal otherwise.
 		success, ok := lastOK[kind+":"+strconv.FormatInt(id, 10)]
-		if status == "ok" && lastRun.Valid && (!ok || lastRun.Time.After(success)) {
+		if status == "ok" && lastRun.Valid {
 			success, ok = lastRun.Time, true
 		}
 		if ok {

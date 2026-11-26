@@ -37,6 +37,14 @@ func ParseLogLine(raw string) LogLine {
 	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest, Task: task}
 }
 
+// ParseTimestamped is ParseLogLine for a stream read without docker's log
+// details: only the timestamp is stripped, so a message that itself starts
+// with a com.docker.swarm.task.id= field keeps it.
+func ParseTimestamped(raw string) LogLine {
+	ts, rest := splitDockerTimestamp(raw)
+	return LogLine{Time: ts, Level: detectLevel(rest), Msg: rest}
+}
+
 // splitDockerTimestamp peels a leading "2026-06-07T19:31:52.307218Z " token
 // (docker --timestamps) off the line. Tolerant of lines without one.
 func splitDockerTimestamp(raw string) (ts, rest string) {

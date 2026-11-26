@@ -145,6 +145,7 @@ func TestListBackupsCoversEveryKindAndFilters(t *testing.T) {
 	if d.Target != "acme-proj/production/app" || d.Server != "main" || d.Destination != "offsite" || d.LastStatus != "error" || d.LastRunAt == "" {
 		t.Fatalf("database backup: %+v", d)
 	}
+	// The last run failed, so the journal's latest success is used.
 	if d.LastSuccessAt != okAt.Format(time.RFC3339) {
 		t.Fatalf("last success from the run history: %q, want %q", d.LastSuccessAt, okAt.Format(time.RFC3339))
 	}
@@ -453,5 +454,35 @@ func TestBackupNowStartedAtMatchesTheStoredRunTime(t *testing.T) {
 		if b.Kind == api.BackupDatabase && b.LastRunAt != res.StartedAt {
 			t.Fatalf("last_run_at %q != started_at %q", b.LastRunAt, res.StartedAt)
 		}
+	}
+}
+
+// When the row's last run succeeded, its own time is the last success — not
+// the journal's later finish time of the same run.
+func TestLastSuccessIsStableWhileTheRunIsJournaled(t *testing.T) {
+	f := newBackupFixture(t)
+	ctx := t.Context()
+	ranAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	if err := f.q.SetBackupResult(ctx, db.SetBackupResultParams{ID: f.dbBackup, LastRunAt: pgtype.Timestamptz{Time: ranAt, Valid: true}, LastStatus: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	read := func() string {
+		all, err := f.svc.ListBackups(ctx, f.readIdent, api.BackupFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, b := range all {
+			if b.Kind == api.BackupDatabase {
+				return b.LastSuccessAt
+			}
+		}
+		return ""
+	}
+	before := read()
+	if err := f.q.InsertBackupRun(ctx, db.InsertBackupRunParams{OrgID: f.ident.OrgID, Kind: "database", SourceID: f.dbBackup, Status: "ok", FinishedAt: ranAt.Add(40 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if after := read(); after != before || before != ranAt.Format(time.RFC3339) {
+		t.Fatalf("last success moved from %q to %q (row ran at %s)", before, after, ranAt.Format(time.RFC3339))
 	}
 }

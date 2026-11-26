@@ -88,9 +88,14 @@ func unixNano(t time.Time) string {
 	return fmt.Sprintf("%d.%09d", t.Unix(), t.Nanosecond())
 }
 
+// windowSkew is how far a worker's clock may be off the manager's for
+// inWindow: task times come from the manager, log timestamps from the
+// worker, so a task is only skipped when it is clear of the window by more.
+const windowSkew = time.Minute
+
 // inWindow drops the tasks that cannot have a line in [since, until]: one
-// that stopped before since (its last state change is before it) or was
-// created after until. Running tasks are always kept.
+// that stopped well before since (its last state change is before it) or was
+// created well after until. Running tasks are always kept.
 func inWindow(tasks []swarm.Task, since, until time.Time) []swarm.Task {
 	if since.IsZero() && until.IsZero() {
 		return tasks
@@ -98,10 +103,10 @@ func inWindow(tasks []swarm.Task, since, until time.Time) []swarm.Task {
 	out := tasks[:0:0]
 	for _, t := range tasks {
 		ended := t.Status.State != swarm.TaskStateRunning && t.Status.State != swarm.TaskStateStarting
-		if !since.IsZero() && ended && !t.Status.Timestamp.IsZero() && t.Status.Timestamp.Before(since) {
+		if !since.IsZero() && ended && !t.Status.Timestamp.IsZero() && t.Status.Timestamp.Before(since.Add(-windowSkew)) {
 			continue
 		}
-		if !until.IsZero() && !t.Meta.CreatedAt.IsZero() && t.Meta.CreatedAt.After(until) {
+		if !until.IsZero() && !t.Meta.CreatedAt.IsZero() && t.Meta.CreatedAt.After(until.Add(windowSkew)) {
 			continue
 		}
 		out = append(out, t)

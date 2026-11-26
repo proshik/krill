@@ -559,9 +559,8 @@ func TestDeploymentStatusWaitTimesOutAndStopsOnShutdown(t *testing.T) {
 	if err != nil || d.Status != "running" {
 		t.Fatalf("timeout: %+v %v", d, err)
 	}
-	// The answer comes by the deadline; a tenth of the wait is kept for the
-	// final reads.
-	if el := time.Since(start); el < 850*time.Millisecond || el > 1100*time.Millisecond {
+	// The polls run to the deadline; the closing reads get a quarter second.
+	if el := time.Since(start); el < 950*time.Millisecond || el > 1500*time.Millisecond {
 		t.Fatalf("waited %s for a 1 s wait", el)
 	}
 	stopping, stop := context.WithCancel(context.Background())
@@ -768,7 +767,7 @@ func TestLogsTruncateAnOversizedLine(t *testing.T) {
 func TestDeploymentStatusWaitReadsOnceMoreAtTheDeadline(t *testing.T) {
 	f := newAPIFixture(t)
 	depID := f.seedDeployment(t)
-	time.AfterFunc(750*time.Millisecond, func() {
+	time.AfterFunc(950*time.Millisecond, func() {
 		_ = f.q.FinishDeployment(context.Background(), db.FinishDeploymentParams{ID: depID, Status: "error", Log: "boom"})
 	})
 	d, err := f.svc.DeploymentStatusWait(t.Context(), f.readIdent, depID, 1)
@@ -777,5 +776,93 @@ func TestDeploymentStatusWaitReadsOnceMoreAtTheDeadline(t *testing.T) {
 	}
 	if d.Status != "error" || d.LogTail != "boom" {
 		t.Fatalf("detail at the deadline: %+v", d)
+	}
+}
+
+func TestAppStatusNodeAndCPUAttributionEdges(t *testing.T) {
+	f := newAPIFixture(t)
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	eng := &diagEngine{
+		tasks: []docker.TaskRecord{
+			// A start-first predecessor: desired shutdown, still running.
+			{ID: "retiring00001", NodeID: "n1", NodeName: "node-1", State: "running", Desired: "shutdown", Created: old.Add(-time.Hour), Updated: old.Add(-time.Hour), ContainerID: "c-old"},
+			// Its replacement, on a node whose name did not resolve.
+			{ID: "replacement01", NodeID: "n1", State: "running", Desired: "running", Created: old, Updated: old, ContainerID: "c-new"},
+		},
+		probes: map[string]docker.ContainerProbe{
+			"c-new": {Running: true, MemOK: true, MemBytes: 1},
+		},
+	}
+	if err := f.q.InsertMetricSample(t.Context(), db.InsertMetricSampleParams{Node: "control-plane", Component: docker.ServiceName(f.appID), CpuPct: 9}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := api.NewService(f.q, eng, nil).AppStatus(t.Context(), f.readIdent, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The node is the replacement's (meant to run), by id as its name is unknown.
+	if st.Node != "n1" {
+		t.Fatalf("node %q: want the running task meant to run, by id", st.Node)
+	}
+	if len(st.Usage) != 1 || st.Usage[0].CPUPct != nil {
+		t.Fatalf("a predecessor still running on the node may own the sample: %+v", st.Usage)
+	}
+
+	// Alone on its node, but a worker is named like the control plane's key.
+	eng.tasks = eng.tasks[1:]
+	if _, err := f.q.CreateClusterNode(t.Context(), db.CreateClusterNodeParams{Name: "control-plane", SshHost: "192.0.2.50", SshPort: 22, SshUser: "root", SshKey: "k", HostKey: "h", SwarmNodeID: "w1"}); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	st, err = api.NewService(f.q, eng, nil).AppStatus(t.Context(), f.readIdent, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Usage) != 1 || st.Usage[0].CPUPct != nil {
+		t.Fatalf("an ambiguous sampler key must not attribute CPU: %+v", st.Usage)
+	}
+}
+
+func TestAppConfigLimitThatRoundsToZeroIsNotExplicit(t *testing.T) {
+	f := newAPIFixture(t)
+	tiny := "0.0000000001"
+	if err := f.q.UpdateApplicationAdvanced(t.Context(), db.UpdateApplicationAdvancedParams{ID: f.appID, CpuLimit: &tiny, Replicas: 1, RestartCondition: "any"}); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.SetResourceDefaults("", "0.5")
+	cfg, err := f.svc.AppConfig(t.Context(), f.readIdent, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources.CPULimitSource != "default" || cfg.Resources.CPULimit != "0.5" {
+		t.Fatalf("a limit the deployer reads as zero falls back to the default: %+v", cfg.Resources)
+	}
+}
+
+func TestLogsKeepAMessageThatStartsWithATaskField(t *testing.T) {
+	f := newAPIFixture(t)
+	body := "2026-11-20T10:00:00.000Z com.docker.swarm.task.id=t1,user=ada login ok\n"
+	res, err := api.NewService(f.q, &diagEngine{backlog: body}, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{Contains: "user=ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := res.([]api.LogLine); len(lines) != 1 || !strings.HasPrefix(lines[0].Message, "com.docker.swarm.task.id=") {
+		t.Fatalf("without docker details nothing but the timestamp is stripped: %+v", lines)
+	}
+}
+
+func TestWaitContextKeepsExactlyTail(t *testing.T) {
+	f := newAPIFixture(t)
+	var b strings.Builder
+	for i := 0; i < 50; i++ {
+		b.WriteString("2026-11-20T10:00:00.000Z line\n")
+	}
+	b.WriteString("2026-11-20T10:00:01.000Z READY\n")
+	res, err := api.NewService(f.q, liveOnly(b.String()), nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "ready", Tail: 7, Timeout: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := res.(api.LogWaitResult); !w.Found || len(w.Lines) != 8 {
+		t.Fatalf("seven lines before the match and the match: %d lines", len(w.Lines))
 	}
 }

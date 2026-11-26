@@ -178,6 +178,12 @@ func (s *Service) DeploymentStatusWait(ctx context.Context, id Identity, deployI
 	if wait > maxDeployWait {
 		wait = maxDeployWait
 	}
+	if wait > 0 {
+		// A waiting call ends on Krill's shutdown from its first read on.
+		var cancel context.CancelFunc
+		ctx, cancel = s.withStopping(ctx)
+		defer cancel()
+	}
 
 	dep, err := s.q.GetDeployment(ctx, deployID)
 	if err != nil {
@@ -189,19 +195,22 @@ func (s *Service) DeploymentStatusWait(ctx context.Context, id Identity, deployI
 	}
 
 	if wait > 0 && dep.Status == "running" {
-		// One deadline for everything the wait does: the polls get the wait
-		// minus a reserve, the final reads the reserve.
+		// Polls run to the deadline; the reads after them get a short
+		// fixed grace past it.
 		deadline := time.Now().Add(time.Duration(wait) * time.Second)
-		reserve := min(waitReadReserve, time.Duration(wait)*time.Second/10)
-		st, err := s.waitDeployment(ctx, deployID, time.Until(deadline)-reserve, deadline)
+		st, err := s.waitDeployment(ctx, deployID, time.Until(deadline), deadline.Add(waitReadGrace))
 		if err != nil {
 			return DeploymentDetail{}, err
 		}
 		if st != "running" {
-			// Read the final row (its log, its end time) by the deadline;
+			// Read the final row (its log, its end time) within the grace;
 			// failing that, answer the status the wait saw rather than fail
 			// a wait that worked.
-			rctx, cancel := s.boundedRead(ctx, deadline)
+			readBy := deadline
+			if now := time.Now(); now.After(readBy) {
+				readBy = now
+			}
+			rctx, cancel := s.boundedRead(ctx, readBy.Add(waitReadGrace))
 			d, err := s.q.GetDeployment(rctx, deployID)
 			cancel()
 			if err == nil {
@@ -229,11 +238,11 @@ func (s *Service) DeploymentStatusWait(ctx context.Context, id Identity, deployI
 // waitDeployment polls the deployment's status until it is no longer
 // running, poll has passed, ctx ends or Krill starts shutting down, and
 // returns the last status it read ("running" when it saw no change). When
-// the polling time runs out, the status is read once more, by deadline, so a
+// the polling time runs out, the status is read once more, by readBy, so a
 // deploy that ended after the last poll is not reported running. A failed
 // read is retried at the next poll; a deployment that is gone (its app was
 // deleted meanwhile) is not found.
-func (s *Service) waitDeployment(ctx context.Context, deployID int64, poll time.Duration, deadline time.Time) (string, error) {
+func (s *Service) waitDeployment(ctx context.Context, deployID int64, poll time.Duration, readBy time.Time) (string, error) {
 	wctx, cancel, stoppedBy := s.waitContext(ctx, poll)
 	defer cancel()
 	t := time.NewTicker(deployWaitPoll)
@@ -258,7 +267,7 @@ func (s *Service) waitDeployment(ctx context.Context, deployID int64, poll time.
 			if stoppedBy() != "timeout" {
 				return "running", nil // shutdown or the caller left: answer at once
 			}
-			rctx, rcancel := s.boundedRead(ctx, deadline)
+			rctx, rcancel := s.boundedRead(ctx, readBy)
 			defer rcancel()
 			st, err := read(rctx)
 			if errors.Is(err, gone) {
@@ -279,9 +288,20 @@ func (s *Service) waitDeployment(ctx context.Context, deployID int64, poll time.
 	}
 }
 
-// waitReadReserve is the part of a wait kept for the reads that follow it,
-// so the answer arrives by the deadline the caller asked for.
-const waitReadReserve = time.Second
+// waitReadGrace is how far past the requested wait the reads that close it
+// may go: the status once more, then the final row. A caller should allow
+// the wait plus a second.
+const waitReadGrace = 250 * time.Millisecond
+
+// withStopping is ctx ended also when Krill starts shutting down.
+func (s *Service) withStopping(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	if s.stopping == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(s.stopping, cancel)
+	return ctx, func() { stop(); cancel() }
+}
 
 // boundedRead is a context for one read after a wait: ended by ctx, by
 // Krill's shutdown and at deadline.

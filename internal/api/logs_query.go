@@ -43,8 +43,10 @@ type LogWaitResult struct {
 	// Lines are the lines before the match, the match, and a few after it;
 	// without a match, the last lines read.
 	Lines []LogLine `json:"lines"`
-	// FollowingSince is when the live stream was open: lines written before
-	// it are not covered by the wait. Empty when the stream never opened.
+	// FollowingSince is when Docker accepted the live read. Lines written
+	// before it are not covered; neither, possibly, are the first moments
+	// after it — Docker answers before each task's reader is attached, and
+	// says nothing when that happens. Empty when the stream never opened.
 	FollowingSince string `json:"following_since,omitempty"`
 	// Incomplete: the live read broke before the wait ended, so a missing
 	// match is no proof the line never appeared.
@@ -89,6 +91,12 @@ func parseLogTime(name, v string, now time.Time) (time.Time, error) {
 // or, with WaitFor, a wait for a line. The answer is []LogLine or
 // LogWaitResult accordingly.
 func (s *Service) Logs(ctx context.Context, id Identity, ref string, in LogsInput) (any, error) {
+	if in.WaitFor != "" {
+		// A waiting call ends on Krill's shutdown from its first read on.
+		var cancel context.CancelFunc
+		ctx, cancel = s.withStopping(ctx)
+		defer cancel()
+	}
 	app, err := s.resolveApp(ctx, id, ref)
 	if err != nil {
 		return nil, err
@@ -162,6 +170,24 @@ func truncMessage(m string) string {
 	return m[:cut] + fmt.Sprintf(" …[truncated %d bytes]", len(m)-cut)
 }
 
+// keptLine is the copy of a parsed line an answer keeps: the message cut
+// and the timestamp cloned. Both would otherwise be substrings of the raw
+// line, which can be 1 MiB, and keep all of it alive while the line waits in
+// a buffer.
+func keptLine(p logparse.LogLine) LogLine {
+	return LogLine{Time: strings.Clone(p.Time), Level: p.Level, Message: strings.Clone(truncMessage(p.Msg))}
+}
+
+// parseLine parses a line of an API read. The API asks Docker for no log
+// details (see openLog), so only the timestamp is stripped — unless the
+// engine cannot window and the stream is a plain read that carries them.
+func (s *Service) parseLine(raw string) logparse.LogLine {
+	if _, ok := s.engine.(docker.WindowedLogs); ok {
+		return logparse.ParseTimestamped(raw)
+	}
+	return logparse.ParseLogLine(raw)
+}
+
 // windowRead is how a read of a window of a service's log ended.
 type windowRead struct {
 	cut     bool // incomplete: a task was skipped or capped, the read ran out of time or scan budget
@@ -201,14 +227,14 @@ func (s *Service) readWindow(ctx context.Context, name string, w logWindow, tail
 		if capPerTask > 0 && scanned == capPerTask {
 			out.cut = true
 		}
-		parsed := logparse.ParseLogLine(raw)
+		parsed := s.parseLine(raw)
 		if ts, err := time.Parse(time.RFC3339Nano, parsed.Time); err == nil {
 			last = ts
 		}
 		if !w.holds(last) {
 			return
 		}
-		if visit(last, LogLine{Time: parsed.Time, Level: parsed.Level, Message: truncMessage(parsed.Msg)}, parsed.Msg) {
+		if visit(last, keptLine(parsed), parsed.Msg) {
 			stop.Store(true)
 		}
 	})
@@ -416,7 +442,7 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 		return LogWaitResult{}, fmt.Errorf("wait for log: follow: %w", err)
 	}
 	res := LogWaitResult{FollowingSince: formatMicro(time.Now())}
-	lines, followErr := followLines(ctx, rc, matches)
+	lines, followErr := followLines(ctx, rc, s.parseLine, matches)
 	before := newLineRing(nCtx)
 
 	// The new lines, as they are written.
@@ -493,7 +519,7 @@ type followed struct {
 // followLines delivers rc's lines until rc ends or ctx does; then rc is
 // closed and the channel closed. The error channel then carries the read's
 // error (nil for a clean end), once.
-func followLines(ctx context.Context, rc io.ReadCloser, matches func(full string) bool) (<-chan followed, <-chan error) {
+func followLines(ctx context.Context, rc io.ReadCloser, parse func(string) logparse.LogLine, matches func(full string) bool) (<-chan followed, <-chan error) {
 	out := make(chan followed, 64)
 	errc := make(chan error, 1)
 	stop := context.AfterFunc(ctx, func() { rc.Close() })
@@ -504,8 +530,8 @@ func followLines(ctx context.Context, rc io.ReadCloser, matches func(full string
 		sc := bufio.NewScanner(rc)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
-			p := logparse.ParseLogLine(sc.Text())
-			fl := followed{line: LogLine{Time: p.Time, Level: p.Level, Message: truncMessage(p.Msg)}, match: matches(p.Msg)}
+			p := parse(sc.Text())
+			fl := followed{line: keptLine(p), match: matches(p.Msg)}
 			select {
 			case out <- fl:
 			case <-ctx.Done():
@@ -518,24 +544,33 @@ func followLines(ctx context.Context, rc io.ReadCloser, matches func(full string
 	return out, errc
 }
 
-// lineRing keeps the last n lines added.
+// lineRing keeps the last n lines added, never more.
 type lineRing struct {
-	n   int
-	buf []LogLine
+	n    int
+	buf  []LogLine
+	next int // where the next line goes once buf is full
 }
 
 func newLineRing(n int) *lineRing { return &lineRing{n: n} }
 
 func (r *lineRing) add(l LogLine) {
-	r.buf = append(r.buf, l)
-	if len(r.buf) > 2*r.n {
-		r.buf = append(r.buf[:0:0], r.buf[len(r.buf)-r.n:]...)
+	if r.n <= 0 {
+		return
 	}
+	if len(r.buf) < r.n {
+		r.buf = append(r.buf, l)
+		return
+	}
+	r.buf[r.next] = l
+	r.next = (r.next + 1) % r.n
 }
 
+// lines returns the kept lines, oldest first.
 func (r *lineRing) lines() []LogLine {
-	if len(r.buf) > r.n {
-		return append([]LogLine(nil), r.buf[len(r.buf)-r.n:]...)
+	out := make([]LogLine, 0, len(r.buf))
+	if len(r.buf) < r.n {
+		return append(out, r.buf...)
 	}
-	return append([]LogLine{}, r.buf...)
+	out = append(out, r.buf[r.next:]...)
+	return append(out, r.buf[:r.next]...)
 }

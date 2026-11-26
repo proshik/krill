@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/envtext"
 	"github.com/proshik/krill/internal/secret"
 	"github.com/proshik/krill/internal/traefik"
@@ -259,8 +260,8 @@ func (s *Service) configResources(app db.Application) ConfigResources {
 	if r.RestartCondition == "" {
 		r.RestartCondition = "any"
 	}
-	r.MemoryLimit, r.MemoryLimitSource = limitOf(app.MemoryLimit, s.memDefault)
-	r.CPULimit, r.CPULimitSource = limitOf(app.CpuLimit, s.cpuDefault)
+	r.MemoryLimit, r.MemoryLimitSource = limitOf(app.MemoryLimit, s.memDefault, docker.ParseMemoryBytes)
+	r.CPULimit, r.CPULimitSource = limitOf(app.CpuLimit, s.cpuDefault, docker.ParseNanoCPUs)
 	for _, n := range strings.Split(app.PlacementNodes, ",") {
 		if n = strings.TrimSpace(n); n != "" {
 			r.PlacementNodes = append(r.PlacementNodes, n)
@@ -270,12 +271,18 @@ func (s *Service) configResources(app db.Application) ConfigResources {
 }
 
 // limitOf is the limit a deploy applies: the app's own, else the instance
-// default, else none.
-func limitOf(own *string, def string) (string, string) {
-	switch {
-	case own != nil && strings.TrimSpace(*own) != "":
-		return strings.TrimSpace(*own), "explicit"
-	case def != "":
+// default, else none — by the deployer's rules, under which an own value that
+// does not parse or comes to zero (a CPU fraction too small to count) is
+// unset and falls back to the default.
+func limitOf(own *string, def string, parse func(string) (int64, error)) (string, string) {
+	if own != nil {
+		if v := strings.TrimSpace(*own); v != "" {
+			if n, err := parse(v); err == nil && n > 0 {
+				return v, "explicit"
+			}
+		}
+	}
+	if def != "" {
 		return def, "default"
 	}
 	return "", "none"

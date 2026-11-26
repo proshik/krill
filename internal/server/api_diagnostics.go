@@ -77,27 +77,48 @@ func (b apiBackups) Running(kind string, id int64) bool {
 type apiGateway struct{ s *Server }
 
 func (g apiGateway) Locate(ctx context.Context) ([]string, string, error) {
-	var addrs []string
-	var errs []error
-	if a := g.s.cfg.AdvertiseAddr; a != "" {
-		ips, err := resolveHostIPs(ctx, a)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("resolve KRILL_ADVERTISE_ADDR: %w", err))
-		}
-		for _, ip := range ips {
-			addrs = append(addrs, ip.String())
-		}
+	// The advertised host's resolution and the Swarm placement lookup run
+	// side by side: a stalled DNS answer must not leave the placement (and
+	// the TLS target it gives) no time.
+	type result struct {
+		addrs []string
+		err   error
 	}
+	adv := make(chan result, 1)
+	go func() {
+		var r result
+		if a := g.s.cfg.AdvertiseAddr; a != "" {
+			ips, err := resolveHostIPs(ctx, a)
+			if err != nil {
+				r.err = fmt.Errorf("resolve KRILL_ADVERTISE_ADDR: %w", err)
+			}
+			for _, ip := range ips {
+				r.addrs = append(r.addrs, ip.String())
+			}
+		}
+		adv <- r
+	}()
+	taskAddrs, terr := g.gatewayTaskAddrs(ctx)
+	ar := <-adv
+
 	dial := g.s.cfg.AdvertiseAddr
 	if dial == "" {
-		dial = "127.0.0.1"
+		dial = "127.0.0.1" // Krill runs on a manager
 	}
+	if len(taskAddrs) > 0 {
+		dial = taskAddrs[0]
+	}
+	return append(ar.addrs, taskAddrs...), dial, errors.Join(ar.err, terr)
+}
+
+// gatewayTaskAddrs is the Swarm address of each node a gateway task runs on.
+func (g apiGateway) gatewayTaskAddrs(ctx context.Context) ([]string, error) {
 	if g.s.engine == nil {
-		return addrs, dial, errors.Join(errs...)
+		return nil, nil
 	}
 	tasks, err := g.s.engine.ServiceTasks(ctx, traefik.ServiceName)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("gateway tasks: %w", err))
+		return nil, fmt.Errorf("gateway tasks: %w", err)
 	}
 	onNode := map[string]bool{}
 	for _, t := range tasks {
@@ -106,25 +127,22 @@ func (g apiGateway) Locate(ctx context.Context) ([]string, string, error) {
 		}
 	}
 	if len(onNode) == 0 {
-		return addrs, dial, errors.Join(errs...)
+		return nil, nil
 	}
 	nodes, err := g.s.engine.Nodes(ctx)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("list swarm nodes: %w", err))
+		return nil, fmt.Errorf("list swarm nodes: %w", err)
 	}
-	var taskAddrs []string
+	var out []string
 	for _, n := range nodes {
 		if !onNode[n.ID] {
 			continue
 		}
 		if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
-			taskAddrs = append(taskAddrs, ip.String())
+			out = append(out, ip.String())
 		}
 	}
-	if len(taskAddrs) > 0 {
-		dial = taskAddrs[0]
-	}
-	return append(addrs, taskAddrs...), dial, errors.Join(errs...)
+	return out, nil
 }
 
 // apiAppConfig reports an app's saved settings, never a secret.

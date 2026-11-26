@@ -131,13 +131,34 @@ func (s *Service) runningNode(ctx context.Context, name string) string {
 	return ""
 }
 
+// firstRunningNode is the node of the first task both meant to run and
+// running — not one being retired — by name, or by id when the name could
+// not be resolved.
 func firstRunningNode(recs []docker.TaskRecord) string {
 	for _, r := range recs {
-		if r.State == "running" {
-			return r.NodeName
+		if r.State == "running" && r.Desired == "running" {
+			return nodeLabel(r)
 		}
 	}
 	return ""
+}
+
+// nodeLabel names a task's node: its hostname, or its id when Swarm's node
+// list did not resolve it.
+func nodeLabel(r docker.TaskRecord) string {
+	if r.NodeName != "" {
+		return r.NodeName
+	}
+	return r.NodeID
+}
+
+// taskLive reports a task state whose container may still run.
+func taskLive(state string) bool {
+	switch state {
+	case "running", "starting", "preparing", "ready":
+		return true
+	}
+	return false
 }
 
 // shortID is the 12-character form `docker service ps` shows.
@@ -163,7 +184,7 @@ func taskStatuses(recs []docker.TaskRecord, n int) []TaskStatus {
 	out := make([]TaskStatus, 0, len(recs))
 	for _, r := range recs {
 		out = append(out, TaskStatus{
-			ID: shortID(r.ID), Node: r.NodeName, State: r.State, DesiredState: r.Desired,
+			ID: shortID(r.ID), Node: nodeLabel(r), State: r.State, DesiredState: r.Desired,
 			Message: r.Message, Error: r.Err, ExitCode: r.ExitCode,
 			CreatedAt: formatTime(r.Created), UpdatedAt: formatTime(r.Updated),
 		})
@@ -231,13 +252,13 @@ func (s *Service) probeTasks(ctx context.Context, appID int64, recs []docker.Tas
 		id := shortID(d.rec.ID)
 		if h := d.probe.Health; h != nil {
 			health = append(health, TaskHealth{
-				TaskID: id, Node: d.rec.NodeName, Status: h.Status, FailingStreak: h.FailingStreak,
+				TaskID: id, Node: nodeLabel(d.rec), Status: h.Status, FailingStreak: h.FailingStreak,
 				LastExitCode: h.LastExitCode, LastAt: formatTime(h.LastAt),
 			})
 		}
 		if d.probe.MemOK {
 			usage = append(usage, TaskUsage{
-				TaskID: id, Node: d.rec.NodeName, MemBytes: d.probe.MemBytes, MemLimitBytes: d.probe.MemLimitBytes,
+				TaskID: id, Node: nodeLabel(d.rec), MemBytes: d.probe.MemBytes, MemLimitBytes: d.probe.MemLimitBytes,
 			})
 		}
 	}
@@ -305,6 +326,15 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 	for _, r := range recs {
 		byID[shortID(r.ID)] = r
 	}
+	// A worker named like the control plane's sampler key shares its rows.
+	ambiguous := map[string]bool{}
+	seen := map[string]bool{}
+	for _, n := range names {
+		if seen[n] || n == controlPlaneNode {
+			ambiguous[n] = true
+		}
+		seen[n] = true
+	}
 	for i := range usage {
 		t, ok := byID[usage[i].TaskID]
 		if !ok || t.Created.IsZero() {
@@ -316,7 +346,10 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 			if o.ID == t.ID || o.NodeID != t.NodeID {
 				continue
 			}
-			if o.Desired == "running" {
+			// Another task meant to run here, or one being retired that
+			// still has a live container (a start-first predecessor whose
+			// desired state is already shutdown): the samples may be its.
+			if o.Desired == "running" || taskLive(o.State) {
 				alone = false
 				break
 			}
@@ -330,6 +363,9 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 		node := names[t.NodeID]
 		if node == "" {
 			node = controlPlaneNode
+		}
+		if ambiguous[node] {
+			continue // the sampler key names more than one node
 		}
 		if smp, ok := latest[node]; ok && smp.Ts.After(cutoff.Add(margin)) {
 			cpu := float64(smp.CpuPct)
