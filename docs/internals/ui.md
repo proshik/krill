@@ -64,3 +64,9 @@ A `@Component(...)` call inline after text renders as literal `@Component` text.
 ### Literal `@` between two templ `{ }` expressions breaks the parser
 
 `@` starts a component-call token anywhere in templ text, not just right after other text — `{ a } @ { b }` fails to parse even though neither `a` nor `b` is a component. Build the whole string as one Go expression instead: `{ a + " @ " + b }` (see `database_detail.templ`'s `dbName @ instanceName` line).
+
+### Service cards: kind plates, the running tint and the canvas row step
+
+*(2026-11-26)*
+
+- A `.svc` card's glyph sits on a plate (`ui.KindGlyph`, `.svc-ico--app`/`--db`/`--sys`, tokens `--color-kind-*`): violet for apps, teal for databases and storage, neutral for Krill's own services; a card whose status badge is `.state--ok` is tinted green by `.svc:has(.state--ok)`, so it follows the status poll's swaps, and hover, `.is-lit` and the selected card win over it. The plate made a canvas card about 108px tall, so `topology.CanvasRow` (also used for the ghost card) is 124: a taller card needs a bigger row step, or it covers the next one.

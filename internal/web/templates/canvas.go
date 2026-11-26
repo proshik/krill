@@ -89,8 +89,8 @@ func planeStyle(c topology.Canvas) string {
 func ghostY(g topology.CanvasGroup) int {
 	y := 64
 	for _, it := range g.Items {
-		if it.X < 200 && it.Y+114 > y {
-			y = it.Y + 114
+		if it.X < 200 && it.Y+topology.CanvasRow > y {
+			y = it.Y + topology.CanvasRow
 		}
 	}
 	return y
@@ -98,7 +98,7 @@ func ghostY(g topology.CanvasGroup) int {
 
 func ghostGroupStyle(g topology.CanvasGroup) string {
 	h := g.H
-	if gy := ghostY(g) + 114 + 8; gy > h {
+	if gy := ghostY(g) + topology.CanvasRow + 8; gy > h {
 		h = gy
 	}
 	return "--x:" + strconv.Itoa(g.X) + "px;--y:" + strconv.Itoa(g.Y) + "px;--w:" + strconv.Itoa(g.W) + "px;--h:" + strconv.Itoa(h) + "px"
@@ -120,7 +120,7 @@ func ghostOnlyStyle(c topology.Canvas) string {
 	if len(c.Groups) > 0 {
 		x = 760
 	}
-	return "--x:" + strconv.Itoa(x) + "px;--y:0px;--w:336px;--h:186px"
+	return "--x:" + strconv.Itoa(x) + "px;--y:0px;--w:336px;--h:" + strconv.Itoa(64+topology.CanvasRow+8) + "px"
 }
 
 func nodeCountLabel(n CanvasNode) string { return strconv.Itoa(n.Count) }

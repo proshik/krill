@@ -134,7 +134,7 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">
-				@ui.Glyph(c.Glyph)
+				@ui.KindGlyph(c.Glyph, ui.GlyphKind(c.Glyph))
 				<span class="svc-name">{ c.Name }</span>
 				if c.App {
 					@canvasPending(c.ElemID, c.Pending, false)
@@ -204,7 +204,7 @@ templ CanvasRefresh(v CanvasView) {
 templ ghostCard(y int) {
 	<div class="svc svc--ghost" id="s-ghost" style={ templ.SafeCSS(canvasStyle(24, y)) } aria-hidden="true">
 		<span class="svc-head">
-			@ui.Glyph("i-app")
+			@ui.KindGlyph("i-app", "app")
 			<span class="svc-name" data-ghost-name>{ i18n.T(ctx, "canvas.new_app") }</span>
 		</span>
 		<span class="svc-sub">{ i18n.T(ctx, "canvas.new_app") }</span>

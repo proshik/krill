@@ -41,6 +41,15 @@ type LaneItem struct {
 
 func laneWarn(l NodeLane) bool { return l.Mem >= 85 || l.Node.State != "ready" }
 
+// laneKind is the plate kind of a lane card: Krill's own services (the cards
+// without a link) are neutral whatever their glyph.
+func laneKind(it LaneItem) string {
+	if it.Href == "" {
+		return "sys"
+	}
+	return ui.GlyphKind(it.Glyph)
+}
+
 templ Nodes(org db.Organization, role string, lanes []NodeLane, newNode bool) {
 	@Page(Shell{Title: i18n.Sentence(i18n.T(ctx, "nodes.title")), Org: org, Role: role, Tab: "nodes", Body: dashBody(newNode)}) {
 		<main class="wrap wrap--wide">
@@ -182,7 +191,7 @@ templ laneGroup(title string, items []LaneItem) {
 
 templ laneItemBody(it LaneItem) {
 	<span class="svc-head">
-		@ui.Glyph(it.Glyph)
+		@ui.KindGlyph(it.Glyph, laneKind(it))
 		<span class="svc-name">{ it.Name }</span>
 		@ui.State(it.StateKind, it.StateText)
 	</span>

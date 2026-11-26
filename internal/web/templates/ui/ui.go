@@ -11,6 +11,18 @@ func SigKind(kind string) string {
 	return "idle"
 }
 
+// GlyphKind is the plate kind of a card glyph: an app, a database or storage
+// resource, or anything else (the gateway, the internet), drawn neutral.
+func GlyphKind(id string) string {
+	switch id {
+	case "i-app":
+		return "app"
+	case "i-pg", "i-kv", "i-bucket":
+		return "db"
+	}
+	return "sys"
+}
+
 func clamp(pct int) int {
 	if pct < 0 {
 		return 0

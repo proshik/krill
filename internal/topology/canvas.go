@@ -9,12 +9,13 @@ import "strconv"
 // package it is pure; the client only draws the wires between cards.
 
 // Canvas geometry, in CSS pixels on the unscaled plane. CardW mirrors the
-// stylesheet's --card-w.
+// stylesheet's --card-w; CanvasRow has to fit the tallest card (the .svc
+// rules in input.css), and the new-app ghost card is placed with it too.
 const (
 	CanvasCardW     = 288
 	canvasPad       = 24  // inner left/right padding of a group
 	canvasTop       = 64  // a group's first row, below its name
-	canvasRow       = 114 // vertical step between two cards
+	CanvasRow       = 124 // vertical step between two cards
 	canvasBottom    = 8   // below the last card's row step
 	canvasGroupW    = 736 // a two-column group
 	canvasLooseW    = 336 // the one-column group beside the systems
@@ -111,7 +112,7 @@ func LayoutCanvas(view EnvView, all []EnvResource) Canvas {
 			loose.X = canvasGroupW + canvasSideGap
 			loose.W = canvasLooseW
 			for i, k := range append(apps, res...) {
-				loose.Items = append(loose.Items, CanvasItem{Key: k, X: canvasPad, Y: canvasTop + i*canvasRow})
+				loose.Items = append(loose.Items, CanvasItem{Key: k, X: canvasPad, Y: canvasTop + i*CanvasRow})
 			}
 			loose.H = groupHeight(len(apps) + len(res))
 			width = loose.X + loose.W
@@ -134,10 +135,10 @@ func LayoutCanvas(view EnvView, all []EnvResource) Canvas {
 func twoColumns(apps, res []string) ([]CanvasItem, int) {
 	items := make([]CanvasItem, 0, len(apps)+len(res))
 	for i, k := range apps {
-		items = append(items, CanvasItem{Key: k, X: canvasPad, Y: canvasTop + i*canvasRow})
+		items = append(items, CanvasItem{Key: k, X: canvasPad, Y: canvasTop + i*CanvasRow})
 	}
 	for i, k := range res {
-		items = append(items, CanvasItem{Key: k, X: canvasColGap + canvasPad, Y: canvasTop + i*canvasRow})
+		items = append(items, CanvasItem{Key: k, X: canvasColGap + canvasPad, Y: canvasTop + i*CanvasRow})
 	}
 	rows := len(apps)
 	if len(res) > rows {
@@ -150,5 +151,5 @@ func groupHeight(rows int) int {
 	if rows < 1 {
 		rows = 1
 	}
-	return canvasTop + rows*canvasRow + canvasBottom
+	return canvasTop + rows*CanvasRow + canvasBottom
 }

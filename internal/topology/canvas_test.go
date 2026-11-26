@@ -31,13 +31,13 @@ func TestLayoutCanvasSystemsAndLoose(t *testing.T) {
 		t.Fatalf("want 2 systems + loose, got %d groups", len(c.Groups))
 	}
 	shop, office, loose := c.Groups[0], c.Groups[1], c.Groups[2]
-	if shop.Y != 0 || shop.W != 736 || shop.H != 64+3*114+8 {
+	if shop.Y != 0 || shop.W != 736 || shop.H != 64+3*124+8 {
 		t.Fatalf("shop frame: %+v", shop)
 	}
-	if it := itemAt(t, shop, "app:12"); it.X != 24 || it.Y != 64+2*114 {
+	if it := itemAt(t, shop, "app:12"); it.X != 24 || it.Y != 64+2*124 {
 		t.Fatalf("third app of shop: %+v", it)
 	}
-	if it := itemAt(t, shop, "inst:5"); it.X != 424 || it.Y != 64+114 {
+	if it := itemAt(t, shop, "inst:5"); it.X != 424 || it.Y != 64+124 {
 		t.Fatalf("second resource of shop: %+v", it)
 	}
 	if office.Y != shop.H+32 {
@@ -52,7 +52,7 @@ func TestLayoutCanvasSystemsAndLoose(t *testing.T) {
 	if !loose.Loose || loose.X != 760 || loose.W != 336 {
 		t.Fatalf("loose group beside the systems: %+v", loose)
 	}
-	if itemAt(t, loose, "app:14").Y != 64 || itemAt(t, loose, "bucket:7").Y != 64+114 {
+	if itemAt(t, loose, "app:14").Y != 64 || itemAt(t, loose, "bucket:7").Y != 64+124 {
 		t.Fatalf("loose items stack apps first, then unused resources: %+v", loose.Items)
 	}
 	if c.W != 1096 || c.H != shop.H+32+office.H {

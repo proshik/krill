@@ -142,7 +142,7 @@ templ topoCard(c TopoCard) {
 
 templ topoCardBody(c TopoCard) {
 	<span class="svc-head">
-		@ui.Glyph(c.Glyph)
+		@ui.KindGlyph(c.Glyph, ui.GlyphKind(c.Glyph))
 		<span class="svc-name">{ c.Name }</span>
 		if c.StateText != "" {
 			@ui.State(c.StateKind, c.StateText)

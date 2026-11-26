@@ -79,6 +79,11 @@ button, input, select, textarea { font: inherit; }
   --color-mark: var(--color-accent); --color-wire-lit: var(--color-accent);
   --color-accent: oklch(49% 0.16 288); --color-accent-deep: oklch(43% 0.15 288); --color-accent-soft: oklch(88% 0.05 292); --color-focus: oklch(49% 0.16 288);
   --color-card: oklch(99% 0.008 300); --color-well: var(--color-paper-2);
+  /* card kinds (the glyph plate) and the running card's tint */
+  --color-kind-app: oklch(49% 0.16 288); --color-kind-app-soft: oklch(92% 0.045 292);
+  --color-kind-db: oklch(50% 0.09 192); --color-kind-db-soft: oklch(92% 0.04 192);
+  --color-kind-sys: var(--color-muted); --color-kind-sys-soft: color-mix(in oklab, var(--color-ink) 7%, var(--color-card));
+  --color-card-run: color-mix(in oklab, var(--color-ok) 8%, var(--color-card)); --color-card-run-ring: color-mix(in oklab, var(--color-ok) 22%, transparent);
 }
 :root[data-mode="dark"] {
   color-scheme: dark;
@@ -93,6 +98,10 @@ button, input, select, textarea { font: inherit; }
   --shadow-card: none;
   --color-card: var(--color-paper-3); --color-well: var(--color-paper);
   --color-mark: oklch(74% 0.07 280); --color-wire-lit: oklch(72% 0.06 280);
+  --color-kind-app: oklch(80% 0.08 285); --color-kind-app-soft: oklch(35% 0.05 285);
+  --color-kind-db: oklch(80% 0.075 192); --color-kind-db-soft: oklch(34% 0.04 195);
+  --color-kind-sys-soft: color-mix(in oklab, var(--color-ink) 9%, var(--color-card));
+  --color-card-run: color-mix(in oklab, var(--color-ok) 12%, var(--color-card)); --color-card-run-ring: color-mix(in oklab, var(--color-ok) 30%, transparent);
 }
 
 /* ---------- controls ---------- */
@@ -158,6 +167,9 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .grp-name--quiet { color: var(--color-muted); font-weight: 500; }
 
 .svc { position: absolute; left: var(--x); top: var(--y); z-index: var(--z-raised); display: grid; gap: var(--space-2xs); width: var(--card-w); padding: var(--space-sm) var(--space-md) var(--space-sm); border-radius: var(--radius-card); background: var(--color-card); box-shadow: var(--shadow-card); color: inherit; text-decoration: none; transition: opacity var(--dur-short) var(--ease-out), background-color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out); }
+/* A running card (its status badge is ok, live after every poll swap) is
+   tinted green; hover, .is-lit and the selected card come after and win. */
+.svc:has(.state--ok) { background: var(--color-card-run); box-shadow: inset 0 0 0 1px var(--color-card-run-ring); }
 .svc:hover { box-shadow: inset 0 0 0 1.5px var(--color-rule-2); }
 .svc.is-lit { box-shadow: inset 0 0 0 1.5px var(--color-accent); }
 .svc[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--color-accent); background: color-mix(in oklab, var(--color-accent) 10%, var(--color-card)); }
@@ -166,13 +178,21 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 /* In the lanes of the topology and the nodes page a card's head wraps rather
    than overflow: when the name and the status do not fit on one line the
    status moves to the next one, and a name or status wider than the card
-   wraps inside it, beside the glyph (20px). The Traefik card's status stuck
-   out of a narrow ingress lane. Not on the canvas: its cards sit on a fixed
-   row step, and a taller card would cover the next one. */
+   wraps inside it, beside the glyph plate (--svc-ico). The Traefik card's
+   status stuck out of a narrow ingress lane. Not on the canvas: its cards sit
+   on a fixed row step (topology.CanvasRow), and a taller card would cover the
+   next one. */
 :is(.topomap, .lanemap) .svc-head { flex-wrap: wrap; row-gap: var(--space-2xs); }
 :is(.topomap, .lanemap) .svc-head .state { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-:is(.topomap, .lanemap) .svc-head .svc-name { min-width: 0; max-width: calc(100% - 20px - var(--space-sm)); overflow-wrap: anywhere; }
+:is(.topomap, .lanemap) .svc-head .svc-name { min-width: 0; max-width: calc(100% - var(--svc-ico) - var(--space-sm)); overflow-wrap: anywhere; }
 .glyph { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--color-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* A card's kind at a glance: its glyph on a plate, violet for apps, teal for
+   databases and storage, neutral for Krill's own services. */
+.svc { --svc-ico: 32px; }
+.svc-ico { display: grid; place-items: center; width: var(--svc-ico); height: var(--svc-ico); flex: none; border-radius: 9px; background: var(--color-kind-sys-soft); color: var(--color-kind-sys); }
+.svc-ico .glyph { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.4; }
+.svc-ico--app { background: var(--color-kind-app-soft); color: var(--color-kind-app); }
+.svc-ico--db { background: var(--color-kind-db-soft); color: var(--color-kind-db); }
 .svc-name { font: 500 var(--text-lg)/1.1 var(--font-display); letter-spacing: var(--tracking-display); }
 .svc-sub { color: var(--color-muted); font-size: var(--text-sm); line-height: 1.3; overflow-wrap: anywhere; }
 .svc-sub--link { color: var(--color-ink-2); }
