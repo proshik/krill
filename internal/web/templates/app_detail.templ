@@ -76,9 +76,13 @@ type AppCtx struct {
 	Deployment *db.Deployment
 	// NodeNames maps a Swarm node id to the name the canvas shows for it.
 	NodeNames map[string]string
-	// Running is the app's running replicas, read for the terminal tab; -1
-	// when unknown (another tab, or Swarm did not answer).
+	// Running is the app's running replicas, read for the terminal tab and
+	// by the deployments poll; -1 when unknown (another tab, or Swarm did not
+	// answer).
 	Running int
+	// HeadStatus is the state the sheet head shows: Status, or a node badge
+	// for a pinned app with no live node. "" falls back to App.Status.
+	HeadStatus string
 	// VolumeBlocks are the volumes' backup sections (settings tab).
 	VolumeBlocks map[int64]BackupBlock
 	// Pending is what the app's saved settings would change if deployed now.
@@ -113,6 +117,27 @@ func (c AppCtx) base() string {
 
 func (c AppCtx) admin() bool { return isAdmin(c.Role) }
 
+func (c AppCtx) headStatus() string {
+	if c.HeadStatus != "" {
+		return c.HeadStatus
+	}
+	return c.App.Status
+}
+
+// headPollURL is where the sheet head's state polls itself, "" on the
+// deployments overview: the deployments poll refreshes it there, with the
+// "runs on" list, from one read.
+func (c AppCtx) headPollURL(tab string) string {
+	switch tab {
+	case "logs", "variables", "domains", "metrics", "settings", "terminal":
+	default:
+		if c.Deployment == nil {
+			return ""
+		}
+	}
+	return c.base() + "/status"
+}
+
 func (c AppCtx) envURL() string { return envURL(c.Org.ID, c.Project.ID, c.Env.ID) }
 
 // appTabs are the sheet's tabs the viewer may open: variables and the
@@ -142,7 +167,7 @@ templ AppDetail(c AppCtx, tab string) {
 				<div class="sheet-title">
 					@ui.Glyph("i-app")
 					<h2>{ c.App.Name }</h2>
-					@AppStateBadge(c.App.Status, c.base()+"/status", c.Running)
+					@AppStateBadge(c.headStatus(), c.headPollURL(tab), c.Running, false)
 					@PendingMarker(c.Pending, false)
 				</div>
 				<a class="pill pill--icon" href={ templ.SafeURL(c.envURL()) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
@@ -233,9 +258,12 @@ templ PendingMarker(p PendingView, oob bool) {
 
 // DeploymentsPoll is the deployments tab's poll response: the list, plus the
 // header marker, the tab dots and the canvas card marker (oob), which change
-// with it when a deploy applies the saved settings.
+// with it when a deploy applies the saved settings, and the head's state with
+// the "runs on" list (oob), read from Swarm together so they tell one story.
 templ DeploymentsPoll(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	@DeploymentsList(c, deps)
+	@AppStateBadge(c.headStatus(), "", c.Running, true)
+	@appRuns(c, true)
 	@PendingMarker(c.Pending, true)
 	for _, t := range c.appTabs(ctx) {
 		if len(tabSections(t.Key)) > 0 {
@@ -249,7 +277,7 @@ templ DeploymentsPoll(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 // changes up (it runs every 3 s on every tab), but clears the markers of an
 // app that no longer runs: they are never shown for a stopped app.
 templ AppStatePoll(c AppCtx, status string, running int) {
-	@AppStateBadge(status, c.base()+"/status", running)
+	@AppStateBadge(status, c.base()+"/status", running, false)
 	if status != "running" {
 		@PendingMarker(PendingView{}, true)
 		for _, t := range c.appTabs(ctx) {
@@ -261,47 +289,30 @@ templ AppStatePoll(c AppCtx, status string, running int) {
 	}
 }
 
-// AppStateBadge is the app's live state in the sheet head; it refreshes itself.
-// running (-1 when unknown) lets the terminal tab follow its replicas: see
-// krillTermState in app.js.
-templ AppStateBadge(status, pollURL string, running int) {
+// AppStateBadge is the app's live state in the sheet head. It refreshes
+// itself from pollURL; with none (the deployments overview) the deployments
+// poll replaces it (oob). running (-1 when unknown) lets the terminal tab
+// follow its replicas: see krillTermState in app.js.
+templ AppStateBadge(status, pollURL string, running int, oob bool) {
 	{{ kind, text := AppState(ctx, status) }}
-	<span class={ "state", "state--" + kind } id="app-state" hx-get={ pollURL } hx-trigger="every 3s" hx-swap="outerHTML" data-running={ itoa(int64(running)) }>
+	<span
+		class={ "state", "state--" + kind }
+		id="app-state"
+		if pollURL != "" {
+			hx-get={ pollURL }
+			hx-trigger="every 3s"
+			hx-swap="outerHTML"
+		}
+		data-running={ itoa(int64(running)) }
+		{ swapOOB(oob)... }
+	>
 		@ui.Sig(kind)
 		{ text }
 	</span>
 }
 
 templ deploymentsTab(c AppCtx) {
-	<section class="runs" aria-labelledby="runs-h">
-		<h3 id="runs-h">{ i18n.T(ctx, "app.runs_on") }</h3>
-		if len(c.Tasks) == 0 {
-			<p class="empty">{ i18n.T(ctx, "app.no_replicas") }</p>
-		} else {
-			<div class="runs-list">
-				for _, t := range c.Tasks {
-					<div class="run">
-						<span class="run-node">
-							if n := c.NodeNames[t.NodeID]; n != "" {
-								{ n }
-							} else if t.NodeName != "" {
-								{ nodeDisplay(c.NodeLabels, t.NodeID, t.NodeName) }
-							} else {
-								{ i18n.T(ctx, "app.not_placed") }
-							}
-						</span>
-						if t.Desired != "" && taskLabel(ctx, t.Desired) != taskLabel(ctx, t.State) {
-							<span class="run-meta">{ "→ " + taskLabel(ctx, t.Desired) }</span>
-						} else {
-							<span class="run-meta"></span>
-						}
-						@ui.State(taskKind(t.State), taskLabel(ctx, t.State))
-					</div>
-				}
-			</div>
-		}
-		<p class="hint">{ placementText(ctx, c) }</p>
-	</section>
+	@appRuns(c, false)
 	// The app's action forms stay outside the polled part: a refresh must not
 	// replace a form whose confirmation is open. The buttons in the polled
 	// part reach them through form=.
@@ -314,6 +325,38 @@ templ deploymentsTab(c AppCtx) {
 	<div hx-get={ c.base() + "/deployments-list" } hx-trigger="every 3s" hx-swap="innerHTML">
 		@DeploymentsList(c, c.Deps)
 	</div>
+}
+
+// appRuns is where the app's tasks run: every task Swarm wants running, the
+// one serving first (during a StartFirst update the old task serves while
+// the new one starts). The deployments poll replaces it (oob) together with
+// the head's state.
+templ appRuns(c AppCtx, oob bool) {
+	<section class="runs" id="app-runs" aria-labelledby="runs-h" { swapOOB(oob)... }>
+		<h3 id="runs-h">{ i18n.T(ctx, "app.runs_on") }</h3>
+		if len(c.Tasks) == 0 {
+			<p class="empty">{ i18n.T(ctx, "app.no_replicas") }</p>
+		} else {
+			<div class="runs-list">
+				for _, t := range sortedTasks(c.Tasks) {
+					<div class="run">
+						<span class="run-node">
+							if n := c.NodeNames[t.NodeID]; n != "" {
+								{ n }
+							} else if t.NodeName != "" {
+								{ nodeDisplay(c.NodeLabels, t.NodeID, t.NodeName) }
+							} else {
+								{ i18n.T(ctx, "app.not_placed") }
+							}
+						</span>
+						<span class="run-meta"></span>
+						@ui.State(taskKind(t.State), taskLabel(ctx, t.State))
+					</div>
+				}
+			</div>
+		}
+		<p class="hint">{ placementText(ctx, c) }</p>
+	</section>
 }
 
 // DeploymentsList is the polled part of the deployments tab: a failed

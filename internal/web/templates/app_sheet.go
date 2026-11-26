@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -65,6 +66,24 @@ func taskKind(state string) string {
 		return "warn"
 	}
 	return "idle"
+}
+
+// sortedTasks orders the "runs on" list so it does not reshuffle on every
+// poll (Swarm lists tasks in no set order): running tasks first, then the
+// starting, failed and stopped ones; within a state by node, then task ID.
+func sortedTasks(tasks []docker.TaskPlacement) []docker.TaskPlacement {
+	rank := map[string]int{"ok": 0, "warn": 1, "err": 2, "idle": 3}
+	out := slices.Clone(tasks)
+	slices.SortStableFunc(out, func(a, b docker.TaskPlacement) int {
+		if d := rank[taskKind(a.State)] - rank[taskKind(b.State)]; d != 0 {
+			return d
+		}
+		if c := strings.Compare(a.NodeName, b.NodeName); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
 }
 
 func taskLabel(ctx context.Context, state string) string {
