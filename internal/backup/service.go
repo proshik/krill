@@ -251,10 +251,19 @@ func retentionNote(listErr error, deleteFailures int) string {
 	return ""
 }
 
+// resultWriteTimeout bounds recording a failed run's result.
+const resultWriteTimeout = 10 * time.Second
+
 func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) error {
-	// WithoutCancel: a run that failed because its deadline passed must still
-	// record the failure, or the previous "ok" would stand for it.
-	_ = s.store.SetBackupResult(context.WithoutCancel(ctx), id, now, "error", err.Error())
+	// A run that failed because its deadline passed must still record the
+	// failure, or the previous "ok" would stand for it: the write gets a
+	// context of its own, bounded so a stalled database cannot hold the run's
+	// claim (and keep the backup "running") indefinitely.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resultWriteTimeout)
+	defer cancel()
+	if werr := s.store.SetBackupResult(wctx, id, now, "error", err.Error()); werr != nil {
+		slog.Error("backup: could not record the failed run", "backup_id", id, "err", werr)
+	}
 	if s.notifier != nil {
 		s.notifier.BackupFailed(ctx, id, err.Error())
 	}

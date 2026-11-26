@@ -23,5 +23,8 @@ func (s *Service) SetDomainProbe(
 	s.domains = domainProbe{lookup: lookup, certs: certs, roots: roots, now: now}
 }
 
-// RedactBackupError exposes the backup error redaction.
-var RedactBackupError = redactBackupError
+// BackupErrorSummary exposes the backup error summary.
+var BackupErrorSummary = backupErrorSummary
+
+// DisplayRepoURL exposes the git address shown by AppConfig.
+var DisplayRepoURL = displayRepoURL

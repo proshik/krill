@@ -109,7 +109,10 @@ func TestAppStatusReportsTasksHealthAndUsage(t *testing.T) {
 		},
 	}
 	svc := api.NewService(f.q, eng, nil)
-	time.Sleep(20 * time.Millisecond)
+	// A sample counts for a task only a full sampler interval after the task
+	// (and its predecessor's last change): a row's time is its insert time.
+	svc.SetMetricsInterval(time.Second)
+	time.Sleep(1200 * time.Millisecond)
 	// A sample of krill-<app> on the control plane taken after the running
 	// task started (and after its predecessor on that node stopped).
 	if err := f.q.InsertMetricSample(t.Context(), db.InsertMetricSampleParams{
@@ -232,9 +235,10 @@ func TestLogsWindowAndContains(t *testing.T) {
 		t.Fatalf("until must be applied by Krill and contains case-insensitively: %+v", lines)
 	}
 	// Swarm's task logs take no until, so a window with an end is read whole
-	// from its start, never cut by a tail that counts back from now.
+	// from its start, never cut by a tail that counts back from now; the end
+	// goes to the engine only to pick the tasks.
 	w := eng.lastWindow()
-	if w.Tail != docker.TailAll || !w.Until.IsZero() || w.Since.IsZero() || w.Follow {
+	if w.Tail != docker.TailAll || w.Until.IsZero() || w.Since.IsZero() || w.Follow {
 		t.Fatalf("window sent to docker: %+v", w)
 	}
 
@@ -321,7 +325,9 @@ func TestWaitForLogFollowsNewLines(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("a match must answer within the after-match grace, took %s", time.Since(start))
 	}
-	if w := eng.lastWindow(); !w.Follow || w.Since.IsZero() {
+	// The follow takes what is written from now on, with no time bound: a
+	// worker's clock behind the control plane's cannot hide a line.
+	if w := eng.lastWindow(); !w.Follow || !w.Since.IsZero() || w.Tail != 0 {
 		t.Fatalf("follow window: %+v", w)
 	}
 }
@@ -547,5 +553,116 @@ func TestAppConfigStripsGitCredentials(t *testing.T) {
 	}
 	if strings.Contains(mustJSON(t, cfg), "ghp_tok3n") {
 		t.Fatal("git token leaked")
+	}
+}
+
+func TestDisplayRepoURLShowsNoCredentials(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/acme/bot.git":                                "https://github.com/acme/bot.git",
+		"https://bot:ghp_tok3n@github.com/acme/bot.git":                  "https://github.com/acme/bot.git", // gitleaks:allow (fake)
+		"https://git.example.test/acme/bot.git?private_token=tok3n#frag": "https://git.example.test/acme/bot.git",
+		"https://user:pa%zz@git.example.test/acme/bot.git":               "", // unparseable: not shown at all
+		"git@github.com:acme/bot.git":                                    "github.com:acme/bot.git",
+		"ssh://git@github.com/acme/bot.git":                              "ssh://github.com/acme/bot.git",
+		"user:tok3n@github.com:acme/bot.git":                             "", // gitleaks:allow (fake)
+		"":                                                               "",
+	}
+	for in, want := range cases {
+		if got := api.DisplayRepoURL(in); got != want {
+			t.Errorf("display(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestWaitForLogMatchesALineStampedBeforeTheCall(t *testing.T) {
+	f := newAPIFixture(t)
+	fs := newFollowStream()
+	eng := &diagEngine{follow: func(ctx context.Context) io.ReadCloser {
+		context.AfterFunc(ctx, func() { fs.pw.Close() })
+		return fs.pr
+	}}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		// A worker whose clock is an hour behind writes the line now.
+		fs.write(time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + " ready to serve")
+	}()
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "ready", Timeout: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := res.(api.LogWaitResult); !w.Found {
+		t.Fatalf("a new line must match whatever its timestamp: %+v", w)
+	}
+}
+
+// brokenFollow is a live stream that fails mid-read.
+type brokenFollow struct{ done bool }
+
+func (b *brokenFollow) Read(p []byte) (int, error) {
+	if !b.done {
+		b.done = true
+		return copy(p, "2026-11-26T10:00:00Z starting\n"), nil
+	}
+	return 0, errors.New("connection reset")
+}
+func (*brokenFollow) Close() error { return nil }
+
+func TestWaitForLogReportsABrokenLiveRead(t *testing.T) {
+	f := newAPIFixture(t)
+	eng := &diagEngine{follow: func(context.Context) io.ReadCloser { return &brokenFollow{} }}
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Timeout: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := res.(api.LogWaitResult)
+	if w.Found || w.StoppedBy != "error" || !w.Incomplete || len(w.Lines) != 1 {
+		t.Fatalf("a broken live read is not a clean end: %+v", w)
+	}
+}
+
+func TestLogsContainsSaysWhenATaskWasCapped(t *testing.T) {
+	f := newAPIFixture(t)
+	var b strings.Builder
+	for i := 0; i < 10000; i++ {
+		b.WriteString("2026-11-20T10:00:00.000Z com.docker.swarm.node.id=n1,com.docker.swarm.service.id=s1,com.docker.swarm.task.id=t1 busy\n")
+	}
+	eng := &diagEngine{backlog: b.String()}
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{Contains: "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := res.([]api.LogLine)
+	if len(lines) != 1 || !strings.Contains(lines[0].Message, "incomplete") {
+		t.Fatalf("a task that filled its scan cap may hold more lines: want the incomplete notice, got %+v", lines)
+	}
+}
+
+func TestLogsTruncateAnOversizedLine(t *testing.T) {
+	f := newAPIFixture(t)
+	eng := &diagEngine{backlog: "2026-11-20T10:00:00.000Z " + strings.Repeat("x", 100<<10) + "\n"}
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := res.([]api.LogLine)
+	if len(lines) != 1 || len(lines[0].Message) > 17<<10 || !strings.Contains(lines[0].Message, "truncated") {
+		t.Fatalf("oversized line: %d bytes", len(lines[0].Message))
+	}
+}
+
+// A deploy that ends right before the wait's deadline, after its last poll,
+// is reported ended, not running.
+func TestDeploymentStatusWaitReadsOnceMoreAtTheDeadline(t *testing.T) {
+	f := newAPIFixture(t)
+	depID := f.seedDeployment(t)
+	time.AfterFunc(950*time.Millisecond, func() {
+		_ = f.q.FinishDeployment(context.Background(), db.FinishDeploymentParams{ID: depID, Status: "error", Log: "boom"})
+	})
+	d, err := f.svc.DeploymentStatusWait(t.Context(), f.readIdent, depID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "error" || d.LogTail != "boom" {
+		t.Fatalf("detail at the deadline: %+v", d)
 	}
 }

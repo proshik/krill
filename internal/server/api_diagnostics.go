@@ -14,6 +14,7 @@ import (
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/backup"
 	"github.com/proshik/krill/internal/bucketbackup"
+	"github.com/proshik/krill/internal/traefik"
 	"github.com/proshik/krill/internal/volume"
 )
 
@@ -67,9 +68,10 @@ func (b apiBackups) Running(kind string, id int64) bool {
 	return false
 }
 
-// apiGateway is what Krill knows of its gateway: Traefik runs on the manager
-// nodes with 80/443 published in host mode, so it answers at the manager's
-// advertised address and at every manager's Swarm address.
+// apiGateway is what Krill knows of its gateway: Traefik publishes 80/443 in
+// host mode, so it answers at the addresses of the nodes its task runs on —
+// not at every manager — and, as configured evidence, at the manager's
+// advertised address.
 type apiGateway struct{ s *Server }
 
 func (g apiGateway) DialAddr() string {
@@ -93,16 +95,28 @@ func (g apiGateway) Addresses(ctx context.Context) ([]string, error) {
 		}
 	}
 	if g.s.engine != nil {
-		nodes, err := g.s.engine.Nodes(ctx)
+		tasks, err := g.s.engine.ServiceTasks(ctx, traefik.ServiceName)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("list swarm nodes: %w", err))
+			errs = append(errs, fmt.Errorf("gateway tasks: %w", err))
 		}
-		for _, n := range nodes {
-			if n.Role != "manager" {
-				continue
+		onNode := map[string]bool{}
+		for _, t := range tasks {
+			if t.State == "running" {
+				onNode[t.NodeID] = true
 			}
-			if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
-				out = append(out, ip.String())
+		}
+		if len(onNode) > 0 {
+			nodes, err := g.s.engine.Nodes(ctx)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("list swarm nodes: %w", err))
+			}
+			for _, n := range nodes {
+				if !onNode[n.ID] {
+					continue
+				}
+				if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
+					out = append(out, ip.String())
+				}
 			}
 		}
 	}

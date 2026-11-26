@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,14 +53,97 @@ func TestAPIDiagnosticRoutesRejectForeignOrgToken(t *testing.T) {
 		{http.MethodGet, "/api/v1/apps/" + fx.appID + "/logs?wait_for=x&timeout=1"},
 		{http.MethodGet, "/api/v1/deployments/" + fx.deployID + "?wait=5"},
 		{http.MethodGet, "/api/v1/backups?app=" + fx.appID},
-		{http.MethodPost, "/api/v1/backups/database/1/run"},
-		{http.MethodPost, "/api/v1/backups/volume/1/run"},
-		{http.MethodPost, "/api/v1/backups/bucket/1/run"},
 	} {
 		if rec := apiDo(t, h, rt.method, rt.path, fx.foreignToken); rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s: want 404, got %d: %s", rt.method, rt.path, rec.Code, rec.Body.String())
 		}
 	}
+
+	// Backups that exist in org A: B's write token must not reach them,
+	// A's own must get past the tenancy check (to the start, which this
+	// server has no volume or bucket backup service for: 503).
+	ctx := context.Background()
+	appID, _ := strconv.ParseInt(fx.appID, 10, 64)
+	chain, err := q.GetApplicationChain(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := seedBackupsOfEachKind(t, q, chain.OrgID, appID)
+	owner, err := q.GetUserByEmail(ctx, "api-idor-a@k.local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := issueAPIToken(t, q, owner.ID, chain.OrgID, api.LevelWrite)
+	for kind, id := range ids {
+		path := "/api/v1/backups/" + kind + "/" + strconv.FormatInt(id, 10) + "/run"
+		if rec := apiDo(t, h, http.MethodPost, path, fx.foreignToken); rec.Code != http.StatusNotFound {
+			t.Errorf("foreign %s: want 404, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+		if kind == "database" {
+			// This test server wires a database backup service with no
+			// docker engine: a started run would dereference it.
+			continue
+		}
+		if rec := apiDo(t, h, http.MethodPost, path, own); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("own %s: want 503 (no backup service of that kind here), got %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	rec := apiDo(t, h, http.MethodGet, "/api/v1/backups", own)
+	var list []api.BackupInfo
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list) != 3 {
+		t.Fatalf("own list: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := apiDo(t, h, http.MethodGet, "/api/v1/backups", fx.foreignToken); strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Fatalf("foreign list: %s", rec.Body.String())
+	}
+}
+
+// seedBackupsOfEachKind adds a pg_dump, a volume and a bucket backup to an
+// app's environment and returns their ids by kind.
+func seedBackupsOfEachKind(t *testing.T, q *db.Queries, orgID, appID int64) map[string]int64 {
+	t.Helper()
+	ctx := context.Background()
+	app, err := q.GetApplication(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := q.CreateDestination(ctx, db.CreateDestinationParams{OrganizationID: orgID, Name: "offsite", Bucket: "bk", Region: "us-east-1", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: orgID, Engine: "postgres", Name: "main", AppName: "krill-postgres-api-diag", Image: "postgres:16", Superuser: "postgres", SuperuserPassword: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ldb, err := q.CreateLogicalDatabase(ctx, db.CreateLogicalDatabaseParams{InstanceID: pg.ID, EnvironmentID: app.EnvironmentID, Name: "app", DbName: "app", Username: "app", Password: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := q.CreateBackup(ctx, db.CreateBackupParams{LogicalDatabaseID: ldb.ID, DestinationID: dest.ID, Schedule: "@daily", Retention: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol, err := q.CreateVolume(ctx, db.CreateVolumeParams{ApplicationID: app.ID, Name: "data", MountPath: "/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vb, err := q.CreateVolumeBackup(ctx, db.CreateVolumeBackupParams{AppVolumeID: vol.ID, DestinationID: dest.ID, Schedule: "@daily", Retention: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mi, err := q.CreateDBInstance(ctx, db.CreateDBInstanceParams{OrganizationID: orgID, Engine: "minio", Name: "files", AppName: "krill-minio-api-diag", Image: "minio/minio", Superuser: "root", SuperuserPassword: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bk, err := q.CreateS3Bucket(ctx, db.CreateS3BucketParams{InstanceID: mi.ID, EnvironmentID: app.EnvironmentID, Name: "uploads", AccessKey: "ak", SecretKey: "x", CreatedByKrill: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bb, err := q.CreateBucketBackup(ctx, db.CreateBucketBackupParams{BucketID: bk.ID, DestinationID: dest.ID, Schedule: "@daily", Retention: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]int64{"database": b.ID, "volume": vb.ID, "bucket": bb.ID}
 }
 
 func TestAPIDiagnosticRoutes(t *testing.T) {

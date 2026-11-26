@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -50,10 +49,15 @@ type BackupInfo struct {
 	Enabled     bool   `json:"enabled"`
 	Retention   int32  `json:"retention"`
 	Running     bool   `json:"running"`
-	// LastRunAt is when the run that recorded the last result started.
+	// LastRunAt is when the run that recorded the last result started, to
+	// the microsecond: the run BackupNow started is the one whose
+	// LastRunAt equals its StartedAt.
 	LastRunAt  string `json:"last_run_at,omitempty"`
 	LastStatus string `json:"last_status,omitempty"` // ok | error
-	LastError  string `json:"last_error,omitempty"`  // redacted, bounded
+	// LastError is a summary Krill writes of the stored error, never the
+	// stored text itself: that comes from SDKs and tools and can carry a
+	// credential. The full text is on the backup's page in the web UI.
+	LastError string `json:"last_error,omitempty"`
 	// LastSuccessAt is when the latest successful run on record finished
 	// (runs are kept 30 days), or, when the last run succeeded, when it ran.
 	LastSuccessAt string `json:"last_success_at,omitempty"`
@@ -67,8 +71,9 @@ type BackupFilter struct {
 	Environment string
 }
 
-// BackupStarted answers BackupNow. The run's outcome is the list entry's
-// result once running is false and its last_run_at is not before StartedAt.
+// BackupStarted answers BackupNow. Once the list entry's running is false,
+// its result is this run's when last_run_at equals StartedAt, a later run's
+// when it is later, and none (this run recorded nothing) when it is earlier.
 type BackupStarted struct {
 	Kind      string `json:"kind"`
 	ID        int64  `json:"id"`
@@ -160,19 +165,25 @@ func (s *Service) backupRows(ctx context.Context, orgID int64) ([]backupRow, err
 		return nil, fmt.Errorf("list backups: latest runs: %w", err)
 	}
 	lastOK := make(map[string]time.Time, len(okRuns))
+	runningBefore, err := s.runningBackups(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range okRuns {
 		lastOK[r.Kind+":"+strconv.FormatInt(r.SourceID, 10)] = r.FinishedAt
 	}
 	common := func(kind string, id int64, schedule string, retention int32, enabled bool, lastRun pgtype.Timestamptz, status, lastErr, dest string) BackupInfo {
 		b := BackupInfo{
 			Kind: kind, ID: id, Destination: dest, Schedule: schedule, Enabled: enabled, Retention: retention,
-			LastStatus: status, LastError: redactBackupError(lastErr),
+			LastStatus: status, LastError: backupErrorSummary(lastErr),
 		}
-		if s.backups != nil {
-			b.Running = s.backups.Running(kind, id)
-		}
+		// Running is sampled before the rows were read and again now: a run
+		// that ended in between may have written its result after the read,
+		// so it still counts as running and the caller looks again, rather
+		// than pairing running=false with the previous result.
+		b.Running = runningBefore[kind+":"+strconv.FormatInt(id, 10)] || (s.backups != nil && s.backups.Running(kind, id))
 		if lastRun.Valid {
-			b.LastRunAt = formatTime(lastRun.Time)
+			b.LastRunAt = formatMicro(lastRun.Time)
 		}
 		success, ok := lastOK[kind+":"+strconv.FormatInt(id, 10)]
 		if status == "ok" && lastRun.Valid && (!ok || lastRun.Time.After(success)) {
@@ -234,7 +245,9 @@ func (s *Service) BackupNow(ctx context.Context, id Identity, kind string, backu
 	if s.backups == nil {
 		return BackupStarted{}, Unavailable("backups are unavailable on this server")
 	}
-	now := time.Now()
+	// Microsecond precision: the stored last_run_at of this run is this
+	// value exactly, which is how a caller recognizes its result.
+	now := time.Now().Truncate(time.Microsecond)
 	if err := s.backups.Start(kind, backupID, now); err != nil {
 		switch {
 		case errors.Is(err, ErrBackupBusy):
@@ -244,7 +257,32 @@ func (s *Service) BackupNow(ctx context.Context, id Identity, kind string, backu
 		}
 		return BackupStarted{}, fmt.Errorf("backup now: %w", err)
 	}
-	return BackupStarted{Kind: kind, ID: backupID, Status: "started", StartedAt: formatTime(now)}, nil
+	return BackupStarted{Kind: kind, ID: backupID, Status: "started", StartedAt: formatMicro(now)}, nil
+}
+
+// formatMicro renders t to the microsecond, the precision PostgreSQL keeps,
+// so a stored run time compares equal to the time the run was started with.
+func formatMicro(t time.Time) string {
+	return t.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z07:00")
+}
+
+// runningBackups samples which of the organization's backups run, before
+// their rows are read (see backupRows).
+func (s *Service) runningBackups(ctx context.Context, orgID int64) (map[string]bool, error) {
+	out := map[string]bool{}
+	if s.backups == nil {
+		return out, nil
+	}
+	ids, err := s.q.ListOrgBackupIDs(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list backups: ids: %w", err)
+	}
+	for _, r := range ids {
+		if s.backups.Running(r.Kind, r.ID) {
+			out[r.Kind+":"+strconv.FormatInt(r.ID, 10)] = true
+		}
+	}
+	return out, nil
 }
 
 // backupInOrg checks that a backup configuration exists in the organization;
@@ -299,33 +337,42 @@ func (s *Service) backupInOrg(ctx context.Context, orgID int64, kind string, bac
 	return nil
 }
 
-// backupErrorMax bounds a returned backup error.
-const backupErrorMax = 500
-
-var (
-	// urlUserinfo matches the credentials of a URL (scheme://user:pass@).
-	urlUserinfo = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@`)
-	// credentialPair matches key=value or key: value with a credential-like
-	// key, also as a query parameter (X-Amz-Signature=…, password=…).
-	credentialPair = regexp.MustCompile(`(?i)((?:x-amz-)?(?:password|passwd|pwd|secret[a-z_-]*|token|signature|credential|access[_-]?key[a-z_-]*|api[_-]?key|authorization)\s*[=:]\s*)("[^"]*"|[^\s&"',;]+)`)
-)
-
-// redactBackupError makes a stored backup error safe to hand an agent: the
-// text comes from SDKs and tools and is not guaranteed free of credentials.
-// URL userinfo and credential-named values are masked; the result is cut to
-// backupErrorMax bytes on a character boundary.
-func redactBackupError(msg string) string {
-	if msg == "" {
+// backupErrorSummary turns a stored backup error into a summary Krill
+// writes itself. The stored text comes from S3 SDKs, pg_dump and archive
+// tools and can echo a credential (an access key, a signed URL); none of it
+// is passed on, only the kind of failure it shows.
+func backupErrorSummary(msg string) string {
+	if strings.TrimSpace(msg) == "" {
 		return ""
 	}
-	msg = urlUserinfo.ReplaceAllString(msg, "${1}***@")
-	msg = credentialPair.ReplaceAllString(msg, "${1}***")
-	if len(msg) > backupErrorMax {
-		cut := backupErrorMax
-		for cut > 0 && msg[cut]&0xC0 == 0x80 {
-			cut--
+	m := strings.ToLower(msg)
+	has := func(subs ...string) bool {
+		for _, sub := range subs {
+			if strings.Contains(m, sub) {
+				return true
+			}
 		}
-		msg = strings.TrimSpace(msg[:cut]) + "…"
+		return false
 	}
-	return msg
+	switch {
+	case strings.HasPrefix(m, "backup stored, but"):
+		return "the backup was stored, but old backups could not be pruned: the destination keeps growing"
+	case has("migrating"):
+		return "the database server was migrating; the backup was not taken"
+	case has("context deadline exceeded", "timeout", "timed out"):
+		return "the backup ran out of time"
+	case has("accessdenied", "access denied", "signaturedoesnotmatch", "invalidaccesskeyid", "statuscode: 403", "status code: 403", "forbidden"):
+		return "the destination refused the credentials"
+	case has("nosuchbucket", "no such bucket"):
+		return "the destination bucket does not exist"
+	case has("no such host", "connection refused", "network is unreachable", "dial tcp", "egress"):
+		return "the destination could not be reached"
+	case has("undecryptable"):
+		return "a stored credential could not be decrypted (missing or rotated KRILL_SECRET_KEY)"
+	case has("pg_dump"):
+		return "pg_dump failed"
+	case has("no running container", "not running"):
+		return "the source was not running"
+	}
+	return "the backup failed; the full error is on the backup's page in the web UI"
 }

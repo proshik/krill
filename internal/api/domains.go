@@ -11,6 +11,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -214,7 +215,7 @@ func (s *Service) checkDomain(ctx context.Context, c *DomainCheck, gw map[string
 	defer cancel()
 	chain, err := s.domains.certs(tctx, dialAddr, c.Host)
 	if err != nil {
-		c.Certificate = &CertCheck{Error: "TLS handshake with the gateway failed: " + handshakeError(err)}
+		c.Certificate = &CertCheck{Error: "TLS handshake with the gateway failed: " + handshakeError(err, dialAddr)}
 		return
 	}
 	c.Certificate = s.inspectChain(chain, c.Host)
@@ -248,17 +249,39 @@ func (s *Service) inspectChain(chain []*x509.Certificate, host string) *CertChec
 	return cc
 }
 
-// handshakeError describes a failed handshake without the address dialed
-// (the gateway's node address is operator data).
-func handshakeError(err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timed out"
-	}
+// handshakeError describes a failed handshake in words of its own, without
+// the address or host name dialed (the gateway's address is operator data)
+// and without a resolver's address.
+func handshakeError(err error, dialAddr string) string {
+	var dnsErr *net.DNSError
 	var op *net.OpError
-	if errors.As(err, &op) && op.Err != nil {
-		return op.Err.Error()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed out"
+	case errors.As(err, &dnsErr):
+		return "the gateway's address does not resolve"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+		return "the gateway is unreachable"
+	case errors.As(err, &op):
+		// A TLS-level failure (tls: …) carries no address; anything else is
+		// not described further.
+		if op.Op != "dial" && op.Err != nil {
+			return scrub(op.Err.Error(), dialAddr)
+		}
+		return "could not connect"
 	}
-	return err.Error()
+	return scrub(err.Error(), dialAddr)
+}
+
+// scrub removes the dialed address from a message, in case a library put it
+// there.
+func scrub(msg, dialAddr string) string {
+	if dialAddr != "" {
+		msg = strings.ReplaceAll(msg, dialAddr, "the gateway")
+	}
+	return msg
 }
 
 func issuerName(c *x509.Certificate) string {

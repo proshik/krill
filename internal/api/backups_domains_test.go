@@ -146,10 +146,13 @@ func TestListBackupsCoversEveryKindAndFilters(t *testing.T) {
 	if d.LastSuccessAt != okAt.Format(time.RFC3339) {
 		t.Fatalf("last success from the run history: %q, want %q", d.LastSuccessAt, okAt.Format(time.RFC3339))
 	}
-	for _, leak := range []string{"dest-secret", "deadbeef", "db-secret"} {
+	for _, leak := range []string{"dest-secret", "deadbeef", "db-secret", "AKIDEXAMPLE", "s3.example.test"} {
 		if strings.Contains(d.LastError, leak) {
 			t.Fatalf("last_error leaks %q: %s", leak, d.LastError)
 		}
+	}
+	if d.LastRunAt != ranAt.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z07:00") {
+		t.Fatalf("last_run_at must keep microseconds to match a started_at: %q", d.LastRunAt)
 	}
 	if v := byKind["volume"]; v.Target != "acme-proj/production/bot:data" || !v.Running || v.Enabled {
 		t.Fatalf("volume backup: %+v", v)
@@ -157,7 +160,7 @@ func TestListBackupsCoversEveryKindAndFilters(t *testing.T) {
 	if b := byKind["bucket"]; b.Target != "acme-proj/production/uploads" || b.Server != "files" || b.Running {
 		t.Fatalf("bucket backup: %+v", b)
 	}
-	if strings.Contains(mustJSON(t, all), "secret") && !strings.Contains(mustJSON(t, all), "***") {
+	if strings.Contains(mustJSON(t, all), "secret") {
 		t.Fatalf("list leaks a secret: %s", mustJSON(t, all))
 	}
 
@@ -218,22 +221,19 @@ func TestBackupNowGatesAndStarts(t *testing.T) {
 	}
 }
 
-func TestRedactBackupError(t *testing.T) {
+func TestBackupErrorSummaryNeverPassesStoredText(t *testing.T) {
 	cases := map[string]string{
-		"dial tcp 10.0.0.1:9000: connection refused":                                      "dial tcp 10.0.0.1:9000: connection refused",
-		"GET https://user:pa55@host/x":                                                    "GET https://***@host/x",
-		"api error SignatureDoesNotMatch; X-Amz-Credential=AKID/2026 X-Amz-Signature=abc": "api error SignatureDoesNotMatch; X-Amz-Credential=*** X-Amz-Signature=***",
-		`psql: password="s3cr et" rejected`:                                               `psql: password=*** rejected`,
-		"token: abc123":                                                                   "token: ***",
+		"upload: operation error S3: PutObject, https response error StatusCode: 403, api error SignatureDoesNotMatch: AKIDEXAMPLE 'leaked'": "the destination refused the credentials",
+		"upload: dial tcp 10.0.0.1:9000: connect: connection refused":                                                                        "the destination could not be reached",
+		"upload: context deadline exceeded": "the backup ran out of time",
+		"backup stored, but old backups could not be pruned (listing failed: GET https://u:p@x) — the bucket will keep growing": "the backup was stored, but old backups could not be pruned: the destination keeps growing",
+		"something nobody anticipated: Bearer abc.def.ghi":                                                                      "the backup failed; the full error is on the backup's page in the web UI",
+		"": "",
 	}
 	for in, want := range cases {
-		if got := api.RedactBackupError(in); got != want {
-			t.Errorf("redact(%q) = %q, want %q", in, got, want)
+		if got := api.BackupErrorSummary(in); got != want {
+			t.Errorf("summary(%q) = %q, want %q", in, got, want)
 		}
-	}
-	long := strings.Repeat("ж", 400)
-	if got := api.RedactBackupError(long); len(got) > 504 || !strings.HasSuffix(got, "…") || strings.ContainsRune(got, '�') {
-		t.Errorf("long error not cut cleanly: %d bytes", len(got))
 	}
 }
 
@@ -277,8 +277,10 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 	if _, err := f.q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: f.appID, Host: "plain.example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: f.appID, Host: "down.example.test", Tls: true, Exposed: true}); err != nil {
-		t.Fatal(err)
+	for _, h := range []string{"down.example.test", "nxdomain.example.test"} {
+		if _, err := f.q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: f.appID, Host: h, Tls: true, Exposed: true}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
 	issued := selfSigned(t, "hook.example.test", now.Add(30*24*time.Hour))
@@ -307,7 +309,9 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 			case "hook.example.test":
 				return []*x509.Certificate{issued}, nil
 			case "down.example.test":
-				return nil, &net.OpError{Op: "dial", Net: "tcp", Addr: &net.TCPAddr{IP: net.ParseIP("10.9.9.9"), Port: 443}, Err: errors.New("connect: connection refused")}
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Addr: &net.TCPAddr{IP: net.ParseIP("10.9.9.9"), Port: 443}, Err: errors.New("connect: connection refused 10.9.9.9")}
+			case "nxdomain.example.test":
+				return nil, &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "gateway.internal", Server: "10.0.0.53:53"}}
 			}
 			return []*x509.Certificate{defaultCert}, nil
 		},
@@ -337,7 +341,7 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 			t.Fatalf("dialed %s", d)
 		}
 	}
-	if len(dialed) != 3 {
+	if len(dialed) != 4 {
 		t.Fatalf("dialed %v", dialed)
 	}
 
@@ -347,6 +351,10 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 	down := got["down.example.test"]
 	if down.Certificate == nil || down.Certificate.Error == "" || strings.Contains(down.Certificate.Error, "10.9.9.9") {
 		t.Fatalf("a failed handshake must not name the gateway's address: %+v", down.Certificate)
+	}
+	nx := got["nxdomain.example.test"]
+	if nx.Certificate == nil || strings.Contains(nx.Certificate.Error, "gateway.internal") || strings.Contains(nx.Certificate.Error, "10.0.0.53") {
+		t.Fatalf("a dial DNS failure must not name the gateway's host or the resolver: %+v", nx.Certificate)
 	}
 
 	// Gateway addresses unknown: only the resolution is reported.
@@ -362,5 +370,61 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 	}
 	if _, err := f.svc.DomainStatus(ctx, f.otherIdent, f.appIDString); err == nil {
 		t.Fatal("foreign app must be not found")
+	}
+}
+
+// endingBackups reports a run under way the first time it is asked, and
+// ended after that: a run that finishes while the list is being read.
+type endingBackups struct {
+	fakeBackups
+	mu    sync.Mutex
+	asked map[string]int
+}
+
+func (b *endingBackups) Running(kind string, _ int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.asked[kind]++
+	return b.asked[kind] == 1
+}
+
+func TestListBackupsKeepsRunningWhenARunEndsDuringTheRead(t *testing.T) {
+	f := newBackupFixture(t)
+	f.svc.SetBackups(&endingBackups{asked: map[string]int{}})
+	all, err := f.svc.ListBackups(t.Context(), f.readIdent, api.BackupFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range all {
+		if !b.Running {
+			t.Fatalf("a run that ended during the read must still read running (its result may be newer than the row read): %+v", b)
+		}
+	}
+}
+
+func TestBackupNowStartedAtMatchesTheStoredRunTime(t *testing.T) {
+	f := newBackupFixture(t)
+	f.svc.SetBackups(&fakeBackups{})
+	res, err := f.svc.BackupNow(t.Context(), f.ident, api.BackupDatabase, f.dbBackup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, res.StartedAt)
+	if err != nil || !strings.Contains(res.StartedAt, ".") {
+		t.Fatalf("started_at must carry microseconds: %q (%v)", res.StartedAt, err)
+	}
+	// The service records the run under this very time; read back, it is
+	// the same string.
+	if err := f.q.SetBackupResult(t.Context(), db.SetBackupResultParams{ID: f.dbBackup, LastRunAt: pgtype.Timestamptz{Time: at, Valid: true}, LastStatus: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := f.svc.ListBackups(t.Context(), f.readIdent, api.BackupFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range all {
+		if b.Kind == api.BackupDatabase && b.LastRunAt != res.StartedAt {
+			t.Fatalf("last_run_at %q != started_at %q", b.LastRunAt, res.StartedAt)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -38,7 +39,7 @@ type ConfigSource struct {
 	Image    string `json:"image,omitempty"`
 	Tag      string `json:"tag,omitempty"`
 	Registry string `json:"registry,omitempty"` // name of the private registry, if any
-	GitURL   string `json:"git_url,omitempty"`  // without credentials
+	GitURL   string `json:"git_url,omitempty"`  // scheme, host and path only; omitted when unparseable
 	Branch   string `json:"git_branch,omitempty"`
 	// Dockerfile is the path the builder builds (default Dockerfile).
 	Dockerfile string `json:"dockerfile_path,omitempty"`
@@ -186,18 +187,30 @@ func (s *Service) AppConfig(ctx context.Context, id Identity, ref string) (AppCo
 	return out, nil
 }
 
-// withoutCredentials drops the userinfo of a git URL. An scp-like address
-// (user:token@host:org/repo) is not a URL to the parser; its part before the
-// last "@" goes as well.
-func withoutCredentials(raw string) string {
-	if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
-		u.User = nil
-		return u.String()
+// scpLikeRepo is an scp-style git address, user@host:path, with nothing
+// in it that could carry a secret beyond the user name.
+var scpLikeRepo = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):([A-Za-z0-9._~/-]+)$`)
+
+// displayRepoURL is a git address fit to show: for a URL only its scheme,
+// host and path — no user info, query or fragment, any of which can carry a
+// token — and for an scp-style address its host and path. Anything else is
+// not shown at all ("").
+func displayRepoURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
 	}
-	if i := strings.LastIndex(raw, "@"); i >= 0 && !strings.Contains(raw[:i], "/") {
-		return raw[i+1:]
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || u.Opaque != "" {
+			return ""
+		}
+		return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 	}
-	return raw
+	if m := scpLikeRepo.FindStringSubmatch(raw); m != nil {
+		return m[1] + ":" + m[2]
+	}
+	return ""
 }
 
 func (s *Service) configSource(ctx context.Context, app db.Application) (ConfigSource, error) {
@@ -215,7 +228,7 @@ func (s *Service) configSource(ctx context.Context, app db.Application) (ConfigS
 	}
 	// The builder's defaults: an empty branch clones main, an empty path
 	// builds ./Dockerfile (as deploy.configSections reads them).
-	src.GitURL, src.Branch, src.Dockerfile = withoutCredentials(app.GitUrl), app.GitBranch, app.DockerfilePath
+	src.GitURL, src.Branch, src.Dockerfile = displayRepoURL(app.GitUrl), app.GitBranch, app.DockerfilePath
 	if src.Branch == "" {
 		src.Branch = "main"
 	}

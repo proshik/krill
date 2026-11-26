@@ -310,6 +310,8 @@ type Querier interface {
 	ListNodeDisks(ctx context.Context) ([]NodeDisk, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrgApps(ctx context.Context, organizationID int64) ([]ListOrgAppsRow, error)
+	// The kind and id of every backup configuration of an organization.
+	ListOrgBackupIDs(ctx context.Context, organizationID int64) ([]ListOrgBackupIDsRow, error)
 	// Every backup of an organization's buckets (see ListOrgDatabaseBackups).
 	ListOrgBucketBackups(ctx context.Context, organizationID int64) ([]ListOrgBucketBackupsRow, error)
 	// Every pg_dump backup of an organization's logical databases, with where it

@@ -97,10 +97,11 @@ func TestDiagnosticsAgainstARealService(t *testing.T) {
 		t.Fatalf("window read lacks the first line: %q", b)
 	}
 
-	// A following read from now sees the second line arrive.
+	// A following read with no backlog (what a log wait opens) sees the second
+	// line arrive and none of the older ones.
 	fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	frc, err := wl.ServiceLogsWindow(fctx, name, docker.LogWindow{Since: time.Now(), Tail: docker.TailAll, Follow: true})
+	frc, err := wl.ServiceLogsWindow(fctx, name, docker.LogWindow{Tail: 0, Follow: true})
 	if err != nil {
 		t.Fatalf("follow: %v", err)
 	}

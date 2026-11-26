@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
@@ -112,9 +113,10 @@ func (w logWindow) holds(t time.Time) bool {
 func (s *Service) openLog(name string, w logWindow, tail int) func(context.Context) (io.ReadCloser, error) {
 	return func(ctx context.Context) (io.ReadCloser, error) {
 		if wl, ok := s.engine.(docker.WindowedLogs); ok {
-			// Swarm's task logs take no "until": the window's end is applied
-			// to the lines read (logWindow.holds), never sent.
-			return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Since: w.since, Tail: tail})
+			// Swarm's task log API takes no "until": the engine uses it only
+			// to skip tasks created after it, and the window's end is applied
+			// to the lines read (logWindow.holds).
+			return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Since: w.since, Until: w.until, Tail: tail})
 		}
 		if tail == docker.TailAll {
 			tail = maxWindowScanLines
@@ -137,22 +139,41 @@ func (r stopReader) Read(p []byte) (int, error) {
 	return r.ReadCloser.Read(p)
 }
 
-// windowScan is the result of reading a window of a service's log.
-type windowScan struct {
-	entries []timedLine // in stream order; see sortByLogTime
-	cut     bool        // incomplete: a task was skipped, the read ran out of time or scan budget
+// logMessageMax bounds one returned message: a single line can reach 1 MiB,
+// and an agent's context (and this process's memory, for a window held to
+// sort) should not pay for that.
+const logMessageMax = 16 << 10
+
+// truncMessage cuts a message to logMessageMax bytes on a character
+// boundary, saying so.
+func truncMessage(m string) string {
+	if len(m) <= logMessageMax {
+		return m
+	}
+	cut := logMessageMax
+	for cut > 0 && !utf8.RuneStart(m[cut]) {
+		cut--
+	}
+	return m[:cut] + fmt.Sprintf(" …[truncated %d bytes]", len(m)-cut)
+}
+
+// windowRead is how a read of a window of a service's log ended.
+type windowRead struct {
+	cut     bool // incomplete: a task was skipped or capped, the read ran out of time or scan budget
 	scanErr error
 }
 
-// scanWindow reads the window and hands each line inside it to keep (nil:
-// keep every one), collecting at most limit kept lines — the newest, once
-// sorted. Lines without a timestamp sort, and are windowed, with the line
-// before them.
-func (s *Service) scanWindow(ctx context.Context, name string, w logWindow, tail, limit int, keep func(logparse.LogLine) bool) (windowScan, error) {
-	var out windowScan
+// readWindow reads the window and hands each line inside it to visit, in
+// stream order (task by task), until visit returns true or the read ends.
+// Lines without a timestamp are windowed with the line before them. With
+// capPerTask > 0, a task that delivers that many lines may have had more
+// in the window, and the read is reported cut.
+func (s *Service) readWindow(ctx context.Context, name string, w logWindow, tail, capPerTask int, visit func(at time.Time, l LogLine) bool) (windowRead, error) {
+	var out windowRead
 	var last time.Time
 	var stop atomic.Bool
 	scanned := 0
+	perTask := map[string]int{}
 	open := s.openLog(name, w, tail)
 	wrapped := func(ctx context.Context) (io.ReadCloser, error) {
 		rc, err := open(ctx)
@@ -171,18 +192,20 @@ func (s *Service) scanWindow(ctx context.Context, name string, w logWindow, tail
 			out.cut = true
 		}
 		parsed := logparse.ParseLogLine(raw)
+		if capPerTask > 0 && parsed.Task != "" {
+			perTask[parsed.Task]++
+			if perTask[parsed.Task] == capPerTask {
+				out.cut = true
+			}
+		}
 		if ts, err := time.Parse(time.RFC3339Nano, parsed.Time); err == nil {
 			last = ts
 		}
-		if !w.holds(last) || (keep != nil && !keep(parsed)) {
+		if !w.holds(last) {
 			return
 		}
-		out.entries = append(out.entries, timedLine{at: last, line: LogLine{Time: parsed.Time, Level: parsed.Level, Message: parsed.Msg}})
-		// Keep memory bounded on a long window: trim to the newest limit
-		// once twice that many are held.
-		if limit > 0 && len(out.entries) >= 2*limit {
-			sortByLogTime(out.entries)
-			out.entries = append(out.entries[:0:0], out.entries[len(out.entries)-limit:]...)
+		if visit(last, LogLine{Time: parsed.Time, Level: parsed.Level, Message: truncMessage(parsed.Msg)}) {
+			stop.Store(true)
 		}
 	})
 	if openErr != nil {
@@ -190,7 +213,6 @@ func (s *Service) scanWindow(ctx context.Context, name string, w logWindow, tail
 	}
 	out.cut = out.cut || cut
 	out.scanErr = scanErr
-	sortByLogTime(out.entries)
 	return out, nil
 }
 
@@ -232,19 +254,33 @@ func (s *Service) appLogs(ctx context.Context, app db.Application, in LogsInput)
 	case needle != "":
 		tail = containsScanLines
 	}
-	keep := func(l logparse.LogLine) bool {
+	capPerTask := 0
+	if tail == containsScanLines {
+		capPerTask = containsScanLines
+	}
+	var entries []timedLine
+	ws, err := s.readWindow(ctx, docker.ServiceName(app.ID), logWindow{since: since, until: until}, tail, capPerTask, func(at time.Time, l LogLine) bool {
 		if minRank >= 0 {
 			if r, ok := logLevelRank(l.Level); ok && r < minRank {
 				return false
 			}
 		}
-		return needle == "" || strings.Contains(strings.ToLower(l.Msg), needle)
-	}
-	ws, err := s.scanWindow(ctx, docker.ServiceName(app.ID), logWindow{since: since, until: until}, tail, n, keep)
+		if needle != "" && !strings.Contains(strings.ToLower(l.Message), needle) {
+			return false
+		}
+		entries = append(entries, timedLine{at: at, line: l})
+		// Keep memory bounded on a long window: trim to the newest n once
+		// twice that many are held.
+		if len(entries) >= 2*n {
+			sortByLogTime(entries)
+			entries = append(entries[:0:0], entries[len(entries)-n:]...)
+		}
+		return false
+	})
 	if err != nil {
 		return nil, fmt.Errorf("app logs: service logs: %w", err)
 	}
-	entries := ws.entries
+	sortByLogTime(entries)
 	if len(entries) > n {
 		entries = entries[len(entries)-n:]
 	}
@@ -327,8 +363,11 @@ func clampWait(name string, sec, def, max int) (time.Duration, error) {
 }
 
 // waitForLog waits until a line containing in.WaitFor appears in the app's
-// log: first among the lines since in.Since (default: now), read from
-// history, then among new lines as they are written.
+// log: first among the lines since in.Since, read from history, then among
+// new lines as they are written. The follow stream is opened before history
+// is read, with no time bound — Docker sends what is written from then on —
+// so nothing written meanwhile is missed, and a worker whose clock lags the
+// control plane's cannot hide a new line behind a timestamp cut.
 func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInput) (LogWaitResult, error) {
 	if in.Contains != "" || in.Until != "" || in.Level != "" {
 		return LogWaitResult{}, Invalid("wait_for cannot be combined with contains, until or level")
@@ -350,9 +389,6 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	if err != nil {
 		return LogWaitResult{}, err
 	}
-	if since.IsZero() || since.After(t0) {
-		since = t0
-	}
 	if s.engine == nil {
 		return LogWaitResult{}, Unavailable("logs are unavailable: no docker engine")
 	}
@@ -360,77 +396,83 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	defer cancel()
 	name := docker.ServiceName(app.ID)
 	matches := func(l LogLine) bool { return strings.Contains(strings.ToLower(l.Message), needle) }
+
+	rc, err := s.openFollow(ctx, name)
+	if err != nil {
+		if ctx.Err() != nil {
+			return LogWaitResult{StoppedBy: stoppedBy(), Lines: []LogLine{}}, nil
+		}
+		return LogWaitResult{}, fmt.Errorf("wait for log: follow: %w", err)
+	}
+	lines, followErr := followLines(ctx, rc)
+
 	var res LogWaitResult
 	before := newLineRing(nCtx)
-
-	// History first: the lines in [since, t0].
-	if since.Before(t0) {
-		ws, err := s.scanWindow(ctx, name, logWindow{since: since, until: t0}, docker.TailAll, 0, nil)
+	// History first: the lines in [since, t0], streamed — only the context
+	// ring and the match are kept, never the whole window.
+	if !since.IsZero() && since.Before(t0) {
+		var after []LogLine
+		wr, err := s.readWindow(ctx, name, logWindow{since: since, until: t0}, docker.TailAll, 0, func(_ time.Time, l LogLine) bool {
+			if res.Found {
+				after = append(after, l)
+				return len(after) >= waitAfterLines
+			}
+			if !matches(l) {
+				before.add(l)
+				return false
+			}
+			m := l
+			res.Found, res.StoppedBy, res.Match = true, "match", &m
+			return false
+		})
 		if err != nil {
 			if ctx.Err() != nil {
-				res.StoppedBy, res.Lines = stoppedBy(), []LogLine{}
-				return res, nil
+				return LogWaitResult{StoppedBy: stoppedBy(), Lines: before.lines()}, nil
 			}
 			return LogWaitResult{}, fmt.Errorf("wait for log: read history: %w", err)
 		}
-		res.Incomplete = ws.cut || ws.scanErr != nil
-		for i, e := range ws.entries {
-			if !matches(e.line) {
-				before.add(e.line)
-				continue
-			}
-			m := e.line
-			res.Found, res.StoppedBy, res.Match = true, "match", &m
-			res.Lines = append(before.lines(), m)
-			for _, a := range ws.entries[i+1:] {
-				if len(res.Lines) >= nCtx+1+waitAfterLines {
-					break
-				}
-				res.Lines = append(res.Lines, a.line)
-			}
+		res.Incomplete = wr.cut || wr.scanErr != nil
+		if res.Found {
+			res.Lines = append(append(before.lines(), *res.Match), after...)
 			return res, nil
 		}
 	}
 
 	// Then new lines, as they are written.
-	rc, err := s.openFollow(ctx, name, t0)
-	if err != nil {
-		if ctx.Err() != nil {
-			res.StoppedBy, res.Lines = stoppedBy(), before.lines()
-			return res, nil
-		}
-		return LogWaitResult{}, fmt.Errorf("wait for log: follow: %w", err)
-	}
-	lines := followLines(ctx, rc)
 	var after []LogLine
 	var grace <-chan time.Time
+	finish := func(stopped string) (LogWaitResult, error) {
+		if res.Found {
+			res.Lines = append(res.Lines, after...)
+			return res, nil
+		}
+		res.StoppedBy, res.Lines = stopped, before.lines()
+		return res, nil
+	}
 	for {
 		select {
 		case raw, ok := <-lines:
 			if !ok {
-				// The stream ended (the service was removed, or ctx ended).
-				if res.Found {
-					res.Lines = append(res.Lines, after...)
-					return res, nil
+				if ctx.Err() != nil {
+					return finish(stoppedBy())
 				}
-				res.StoppedBy, res.Lines = stoppedBy(), before.lines()
-				if ctx.Err() == nil {
-					// The log stream ended on its own: the service was
-					// removed or scaled away; there is nothing more to wait for.
-					res.StoppedBy = "ended"
+				if err := <-followErr; err != nil {
+					// The live read broke (a lost connection, a line over the
+					// scanner's limit): not the same as the stream ending.
+					slog.Warn("wait for log: follow read failed", "app_id", app.ID, "err", err)
+					res.Incomplete = true
+					return finish("error")
 				}
-				return res, nil
+				// The log stream ended on its own: the service was removed or
+				// scaled away; there is nothing more to wait for.
+				return finish("ended")
 			}
 			p := logparse.ParseLogLine(raw)
-			if ts, err := time.Parse(time.RFC3339Nano, p.Time); err == nil && !ts.After(t0) {
-				continue // already covered by the history read
-			}
-			l := LogLine{Time: p.Time, Level: p.Level, Message: p.Msg}
+			l := LogLine{Time: p.Time, Level: p.Level, Message: truncMessage(p.Msg)}
 			if res.Found {
 				after = append(after, l)
 				if len(after) >= waitAfterLines {
-					res.Lines = append(res.Lines, after...)
-					return res, nil
+					return finish("match")
 				}
 				continue
 			}
@@ -444,32 +486,28 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 			defer t.Stop()
 			grace = t.C
 		case <-grace:
-			res.Lines = append(res.Lines, after...)
-			return res, nil
+			return finish("match")
 		case <-ctx.Done():
 			// Normally the stream closes with ctx; do not depend on it.
-			if res.Found {
-				res.Lines = append(res.Lines, after...)
-				return res, nil
-			}
-			res.StoppedBy, res.Lines = stoppedBy(), before.lines()
-			return res, nil
+			return finish(stoppedBy())
 		}
 	}
 }
 
-// openFollow opens a following read of new lines from t0 on.
-func (s *Service) openFollow(ctx context.Context, name string, t0 time.Time) (io.ReadCloser, error) {
+// openFollow opens a following read of the lines written from now on.
+func (s *Service) openFollow(ctx context.Context, name string) (io.ReadCloser, error) {
 	if wl, ok := s.engine.(docker.WindowedLogs); ok {
-		return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Since: t0, Tail: docker.TailAll, Follow: true})
+		return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Tail: 0, Follow: true})
 	}
 	return s.engine.ServiceLogs(ctx, name, true, 0)
 }
 
 // followLines delivers rc's lines until rc ends or ctx does; then rc is
-// closed and the channel closed.
-func followLines(ctx context.Context, rc io.ReadCloser) <-chan string {
+// closed and the channel closed. The error channel then carries the read's
+// error (nil for a clean end), once.
+func followLines(ctx context.Context, rc io.ReadCloser) (<-chan string, <-chan error) {
 	out := make(chan string, 64)
+	errc := make(chan error, 1)
 	stop := context.AfterFunc(ctx, func() { rc.Close() })
 	go func() {
 		defer close(out)
@@ -481,11 +519,13 @@ func followLines(ctx context.Context, rc io.ReadCloser) <-chan string {
 			select {
 			case out <- sc.Text():
 			case <-ctx.Done():
+				errc <- nil
 				return
 			}
 		}
+		errc <- sc.Err()
 	}()
-	return out
+	return out, errc
 }
 
 // lineRing keeps the last n lines added.

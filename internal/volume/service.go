@@ -207,10 +207,19 @@ func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, 
 	return nil
 }
 
+// resultWriteTimeout bounds recording a failed run's result.
+const resultWriteTimeout = 10 * time.Second
+
 func (s *VolumeService) fail(ctx context.Context, id int64, now time.Time, err error) error {
-	// WithoutCancel: a run that failed because its deadline passed must still
-	// record the failure, or the previous "ok" would stand for it.
-	_ = s.store.SetVolumeBackupResult(context.WithoutCancel(ctx), id, now, "error", err.Error())
+	// A run that failed because its deadline passed must still record the
+	// failure, or the previous "ok" would stand for it: the write gets a
+	// context of its own, bounded so a stalled database cannot hold the run's
+	// claim (and keep the backup "running") indefinitely.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resultWriteTimeout)
+	defer cancel()
+	if werr := s.store.SetVolumeBackupResult(wctx, id, now, "error", err.Error()); werr != nil {
+		slog.Error("volume backup: could not record the failed run", "vb_id", id, "err", werr)
+	}
 	if s.notifier != nil {
 		s.notifier.VolumeBackupFailed(ctx, id, err.Error())
 	}

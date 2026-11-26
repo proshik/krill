@@ -216,6 +216,53 @@ func (q *Queries) ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsR
 	return items, nil
 }
 
+const listOrgBackupIDs = `-- name: ListOrgBackupIDs :many
+SELECT 'database'::text AS kind, b.id FROM backups b
+JOIN logical_databases ld ON ld.id = b.logical_database_id
+JOIN environments e ON e.id = ld.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+UNION ALL
+SELECT 'volume'::text, vb.id FROM volume_backups vb
+JOIN app_volumes v ON v.id = vb.app_volume_id
+JOIN applications a ON a.id = v.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+UNION ALL
+SELECT 'bucket'::text, bb.id FROM bucket_backups bb
+JOIN s3_buckets bk ON bk.id = bb.bucket_id
+JOIN environments e ON e.id = bk.environment_id
+JOIN projects p ON p.id = e.project_id
+WHERE p.organization_id = $1
+`
+
+type ListOrgBackupIDsRow struct {
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+}
+
+// The kind and id of every backup configuration of an organization.
+func (q *Queries) ListOrgBackupIDs(ctx context.Context, organizationID int64) ([]ListOrgBackupIDsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgBackupIDs, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgBackupIDsRow
+	for rows.Next() {
+		var i ListOrgBackupIDsRow
+		if err := rows.Scan(&i.Kind, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgDatabaseBackups = `-- name: ListOrgDatabaseBackups :many
 SELECT b.id, b.schedule, b.retention, b.enabled, b.last_run_at, b.last_status, b.last_error,
        ld.id AS logical_database_id, ld.name AS database_name, i.name AS server_name,

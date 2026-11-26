@@ -249,8 +249,10 @@ const controlPlaneNode = "control-plane"
 // the task is the only one of the service meant to run on its node, and the
 // sample was taken after the task was created and after every other task of
 // the service on that node last changed state (a predecessor stopping during
-// a rolling update is sampled under the same key). A sample older than a few
-// sampler intervals is stale and not used either.
+// a rolling update is sampled under the same key) — by a full sampler
+// interval, since a row's time is when it was inserted, which can be a while
+// after the container was measured. A sample older than a few sampler
+// intervals is stale and not used either.
 func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.TaskRecord, usage []TaskUsage) {
 	if len(usage) == 0 {
 		return
@@ -310,7 +312,7 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 		if node == "" {
 			node = controlPlaneNode
 		}
-		if smp, ok := latest[node]; ok && smp.Ts.After(cutoff) {
+		if smp, ok := latest[node]; ok && smp.Ts.After(cutoff.Add(interval)) {
 			cpu := float64(smp.CpuPct)
 			usage[i].CPUPct, usage[i].CPUSampledAt = &cpu, formatTime(smp.Ts)
 		}

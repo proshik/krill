@@ -187,11 +187,18 @@ func (s *Service) DeploymentStatusWait(ctx context.Context, id Identity, deployI
 	}
 
 	if wait > 0 && dep.Status == "running" {
-		if s.waitDeployment(ctx, deployID, time.Duration(wait)*time.Second) {
-			// Read once more for the final row; a failure keeps the first
-			// one rather than failing a wait that worked.
-			if d, err := s.q.GetDeployment(context.WithoutCancel(ctx), deployID); err == nil {
+		if st := s.waitDeployment(ctx, deployID, time.Duration(wait)*time.Second); st != "running" {
+			// Read the final row (its log, its end time) under a bound of
+			// its own that the caller and a shutdown still end; failing that,
+			// answer the status the wait saw rather than fail a wait that
+			// worked.
+			rctx, cancel := s.boundedRead(ctx)
+			d, err := s.q.GetDeployment(rctx, deployID)
+			cancel()
+			if err == nil {
 				dep = d
+			} else {
+				dep.Status = st
 			}
 		}
 	}
@@ -211,30 +218,63 @@ func (s *Service) DeploymentStatusWait(ctx context.Context, id Identity, deployI
 }
 
 // waitDeployment polls the deployment's status until it is no longer
-// running, d has passed, ctx ends or Krill starts shutting down. It reports
-// whether the status changed and should be read again.
-func (s *Service) waitDeployment(ctx context.Context, deployID int64, d time.Duration) bool {
-	ctx, cancel, _ := s.waitContext(ctx, d)
+// running, d has passed, ctx ends or Krill starts shutting down, and returns
+// the last status it read ("running" when it saw no change). When the time
+// runs out, the status is read once more so a deploy that ended after the
+// last poll is not reported running.
+func (s *Service) waitDeployment(ctx context.Context, deployID int64, d time.Duration) string {
+	wctx, cancel, stoppedBy := s.waitContext(ctx, d)
 	defer cancel()
 	t := time.NewTicker(deployWaitPoll)
 	defer t.Stop()
+	read := func(ctx context.Context) (string, bool) {
+		st, err := s.q.GetDeploymentStatus(ctx, deployID)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("deployment wait: status read failed", "deployment_id", deployID, "err", err)
+			}
+			return "running", false
+		}
+		return st, true
+	}
 	for {
 		select {
-		case <-ctx.Done():
-			return false
+		case <-wctx.Done():
+			if stoppedBy() != "timeout" {
+				return "running" // shutdown or the caller left: answer at once
+			}
+			rctx, rcancel := s.boundedRead(ctx)
+			defer rcancel()
+			st, _ := read(rctx)
+			return st
 		case <-t.C:
-			st, err := s.q.GetDeploymentStatus(ctx, deployID)
-			if err != nil {
-				if ctx.Err() == nil {
-					slog.Warn("deployment wait: status read failed", "deployment_id", deployID, "err", err)
+			st, ok := read(wctx)
+			if !ok {
+				if wctx.Err() != nil {
+					continue // the wait ended during this read: see the Done case
 				}
-				return false
+				return "running"
 			}
 			if st != "running" {
-				return true
+				return st
 			}
 		}
 	}
+}
+
+// waitReadTimeout bounds a read made after a wait: it must not stretch the
+// answer far past the wait the caller asked for.
+const waitReadTimeout = 5 * time.Second
+
+// boundedRead is a context for one read after a wait: ended by ctx, by
+// Krill's shutdown and by waitReadTimeout.
+func (s *Service) boundedRead(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(ctx, waitReadTimeout)
+	if s.stopping == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(s.stopping, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 // logLevelOrder ranks recognized runtime log levels from least to most
