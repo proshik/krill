@@ -37,6 +37,11 @@ func TestResponseTypesMatchTheServer(t *testing.T) {
 		{"Deployment", client.Deployment{}, api.DeploymentSummary{}},
 		{"DeploymentDetail", client.DeploymentDetail{}, api.DeploymentDetail{}},
 		{"Accepted", client.Accepted{}, api.DeployAccepted{}},
+		{"LogWaitResult", client.LogWaitResult{}, api.LogWaitResult{}},
+		{"AppConfig", client.AppConfig{}, api.AppConfig{}},
+		{"BackupInfo", client.BackupInfo{}, api.BackupInfo{}},
+		{"BackupStarted", client.BackupStarted{}, api.BackupStarted{}},
+		{"DomainStatus", client.DomainStatus{}, api.DomainStatusResult{}},
 	}
 	for _, p := range pairs {
 		t.Run(p.name, func(t *testing.T) {
@@ -54,7 +59,9 @@ func TestResponseTypesMatchTheServer(t *testing.T) {
 // jsonTags returns the flattened set of JSON field names a type serializes,
 // following anonymous embedded structs the way encoding/json does — both
 // sides use embedding, and a nested-vs-flat mismatch is exactly the kind of
-// drift worth catching.
+// drift worth catching. Named nested objects (a struct, a pointer to one, a
+// slice of them) are followed too and reported as "parent.child", so a field
+// renamed inside a task or a domain check is caught like a top-level one.
 func jsonTags(t reflect.Type) []string {
 	var out []string
 	for i := 0; i < t.NumField(); i++ {
@@ -72,7 +79,24 @@ func jsonTags(t reflect.Type) []string {
 			name = f.Name
 		}
 		out = append(out, name)
+		if inner := objectType(f.Type); inner != nil {
+			for _, sub := range jsonTags(inner) {
+				out = append(out, name+"."+sub)
+			}
+		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// objectType returns the struct a field serializes as a JSON object (or an
+// array of them), or nil for a scalar.
+func objectType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Struct {
+		return t
+	}
+	return nil
 }

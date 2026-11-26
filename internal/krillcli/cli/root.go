@@ -8,12 +8,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/proshik/krill/internal/krillcli/cliconfig"
 	"github.com/proshik/krill/internal/krillcli/client"
@@ -40,7 +43,17 @@ var g globals
 func Execute(v string) int {
 	version = v
 	root := newRoot()
-	if err := root.Execute(); err != nil {
+	// Ctrl-C cancels the command's context, so a watch can say it was
+	// interrupted and still print what it last saw (--json) instead of the
+	// process dying mid-write. A second Ctrl-C is the default again: it
+	// kills a command that does not stop.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := root.ExecuteContext(ctx); err != nil {
 		// Cobra has already printed usage errors; everything else is ours.
 		fmt.Fprintln(os.Stderr, "Error:", classifyHint(err))
 		return exitCodeFor(classify(err))
@@ -63,6 +76,14 @@ func classify(err error) error {
 	var f *deployflow.Failure
 	if errors.As(err, &f) {
 		return err
+	}
+	// A server too old for the operation, or a reference refused before
+	// anything was sent: both are something to fix in the setup or the
+	// invocation, and nothing was attempted.
+	var old *client.OldServerError
+	var ue *client.UsageError
+	if errors.As(err, &old) || errors.As(err, &ue) {
+		return &deployflow.Failure{Code: deployflow.ExitUsage, Err: err}
 	}
 	var ae *client.APIError
 	if errors.As(err, &ae) {
@@ -141,11 +162,15 @@ this tool only deploys ones that already exist.`,
 		newLoginCmd(),
 		newContextCmd(),
 		newAppsCmd(),
+		newWhoamiCmd(),
 		newStatusCmd(),
+		newConfigCmd(),
+		newDomainsCmd(),
 		newLogsCmd(),
 		newDeploymentsCmd(),
 		newDeploymentCmd(),
 		newEnvCmd(),
+		newBackupsCmd(),
 		newStopCmd(),
 		newReloadCmd(),
 		newRebuildCmd(),

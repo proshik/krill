@@ -1,6 +1,6 @@
 ---
 name: krill-deploy
-description: Use when shipping an application to Krill or working out why one there is broken — deploy a change and verify the rollout, restart or stop a service, check what is running, or diagnose a failed deploy or a service that is down. Applies whenever the app in question is hosted on a Krill instance reachable through the krill MCP server.
+description: Use when shipping an application to Krill or working out why one there is broken — deploy a change and verify the rollout, restart or stop a service, check what is running, or diagnose a failed deploy or a service that is down. Applies whenever the app in question is hosted on a Krill instance, reached through the krill MCP server or through the krill-cli command line (no MCP connected, several Krill installations, or one particular installation).
 ---
 
 # Deploying and diagnosing apps on Krill
@@ -68,6 +68,49 @@ So when the user's change is source code that has not been built and pushed yet,
 4. Verify with `krill_app_status` as usual.
 
 Two things this branch does not change. **Rule 4 still applies** — building and shipping arbitrary local code to production is a bigger action than moving a tag, not a smaller one, so ask first. And if `krill-cli` is not installed, or the shell is not in the application's repository, say so and stop; do not hand-roll `docker build` and `docker push` to work around it.
+
+## Through krill-cli instead of MCP
+
+Use the `krill-cli` command line when the krill MCP server is not connected, when more than one Krill installation is in play, or when the user names a particular one. `krill-cli` keeps one stored login (context) per installation, so it reaches any of them from the shell; `krill-cli context` lists them. On this path:
+
+- **Always pass `-c CONTEXT` and `--json`**, on every call: without `-c` the CLI acts on the stored current context (or the one `krill.yaml` pins), which may be another installation, and the human output is not a contract. With `--json` the read commands, `deployment --watch`, `rebuild` and `backups run` print only JSON on stdout; `deploy`, `stop`, `reload` and `env set|rm` print a progress or confirmation line instead — rely on their exit code.
+- **Leave `KRILL_TOKEN` and `KRILL_SERVER` out of the environment** (`env -u KRILL_TOKEN -u KRILL_SERVER krill-cli …` when they are set): `KRILL_SERVER` overrides the server of the context `-c` names — the stored token would go there — and `KRILL_TOKEN` replaces its credential, possibly with another organization's.
+- **Before every write, run `krill-cli -c CONTEXT --json whoami`** and check `instance.url`, the organization (`org_name`, `org_id`) and `can_write` against what the user means — the same check as with several MCP servers above. Address apps by `project/environment/app`, not by id, and name the app in every write (`--app` for `deploy`) rather than relying on `krill.yaml`. A missing `instance` means a Krill older than these commands: `config`, `domains`, `backups` and the log window and wait options exit `2` there.
+- **Never put a token on the command line** — not as an argument, not in a `KRILL_TOKEN=…` prefix you type. If a context is missing or its token is rejected (exit `6`), ask the user to run `krill-cli login --server URL --name NAME` themselves; it reads the token from stdin.
+
+| MCP tool | krill-cli (`-c CONTEXT --json` …) |
+|---|---|
+| `krill_whoami` | `whoami` |
+| `krill_list_apps` | `apps` |
+| `krill_app_status` | `status APP` |
+| `krill_app_logs` | `logs APP [--tail N] [--level L] [--since 10m] [--until 5m] [--contains TEXT]`; waiting: `logs APP --wait-for TEXT --timeout 90s` |
+| `krill_deployments` | `deployments APP [--limit N]` |
+| `krill_deployment_status` | `deployment ID`; with `wait`: `deployment ID --watch [--timeout 10m]` — it waits on the server and repeats by itself up to `--timeout`, then prints the last deployment it received (none if it received none; on exit `4` it may still read `running`) |
+| `krill_list_env` | `env APP` |
+| `krill_app_config` | `config APP` |
+| `krill_list_backups` | `backups [--app APP \| --env PROJECT/ENV]` |
+| `krill_domain_status` | `domains APP` |
+| `krill_deploy` | `image` apps only: `deploy --app APP` builds locally (see above); an existing tag without a build: `deploy --app APP --skip-build --skip-push --tag TAG`, in the app's repository. Always pass `--app`: without it the app comes from `krill.yaml`, which may name another app on that installation. A normal (cached) build of a `dockerfile` app has no CLI command — use MCP or REST |
+| `krill_rebuild` | `rebuild APP [--watch]` — the **no-cache** build, `dockerfile` apps only |
+| `krill_reload` | `reload APP`. It does not print the deployment a stopped app gets instead of a restart; find it with `deployments APP --limit 1` and watch that |
+| `krill_stop` | `stop APP` |
+| `krill_set_env` | `env set KEY=VALUE APP`, `env rm KEY APP` |
+| `krill_backup_now` | `backups run KIND ID [--wait]` — `--wait` follows this run and compares `last_run_at` with `started_at` for you |
+| `krill_create_*`, `krill_add_domain`, `krill_link_database` | none — provisioning is MCP or REST only |
+
+Read the exit code, not the prose:
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `0` | done; the line was seen; the backup run succeeded | go on with the runbook |
+| `1` | the deployment or this backup run failed (or an unexpected error) | read the log tail it printed and stop — rule 2 |
+| `2` | arguments, a missing app, or a Krill too old for the command (the message says "Update Krill") | fix the call; for "too old", tell the user and fall back to what the old server has — do not guess the answer |
+| `3` | another deploy (with `--no-wait-for-lock`) or a backup of it is already running | wait for that one; do not resend |
+| `4` | stopped waiting, outcome unknown: a watch ran out of time, `logs --wait-for` did not see the line, a later backup run overwrote the result | check with `status` / the three-step log read / `backups`; never report success or failure from this code alone |
+| `5` | deployed, but the service is not running its replicas | diagnose branch |
+| `6` | the token was rejected or lacks the level | ask the user — rule 4, `login` |
+
+The four rules below and the runbooks above hold on this path too: the CLI waits on the server for you (`deployment --watch`, `logs --wait-for`), so do not wrap it in a polling loop.
 
 ## Diagnose a failure
 

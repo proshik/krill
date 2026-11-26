@@ -247,7 +247,7 @@ func TestLogsQueryParameters(t *testing.T) {
 		q = r.URL.RawQuery
 		_, _ = w.Write([]byte(`[{"t":"2026-09-06T10:00:00Z","lvl":"error","msg":"boom"}]`))
 	})
-	lines, err := c.Logs(context.Background(), "17", 500, "error")
+	lines, err := c.Logs(context.Background(), "17", client.LogsQuery{Tail: 500, Level: "error"})
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}

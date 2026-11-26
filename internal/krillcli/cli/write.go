@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -87,6 +88,15 @@ Image apps have no source to rebuild and are refused.`,
 			acc, err := s.api.Rebuild(cmd.Context(), ref)
 			if err != nil {
 				return err
+			}
+			if g.asJSON {
+				// stdout carries JSON only: the accepted answer, or with
+				// --watch the final deployment.
+				if !watch {
+					return printJSON(acc)
+				}
+				fmt.Fprintf(os.Stderr, "Rebuild of %s queued as #%d.\n", ref, acc.DeploymentID)
+				return followDeployment(cmd, s, acc.DeploymentID)
 			}
 			fmt.Printf("Rebuild of %s queued as #%d.\n", ref, acc.DeploymentID)
 			if !watch {
