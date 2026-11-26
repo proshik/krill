@@ -492,10 +492,14 @@ func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude
 	if svc.Spec.Mode.Global != nil {
 		desired = fresh
 	}
+	image := ""
+	if cs := svc.Spec.TaskTemplate.ContainerSpec; cs != nil {
+		image = cs.Image
+	}
 	return ServiceProgress{
 		Found: true, Desired: desired, Running: running, Failed: failed,
 		UpdateState: updateState, TaskIDs: ids, Global: svc.Spec.Mode.Global != nil,
-		UpdatedAt: svc.UpdatedAt,
+		UpdatedAt: svc.UpdatedAt, Image: image,
 	}, nil
 }
 

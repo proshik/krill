@@ -54,6 +54,7 @@ func TestAppCrossTenantIsolation(t *testing.T) {
 	}{
 		{http.MethodGet, ""},
 		{http.MethodPost, "/deploy"},
+		{http.MethodPost, "/apply-settings"},
 		{http.MethodPost, "/stop"},
 		{http.MethodPost, "/env"},
 	}

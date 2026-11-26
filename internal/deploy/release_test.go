@@ -24,12 +24,35 @@ type releaseEngine struct {
 	afterDeploy func()
 	stateMu     sync.Mutex
 	updateState string
+	liveImage   string // overrides the image of the last deploy
+	stopped     bool   // the service stands at zero (guarded by digestMockEngine.mu)
+	nodes       []docker.SwarmNode
+	labelWrites int // NodeSetLabel/NodeDeleteLabel calls
+}
+
+func (e *releaseEngine) Nodes(context.Context) ([]docker.SwarmNode, error) { return e.nodes, nil }
+func (e *releaseEngine) NodeSetLabel(context.Context, string, string, string) error {
+	e.labelWrites++
+	return nil
+}
+func (e *releaseEngine) NodeDeleteLabel(context.Context, string, string) error {
+	e.labelWrites++
+	return nil
 }
 
 func (e *releaseEngine) setUpdateState(v string) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	e.updateState = v
+}
+
+func (e *releaseEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	e.digestMockEngine.mu.Lock()
+	defer e.digestMockEngine.mu.Unlock()
+	if e.stopped {
+		return docker.ServiceState{Found: true}, nil
+	}
+	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
 
 func (e *releaseEngine) ValidateRelease(context.Context, docker.ServiceSpec, []string) error {
@@ -45,7 +68,16 @@ func (e *releaseEngine) ServiceDeploy(ctx context.Context, s docker.ServiceSpec)
 func (e *releaseEngine) ServiceProgress(context.Context, string, []string) (docker.ServiceProgress, error) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
-	return docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: e.updateState, TaskIDs: []string{"new"}}, nil
+	p := docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: e.updateState, TaskIDs: []string{"new"}, Image: e.liveImage}
+	e.digestMockEngine.mu.Lock()
+	if p.Image == "" && len(e.deployed) > 0 {
+		p.Image = e.deployed[len(e.deployed)-1].Image
+	}
+	if e.stopped {
+		p.Desired, p.Running = 0, 0
+	}
+	e.digestMockEngine.mu.Unlock()
+	return p, nil
 }
 
 func releaseFixture(t *testing.T) (*db.Queries, *DBStore, *Deployer, *releaseEngine, int64) {

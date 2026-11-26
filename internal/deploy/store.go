@@ -553,6 +553,7 @@ func (s *DBStore) applyMetrics(ctx context.Context, appID int64, appPort int32, 
 		out.Env = map[string]string{}
 	}
 	out.Env[m.MetricsTokenEnv] = tok
+	out.MetricsTokenEnv = m.MetricsTokenEnv
 	if out.ContainerLabels == nil {
 		out.ContainerLabels = map[string]string{}
 	}
@@ -655,4 +656,56 @@ func (s *DBStore) ListStaleStoppedCandidates(ctx context.Context) ([]StaleApp, e
 func (s *DBStore) HealStoppedAppStatus(ctx context.Context, appID int64, from string, seen time.Time) (bool, error) {
 	n, err := s.q.HealStoppedApplicationStatus(ctx, db.HealStoppedApplicationStatusParams{ID: appID, FromStatus: from, Seen: seen})
 	return n > 0, err
+}
+
+// FinishDeploymentApplied records a deployment that ended done together with
+// what it applied.
+func (s *DBStore) FinishDeploymentApplied(ctx context.Context, deployID int64, status, imageTag, errMsg, log string, c AppliedConfig) error {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return s.q.FinishDeploymentApplied(ctx, db.FinishDeploymentAppliedParams{
+		ID: deployID, Status: status, ImageTag: imageTag, ErrorMessage: errMsg, Log: log, AppliedConfig: b,
+	})
+}
+
+// DeploymentAppliedConfig reads one deployment's fingerprint (found false
+// when it recorded none).
+func (s *DBStore) DeploymentAppliedConfig(ctx context.Context, deployID int64) (AppliedConfig, bool, error) {
+	raw, err := s.q.GetDeploymentAppliedConfig(ctx, deployID)
+	if err != nil {
+		return AppliedConfig{}, false, err
+	}
+	c, ok := decodeAppliedConfig(raw)
+	return c, ok, nil
+}
+
+// LatestApplied reads each app's newest successful deployment.
+func (s *DBStore) LatestApplied(ctx context.Context, appIDs []int64) (map[int64]LatestApplied, error) {
+	rows, err := s.q.ListLatestAppliedDeployments(ctx, appIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]LatestApplied, len(rows))
+	for _, r := range rows {
+		l := LatestApplied{DeploymentID: r.ID, ImageTag: r.ImageTag, InFlight: r.InFlight}
+		if c, ok := decodeAppliedConfig(r.AppliedConfig); ok {
+			l.Config = &c
+		}
+		out[r.ApplicationID] = l
+	}
+	return out, nil
+}
+
+// decodeAppliedConfig reads a stored fingerprint; NULL or unreadable is none.
+func decodeAppliedConfig(raw []byte) (AppliedConfig, bool) {
+	if len(raw) == 0 {
+		return AppliedConfig{}, false
+	}
+	var c AppliedConfig
+	if json.Unmarshal(raw, &c) != nil || c.Sections == nil {
+		return AppliedConfig{}, false
+	}
+	return c, true
 }

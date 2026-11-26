@@ -50,6 +50,12 @@ func TestFailOrphanedDeployments(t *testing.T) {
 	}
 
 	s := NewDBStore(q)
+	// The orphan recorded what it applied but died before writing done.
+	for _, id := range []int64{orphan.ID, finished.ID} {
+		if err := q.SetDeploymentAppliedConfig(ctx, db.SetDeploymentAppliedConfigParams{ID: id, AppliedConfig: []byte(`{"v":1,"key":"sha256","sections":{}}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	n, err := s.FailOrphanedDeployments(ctx)
 	if err != nil {
 		t.Fatalf("FailOrphanedDeployments: %v", err)
@@ -71,10 +77,13 @@ func TestFailOrphanedDeployments(t *testing.T) {
 	if !got.FinishedAt.Valid {
 		t.Error("orphan finished_at not set: the row still reads as in flight")
 	}
+	if got.AppliedConfig != nil {
+		t.Error("a failed deployment kept an applied configuration")
+	}
 
 	// An already-finished deploy must not be touched.
 	after, _ := q.GetDeployment(ctx, finished.ID)
-	if after.Status != "done" || after.ErrorMessage != "" {
+	if after.Status != "done" || after.ErrorMessage != "" || after.AppliedConfig == nil {
 		t.Errorf("finished deploy was rewritten: status=%q err=%q", after.Status, after.ErrorMessage)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/oplock"
 	"github.com/proshik/krill/internal/secret"
+	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/templates"
 )
 
@@ -272,7 +273,23 @@ func (s *Server) envStatuses(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	d := s.loadEnvData(ctx, o.ID, p.ID, e)
-	render(w, r, http.StatusOK, templates.CanvasRefresh(s.canvasFor(ctx, o, role, p, e, d, "", false)))
+	cv := s.canvasFor(ctx, o, role, p, e, d, "", false)
+	// No pending lookups here (each costs a settings load): a marker is only
+	// cleared, for an app that stopped or has a deploy queued or running.
+	if s.deployer != nil {
+		ids := make([]int64, 0, len(d.apps))
+		for _, a := range d.apps {
+			ids = append(ids, a.ID)
+		}
+		for id := range s.deployer.AppsDeploying(ctx, ids) {
+			key := topology.AppKey(id)
+			if c, ok := cv.Cards[key]; ok {
+				c.NotRunning = true
+				cv.Cards[key] = c
+			}
+		}
+	}
+	render(w, r, http.StatusOK, templates.CanvasRefresh(cv))
 }
 
 func projURL(orgID, projID int64) string {

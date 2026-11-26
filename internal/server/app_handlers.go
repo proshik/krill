@@ -422,11 +422,13 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 	c.Shell = s.envShell(ctx, c.Org, c.Role, c.Project, c.Env, envs, c.App.Name+", "+c.Project.Name+" "+c.Env.Name, "canvas", "is-canvas has-sheet")
 	d := s.loadEnvData(ctx, c.Org.ID, c.Project.ID, c.Env)
 	c.Canvas = s.canvasFor(ctx, c.Org, c.Role, c.Project, c.Env, d, topology.AppKey(c.App.ID), false)
+	s.markPending(ctx, &c.Canvas, d.apps)
 	for _, a := range d.apps {
 		if a.ID == c.App.ID {
 			c.App.Status = a.Status // live, as on the canvas
 		}
 	}
+	c.Pending = s.appPending(ctx, c.App)
 	if doms, err := s.q.ListDomainsByApplication(ctx, c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list domains", "err", err, "app_id", c.App.ID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -685,7 +687,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		live, nerr := s.engine.Nodes(r.Context())
 		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
 	}
-	render(w, r, http.StatusOK, templates.AppStateBadge(status, appURL(c)+"/status", running))
+	render(w, r, http.StatusOK, templates.AppStatePoll(c, status, running))
 }
 
 func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {

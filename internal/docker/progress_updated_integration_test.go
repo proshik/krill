@@ -84,3 +84,31 @@ func TestServiceProgressUpdatedAtFollowsAScale(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 }
+
+// ServiceProgress reports the image of the service's spec exactly as it was
+// deployed: apply settings compares it with the image a deployment recorded.
+func TestServiceProgressReportsTheSpecImage(t *testing.T) {
+	e, err := docker.NewEngine("")
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	skipIfNoSwarm(t, e)
+	ctx := context.Background()
+	svc := "krill-it-image-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	t.Cleanup(func() { _ = e.ServiceRemove(context.Background(), svc) })
+	image := "busybox:1.36"
+	if pinned, err := e.ResolveDigest(ctx, image, ""); err == nil && pinned != "" {
+		image = pinned // the form apply settings deploys
+	}
+	spec := docker.ServiceSpec{Name: svc, Image: image, Replicas: 1, Network: "krill-net", Command: []string{"sleep", "3600"}}
+	if err := e.ServiceDeploy(ctx, spec); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	p, err := e.ServiceProgress(ctx, svc, nil)
+	if err != nil {
+		t.Fatalf("ServiceProgress: %v", err)
+	}
+	if p.Image != image {
+		t.Fatalf("ServiceProgress.Image = %q, want the deployed %q", p.Image, image)
+	}
+}

@@ -30,6 +30,12 @@ type CanvasCard struct {
 	Href      string
 	To        []string // ElemIDs of the resources the app uses
 	Detected  []string // the subset of To only found in env values
+	App       bool     // an app card (the others are resources)
+	Pending   bool     // an app whose saved settings are not live yet
+	// NotRunning is an app whose live status is not running, or that has a
+	// deploy queued or running: it shows no pending marker, and the status
+	// poll clears one shown before.
+	NotRunning bool
 }
 
 // CanvasNode is one cluster node in the canvas node filter.
@@ -49,16 +55,19 @@ type CanvasFailing struct {
 
 // CanvasView is everything the canvas draws.
 type CanvasView struct {
-	Title     string
-	Plane     topology.Canvas
-	Cards     map[string]CanvasCard
-	Nodes     []CanvasNode
-	Failing   *CanvasFailing
-	StatusURL string
-	Current   string // key of the card whose sheet is open
-	Ghost     bool   // a new app is being created
-	Empty     bool   // no apps and no resources
-	NewAppURL string // where "new app" goes, "" for members
+	// PendingApps is what each running app's saved settings would change
+	// if deployed now, for the apps that were checked (see Server.canvasFor).
+	PendingApps map[int64]PendingView
+	Title       string
+	Plane       topology.Canvas
+	Cards       map[string]CanvasCard
+	Nodes       []CanvasNode
+	Failing     *CanvasFailing
+	StatusURL   string
+	Current     string // key of the card whose sheet is open
+	Ghost       bool   // a new app is being created
+	Empty       bool   // no apps and no resources
+	NewAppURL   string // where "new app" goes, "" for members
 	// A freshly cloned environment asks for a review before its first deploy.
 	Cloned, ClonePending bool
 	SettingsURL          string

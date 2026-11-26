@@ -50,7 +50,7 @@ func TestMemberCannotMutateApp(t *testing.T) {
 		"/environments/" + i64(e.ID) + "/apps/" + i64(a.ID)
 
 	// The mutating POST paths that must be admin-gated.
-	mutations := []string{"/deploy", "/stop", "/env", "/advanced"}
+	mutations := []string{"/deploy", "/apply-settings", "/stop", "/env", "/advanced"}
 
 	// As a member: every mutation must be 403, blocked by RequireRole before the
 	// handler — so the nil deployer/engine in the test server is never reached.

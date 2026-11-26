@@ -39,7 +39,9 @@ WHERE finished_at IS NOT NULL AND finished_at < now() - interval '1 hour' AND lo
 UPDATE deployments
 SET status = 'error',
     error_message = 'interrupted: krill restarted while this deploy was running',
-    finished_at = now()
+    finished_at = now(),
+    -- A deploy that recorded what it applied but died before writing done.
+    applied_config = NULL
 WHERE status = 'running';
 
 -- name: CountRunningDeploymentsByApplication :one
@@ -85,3 +87,35 @@ SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);
 -- is "not deployed" in the UI only when it has none (a stopped global app has
 -- no service either, see docker ServiceScale).
 SELECT DISTINCT application_id FROM deployments WHERE application_id = ANY(@ids::bigint[]);
+
+-- name: FinishDeploymentApplied :exec
+-- FinishDeployment for a deploy that ended done, with what it applied: one
+-- update, so no row reads done without it or failed with it.
+UPDATE deployments
+SET status = @status, image_tag = @image_tag, error_message = @error_message, log = @log,
+    finished_at = now(), applied_config = @applied_config
+WHERE id = @id;
+
+-- name: SetDeploymentAppliedConfig :exec
+-- The configuration fingerprint a successful deployment applied.
+UPDATE deployments SET applied_config = @applied_config WHERE id = @id;
+
+-- name: GetDeploymentAppliedConfig :one
+SELECT applied_config FROM deployments WHERE id = $1;
+
+-- name: ListLatestAppliedDeployments :many
+-- The newest successful deployment of each listed app, with the configuration
+-- fingerprint it applied (NULL before it was recorded) and whether a deploy of
+-- the app is in flight (queued deploys have a running row too).
+-- One ordered index lookup per app (deployments_app_idx, stopping at the first
+-- done row) and the partial running index, so the cost does not grow with the
+-- history the deployments poll keeps asking about.
+SELECT a.id::bigint AS application_id, d.id, d.image_tag, d.applied_config,
+    EXISTS (SELECT 1 FROM deployments r WHERE r.application_id = a.id AND r.status = 'running') AS in_flight
+FROM unnest(@ids::bigint[]) AS a(id)
+JOIN LATERAL (
+    SELECT dd.id, dd.image_tag, dd.applied_config FROM deployments dd
+    WHERE dd.application_id = a.id AND dd.status = 'done'
+    ORDER BY dd.started_at DESC, dd.id DESC
+    LIMIT 1
+) d ON true;

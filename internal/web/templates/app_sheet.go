@@ -3,6 +3,9 @@ package templates
 import (
 	"context"
 	"path"
+	"slices"
+
+	"github.com/a-h/templ"
 	"strings"
 
 	db "github.com/proshik/krill/internal/database/gen"
@@ -248,4 +251,59 @@ func connHintKey(engine string) string {
 		return "dbi.conn_hint_s3"
 	}
 	return "dbi.conn_hint"
+}
+
+// PendingView is what an app's saved settings would change if deployed now
+// (deploy.Pending): the changed sections (deploy.Sections names, in display
+// order) and whether "apply settings" can deploy them on the running image.
+type PendingView struct {
+	Changed  []string
+	CanApply bool
+}
+
+// Any reports whether some section changed.
+func (p PendingView) Any() bool { return len(p.Changed) > 0 }
+
+// Has reports whether any of sections changed.
+func (p PendingView) Has(sections ...string) bool {
+	for _, c := range p.Changed {
+		if slices.Contains(sections, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// tabSections are the settings sections a sheet tab edits.
+func tabSections(tab string) []string {
+	switch tab {
+	case "variables":
+		return []string{"env"}
+	case "metrics":
+		return []string{"metrics"}
+	case "settings":
+		return []string{"source", "runtime", "predeploy", "volumes", "ports", "placement"}
+	}
+	return nil
+}
+
+// pendingNames names changed sections for a sentence ("variables, volumes").
+func pendingNames(ctx context.Context, sections []string) string {
+	names := make([]string, len(sections))
+	for i, s := range sections {
+		names[i] = i18n.T(ctx, "pending.section."+s)
+	}
+	return strings.Join(names, ", ")
+}
+
+// appElemID is the DOM id of an app's card on the environment canvas.
+func appElemID(appID int64) string { return "s-app-" + itoa(appID) }
+
+// swapOOB marks an element of a poll response for an out-of-band swap. The
+// value must be explicit: htmx reads a bare hx-swap-oob as no swap at all.
+func swapOOB(oob bool) templ.Attributes {
+	if oob {
+		return templ.Attributes{"hx-swap-oob": "true"}
+	}
+	return templ.Attributes{}
 }

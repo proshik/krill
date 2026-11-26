@@ -136,6 +136,9 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			<span class="svc-head">
 				@ui.Glyph(c.Glyph)
 				<span class="svc-name">{ c.Name }</span>
+				if c.App {
+					@canvasPending(c.ElemID, c.Pending, false)
+				}
 				if c.Shared {
 					<span class="tag tag--small" title={ i18n.T(ctx, "canvas.shared_hint") }>{ i18n.T(ctx, "system.shared") }</span>
 				}
@@ -149,11 +152,22 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 	}
 }
 
+// canvasPending marks an app card whose saved settings are not live yet. The
+// slot is always there so the app sheet's deployments poll can replace it.
+templ canvasPending(elemID string, pending bool, oob bool) {
+	<span class="svc-pending" id={ "cp-" + elemID } { swapOOB(oob)... }>
+		if pending {
+			<span class="pending-dot" title={ i18n.T(ctx, "pending.marker") } aria-hidden="true"></span>
+			<span class="visually-hidden">{ i18n.T(ctx, "pending.marker") }</span>
+		}
+	</span>
+}
+
 // canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
 // what the node filter matches; the status poll replaces it (oob) with the
 // placement of the same snapshot as the badges.
 templ canvasWhere(c CanvasCard, oob bool) {
-	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } hx-swap-oob?={ oob }>
+	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { swapOOB(oob)... }>
 		if len(c.Nodes) > 0 {
 			@ui.Icon("i-node")
 			{ joinComma(c.Nodes) }
@@ -165,7 +179,7 @@ templ canvasWhere(c CanvasCard, oob bool) {
 
 // canvasNodeCount is a node chip's count of cards, refreshed by the poll.
 templ canvasNodeCount(n CanvasNode, oob bool) {
-	<span class="chip-count" id={ "cn-" + n.ID } hx-swap-oob?={ oob }>{ nodeCountLabel(n) }</span>
+	<span class="chip-count" id={ "cn-" + n.ID } { swapOOB(oob)... }>{ nodeCountLabel(n) }</span>
 }
 
 // CanvasRefresh is the canvas's status poll: every card's state badge and
@@ -176,6 +190,11 @@ templ CanvasRefresh(v CanvasView) {
 			@ui.StateID(c.StateID, c.StateKind, c.StateText, true)
 		}
 		@canvasWhere(c, true)
+		// The poll does not look pending changes up (each costs a settings
+		// load); it only clears the marker of an app that stopped meanwhile.
+		if c.App && c.NotRunning {
+			@canvasPending(c.ElemID, false, true)
+		}
 	}
 	for _, n := range v.Nodes {
 		@canvasNodeCount(n, true)

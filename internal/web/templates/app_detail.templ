@@ -81,6 +81,8 @@ type AppCtx struct {
 	Running int
 	// VolumeBlocks are the volumes' backup sections (settings tab).
 	VolumeBlocks map[int64]BackupBlock
+	// Pending is what the app's saved settings would change if deployed now.
+	Pending PendingView
 }
 
 // DBLinkView is a linked DB row for the Environment tab. Collides is true when
@@ -141,6 +143,7 @@ templ AppDetail(c AppCtx, tab string) {
 					@ui.Glyph("i-app")
 					<h2>{ c.App.Name }</h2>
 					@AppStateBadge(c.App.Status, c.base()+"/status", c.Running)
+					@PendingMarker(c.Pending, false)
 				</div>
 				<a class="pill pill--icon" href={ templ.SafeURL(c.envURL()) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
 					@ui.Icon("i-close")
@@ -163,11 +166,7 @@ templ AppDetail(c AppCtx, tab string) {
 					<code>{ c.App.Image + ":" + c.App.Tag }</code>
 				}
 			</p>
-			<nav class="seg" aria-label={ c.App.Name }>
-				for _, t := range c.appTabs(ctx) {
-					<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == tab, "page")... }>{ t.Label }</a>
-				}
-			</nav>
+			@appNav(c, tab)
 			switch tab {
 				case "logs":
 					@logsTab(c)
@@ -189,6 +188,76 @@ templ AppDetail(c AppCtx, tab string) {
 					}
 			}
 		</aside>
+	}
+}
+
+// appNav is the sheet's tabs. A tab whose settings were changed after the
+// deployment that runs gets a dot; the deployments tab's poll refreshes the
+// dots (oob, each tab's slot alone: replacing the bar would undo the user's
+// sideways scroll of it), so they clear once those settings are applied.
+templ appNav(c AppCtx, tab string) {
+	<nav class="seg" aria-label={ c.App.Name }>
+		for _, t := range c.appTabs(ctx) {
+			<a href={ templ.SafeURL(t.Href) } { ariaCurrent(t.Key == tab, "page")... }>
+				{ t.Label }
+				if len(tabSections(t.Key)) > 0 {
+					@tabDot(c.Pending, t.Key, false)
+				}
+			</a>
+		}
+	</nav>
+}
+
+// tabDot is a tab's pending-changes dot; the slot is always there.
+templ tabDot(p PendingView, key string, oob bool) {
+	<span class="pending-slot" id={ "tab-dot-" + key } { swapOOB(oob)... }>
+		if p.Has(tabSections(key)...) {
+			<span class="tab-dot" aria-hidden="true">•</span>
+			<span class="visually-hidden">{ ", " + i18n.T(ctx, "pending.tab_hint") }</span>
+		}
+	</span>
+}
+
+// PendingMarker says, next to the app's state, that saved settings are not
+// live yet. The slot is always there so the deployments poll can replace it.
+templ PendingMarker(p PendingView, oob bool) {
+	<span class="pending-slot" id="app-pending" { swapOOB(oob)... }>
+		if p.Any() {
+			<span class="state state--warn" title={ i18n.Tf(ctx, "pending.changed", pendingNames(ctx, p.Changed)) }>
+				@ui.Sig("warn")
+				{ i18n.T(ctx, "pending.marker") }
+			</span>
+		}
+	</span>
+}
+
+// DeploymentsPoll is the deployments tab's poll response: the list, plus the
+// header marker, the tab dots and the canvas card marker (oob), which change
+// with it when a deploy applies the saved settings.
+templ DeploymentsPoll(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
+	@DeploymentsList(c, deps)
+	@PendingMarker(c.Pending, true)
+	for _, t := range c.appTabs(ctx) {
+		if len(tabSections(t.Key)) > 0 {
+			@tabDot(c.Pending, t.Key, true)
+		}
+	}
+	@canvasPending(appElemID(c.App.ID), c.Pending.Any(), true)
+}
+
+// AppStatePoll is the state badge's poll response. It looks no pending
+// changes up (it runs every 3 s on every tab), but clears the markers of an
+// app that no longer runs: they are never shown for a stopped app.
+templ AppStatePoll(c AppCtx, status string, running int) {
+	@AppStateBadge(status, c.base()+"/status", running)
+	if status != "running" {
+		@PendingMarker(PendingView{}, true)
+		for _, t := range c.appTabs(ctx) {
+			if len(tabSections(t.Key)) > 0 {
+				@tabDot(PendingView{}, t.Key, true)
+			}
+		}
+		@canvasPending(appElemID(c.App.ID), false, true)
 	}
 }
 
@@ -237,6 +306,7 @@ templ deploymentsTab(c AppCtx) {
 	// replace a form whose confirmation is open. The buttons in the polled
 	// part reach them through form=.
 	<form id="deploy-again" method="post" action={ templ.SafeURL(c.base() + "/deploy") }></form>
+	<form id="apply-form" method="post" action={ templ.SafeURL(c.base() + "/apply-settings") }></form>
 	<form id="reload-form" method="post" action={ templ.SafeURL(c.base() + "/reload") }></form>
 	<form id="rebuild-form" method="post" action={ templ.SafeURL(c.base() + "/rebuild") }></form>
 	<form id="stop-form" method="post" hx-boost="false" action={ templ.SafeURL(c.base() + "/stop") } data-confirm={ i18n.Tf(ctx, "confirm.stop_app", c.App.Name) } data-more={ i18n.T(ctx, "app.stop_more") } data-ok={ i18n.T(ctx, "common.stop") } onsubmit="return krillConfirm(this)"></form>
@@ -299,6 +369,9 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 			if active != nil && active.Status == "running" {
 				<p class="deploy-msg">{ i18n.T(ctx, "deploy.in_progress") }</p>
 			}
+			if active != nil && c.Pending.Any() {
+				<p class="deploy-msg deploy-msg--warn">{ i18n.Tf(ctx, "pending.changed", pendingNames(ctx, c.Pending.Changed)) }</p>
+			}
 			<div class="deploy-keys">
 				if active != nil {
 					// No rollback to the release that runs now; older eligible
@@ -326,8 +399,14 @@ templ DeploymentsList(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 							<button type="submit" form="rebuild-form" class="pill" title={ i18n.T(ctx, "app.rebuild_hint") }>{ i18n.T(ctx, "app.rebuild") }</button>
 						}
 					} else {
+						// Restart keeps the settings the containers run with, so it
+						// is never the highlighted action for saved changes: apply
+						// settings is, or deploy again when only a deploy can.
+						if c.Pending.CanApply {
+							<button type="submit" form="apply-form" class="pill pill--primary" title={ i18n.T(ctx, "app.apply_hint") }>{ i18n.T(ctx, "app.apply_settings") }</button>
+						}
 						<button type="submit" form="reload-form" class="pill" title={ i18n.T(ctx, "app.reload_hint") }>{ i18n.T(ctx, "app.reload") }</button>
-						<button type="submit" form="deploy-again" class="pill" title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.deploy_again") }</button>
+						<button type="submit" form="deploy-again" class={ "pill", templ.KV("pill--primary", c.Pending.Any() && !c.Pending.CanApply) } title={ i18n.T(ctx, "app.deploy_hint") }>{ i18n.T(ctx, "app.deploy_again") }</button>
 						if c.App.SourceType == "dockerfile" {
 							<button type="submit" form="rebuild-form" class="pill" title={ i18n.T(ctx, "app.rebuild_hint") }>{ i18n.T(ctx, "app.rebuild") }</button>
 						}

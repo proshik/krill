@@ -16,6 +16,9 @@ describes them in detail.
   A deploy ships the image tag it was queued with, whatever else writes the app in
   the meantime; Reload of a stopped app redeploys it rather than restarting its old
   spec; deployment history tells UI, webhook, agent-API and control-plane deploys apart.
+  Settings saved after the running deploy are marked (app header, tabs, canvas, the
+  current deploy), and **apply settings** deploys them on the image that runs, without
+  pulling its tag or building.
 - **Projects and tenancy:** organization → project → environment → app, owner /
   admin / member roles, an instance-admin flag for cluster-wide resources, a
   private overlay network per organization (existing installs are moved onto it in
