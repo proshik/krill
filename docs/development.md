@@ -274,7 +274,8 @@ so a custom domain needs no config change. Pages has to be enabled once under
   `go vet`, `go test`, a Docker image build without pushing, and a check that generated code
   is up to date. A change that touches only the landing site skips it.
 - [`release.yml`](../.github/workflows/release.yml) runs on a `v*.*.*` tag. It pushes a
-  multi-arch image to `ghcr.io/proshik/krill` (tags without the leading `v`, plus `latest`) and
+  multi-arch image to `ghcr.io/proshik/krill` (tags without the leading `v`, plus `latest`;
+  the Dockerfile cross-compiles the binary for each platform rather than emulating it) and
   creates a GitHub Release with static `krill-linux-amd64` / `krill-linux-arm64` binaries,
   `krill-cli` tarballs for Linux and macOS, and `checksums.txt` — the files `install.sh`
   downloads and verifies.

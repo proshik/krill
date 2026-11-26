@@ -2,7 +2,10 @@
 
 # ---- Builder stage ----
 # Pinned to the exact Go version declared in go.mod (go 1.26.11).
-FROM golang:1.26.11-alpine AS builder
+# The builder runs on the build machine's own platform ($BUILDPLATFORM) and
+# cross-compiles for the target, so a multi-arch buildx build never runs Go
+# under QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine AS builder
 
 # The release version, stamped into internal/buildinfo.Version so the running
 # server can report it (e.g. via `krill --version`). Passed by CI as
@@ -26,10 +29,11 @@ COPY . .
 # internal/database/migrate.go) and web static assets (internal/web/static,
 # via //go:embed all:static in internal/web/embed.go) are embedded into the
 # binary, so nothing else needs to ship in the final image.
-# GOOS=linux is fixed; GOARCH is left to the build platform so the same
-# Dockerfile builds linux/amd64 and linux/arm64 under buildx (each platform
-# build runs natively for its target arch via QEMU).
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# GOOS/GOARCH come from the target platform; a plain `docker build` sets them
+# to the local platform. Declared only here so the steps above stay shared
+# between the platforms of one multi-arch build.
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
         -trimpath \
         -ldflags="-s -w -X github.com/proshik/krill/internal/buildinfo.Version=${VERSION}" \
         -o /out/krill \
