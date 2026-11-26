@@ -12,7 +12,8 @@ single-variable env edits and starting a configured backup. Four more **create**
 app onto Krill needs — a logical database, an image app, a domain, a database link — and only for
 a token issued at the **provision** level. There are no destructive operations: nothing deletes
 or changes an existing organization, project, environment, app, database, domain or volume, and
-there is no shell into a container. The blast radius is bounded by the surface itself — a list of
+there is no shell into a container. The one thing a write token can remove is old backup copies:
+a backup started through the API applies its configured retention, as a scheduled one does. The blast radius is bounded by the surface itself — a list of
 twenty operations can be checked by eye.
 
 ## 1. Issue a token
@@ -81,7 +82,7 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment; and, when Swarm answers, its five newest `tasks` (node, state, desired state, error, exit code, times — what `docker service ps` shows), `failed_since_deploy` (tasks created since the last deployment started that crashed, were refused or exited; a lower bound, as Swarm keeps about five tasks per replica), `health` of each container meant to run (status, failing streak, last probe's exit code and time — never its output) and `usage` (memory read live; CPU from the monitoring sampler when it can only be that container's). A part that cannot be read is left out. |
 | `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`) is always kept. The level comes from a `level=` field or a severity word (`INFO`, `WARN`, `ERROR`, …) near the start of the line, so most unstructured output has none and passes the filter. `?since=` and `?until=` take an RFC3339 time or a duration ago (`10m`, `2h`); `until` needs `since`. `?contains=` keeps lines whose message contains the text, ignoring case (it searches up to each task's last 10 000 lines of the window, or 50 000 lines in all for a window with an end; a search that may have missed lines ends with a "log read incomplete" line). A line over 16 KB is cut, saying so. `?wait_for=` waits instead — see below. |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
-| `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. `?wait=` (seconds, max 120) waits while it is still running and answers once it is done or failed, or when the time is up. `"settling": true` means the spec is applied and Swarm is still converging — still `running`, not done. |
+| `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. `?wait=` (seconds, max 120) waits while it is still running and answers once it is done or failed, or when the time is up (plus at most a quarter second for the closing reads — give a client timeout of the wait plus a few seconds). `"settling": true` means the spec is applied and Swarm is still converging — still `running`, not done. |
 | `GET /api/v1/apps/{app}/config` | read | Saved settings, never a secret: source (image and tag, or git repository — scheme, host and path only, left out when it cannot be read safely —, branch, Dockerfile path, build args and secrets by name), resources (replicas, memory/CPU limits and whether they are the app's own or the instance default, restart policy, placement), healthcheck timing (not its command), ports, volumes, domains (paths, exposed, HTTPS, redirect, which protection kinds), links by variable, and `pending` — the settings sections saved but not applied yet. |
 | `GET /api/v1/apps/{app}/domain-status` | read | For each domain: what DNS resolves it to from the control plane, whether that is one of the addresses Krill knows for its gateway — `KRILL_ADVERTISE_ADDR` and the node its gateway task runs on (`points_at_gateway`; `gateway_known` is false when Krill knows none, and the addresses themselves are not listed — they are the nodes'). Behind NAT or a private network, the public address can be none of them, and for an HTTPS domain the certificate the gateway serves for it — issuer, validity, `days_left`, `trusted`, `default_cert` (Traefik's own self-signed certificate: none issued yet). |
 | `GET /api/v1/backups` | read | Every configured backup of the organization — `database` (pg_dump), `volume` and `bucket` — with target, destination, schedule, retention, `enabled`, `running`, last run (`last_run_at`, to the microsecond; `last_status`; `last_error` — a summary Krill writes of what went wrong, never the stored text, which can carry a credential: the full error is on the backup's page in the UI) and `last_success_at`. `?app=` (its volumes and the databases and buckets it is linked to) or `?environment=project/env`. |
@@ -130,18 +131,26 @@ worker's clock may lag); it does not search what was logged before. The answer i
 `{"found", "stopped_by", "match", "lines", "following_since", "incomplete"}` — `stopped_by` is
 `match`, `timeout`, `ended` (the service went away), `error` (the live read broke),
 `shutdown` (Krill is restarting) or `cancelled`; `lines` are the `tail` lines before the match
-(default 20), the match and a few after it; `following_since` is when the live stream was open —
-lines written before it are not covered; `incomplete` says the live read broke, so a missing match
-is no proof the line never appeared. `wait_for` cannot be combined with `since`, `until`,
+(default 20), the match and a few after it; `following_since` is when Docker accepted the live
+read — lines written before it are not covered, and neither, possibly, are the first moments after
+it (Docker attaches each task's reader a little later and does not say when); `incomplete` says the
+live read broke, so a missing match is no proof the line never appeared. `wait_for` cannot be combined with `since`, `until`,
 `contains` or `level`. An installation runs a few log waits at once; a further one answers
 `503 unavailable` — retry shortly.
 
-To wait for a line after a deploy without a gap between calls:
+To look for a line after a deploy across the gaps between calls:
 
 1. Read with `contains=listening&since=<the deployment's started_at>`. If the line is there, done.
 2. Otherwise wait: `wait_for=listening&timeout=90`.
-3. On a timeout, read with `contains` and the same `since` once more. It covers the moments
-   between steps 1 and 2 that neither call saw.
+3. If the wait ends without a match — a timeout, `ended` or `error` — read with `contains` and the
+   same `since` once more. It covers the moments between steps 1 and 2 and the start of the wait.
+
+The last read is bounded too (a scan cap and a time limit): when it ends with the "log read
+incomplete" line, or the wait said `incomplete`, the answer is inconclusive, not "not there". And a
+generic line such as `listening` can come from the previous release's task while a rollout is under
+way — `since` is the time the deploy was queued, not when the new task started. To prove the new
+release is up, look for a line only it prints (its version), and check the replicas and `health`
+in the app status as well.
 
 ## Notes
 

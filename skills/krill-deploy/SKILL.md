@@ -43,10 +43,11 @@ An app is addressed as `project/environment/app` or by numeric id — `krill_lis
    - **`krill_rebuild`** when the build must not reuse cached layers (`dockerfile` apps only).
    - **`krill_reload`** when nothing was rebuilt and the process just needs a bounce.
 4. `krill_deploy` and `krill_rebuild` are asynchronous: they return a `deployment_id` right away and the build runs on the server. Wait with `krill_deployment_status` and `wait: 120` (rule 1); repeat while it still says `running`. `settling: true` means the spec is applied and Swarm is still rolling it out — not done yet.
-5. On `done`, verify with `krill_app_status` that replicas read `n/n` and the status is `running`, and that `failed_since_deploy` is 0 and `health` (if any) is `healthy`. A green deployment with `0/1` replicas or failed tasks means the container started and died — go to the diagnose branch. To confirm the app really came up, look for its ready line (for example `listening`) in three steps, so no moment goes unseen:
-   1. `krill_app_logs` with `contains: "listening"` and `since` = the deployment's `started_at`. Found — done.
-   2. Otherwise `krill_app_logs` with `wait_for: "listening"` and a `timeout` (up to 120). It only watches lines written after it started (`following_since`).
-   3. On a timeout, step 1 once more: it covers the moments between steps 1 and 2. Still nothing — the app did not get there; go to the diagnose branch.
+5. On `done`, verify with `krill_app_status` that replicas read `n/n` and the status is `running`, and that `failed_since_deploy` is 0 and `health` (if any) is `healthy`. A green deployment with `0/1` replicas or failed tasks means the container started and died — go to the diagnose branch. To see the app's ready line (for example `listening`), look in three steps, so the gaps between calls are covered:
+   1. `krill_app_logs` with `contains: "listening"` and `since` = the deployment's `started_at`. Found — go on.
+   2. Otherwise `krill_app_logs` with `wait_for: "listening"` and a `timeout` (up to 120). It only watches lines written after it started (`following_since`), and possibly not the first moments after that.
+   3. If the wait ends without a match — `timeout`, `ended` or `error` — step 1 once more: it covers the moments between steps 1 and 2.
+   Still nothing is inconclusive, not a failure, when the last read ended with a "log read incomplete" line or the wait said `incomplete`: say so and fall back on the status. A generic line can also come from the **previous** release's task during a rollout (`started_at` is when the deploy was queued): treat it as supporting evidence, and prove the new release with a line only it prints (its version) or with the status — replicas `n/n`, `failed_since_deploy` 0, `health` healthy.
 6. On `error`, read the `log_tail` the same call returned, name the cause, and stop (rule 2).
 
 `krill_set_env` writes the variable but does **not** restart anything: the app keeps running the old value until the next deploy. If the change is meant to take effect, deploy after it — and say that you are about to.
