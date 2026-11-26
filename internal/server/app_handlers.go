@@ -466,7 +466,6 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 			}
 		}
 	case "deployments":
-		s.fillRuns(r, c)
 		deps, err := s.q.ListDeploymentSummariesByApplication(ctx, c.App.ID)
 		if err != nil {
 			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
@@ -474,6 +473,11 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 			return false
 		}
 		c.Deps = deps
+		// The head and the "runs on" list from one read, as the deployments
+		// poll that refreshes them both.
+		if live := s.readAppLive(r, c.App, len(deps) > 0, true); live.read {
+			c.HeadStatus, c.Tasks = live.head, live.tasks
+		}
 	case "metrics":
 		c.MetricsEnabled, c.MetricsTokenEnv = c.App.MetricsEnabled, c.App.MetricsTokenEnv
 		eps, err := s.q.ListMetricsEndpointsByApplication(ctx, c.App.ID)
@@ -671,7 +675,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	live := s.readAppLive(r, c.App, s.deployedApps(r.Context(), []int64{c.App.ID})[c.App.ID])
+	live := s.readAppLive(r, c.App, s.deployedApps(r.Context(), []int64{c.App.ID})[c.App.ID], false)
 	render(w, r, http.StatusOK, templates.AppStatePoll(c, live.head, live.running))
 }
 
@@ -683,20 +687,37 @@ type appLive struct {
 	running int    // running replicas, -1 when unknown
 	nodes   []docker.SwarmNode
 	nodesOK bool
+	// tasks are the service's desired-running tasks, read only on request;
+	// the status is then counted from them, so the two cannot disagree.
+	tasks []docker.TaskPlacement
+	// read says the status (and the tasks, when requested) came from Swarm.
+	read bool
 }
 
 // readAppLive reads app's live state. deployed says whether the app has any
-// deployment (see deploy.DisplayStatus).
-func (s *Server) readAppLive(r *http.Request, app db.Application, deployed bool) appLive {
+// deployment (see deploy.DisplayStatus); withTasks also reads the tasks of
+// the deployments tab's "runs on" list.
+func (s *Server) readAppLive(r *http.Request, app db.Application, deployed, withTasks bool) appLive {
 	l := appLive{status: app.Status, head: app.Status, running: -1}
 	if s.engine == nil {
 		return l
 	}
-	if st, err := s.engine.ServiceState(r.Context(), dockerName(app.ID)); err == nil {
-		l.running = int(st.Running)
-		l.status = deploy.DisplayStatus(st, app.Status, deployed)
-	} else {
+	st, err := s.engine.ServiceState(r.Context(), dockerName(app.ID))
+	if err != nil {
 		logFrom(r).Error("readAppLive: failed to query engine service state", "err", err, "app_id", app.ID)
+	} else {
+		l.read = true
+		// A service that is not there has no tasks; asking for them is an error.
+		if withTasks && st.Found {
+			if tasks, terr := s.engine.ServiceTasks(r.Context(), docker.ServiceName(app.ID)); terr != nil {
+				logFrom(r).Warn("readAppLive: service tasks", "err", terr, "app_id", app.ID)
+				l.read = false
+			} else {
+				l.tasks, st = tasks, countTasks(st, tasks)
+			}
+		}
+		l.running = st.Running
+		l.status = deploy.DisplayStatus(st, app.Status, deployed)
 	}
 	var nerr error
 	l.nodes, nerr = s.engine.Nodes(r.Context())
@@ -705,16 +726,24 @@ func (s *Server) readAppLive(r *http.Request, app db.Application, deployed bool)
 	return l
 }
 
-// fillRuns loads the tasks of the deployments tab's "runs on" list.
-func (s *Server) fillRuns(r *http.Request, c *templates.AppCtx) {
-	if s.engine == nil {
-		return
+// countTasks recounts st's running and failed replicas from tasks, the same
+// service's desired-running tasks, as ServiceState counts them. ServiceState
+// and ServiceTasks list tasks in two requests; a task that starts or stops
+// between them would otherwise put "online" next to a lone "starting" row.
+func countTasks(st docker.ServiceState, tasks []docker.TaskPlacement) docker.ServiceState {
+	st.Running, st.Failed = 0, 0
+	for _, t := range tasks {
+		switch t.State {
+		case "running":
+			st.Running++
+		case "failed", "rejected":
+			st.Failed++
+		}
 	}
-	tasks, err := s.engine.ServiceTasks(r.Context(), docker.ServiceName(c.App.ID))
-	if err != nil {
-		logFrom(r).Warn("appDetail: service tasks", "err", err, "app_id", c.App.ID)
+	if st.Global {
+		st.Desired = len(tasks)
 	}
-	c.Tasks = tasks
+	return st
 }
 
 // fillNodeNames sets the names the sheet shows for the cluster's nodes.

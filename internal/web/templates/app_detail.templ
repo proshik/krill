@@ -83,6 +83,9 @@ type AppCtx struct {
 	// HeadStatus is the state the sheet head shows: Status, or a node badge
 	// for a pinned app with no live node. "" falls back to App.Status.
 	HeadStatus string
+	// RunsRead says the deployments poll read the head's state and the tasks
+	// from Swarm; without it the poll leaves the pair the page shows.
+	RunsRead bool
 	// VolumeBlocks are the volumes' backup sections (settings tab).
 	VolumeBlocks map[int64]BackupBlock
 	// Pending is what the app's saved settings would change if deployed now.
@@ -259,11 +262,14 @@ templ PendingMarker(p PendingView, oob bool) {
 // DeploymentsPoll is the deployments tab's poll response: the list, plus the
 // header marker, the tab dots and the canvas card marker (oob), which change
 // with it when a deploy applies the saved settings, and the head's state with
-// the "runs on" list (oob), read from Swarm together so they tell one story.
+// the "runs on" list (oob), read from Swarm together so they tell one story
+// (both left as they are when Swarm did not answer).
 templ DeploymentsPoll(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRow) {
 	@DeploymentsList(c, deps)
-	@AppStateBadge(c.headStatus(), "", c.Running, true)
-	@appRuns(c, true)
+	if c.RunsRead {
+		@AppStateBadge(c.headStatus(), "", c.Running, true)
+		@appRuns(c, true)
+	}
 	@PendingMarker(c.Pending, true)
 	for _, t := range c.appTabs(ctx) {
 		if len(tabSections(t.Key)) > 0 {
