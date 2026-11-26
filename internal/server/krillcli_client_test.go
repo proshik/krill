@@ -63,9 +63,19 @@ func TestKrillCLIClientAgainstTheServer(t *testing.T) {
 		t.Fatalf("run of a missing backup: want 404, got %v", err)
 	}
 
-	// The window filters probe whoami first; a current server passes.
-	_, err = c.Logs(ctx, fx.path, client.LogsQuery{Since: "10m", Contains: "x"})
-	notOld(t, err)
+	// The window filters probe whoami first; a current server passes, and
+	// the read reaches the log handler of the right app.
+	lines, err := c.Logs(ctx, fx.path, client.LogsQuery{Since: "10m", Contains: "x"})
+	if err != nil {
+		t.Fatalf("log window: %v", err)
+	}
+	if len(lines) != 0 {
+		t.Fatalf("the no-op engine has no lines, got %+v", lines)
+	}
+	_, err = c.Logs(ctx, fx.path, client.LogsQuery{Since: "soon"})
+	if !errors.As(err, &ae) || ae.HTTPStatus != 400 {
+		t.Fatalf("a bad since must reach the handler and be refused there: %v", err)
+	}
 
 	// WaitLog is not driven here: this server's no-op engine has no log
 	// stream to follow. Its answer's shape is pinned in the client's tests.

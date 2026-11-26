@@ -8,12 +8,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/proshik/krill/internal/krillcli/cliconfig"
 	"github.com/proshik/krill/internal/krillcli/client"
@@ -40,7 +43,17 @@ var g globals
 func Execute(v string) int {
 	version = v
 	root := newRoot()
-	if err := root.Execute(); err != nil {
+	// Ctrl-C cancels the command's context, so a watch can say it was
+	// interrupted and still print what it last saw (--json) instead of the
+	// process dying mid-write. A second Ctrl-C is the default again: it
+	// kills a command that does not stop.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := root.ExecuteContext(ctx); err != nil {
 		// Cobra has already printed usage errors; everything else is ours.
 		fmt.Fprintln(os.Stderr, "Error:", classifyHint(err))
 		return exitCodeFor(classify(err))

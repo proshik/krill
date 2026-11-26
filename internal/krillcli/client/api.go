@@ -81,11 +81,17 @@ func (c *Client) Logs(ctx context.Context, ref string, lq LogsQuery) ([]LogLine,
 // s). tail is how many lines before the match come back (0: the server's
 // default).
 //
-// The server holds the request open, so this runs on the long client. A
-// server older than the diagnostics ignores wait_for and answers with an
-// array of lines at once; that shape is reported as an old server rather than
-// decoded as "not found".
+// The server holds the request open, so this runs on the long client. The
+// server is first asked whether it is new enough (one whoami request); an
+// answer shaped as an array of lines is reported as an old server as well,
+// never decoded as "not found".
 func (c *Client) WaitLog(ctx context.Context, ref, text string, tail int, timeout time.Duration) (LogWaitResult, error) {
+	// An older server would not wait at all: it reads an ordinary tail, and
+	// when that read fails (no such service yet, Docker unreachable) it
+	// answers 500 before the shape check below can tell. Ask first.
+	if err := c.requireDiagnostics(ctx, "waiting for a log line (--wait-for)"); err != nil {
+		return LogWaitResult{}, err
+	}
 	q := url.Values{}
 	q.Set("wait_for", text)
 	if tail > 0 {

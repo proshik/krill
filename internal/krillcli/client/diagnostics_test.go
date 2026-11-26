@@ -21,17 +21,31 @@ const (
 	routerNotFound = "404 page not found\n"
 )
 
+const newWhoami = `{"org_name":"acme","instance":{"url":"https://krill.example.com","version":"v0.14.0"}}`
+
+// serveWhoami answers the compatibility probe as a current server would and
+// hands every other request to h.
+func serveWhoami(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/whoami" {
+			_, _ = w.Write([]byte(newWhoami))
+			return
+		}
+		h(w, r)
+	}
+}
+
 func oldRefRefusal(ref string) string {
 	return `{"code":"invalid","message":"app \"` + ref + `\" is neither a numeric id nor a project/environment/app path","request_id":"r1"}`
 }
 
 func TestWaitLogSendsTheWaitAndDecodesTheResult(t *testing.T) {
 	var q url.Values
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, serveWhoami(func(w http.ResponseWriter, r *http.Request) {
 		q = r.URL.Query()
 		_, _ = w.Write([]byte(`{"found":true,"stopped_by":"match","match":{"t":"2026-11-26T10:00:00Z","lvl":"info","msg":"listening on :8080"},
 			"lines":[{"t":"2026-11-26T10:00:00Z","lvl":"info","msg":"listening on :8080"}],"following_since":"2026-11-26T09:59:58Z"}`))
-	})
+	}))
 	res, err := c.WaitLog(context.Background(), "acme/production/bot", "Listening", 5, 90*time.Second)
 	if err != nil {
 		t.Fatalf("wait: %v", err)
@@ -44,12 +58,34 @@ func TestWaitLogSendsTheWaitAndDecodesTheResult(t *testing.T) {
 	}
 }
 
-// TestWaitLogOnAnOldServer: an older Krill ignores wait_for and answers with
-// the plain tail at once. Decoding that as "not found" would be a lie.
+// TestWaitLogOnAnOldServer: an older Krill ignores wait_for and reads an
+// ordinary tail — which fails outright (500) when the service has no tasks
+// or Docker is unreachable. The probe catches it before either answer.
 func TestWaitLogOnAnOldServer(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"t":"2026-11-26T10:00:00Z","lvl":"info","msg":"hello"}]`))
+	waited := false
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/whoami" {
+			_, _ = w.Write([]byte(`{"org_name":"acme","level":"read","role":"member"}`))
+			return
+		}
+		waited = true
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":"internal","message":"internal error"}`))
 	})
+	_, err := c.WaitLog(context.Background(), "17", "listening", 0, 0)
+	var old *client.OldServerError
+	if !errors.As(err, &old) || waited {
+		t.Fatalf("want OldServerError before any wait, got %v (waited %v)", err, waited)
+	}
+}
+
+// TestWaitLogAnsweredWithAnArray: a probe that passed (a routing layer
+// mixing installations, say) and an answer shaped as the plain tail is still
+// an older server, never "not found".
+func TestWaitLogAnsweredWithAnArray(t *testing.T) {
+	c, _ := newTestClient(t, serveWhoami(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"t":"2026-11-26T10:00:00Z","lvl":"info","msg":"hello"}]`))
+	}))
 	_, err := c.WaitLog(context.Background(), "17", "listening", 0, 0)
 	var old *client.OldServerError
 	if !errors.As(err, &old) {
@@ -269,14 +305,14 @@ func TestWellFormedRef(t *testing.T) {
 // open by the server for up to two minutes, past the 30 s every other call
 // is bounded by. Here the ordinary timeout is 100ms and the server holds 300ms.
 func TestHeldCallsOutliveTheOrdinaryTimeout(t *testing.T) {
-	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c, _ := newTestClient(t, serveWhoami(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		if r.URL.Query().Has("wait_for") {
 			_, _ = w.Write([]byte(`{"found":true,"stopped_by":"match","lines":[]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"id":5,"status":"done"}`))
-	})
+	}))
 	client.SetOrdinaryTimeout(c, 100*time.Millisecond)
 
 	if _, err := c.Deployment(context.Background(), 5); err == nil {
@@ -340,4 +376,35 @@ func TestThrottledProbeIsReportedAsThrottled(t *testing.T) {
 	if !errors.As(err, &ae) || !ae.IsRateLimited() || ae.RetryAfter != 7*time.Second {
 		t.Fatalf("want the probe's 429, got %v", err)
 	}
+}
+
+// TestRouteMissingKeepsTheProbesOwnAnswer: the whoami that follows a bare 404
+// can be refused itself — a rejected token is exit 6, not a hint about a
+// switched-off API — and a server that does report its instance has the
+// route, so the 404 came from something in between.
+func TestRouteMissingKeepsTheProbesOwnAnswer(t *testing.T) {
+	t.Run("rejected token", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/whoami" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"code":"unauthorized","message":"invalid token"}`))
+				return
+			}
+			http.NotFound(w, r)
+		})
+		_, err := c.Backups(context.Background(), client.BackupFilter{})
+		var ae *client.APIError
+		if !errors.As(err, &ae) || !ae.IsUnauthorized() {
+			t.Fatalf("want the probe's 401, got %v", err)
+		}
+	})
+	t.Run("current server behind a proxy that drops the route", func(t *testing.T) {
+		c, _ := newTestClient(t, serveWhoami(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+		_, err := c.Backups(context.Background(), client.BackupFilter{})
+		var old *client.OldServerError
+		var ae *client.APIError
+		if errors.As(err, &old) || !errors.As(err, &ae) || ae.Code != "http_404" {
+			t.Fatalf("a current server was told to update: %v", err)
+		}
+	})
 }

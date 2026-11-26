@@ -481,6 +481,10 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 	var lastTransportErr error
 	var last client.DeploymentDetail
 	settlingNoted := false
+	// held is false once a proxy in front of Krill has cut a held request:
+	// it will do so again, so the watch asks without ?wait= on the ordinary
+	// poll schedule for the rest of its time.
+	held := true
 
 	// nextPause is the ordinary poll schedule, used whenever the server did
 	// not do the waiting: an old server, a throttled one, a dropped link.
@@ -525,6 +529,9 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 		}
 
 		wait := min(serverWait, deadline.Sub(f.now()))
+		if !held {
+			wait = 0
+		}
 		asked := f.now()
 		d, err := f.API.DeploymentWait(wctx, id, wait)
 		took := f.now().Sub(asked)
@@ -541,6 +548,15 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 				continue
 			case errors.As(err, &ae) && !proxyGaveUp(ae):
 				return last, f.authAware(err, "lost track of deployment #%d", id)
+			case errors.As(err, &ae) && held && ae.HTTPStatus == 504:
+				// A proxy timed out the held request: ask without holding
+				// from now on. Not a failure, so it does not count as one.
+				held = false
+				if noteOut != nil {
+					fmt.Fprintf(noteOut, "· watch    a proxy in front of Krill cut the waiting request (504); polling instead\n")
+				}
+				pause = nextPause(0)
+				continue
 			}
 			// Not an answer from Krill at all — a dropped link, a proxy
 			// hiccup, or a proxy in front of Krill that gave up on the held
@@ -583,7 +599,7 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 			fmt.Fprintf(noteOut, "· rollout  applied; Swarm is still converging — waiting\n")
 			settlingNoted = true
 		}
-		if took < wait/2 {
+		if !held || took < wait/2 {
 			pause = nextPause(0)
 		}
 	}

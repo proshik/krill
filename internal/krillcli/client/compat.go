@@ -74,14 +74,23 @@ func (c *Client) routeMissing(ctx context.Context, err error, op string) error {
 	if !errors.As(err, &ae) || !isRouterNotFound(ae) {
 		return err
 	}
-	if _, werr := c.Whoami(ctx); werr != nil {
-		// A throttled or briefly unavailable probe proves nothing either
-		// way: report that, with its Retry-After, rather than the bare 404
-		// the CLI would explain as a switched-off API.
+	who, werr := c.Whoami(ctx)
+	if werr != nil {
+		// whoami answering the router's 404 as well is the switched-off API
+		// (or a wrong base URL), which the CLI explains from the original
+		// error. Anything else — a rejected token, throttling, a dropped
+		// link — is the more useful answer, with its own status and
+		// Retry-After.
 		var we *APIError
-		if errors.As(werr, &we) && we.IsRetryable() {
-			return werr
+		if errors.As(werr, &we) && isRouterNotFound(we) {
+			return err
 		}
+		return werr
+	}
+	if who.InstanceVersion() != "" {
+		// A server new enough to report its instance has this route; the
+		// 404 came from something between (a proxy that does not forward
+		// it), not from an old release.
 		return err
 	}
 	return &OldServerError{Op: op}

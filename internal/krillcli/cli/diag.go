@@ -333,8 +333,14 @@ last_error is Krill's summary of what went wrong; the full error is on the
 backup's page in the web UI.`,
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if app != "" && env != "" {
+			// By presence, not value: an unset shell variable passed as
+			// --app "" must not widen the list to the whole organization.
+			hasApp, hasEnv := cmd.Flags().Changed("app"), cmd.Flags().Changed("env")
+			if hasApp && hasEnv {
 				return usageErr(errors.New("filter by --app or by --env, not both"))
+			}
+			if (hasApp && strings.TrimSpace(app) == "") || (hasEnv && strings.TrimSpace(env) == "") {
+				return usageErr(errors.New("--app and --env need a value; it was empty"))
 			}
 			s, err := connect(false)
 			if err != nil {
@@ -418,7 +424,7 @@ running when --timeout ran out or a later run overwrote the result.`,
 			}
 			started, err := s.api.RunBackup(cmd.Context(), kind, id)
 			if err != nil {
-				return err
+				return startFailure(err, kind, id)
 			}
 			if !wait {
 				if g.asJSON {
@@ -432,7 +438,9 @@ running when --timeout ran out or a later run overwrote the result.`,
 			if g.asJSON {
 				note = os.Stderr
 			}
-			fmt.Fprintf(note, "Started %s backup %d at %s; waiting for it.\n", kind, id, shortTime(started.StartedAt))
+			// The exact started_at, not a rounded local time: it is what
+			// identifies this run's result in `krill-cli backups` later.
+			fmt.Fprintf(note, "Started %s backup %d (started_at %s); waiting for it.\n", kind, id, started.StartedAt)
 			b, err := awaitBackup(cmd.Context(), backupWaiter{
 				List: func(ctx context.Context) ([]client.BackupInfo, error) {
 					return s.api.Backups(ctx, client.BackupFilter{})
@@ -440,13 +448,18 @@ running when --timeout ran out or a later run overwrote the result.`,
 				Sleep: sleepCtx,
 				Now:   time.Now,
 			}, started, timeout)
-			if g.asJSON && b.ID != 0 {
-				if perr := printJSON(b); perr != nil && err == nil {
+			if g.asJSON {
+				if perr := printJSON(backupWaitJSON(started, b)); perr != nil && err == nil {
 					err = perr
 				}
 			}
 			if err == nil && !g.asJSON {
 				fmt.Printf("✓ %s backup %d ok\n", kind, id)
+				if b.LastError != "" {
+					// A run can store its copy and still fail to prune old
+					// ones; that is recorded as ok with a warning.
+					fmt.Printf("  ! %s\n", b.LastError)
+				}
 			}
 			return err
 		},
@@ -529,9 +542,15 @@ func awaitBackup(ctx context.Context, w backupWaiter, started client.BackupStart
 				}
 			}
 			if !found {
-				return last, fmt.Errorf("%s backup %d is no longer listed — it was deleted while running", started.Kind, started.ID)
+				// Deleted while running: the run may still have stored a
+				// copy (and pruned old ones); its outcome cannot be read.
+				return last, &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
+					"%s backup %d is no longer listed — it was deleted while this run was going, so the run's outcome is unknown",
+					started.Kind, started.ID)}
 			}
-			if !last.Running {
+			// This run's recorded result wins even while the entry reads
+			// running: a restore of it may have started right after.
+			if !last.Running || isThisRun(last, startedAt) {
 				return last, backupVerdict(last, startedAt)
 			}
 		}
@@ -539,6 +558,50 @@ func awaitBackup(ctx context.Context, w backupWaiter, started client.BackupStart
 			return last, timedOut()
 		}
 	}
+}
+
+// isThisRun reports an entry whose recorded result is the started run's.
+func isThisRun(b client.BackupInfo, startedAt time.Time) bool {
+	ran, err := time.Parse(time.RFC3339Nano, b.LastRunAt)
+	return err == nil && ran.Equal(startedAt) && b.LastStatus != ""
+}
+
+// backupWaitResult is `backups run --wait --json`'s answer: the server's
+// start acknowledgment, and the list entry carrying THIS run's result — or,
+// when the wait ended without one, the last entry seen, kept apart so it is
+// never read as this run's.
+type backupWaitResult struct {
+	Started  client.BackupStarted `json:"started"`
+	Result   *client.BackupInfo   `json:"result"`
+	LastSeen *client.BackupInfo   `json:"last_seen,omitempty"`
+}
+
+func backupWaitJSON(started client.BackupStarted, b client.BackupInfo) backupWaitResult {
+	out := backupWaitResult{Started: started}
+	if b.ID == 0 {
+		return out
+	}
+	if at, err := time.Parse(time.RFC3339Nano, started.StartedAt); err == nil && isThisRun(b, at) {
+		out.Result = &b
+	} else {
+		out.LastSeen = &b
+	}
+	return out
+}
+
+// startFailure maps an error starting a backup. A refusal from Krill keeps
+// its usual code; no answer at all is different, because the server starts
+// the run before it replies — it may be running now, and sending the
+// request again could start a second one.
+func startFailure(err error, kind string, id int64) error {
+	var ae *client.APIError
+	var old *client.OldServerError
+	if errors.As(err, &old) || (errors.As(err, &ae) && !deployflow.ProxyGaveUp(err)) {
+		return err
+	}
+	return &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
+		"no answer to starting %s backup %d (%v); it may have started — check `krill-cli backups` before trying again",
+		kind, id, err)}
 }
 
 // backupVerdict reads a finished entry against the run that was started.

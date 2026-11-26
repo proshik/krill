@@ -265,3 +265,56 @@ func TestProxyTimeoutIsLostContactNotFailure(t *testing.T) {
 		t.Fatalf("a 504 was not retried (%d calls)", api.statusCall)
 	}
 }
+
+// proxyCutsHeld plays a proxy whose response timeout is shorter than a held
+// request: every request with a wait gets 504, an ordinary one goes through.
+type proxyCutsHeld struct {
+	waitServer
+	plain int
+}
+
+func (p *proxyCutsHeld) DeploymentWait(ctx context.Context, id int64, wait time.Duration) (client.DeploymentDetail, error) {
+	p.asked = append(p.asked, wait)
+	p.clock.t = p.clock.t.Add(50 * time.Millisecond)
+	if wait > 0 {
+		return client.DeploymentDetail{}, &client.APIError{HTTPStatus: 504, Code: "http_504", Message: "Gateway Timeout"}
+	}
+	p.plain++
+	status := "running"
+	if !p.clock.t.Before(p.doneAt) {
+		status = "done"
+	}
+	return client.DeploymentDetail{Deployment: client.Deployment{ID: id, Status: status}}, nil
+}
+
+// TestProxyCuttingHeldRequestsFallsBackToPolling: a proxy that times out
+// every held request but serves ordinary ones must not end a healthy watch
+// after a few 504s; the watch switches to ordinary polling and sees it end.
+func TestProxyCuttingHeldRequestsFallsBackToPolling(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
+	p := &proxyCutsHeld{waitServer: waitServer{clock: clock, doneAt: clock.t.Add(3 * time.Minute)}}
+	var out strings.Builder
+	f := &deployflow.Flow{API: p, Out: &out, Now: clock.now, Sleep: func(_ context.Context, d time.Duration) error {
+		clock.t = clock.t.Add(d)
+		return nil
+	}}
+	d, err := f.Follow(context.Background(), 7, 10*time.Minute, true)
+	if err != nil || d.Status != "done" {
+		t.Fatalf("follow: %+v, %v", d, err)
+	}
+	held := 0
+	for _, w := range p.asked {
+		if w > 0 {
+			held++
+		}
+	}
+	if held != 1 {
+		t.Fatalf("%d held requests after the first 504, want only that one: %v", held, p.asked)
+	}
+	if n := len(p.asked); n > 30 {
+		t.Fatalf("%d requests for three minutes of polling", n)
+	}
+	if !strings.Contains(out.String(), "polling instead") {
+		t.Fatalf("the switch was not said:\n%s", out.String())
+	}
+}

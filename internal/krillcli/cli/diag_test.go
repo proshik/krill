@@ -70,6 +70,18 @@ func writeJSON(w http.ResponseWriter, status int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
+// asCurrent answers the compatibility probe as a current server would and
+// hands every other request to h.
+func asCurrent(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/whoami" {
+			writeJSON(w, 200, currentWhoami)
+			return
+		}
+		h(w, r)
+	}
+}
+
 const currentWhoami = `{"user_id":1,"org_id":3,"org_name":"acme","level":"write","role":"admin","can_write":true,
 	"instance":{"url":"https://krill.example.com","version":"v0.14.0"}}`
 
@@ -85,12 +97,12 @@ func TestLogsWaitForExitCodes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			code, out, errOut, _ := runCLI(t, func(w http.ResponseWriter, r *http.Request) {
+			code, out, errOut, _ := runCLI(t, asCurrent(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Query().Get("wait_for") != "listening" || r.URL.Query().Get("timeout") != "30" {
 					t.Errorf("query = %v", r.URL.Query())
 				}
 				writeJSON(w, 200, tc.body)
-			}, "logs", "acme/production/bot", "--wait-for", "listening", "--timeout", "30s")
+			}), "logs", "acme/production/bot", "--wait-for", "listening", "--timeout", "30s")
 			if code != tc.want {
 				t.Fatalf("exit %d, want %d\nstdout:\n%s\nstderr:\n%s", code, tc.want, out, errOut)
 			}
@@ -102,9 +114,9 @@ func TestLogsWaitForExitCodes(t *testing.T) {
 }
 
 func TestLogsWaitForJSONIsTheServersAnswer(t *testing.T) {
-	code, out, _, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+	code, out, _, _ := runCLI(t, asCurrent(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, `{"found":false,"stopped_by":"timeout","lines":[],"following_since":"2026-11-26T09:59:59Z","incomplete":true}`)
-	}, "--json", "logs", "17", "--wait-for", "x")
+	}), "--json", "logs", "17", "--wait-for", "x")
 	if code != deployflow.ExitTimeout {
 		t.Fatalf("exit %d", code)
 	}
@@ -135,8 +147,12 @@ func TestLogsFlagConflictsAreRefusedUnsent(t *testing.T) {
 }
 
 func TestLogsWaitForOnAnOldServer(t *testing.T) {
-	code, _, errOut, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, `[{"t":"2026-11-26T10:00:00Z","lvl":"info","msg":"hello"}]`)
+	code, _, errOut, _ := runCLI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/whoami" {
+			writeJSON(w, 200, `{"org_name":"acme","level":"read","role":"member"}`)
+			return
+		}
+		writeJSON(w, 500, `{"code":"internal","message":"internal error"}`)
 	}, "logs", "17", "--wait-for", "listening")
 	if code != deployflow.ExitUsage || !strings.Contains(errOut, "older than") {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
@@ -337,9 +353,9 @@ func TestBackupRunRefusesABadTimeoutBeforeStarting(t *testing.T) {
 // TestLogWaitWithNoAnswerIsUnknown: a held log wait that gets no answer (a
 // proxy giving up with 504, a dropped link) says nothing about the line.
 func TestLogWaitWithNoAnswerIsUnknown(t *testing.T) {
-	code, _, errOut, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+	code, _, errOut, _ := runCLI(t, asCurrent(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
-	}, "logs", "17", "--wait-for", "listening", "--timeout", "5s")
+	}), "logs", "17", "--wait-for", "listening", "--timeout", "5s")
 	if code != deployflow.ExitTimeout || !strings.Contains(errOut, "unknown") {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
@@ -378,5 +394,65 @@ func TestAwaitBackupStalledListIsCutAtTheDeadline(t *testing.T) {
 	}
 	if took := time.Since(start); took > 6*time.Second {
 		t.Fatalf("waited %s on a 100ms timeout", took)
+	}
+}
+
+func TestEmptyBackupFilterIsRefused(t *testing.T) {
+	for _, args := range [][]string{{"backups", "--app", ""}, {"backups", "--env", " "}} {
+		code, _, _, n := runCLI(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, `[]`) }, args...)
+		if code != deployflow.ExitUsage || n != 0 {
+			t.Fatalf("%v: exit %d after %d requests, want 2 and none", args, code, n)
+		}
+	}
+}
+
+// TestBackupStartWithNoAnswerIsUnknown: the server starts the run before it
+// replies, so a lost reply means "it may be running" (4), not "failed" (1).
+func TestBackupStartWithNoAnswerIsUnknown(t *testing.T) {
+	code, _, errOut, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+	}, "backups", "run", "database", "3", "--wait")
+	if code != deployflow.ExitTimeout || !strings.Contains(errOut, "may have started") {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+}
+
+// TestAwaitBackupEdgeCases: this run's recorded result wins even when a
+// restore made the entry busy again; an entry deleted mid-run is unknown.
+func TestAwaitBackupEdgeCases(t *testing.T) {
+	const at = "2026-11-26T10:00:00.123456Z"
+	started := client.BackupStarted{Kind: "database", ID: 3, StartedAt: at}
+	run := func(entries ...[]client.BackupInfo) error {
+		i := 0
+		w := backupWaiter{
+			List: func(context.Context) ([]client.BackupInfo, error) {
+				e := entries[min(i, len(entries)-1)]
+				i++
+				return e, nil
+			},
+			Sleep: func(context.Context, time.Duration) error { return nil },
+			Now:   time.Now,
+		}
+		_, err := awaitBackup(context.Background(), w, started, time.Minute)
+		return err
+	}
+	busy := client.BackupInfo{Kind: "database", ID: 3, Running: true}
+	if err := run([]client.BackupInfo{busy}, []client.BackupInfo{{Kind: "database", ID: 3, Running: true, LastRunAt: at, LastStatus: "ok"}}); err != nil {
+		t.Fatalf("a recorded ok under a restore's busy flag: %v", err)
+	}
+	if err := run([]client.BackupInfo{busy}, nil); deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("a deleted entry: want 4, got %v", err)
+	}
+}
+
+func TestBackupWaitJSONKeepsOtherRunsApart(t *testing.T) {
+	st := client.BackupStarted{Kind: "volume", ID: 4, StartedAt: "2026-11-26T10:00:00.000001Z"}
+	mine := backupWaitJSON(st, client.BackupInfo{Kind: "volume", ID: 4, LastRunAt: st.StartedAt, LastStatus: "ok"})
+	if mine.Result == nil || mine.LastSeen != nil {
+		t.Fatalf("this run's entry: %+v", mine)
+	}
+	other := backupWaitJSON(st, client.BackupInfo{Kind: "volume", ID: 4, LastRunAt: "2026-11-26T09:00:00Z", LastStatus: "ok"})
+	if other.Result != nil || other.LastSeen == nil {
+		t.Fatalf("another run's entry was presented as this one's: %+v", other)
 	}
 }

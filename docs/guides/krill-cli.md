@@ -101,17 +101,21 @@ code. An `APP` argument is a numeric id or a `project/environment/app` path and 
 | `logs [APP]` | The runtime log, newest lines across all tasks. `--tail`, `--level`, a window `--since`/`--until` (RFC3339 or `10m`), `--contains TEXT` (ignores case). `--wait-for TEXT --timeout 90s` waits on the server for a **new** line instead (at most 2 minutes; not combinable with the window, `--contains` or `--level`). |
 | `deployment ID [--watch]` | One deployment and its build log tail; `--watch` waits until it ends. |
 | `backups [--app APP \| --env PROJECT/ENV]` | Configured backups: schedule, retention, running, last run, its status and error, last success. |
-| `backups run KIND ID [--wait]` | Start a configured backup now (write level). It applies the backup's retention. `--wait` follows **this** run to its result. |
+| `backups run KIND ID [--wait] [--timeout 30m]` | Start a configured backup now (write level). It applies the backup's retention. `--wait` follows **this** run to its result; with `--json` it prints `{"started", "result"}` — `result` is the entry whose `last_run_at` equals `started_at`, `null` when the wait ended without it (the last entry seen is then under `last_seen`, never as `result`). A stored copy whose old copies could not be pruned is still `ok`, with the warning in `last_error`. |
 
 **Waiting happens on the server.** `deploy`, `rebuild --watch` and `deployment ID --watch` ask
 Krill to hold each request while the deployment runs and to answer the moment it ends, so a
-ten-minute build costs a handful of requests (each waits up to 2 minutes, never past
-`--timeout`). Krill saves the build log when the deployment ends, so the log tail is printed
-then; with `--json`, `deployment ID --watch` and `rebuild --watch` print no log and end with the
-last deployment the server sent. Against a Krill too old to wait, the CLI notices the immediate
+ten-minute build costs a handful of requests. Each request waits up to 2 minutes and none is
+started past `--timeout`; one already under way may take up to 5 s longer to answer.
+(`rebuild --watch` has no `--timeout`: it watches for 10 minutes.) Krill saves the build log
+when the deployment ends, so the log tail is printed then. With `--json`, `deployment ID --watch`
+and `rebuild --watch` print no log and end with the last deployment the server sent — nothing
+when none arrived, and on exit `4` one that may still read `running`: the outcome is unknown.
+Ctrl-C stops a watch the same way (exit `4`, last deployment printed). Against a Krill too old to wait, the CLI notices the immediate
 answers and falls back to its old poll schedule (1, 2, 3, then every 5–10 s), which stays inside
 the token's rate limit. A `502`/`504` from a proxy in front of Krill counts as lost contact: it
-is retried, and a watch that never gets an answer exits `4`, not `1`.
+is retried, and a watch that never gets an answer exits `4`, not `1`; after a `504` on a held
+request the watch stops asking the server to hold and polls instead.
 
 **An older Krill.** `whoami` shows no instance, and `config`, `domains`, `backups`,
 `logs --since/--until/--contains` and `logs --wait-for` exit `2` saying the server needs an
