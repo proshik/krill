@@ -1204,6 +1204,17 @@ function routeAround(l, lanes, colGap, rowGap, box, width) {
   return d + "L" + pts[pts.length - 1][0] + " " + pts[pts.length - 1][1];
 }
 
+// krillEngineFamily maps a database server's engine onto the wire colour
+// family: "pg", "redis" (Redis-compatible) or "s3"; "" for anything else.
+function krillEngineFamily(engine) {
+  switch (engine) {
+    case "postgres": return "pg";
+    case "redis": case "valkey": case "dragonfly": return "redis";
+    case "minio": return "s3";
+  }
+  return "";
+}
+
 function mountWiredMap(map) {
   // A JS property, not an attribute: htmx's history cache restores a page from
   // its serialized HTML, which would carry an attribute but not the listeners.
@@ -1264,6 +1275,11 @@ function mountWiredMap(map) {
       else if (l.detected) p.classList.add("w-detected");
       else if (l.from.closest(".lane") && l.from.closest(".lane") !== l.to.closest(".lane")) p.classList.add("w-cross");
       else p.classList.add("w-link");
+      // The colour says which kind of server the wire reaches; the line's
+      // style above says how.
+      const target = l.to.closest("[data-engine]");
+      const family = target && krillEngineFamily(target.dataset.engine);
+      if (family && !l.from.hasAttribute("data-gateway")) p.classList.add("w-" + family);
       l.path = p;
       svg.append(p);
     });

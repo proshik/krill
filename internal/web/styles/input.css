@@ -88,6 +88,8 @@ button, input, select, textarea { font: inherit; }
   --color-stack-1: color-mix(in oklab, var(--color-ink) 6%, var(--color-card)); --color-stack-2: color-mix(in oklab, var(--color-ink) 11%, var(--color-card));
   --color-stack-run-1: color-mix(in oklab, var(--color-ok) 9%, var(--color-stack-1)); --color-stack-run-2: color-mix(in oklab, var(--color-ok) 9%, var(--color-stack-2));
   --color-stack-line: var(--color-rule-2);
+  /* wires by the engine family of the server they reach, clear of the accent (ingress) and the signals */
+  --color-wire-pg: oklch(52% 0.14 250); --color-wire-redis: oklch(55% 0.17 350); --color-wire-s3: oklch(54% 0.1 190);
 }
 :root[data-mode="dark"] {
   color-scheme: dark;
@@ -109,6 +111,7 @@ button, input, select, textarea { font: inherit; }
   --color-stack-1: oklch(24% 0.006 265); --color-stack-2: oklch(22.5% 0.006 265);
   --color-stack-run-1: color-mix(in oklab, var(--color-ok) 12%, var(--color-stack-1)); --color-stack-run-2: color-mix(in oklab, var(--color-ok) 12%, var(--color-stack-2));
   --color-stack-line: oklch(48% 0.008 265);
+  --color-wire-pg: oklch(74% 0.1 250); --color-wire-redis: oklch(74% 0.12 350); --color-wire-s3: oklch(76% 0.09 190);
 }
 
 /* ---------- controls ---------- */
@@ -763,6 +766,11 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .wires path.w-cross, .legend .w-cross { stroke-dasharray: 6 5; }
 .wires path.w-detected, .legend .w-detected { stroke-dasharray: 1 5; stroke-linecap: round; stroke-width: 2; }
 .wires path.w-link, .legend .w-link { stroke-dasharray: none; }
+/* The colour is the engine family; the line's style above stays the relation. */
+.wires path.w-pg, .legend .w-pg { stroke: var(--color-wire-pg); }
+.wires path.w-redis, .legend .w-redis { stroke: var(--color-wire-redis); }
+.wires path.w-s3, .legend .w-s3 { stroke: var(--color-wire-s3); }
+.legend .w-pg, .legend .w-redis, .legend .w-s3 { stroke-width: 2.5; }
 /* Ingress is drawn wide: in the accent colour alone it read like a linked
    database on the same node. */
 .wires path.w-ingress, .legend .w-ingress { stroke: color-mix(in oklab, var(--color-accent) 55%, transparent); stroke-dasharray: none; stroke-width: 3.5; }
@@ -770,6 +778,9 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .legend li { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .legend-line { width: 28px; height: 8px; }
 .legend-line path { fill: none; stroke: color-mix(in oklab, var(--color-ink-2) 70%, transparent); stroke-width: 1.5; }
+/* the engine colours wrap together, as one entry */
+.legend .legend-engines { gap: var(--space-lg); }
+.legend-engines span { display: inline-flex; align-items: center; gap: var(--space-xs); }
 @media (max-width: 75rem) { .topomap { gap: var(--space-lg); } }
 @media (max-width: 60rem) {
   .topomap { grid-template-columns: minmax(0, 1fr); }

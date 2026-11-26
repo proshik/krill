@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/a-h/templ"
-	db"github.com/proshik/krill/internal/database/gen"
+	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -32,6 +32,7 @@ type CanvasCard struct {
 	To        []string // ElemIDs of the resources the app uses
 	Detected  []string // the subset of To only found in env values
 	App       bool     // an app card (the others are resources)
+	Engine    string   // a resource's server engine, which colours its wires
 	Pending   bool     // an app whose saved settings are not live yet
 	// NotRunning is an app whose live status is not running, or that has a
 	// deploy queued or running: it shows no pending marker, and the status

@@ -131,6 +131,7 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			style={ templ.SafeCSS(canvasStyle(x, y)) }
 			data-to={ joinSpace(c.To) }
 			data-detected={ joinSpace(c.Detected) }
+			data-engine={ c.Engine }
 			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">

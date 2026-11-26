@@ -56,6 +56,9 @@ func TestTopoViewDetectedWiresAndSharedLabels(t *testing.T) {
 	if len(server.Holds) != 2 || server.Holds[0].ElemID != "t-ldb-70" || server.Holds[1].ElemID != "t-ldb-71" {
 		t.Errorf("the database chips must be wire ends: %+v", server.Holds)
 	}
+	if server.Engine != "postgres" || api.Engine != "" {
+		t.Errorf("the server card must carry the engine its wires are coloured by, apps none: server=%q api=%q", server.Engine, api.Engine)
+	}
 	if lanes["t-app-1"] != "n-a" || lanes["t-app-2"] != "n-b" || lanes["t-db-7"] != "n-b" {
 		t.Errorf("workloads placed in the wrong lanes: %v", lanes)
 	}
