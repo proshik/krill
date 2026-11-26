@@ -75,6 +75,12 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
   "https://krill.example.com/api/v1/deployments/$ID?wait=120"
 ```
 
+[`krill-cli`](krill-cli.md) is a client of these same routes, with one stored login per
+installation: `krill-cli -c prod --json status acme/production/bot`, `… logs --wait-for
+listening`, `… deployment $ID --watch` (it waits with `?wait=`), `… config`, `… domains`,
+`… backups`, `… backups run database 3 --wait`. The token stays in its config file, out of the
+command line.
+
 | Route | Level | Notes |
 |-------|-------|-------|
 | `GET /api/v1/whoami` | read | User, organization, token level, live role, `can_write`, and `instance` — this installation's public URL and version, to tell installations apart (app ids repeat across them). |
@@ -185,7 +191,7 @@ under the earlier piece's time. Shorter lines are not affected. A fix is planned
   `db-links` only for the provisioning POSTs. One named `config` or `domain-status` keeps its
   status route: those two words are verbs only after a full `project/environment/app` path or an id.
 - Several installations: app ids repeat across them. Check `instance` in `whoami` before a write
-  and address apps by path. `instance.url` tells installations apart only when each has its own
+  and address apps by path (`krill-cli -c NAME whoami` shows it per stored login). `instance.url` tells installations apart only when each has its own
   `KRILL_PUBLIC_URL` or panel domain; two that both say `http://localhost` cannot be told apart
   this way.
 
