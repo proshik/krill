@@ -49,7 +49,7 @@ templ variablesTab(c AppCtx) {
 			<form class="link-form" id="link-form" method="post" action={ templ.SafeURL(c.base() + "/db-links") } hidden>
 				<div class="field">
 					<label for="dblink-var">{ i18n.T(ctx, "dblink.var_name") }</label>
-					<input class="input input--mono" id="dblink-var" name="var_name" placeholder="DATABASE_URL" required autocomplete="off" spellcheck="false"/>
+					<input class="input input--mono" id="dblink-var" name="var_name" placeholder="DATABASE_URL" required autocomplete="off" spellcheck="false" aria-describedby="dblink-var-hint"/>
 				</div>
 				<div class="field">
 					<label for="dblink-db">{ i18n.T(ctx, "dblink.database") }</label>
@@ -91,6 +91,7 @@ templ variablesTab(c AppCtx) {
 					</select>
 				</div>
 				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "dblink.add") }</button>
+				<p class="field-hint link-form-hint" id="dblink-var-hint">{ i18n.Tf(ctx, "dblink.var_hint", "DATABASE_URL") }</p>
 				<p class="field-hint link-form-hint">{ i18n.T(ctx, "dblink.field_hint") }</p>
 				<p id="dblink-scheme-hint" class="field-hint link-form-hint" style="display:none">{ i18n.T(ctx, "dblink.scheme_hint") }</p>
 			</form>
@@ -206,7 +207,7 @@ templ bucketLinksSection(c AppCtx) {
 			<form class="link-form" id="blink-form" method="post" action={ templ.SafeURL(c.base() + "/bucket-links") } hidden>
 				<div class="field">
 					<label for="bucketlink-var">{ i18n.T(ctx, "dblink.var_name") }</label>
-					<input id="bucketlink-var" class="input input--mono" name="var_name" placeholder="AWS_S3_BUCKET" required autocomplete="off" spellcheck="false"/>
+					<input id="bucketlink-var" class="input input--mono" name="var_name" placeholder="AWS_S3_BUCKET" required autocomplete="off" spellcheck="false" aria-describedby="bucketlink-var-hint"/>
 				</div>
 				<div class="field">
 					<label for="bucketlink-bucket">{ i18n.T(ctx, "bucket.name") }</label>
@@ -227,6 +228,7 @@ templ bucketLinksSection(c AppCtx) {
 					</select>
 				</div>
 				<button type="submit" class="btn btn--primary">{ i18n.T(ctx, "dblink.add") }</button>
+				<p class="field-hint link-form-hint" id="bucketlink-var-hint">{ i18n.Tf(ctx, "dblink.var_hint", "AWS_S3_BUCKET") }</p>
 			</form>
 		}
 		<p class="hint">{ i18n.T(ctx, "bucketlink.note") }</p>

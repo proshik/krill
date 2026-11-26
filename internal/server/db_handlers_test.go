@@ -146,3 +146,97 @@ func TestDatabaseCrossTenantIsolation(t *testing.T) {
 		t.Fatalf("SECURITY FINDING: org-A logical database row (id=%d) was deleted by cross-tenant request: %v", aDBID, err)
 	}
 }
+
+// TestEnvDatabasesNewServerLink checks that an environment's databases tab
+// offers admins a way to create an org-level server, and hides it from members.
+func TestEnvDatabasesNewServerLink(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	memberID := mkUser(t, q, "m@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	target := "/orgs/" + i64(o.ID) + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/databases"
+	link := `href="/orgs/` + i64(o.ID) + `/db-servers?new=server"`
+
+	rec := getWithCookie(t, h, target, loginAs(t, q, "o@k.local"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin GET want 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), link) {
+		t.Fatalf("admin page lacks the new-server link %s", link)
+	}
+
+	rec = getWithCookie(t, h, target, loginAs(t, q, "m@k.local"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member GET want 200, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), link) {
+		t.Fatalf("member page shows the new-server link %s", link)
+	}
+}
+
+// TestEnvPageOrgTabsRow checks that inside an environment the organization's
+// tabs get their own row, gated for the viewer as on the organization's pages,
+// and that an organization's own page has no such row.
+func TestEnvPageOrgTabsRow(t *testing.T) {
+	h, q, orgSvc := newServer(t)
+	ctx := context.Background()
+	ownerID := mkUser(t, q, "o@k.local")
+	if err := q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: ownerID, IsAdmin: true}); err != nil {
+		t.Fatalf("set instance admin: %v", err)
+	}
+	o, _ := orgSvc.CreateOrg(ctx, ownerID, "Org")
+	p, _ := orgSvc.CreateProject(ctx, o.ID, "P", "")
+	e, _ := orgSvc.CreateEnvironment(ctx, p.ID, "production")
+	memberID := mkUser(t, q, "m@k.local")
+	if _, err := q.CreateMember(ctx, db.CreateMemberParams{OrganizationID: o.ID, UserID: memberID, Role: "member"}); err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	base := "/orgs/" + i64(o.ID)
+	envPage := base + "/projects/" + i64(p.ID) + "/environments/" + i64(e.ID) + "/databases"
+
+	row := func(body string) string {
+		start := strings.Index(body, `<nav class="orgrow"`)
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(body[start:], "</nav>")
+		return body[start : start+end]
+	}
+	cases := []struct {
+		email     string
+		has, lack []string
+	}{
+		{"o@k.local", []string{"", "/db-servers", "/nodes", "/topology", "/monitoring", "/settings"}, nil},
+		{"m@k.local", []string{"", "/db-servers", "/settings"}, []string{"/nodes", "/topology", "/monitoring"}},
+	}
+	for _, c := range cases {
+		cookie := loginAs(t, q, c.email)
+		rec := getWithCookie(t, h, envPage, cookie)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: env page want 200, got %d", c.email, rec.Code)
+		}
+		r := row(rec.Body.String())
+		if r == "" {
+			t.Fatalf("%s: env page has no organization tabs row", c.email)
+		}
+		for _, path := range c.has {
+			if !strings.Contains(r, `href="`+base+path+`"`) {
+				t.Errorf("%s: row lacks %q", c.email, base+path)
+			}
+		}
+		for _, path := range c.lack {
+			if strings.Contains(r, `href="`+base+path+`"`) {
+				t.Errorf("%s: row shows %q", c.email, base+path)
+			}
+		}
+		if rec := getWithCookie(t, h, base+"/db-servers", cookie); row(rec.Body.String()) != "" {
+			t.Errorf("%s: an organization page must not have the row", c.email)
+		}
+	}
+}

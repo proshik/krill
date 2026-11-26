@@ -176,7 +176,8 @@ templ newServerSheet(org db.Organization, nodes []docker.SwarmNode) {
 					</div>
 					<div class="field">
 						<label for="sv-console">{ i18n.T(ctx, "dbi.console_port") }</label>
-						<input class="input input--mono" id="sv-console" name="console_external_port" type="number" min="1" max="65535" placeholder={ i18n.T(ctx, "dbi.closed") }/>
+						<input class="input input--mono" id="sv-console" name="console_external_port" type="number" min="1" max="65535" placeholder={ i18n.T(ctx, "dbi.closed") } aria-describedby="sv-console-hint"/>
+						<p class="field-hint" id="sv-console-hint">{ i18n.T(ctx, "dbi.console_port_hint") }</p>
 					</div>
 				</div>
 			</div>

@@ -22,6 +22,10 @@ templ EnvDatabases(s Shell, v EnvDatabasesView) {
 							@ui.Icon("i-plus")
 							{ i18n.T(ctx, "bucket.new") }
 						</a>
+						<a class="pill" href={ templ.SafeURL(orgURL(s.Org.ID) + "/db-servers?new=server") }>
+							@ui.Icon("i-plus")
+							{ i18n.T(ctx, "dbi.new") }
+						</a>
 					</div>
 				}
 			</div>

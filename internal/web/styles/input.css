@@ -73,7 +73,7 @@ button, input, select, textarea { font: inherit; }
 /* Components: the redesign's design system. */
 @layer components {
 :root {
-  --bar-h: 60px; --card-w: 288px; --sheet-w: min(760px, 58vw);
+  --bar-h: 60px; --orgrow-h: 40px; --frame-h: var(--bar-h); --card-w: 288px; --sheet-w: min(760px, 58vw);
   --color-ok: oklch(50% 0.12 150); --color-err: oklch(52% 0.19 27); --color-warn: oklch(55% 0.12 75);
   --grid-dot: color-mix(in oklab, var(--color-rule-2) 55%, transparent);
   --color-mark: var(--color-accent); --color-wire-lit: var(--color-accent);
@@ -88,6 +88,8 @@ button, input, select, textarea { font: inherit; }
   --color-stack-1: color-mix(in oklab, var(--color-ink) 6%, var(--color-card)); --color-stack-2: color-mix(in oklab, var(--color-ink) 11%, var(--color-card));
   --color-stack-run-1: color-mix(in oklab, var(--color-ok) 9%, var(--color-stack-1)); --color-stack-run-2: color-mix(in oklab, var(--color-ok) 9%, var(--color-stack-2));
   --color-stack-line: var(--color-rule-2);
+  /* wires by the engine family of the server they reach, clear of the accent (ingress) and the signals */
+  --color-wire-pg: oklch(52% 0.14 250); --color-wire-redis: oklch(55% 0.17 350); --color-wire-s3: oklch(54% 0.1 190);
 }
 :root[data-mode="dark"] {
   color-scheme: dark;
@@ -109,6 +111,7 @@ button, input, select, textarea { font: inherit; }
   --color-stack-1: oklch(24% 0.006 265); --color-stack-2: oklch(22.5% 0.006 265);
   --color-stack-run-1: color-mix(in oklab, var(--color-ok) 12%, var(--color-stack-1)); --color-stack-run-2: color-mix(in oklab, var(--color-ok) 12%, var(--color-stack-2));
   --color-stack-line: oklch(48% 0.008 265);
+  --color-wire-pg: oklch(74% 0.1 250); --color-wire-redis: oklch(74% 0.12 350); --color-wire-s3: oklch(76% 0.09 190);
 }
 
 /* ---------- controls ---------- */
@@ -156,11 +159,22 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .tabs a { padding: var(--space-md); border-radius: var(--radius-pill); color: var(--color-muted); font: 500 var(--text-md)/1 var(--font-display); text-decoration: none; }
 .tabs a:hover { color: var(--color-ink); }
 .tabs a[aria-current="page"] { background: var(--color-paper-3); color: var(--color-ink); }
+/* The organization's row under an environment's bar (desktop only); the
+   frame height then includes it, for everything placed below the frame. */
+.orgrow { display: none; }
+@media (min-width: 75.0625rem) {
+  .orgrow { position: sticky; top: var(--bar-h); z-index: var(--z-sticky-nav); display: flex; align-items: center; gap: var(--space-3xs); height: var(--orgrow-h); padding: 0 var(--space-md) 0 var(--space-lg); background: var(--color-paper); border-bottom: 1px solid var(--color-rule); }
+  .orgrow-name { margin-right: var(--space-xs); padding-right: var(--space-sm); border-right: 1px solid var(--color-rule); color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); white-space: nowrap; }
+  .orgrow a { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-pill); color: var(--color-muted); font: 500 var(--text-sm)/1 var(--font-display); text-decoration: none; white-space: nowrap; text-box: trim-both ex alphabetic; }
+  .orgrow a:hover { background: var(--color-paper-2); color: var(--color-ink); }
+  body:has(> .orgrow) { --frame-h: calc(var(--bar-h) + var(--orgrow-h)); }
+  html:has(> body > .orgrow) { scroll-padding-top: calc(var(--space-3xl) + var(--orgrow-h)); }
+}
 .bar-end { display: flex; align-items: center; gap: var(--space-xs); padding-left: var(--space-md); border-left: 1px solid var(--color-rule); }
 
 /* ---------- the canvas ---------- */
 .is-canvas { overflow: hidden; }
-.canvas { position: relative; height: calc(100dvh - var(--bar-h)); overflow: hidden; background-color: var(--color-paper); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.4px); background-size: 22px 22px; background-position: 11px 11px; }
+.canvas { position: relative; height: calc(100dvh - var(--frame-h)); overflow: hidden; background-color: var(--color-paper); background-image: radial-gradient(var(--grid-dot) 1px, transparent 1.4px); background-size: 22px 22px; background-position: 11px 11px; }
 .plane { position: absolute; top: 92px; left: 50%; width: 1096px; height: 640px; transform: translateX(-50%); }
 .has-sheet .plane { top: 120px; left: var(--space-lg); transform: scale(0.58); transform-origin: 0 0; }
 .wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
@@ -237,7 +251,7 @@ code { font: 400 var(--text-xs)/1.3 var(--font-outlier); color: var(--color-ink-
 .float--toast:hover .toast-go { background: var(--color-rule); }
 
 /* ---------- the service sheet ---------- */
-.sheet { position: fixed; top: calc(var(--bar-h) + 12px); right: 12px; bottom: 12px; z-index: var(--z-modal); width: var(--sheet-w); overflow-y: auto; padding: var(--space-lg); border-radius: 20px; background: var(--color-paper-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
+.sheet { position: fixed; top: calc(var(--frame-h) + 12px); right: 12px; bottom: 12px; z-index: var(--z-modal); width: var(--sheet-w); overflow-y: auto; padding: var(--space-lg); border-radius: 20px; background: var(--color-paper-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
 /* A resource's sheet (an app, a DB server) spans the page by default; its head's
    toggle brings back the compact panel (the width above). The choice is krill-sheet in
    localStorage, put on <html> as data-sheet="compact" before the first paint.
@@ -693,7 +707,7 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .chip--level { box-shadow: inset 0 0 0 1px var(--color-rule-2); font-family: var(--font-display); }
 /* environment databases and backups */
 .reslist { display: grid; gap: var(--space-sm); margin: 0; padding: 0; list-style: none; }
-.res { display: grid; gap: var(--space-md); padding: var(--space-md) var(--space-lg); border-radius: 20px; background: var(--color-card); scroll-margin-top: 96px; }
+.res { display: grid; gap: var(--space-md); padding: var(--space-md) var(--space-lg); border-radius: 20px; background: var(--color-card); scroll-margin-top: calc(var(--frame-h) + 36px); }
 .res:target { box-shadow: inset 0 0 0 2px var(--color-accent); }
 .res-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
 .res-top h2 { font-size: var(--text-xl); }
@@ -713,17 +727,17 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
    ends where the other rows' buttons do. */
 .links li > .lang-form { grid-column: 2 / -1; justify-self: end; }
 .setpage { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-2xl); align-items: start; }
-.subnav { position: sticky; top: calc(var(--bar-h) + var(--space-lg)); display: grid; gap: var(--space-2xs); }
+.subnav { position: sticky; top: calc(var(--frame-h) + var(--space-lg)); display: grid; gap: var(--space-2xs); }
 .subnav h2 { margin: var(--space-md) 0 var(--space-2xs); padding-left: var(--space-sm); color: var(--color-muted); font: 500 var(--text-sm)/1.2 var(--font-display); letter-spacing: 0; }
 .subnav h2:first-child { margin-top: 0; }
 .subnav a { padding: var(--space-sm); border-radius: 12px; color: var(--color-ink-2); font: 500 var(--text-md)/1 var(--font-display); text-decoration: none; text-box: trim-both ex alphabetic; }
 .subnav a:hover { background: var(--color-paper-2); }
 .subnav a[aria-current] { background: var(--color-paper-3); color: var(--color-ink); }
 .setbody { display: grid; gap: var(--space-md); }
-.setbody .sec { margin-top: 0; padding: var(--space-lg); border-radius: 20px; background: var(--color-paper-2); scroll-margin-top: calc(var(--bar-h) + var(--space-lg)); }
+.setbody .sec { margin-top: 0; padding: var(--space-lg); border-radius: 20px; background: var(--color-paper-2); scroll-margin-top: calc(var(--frame-h) + var(--space-lg)); }
 .setbody .sec:target { box-shadow: inset 0 0 0 2px var(--color-accent); }
 .lane.is-target { box-shadow: inset 0 0 0 2px var(--color-accent); }
-.lane { scroll-margin-top: calc(var(--bar-h) + var(--space-lg)); }
+.lane { scroll-margin-top: calc(var(--frame-h) + var(--space-lg)); }
 .svc--sys { opacity: 0.8; }
 /* the bar's menu on narrow screens */
 @media (max-width: 75rem) {
@@ -763,6 +777,11 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .wires path.w-cross, .legend .w-cross { stroke-dasharray: 6 5; }
 .wires path.w-detected, .legend .w-detected { stroke-dasharray: 1 5; stroke-linecap: round; stroke-width: 2; }
 .wires path.w-link, .legend .w-link { stroke-dasharray: none; }
+/* The colour is the engine family; the line's style above stays the relation. */
+.wires path.w-pg, .legend .w-pg { stroke: var(--color-wire-pg); }
+.wires path.w-redis, .legend .w-redis { stroke: var(--color-wire-redis); }
+.wires path.w-s3, .legend .w-s3 { stroke: var(--color-wire-s3); }
+.legend .w-pg, .legend .w-redis, .legend .w-s3 { stroke-width: 2.5; }
 /* Ingress is drawn wide: in the accent colour alone it read like a linked
    database on the same node. */
 .wires path.w-ingress, .legend .w-ingress { stroke: color-mix(in oklab, var(--color-accent) 55%, transparent); stroke-dasharray: none; stroke-width: 3.5; }
@@ -770,6 +789,9 @@ a.link-src { color: var(--color-ink-2); text-decoration: underline; text-decorat
 .legend li { display: inline-flex; align-items: center; gap: var(--space-xs); }
 .legend-line { width: 28px; height: 8px; }
 .legend-line path { fill: none; stroke: color-mix(in oklab, var(--color-ink-2) 70%, transparent); stroke-width: 1.5; }
+/* the engine colours wrap together, as one entry */
+.legend .legend-engines { gap: var(--space-lg); }
+.legend-engines span { display: inline-flex; align-items: center; gap: var(--space-xs); }
 @media (max-width: 75rem) { .topomap { gap: var(--space-lg); } }
 @media (max-width: 60rem) {
   .topomap { grid-template-columns: minmax(0, 1fr); }

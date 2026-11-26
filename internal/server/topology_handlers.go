@@ -243,7 +243,7 @@ func topoView(ctx context.Context, orgID int64, g topology.Graph, project string
 			c.Href = sv.Href
 			lane.Apps = append(lane.Apps, c)
 		case "db":
-			c.Glyph = engineGlyph(sv.Engine)
+			c.Glyph, c.Engine = engineGlyph(sv.Engine), sv.Engine
 			c.StateKind, c.StateText = templates.ServerState(ctx, sv.Status)
 			c.Href = base + "/db-servers/" + strings.TrimPrefix(sv.ID, "db-")
 			c.Holds = holds[sv.ID]

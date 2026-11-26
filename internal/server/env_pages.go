@@ -299,7 +299,7 @@ func (s *Server) canvasFor(ctx context.Context, o db.Organization, role string, 
 	for _, r := range all {
 		in := d.insts[r.InstanceID]
 		kind, text := templates.ServerState(ctx, in.Status)
-		c := templates.CanvasCard{Key: r.Key, ElemID: elem(r.Key), Glyph: engineGlyph(r.Engine), Href: r.Href,
+		c := templates.CanvasCard{Key: r.Key, ElemID: elem(r.Key), Glyph: engineGlyph(r.Engine), Engine: r.Engine, Href: r.Href,
 			StateKind: kind, StateText: text, Nodes: running[in.AppName], NodeIDs: runningIDs[in.AppName], Shared: shared[r.Key]}
 		id, _ := strconv.ParseInt(r.Key[strings.IndexByte(r.Key, ':')+1:], 10, 64)
 		switch r.Kind {

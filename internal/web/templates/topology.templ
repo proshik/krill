@@ -46,6 +46,7 @@ type TopoCard struct {
 	Holds     []TopoHold
 	Gateway   bool
 	System    bool
+	Engine    string // a database server's engine, which colours its wires
 }
 
 // TopoHold is a database inside a server card.
@@ -73,6 +74,11 @@ templ Topology(org db.Organization, role string, v TopoView) {
 				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-link" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.link") }</li>
 				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-cross" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.crossnode") }</li>
 				<li><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-detected" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.detected") }</li>
+				<li class="legend-engines">
+					<span><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-link w-pg" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.postgres") }</span>
+					<span><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-link w-redis" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.redis") }</span>
+					<span><svg class="legend-line" viewBox="0 0 28 8" aria-hidden="true"><path class="w-link w-s3" d="M1 4H27"></path></svg>{ i18n.T(ctx, "topo.legend.s3") }</span>
+				</li>
 			</ul>
 			<div class="topomap" style={ templ.SafeCSS(laneCols(len(v.Lanes) - 1)) }>
 				<svg class="wires" aria-hidden="true"></svg>
@@ -130,7 +136,7 @@ templ Topology(org db.Organization, role string, v TopoView) {
 
 templ topoCard(c TopoCard) {
 	if c.Href != "" {
-		<a class="svc" id={ c.ElemID } href={ templ.SafeURL(c.Href) } data-to={ joinSpace(c.To) } data-detected={ joinSpace(c.Detected) } data-project={ c.Projects } data-gateway?={ c.Gateway } data-nodes="">
+		<a class="svc" id={ c.ElemID } href={ templ.SafeURL(c.Href) } data-to={ joinSpace(c.To) } data-detected={ joinSpace(c.Detected) } data-project={ c.Projects } data-gateway?={ c.Gateway } data-engine={ c.Engine } data-nodes="">
 			@topoCardBody(c)
 		</a>
 	} else {
