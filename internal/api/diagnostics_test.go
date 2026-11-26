@@ -265,23 +265,31 @@ func TestLogsWindowAndContains(t *testing.T) {
 	}
 }
 
-func TestWaitForLogFindsALineInHistory(t *testing.T) {
+// A wait looks only at lines written after it: a match already in the log
+// is not found (an ordinary read with since and contains finds it), and no
+// history is read at all.
+func TestWaitForLogDoesNotReadHistory(t *testing.T) {
 	f := newAPIFixture(t)
-	eng := &diagEngine{backlog: windowLogBody}
+	eng := &diagEngine{backlog: windowLogBody} // the matching line is history
 	svc := api.NewService(f.q, eng, nil)
-	res, err := svc.Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{
-		WaitFor: "upstream timeout", Since: "2026-11-20T13:00:00Z", Tail: 1,
-	})
+	before := time.Now()
+	res, err := svc.Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "upstream timeout", Timeout: 1})
 	if err != nil {
 		t.Fatalf("wait: %v", err)
 	}
 	w := res.(api.LogWaitResult)
-	if !w.Found || w.StoppedBy != "match" || w.Match == nil || !strings.Contains(w.Match.Message, "upstream") {
-		t.Fatalf("wait: %+v", w)
+	if w.Found {
+		t.Fatalf("a wait must not search history: %+v", w)
 	}
-	// One line before (tail=1), the match, then the lines after it.
-	if len(w.Lines) != 4 || !strings.Contains(w.Lines[0].Message, "boot") || !strings.Contains(w.Lines[2].Message, "served") {
-		t.Fatalf("lines: %+v", w.Lines)
+	eng.mu.Lock()
+	windows := append([]docker.LogWindow(nil), eng.windows...)
+	eng.mu.Unlock()
+	if len(windows) != 1 || !windows[0].Follow {
+		t.Fatalf("a wait opens the live stream only, got %+v", windows)
+	}
+	at, err := time.Parse(time.RFC3339Nano, w.FollowingSince)
+	if err != nil || at.Before(before.Add(-time.Second)) || at.After(time.Now()) {
+		t.Fatalf("following_since %q must say when the live stream was open", w.FollowingSince)
 	}
 }
 
@@ -378,6 +386,7 @@ func TestWaitForLogEndsOnShutdownAndTimeout(t *testing.T) {
 		{WaitFor: "x", Until: "1m", Since: "2m"},
 		{WaitFor: "x", Level: "error"},
 		{WaitFor: "x", Timeout: -1},
+		{WaitFor: "x", Since: "10m"},
 	} {
 		_, err := svc.Logs(t.Context(), f.readIdent, f.appIDString, in)
 		var aerr *api.Error
@@ -387,40 +396,15 @@ func TestWaitForLogEndsOnShutdownAndTimeout(t *testing.T) {
 	}
 }
 
-// splitLogsEngine serves history and the live stream from separate readers.
-type splitLogsEngine struct {
-	docker.Engine
-	history io.Reader
-	live    string
-}
-
-func (e *splitLogsEngine) ServiceLogs(_ context.Context, _ string, follow bool, _ int) (io.ReadCloser, error) {
-	if follow {
-		return io.NopCloser(strings.NewReader(e.live)), nil
-	}
-	return io.NopCloser(e.history), nil
-}
-
-func TestWaitForLogReportsIncompleteHistory(t *testing.T) {
-	f := newAPIFixture(t)
-	eng := &splitLogsEngine{
-		history: &errAfterReader{r: strings.NewReader(windowLogBody), err: errors.New("task skipped")},
-		live:    "", // ends cleanly at once
-	}
-	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Since: "2026-11-20T13:00:00Z", Timeout: 5})
-	if err != nil {
-		t.Fatalf("wait: %v", err)
-	}
-	if w := res.(api.LogWaitResult); w.Found || !w.Incomplete || w.StoppedBy != "ended" {
-		t.Fatalf("a broken history read must be reported even when the live stream ends cleanly: %+v", w)
-	}
+// liveOnly serves a live stream made of body, which then ends.
+func liveOnly(body string) *diagEngine {
+	return &diagEngine{follow: func(context.Context) io.ReadCloser { return io.NopCloser(strings.NewReader(body)) }}
 }
 
 func TestWaitForLogMatchesBeyondTheDisplayCut(t *testing.T) {
 	f := newAPIFixture(t)
 	long := "2026-11-20T14:00:00.000Z " + strings.Repeat("x", 20<<10) + " READY\n"
-	eng := &splitLogsEngine{history: strings.NewReader(long)}
-	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "ready", Since: "2026-11-20T13:00:00Z", Timeout: 5})
+	res, err := api.NewService(f.q, liveOnly(long), nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "ready", Timeout: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,13 +412,12 @@ func TestWaitForLogMatchesBeyondTheDisplayCut(t *testing.T) {
 		t.Fatalf("a match past 16 KB must be found, and returned cut: found=%v", w.Found)
 	}
 	// The cut marker itself must not match.
-	eng = &splitLogsEngine{history: strings.NewReader(long)}
-	res, err = api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "truncated", Since: "2026-11-20T13:00:00Z", Timeout: 1})
+	res, err = api.NewService(f.q, liveOnly(long), nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "truncated", Timeout: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := res.(api.LogWaitResult); w.Found {
-		t.Fatal("the truncation marker must not match")
+	if w := res.(api.LogWaitResult); w.Found || w.StoppedBy != "ended" || w.Incomplete {
+		t.Fatalf("the truncation marker must not match, and a clean end is not incomplete: %+v", w)
 	}
 	out, err := api.NewService(f.q, &diagEngine{backlog: long}, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{Contains: "ready"})
 	if err != nil {

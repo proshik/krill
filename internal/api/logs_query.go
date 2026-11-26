@@ -26,23 +26,28 @@ type LogsInput struct {
 	Since    string // RFC3339, or a duration meaning that long ago
 	Until    string // same forms; needs Since
 	Contains string // case-insensitive substring of the message
-	WaitFor  string // case-insensitive substring to wait for
+	WaitFor  string // case-insensitive substring to wait for, in new lines only
 	Timeout  int    // seconds to wait; 0 = default
 }
 
-// LogWaitResult answers a call that waited for a log line.
+// LogWaitResult answers a call that waited for a log line. A wait looks only
+// at lines written after it started reading (FollowingSince); what came
+// before is for an ordinary read with since and contains.
 type LogWaitResult struct {
 	Found bool `json:"found"`
 	// StoppedBy says why the wait ended: match, timeout, shutdown (Krill is
-	// stopping), cancelled (the caller went away) or ended (the log stream
-	// ended: the service is gone).
+	// stopping), cancelled (the caller went away), ended (the log stream
+	// ended: the service is gone) or error (the live read broke).
 	StoppedBy string   `json:"stopped_by"`
 	Match     *LogLine `json:"match,omitempty"`
 	// Lines are the lines before the match, the match, and a few after it;
 	// without a match, the last lines read.
 	Lines []LogLine `json:"lines"`
-	// Incomplete: the part read from history missed some task's lines, so a
-	// timeout is no proof the line never appeared.
+	// FollowingSince is when the live stream was open: lines written before
+	// it are not covered by the wait. Empty when the stream never opened.
+	FollowingSince string `json:"following_since,omitempty"`
+	// Incomplete: the live read broke before the wait ended, so a missing
+	// match is no proof the line never appeared.
 	Incomplete bool `json:"incomplete,omitempty"`
 }
 
@@ -362,20 +367,21 @@ func clampWait(name string, sec, def, max int) (time.Duration, error) {
 }
 
 // maxLogWaits bounds the log waits running at once across every caller:
-// each holds a live log stream and a buffer of lines for up to two minutes.
+// each holds a live log stream and a bounded buffer of lines (at most
+// maxWaitContext cut lines and a 64-line queue) for up to two minutes.
 const maxLogWaits = 8
 
-// waitForLog waits until a line containing in.WaitFor appears in the app's
-// log. The live stream is opened first, with no time bound — Docker sends
-// what is written from then on, so a worker whose clock lags the control
-// plane's cannot hide a new line behind a timestamp cut. Then the history
-// from in.Since (default: the moment of the call) up to the moment the live
-// stream was open is read, which covers what was written while it opened.
-// Then the live lines. Lines are matched on their whole message; only the
+// waitForLog waits until a line containing in.WaitFor is written to the
+// app's log after the call: it opens the live stream and reads what Docker
+// sends from then on — with no time bound, so a worker whose clock lags the
+// control plane's cannot hide a new line behind a timestamp cut. It does
+// not read history: lines written before the stream was open are for an
+// ordinary read with since and contains (the runbook closes the gap with one
+// after a timeout). Lines are matched on their whole message; only the
 // returned copies are cut.
 func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInput) (LogWaitResult, error) {
-	if in.Contains != "" || in.Until != "" || in.Level != "" {
-		return LogWaitResult{}, Invalid("wait_for cannot be combined with contains, until or level")
+	if in.Since != "" || in.Contains != "" || in.Until != "" || in.Level != "" {
+		return LogWaitResult{}, Invalid("wait_for waits for new lines only and cannot be combined with since, until, contains or level; search earlier lines with an ordinary read (since and contains)")
 	}
 	needle := strings.ToLower(in.WaitFor)
 	d, err := clampWait("timeout", in.Timeout, defaultLogWait, maxLogWait)
@@ -389,14 +395,6 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	case nCtx > maxWaitContext:
 		nCtx = maxWaitContext
 	}
-	t0 := time.Now()
-	since, err := parseLogTime("since", in.Since, t0)
-	if err != nil {
-		return LogWaitResult{}, err
-	}
-	if since.IsZero() || since.After(t0) {
-		since = t0
-	}
 	if s.engine == nil {
 		return LogWaitResult{}, Unavailable("logs are unavailable: no docker engine")
 	}
@@ -408,52 +406,21 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	}
 	ctx, cancel, stoppedBy := s.waitContext(ctx, d)
 	defer cancel()
-	name := docker.ServiceName(app.ID)
 	matches := func(full string) bool { return strings.Contains(strings.ToLower(full), needle) }
 
-	rc, err := s.openFollow(ctx, name)
+	rc, err := s.openFollow(ctx, docker.ServiceName(app.ID))
 	if err != nil {
 		if ctx.Err() != nil {
 			return LogWaitResult{StoppedBy: stoppedBy(), Lines: []LogLine{}}, nil
 		}
 		return LogWaitResult{}, fmt.Errorf("wait for log: follow: %w", err)
 	}
-	t1 := time.Now()
+	res := LogWaitResult{FollowingSince: formatMicro(time.Now())}
 	lines, followErr := followLines(ctx, rc, matches)
-
-	var res LogWaitResult
 	before := newLineRing(nCtx)
-	// History first: [since, t1], streamed — only the context ring and the
-	// match are kept, never the whole window. A line written while the live
-	// stream opened may come again on it; the wait has ended by then.
-	var after []LogLine
-	wr, err := s.readWindow(ctx, name, logWindow{since: since, until: t1}, docker.TailAll, 0, func(_ time.Time, l LogLine, full string) bool {
-		if res.Found {
-			after = append(after, l)
-			return len(after) >= waitAfterLines
-		}
-		if !matches(full) {
-			before.add(l)
-			return false
-		}
-		m := l
-		res.Found, res.StoppedBy, res.Match = true, "match", &m
-		return false
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return LogWaitResult{StoppedBy: stoppedBy(), Lines: before.lines()}, nil
-		}
-		return LogWaitResult{}, fmt.Errorf("wait for log: read history: %w", err)
-	}
-	res.Incomplete = wr.cut || wr.scanErr != nil
-	if res.Found {
-		res.Lines = append(append(before.lines(), *res.Match), after...)
-		return res, nil
-	}
 
-	// Then new lines, as they are written.
-	after = nil
+	// The new lines, as they are written.
+	var after []LogLine
 	var grace <-chan time.Time
 	finish := func(stopped string) (LogWaitResult, error) {
 		if res.Found {
