@@ -435,7 +435,7 @@ func (e *dockerEngine) ServiceState(ctx context.Context, name string) (ServiceSt
 	if svc.Spec.Mode.Global != nil {
 		desired = len(tasks)
 	}
-	return ServiceState{Found: true, Running: running, Desired: desired, Failed: failed}, nil
+	return ServiceState{Found: true, Running: running, Desired: desired, Failed: failed, Global: svc.Spec.Mode.Global != nil}, nil
 }
 
 func (e *dockerEngine) ServiceProgress(ctx context.Context, name string, exclude []string) (ServiceProgress, error) {

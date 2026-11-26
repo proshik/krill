@@ -86,7 +86,7 @@ func (noopEngine) NodeSetAvailability(context.Context, string, string) error { r
 func (noopEngine) NodeRemove(context.Context, string, bool) error            { return nil }
 func (noopEngine) SwarmWorkerToken(context.Context) (string, error)          { return "", nil }
 func (noopEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
-	return nil, nil
+	return []docker.TaskPlacement{{ID: "t1", State: "running", Desired: "running"}}, nil
 }
 func (noopEngine) Tasks(context.Context) ([]docker.TaskInfo, error)           { return nil, nil }
 func (noopEngine) NodeSetLabel(context.Context, string, string, string) error { return nil }
@@ -170,6 +170,10 @@ type stoppedEngine struct{ noopEngine }
 
 func (stoppedEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return docker.ServiceState{Found: true, Desired: 0}, nil
+}
+
+func (stoppedEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
 }
 
 // newStoppedAppServer is newDeployServer over an engine reporting every

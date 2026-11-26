@@ -30,6 +30,10 @@ func (scaledDownEngine) ServiceState(context.Context, string) (docker.ServiceSta
 	return docker.ServiceState{Found: true, Desired: 0}, nil
 }
 
+func (scaledDownEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	return nil, nil
+}
+
 func (e scaledDownEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
 	*e.listings++
 	out := map[string]docker.ServiceState{}

@@ -29,13 +29,16 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	// The same live status the sheet shows: the stored one can lag behind
 	// Swarm (an app stopped through the API still reads running). This polls
-	// every few seconds, so it asks for this one service only.
-	if s.engine != nil {
-		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
-			c.App.Status = deploy.DisplayStatus(st, c.App.Status, len(deps) > 0)
-		} else {
-			logFrom(r).Warn("listDeployments: service state", "err", err, "app_id", c.App.ID)
-		}
+	// every few seconds, so it asks for this one service only. It refreshes
+	// the sheet head and the "runs on" list too, from the same read, so the
+	// two cannot drift apart (the head does not poll on its own here); a
+	// failed read leaves the pair the page already shows.
+	live := s.readAppLive(r, c.App, len(deps) > 0, true)
+	c.App.Status = live.status
+	if live.read {
+		c.HeadStatus, c.Running, c.Tasks = live.head, live.running, live.tasks
+		c.RunsRead = true
+		s.fillNodeNames(r.Context(), &c, live.nodes, live.nodesOK)
 	}
 	c.Pending = s.appPending(r.Context(), c.App)
 	render(w, r, http.StatusOK, templates.DeploymentsPoll(c, deps))

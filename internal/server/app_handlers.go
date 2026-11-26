@@ -441,14 +441,16 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 	} else {
 		c.Exposed = n > 0
 	}
+	var nodes []docker.SwarmNode
+	nodesOK := false
 	if s.engine != nil {
-		c.NodeLabels = s.nodeLabelMap(ctx)
-		c.NodeNames = map[string]string{}
-		if nodes, err := s.engine.Nodes(ctx); err == nil {
-			for _, n := range nodes {
-				c.NodeNames[n.ID] = nodeDisplayName(n, c.NodeLabels)
-			}
-		}
+		var err error
+		nodes, err = s.engine.Nodes(ctx)
+		nodesOK = err == nil
+		s.fillNodeNames(ctx, c, nodes, nodesOK)
+		// As the head's poll reads it (readAppLive), so the first render and
+		// the polls agree.
+		c.HeadStatus = displayAppStatus(c.App.Status, c.App.PlacementMode, c.App.PlacementNodes, nodes, nodesOK)
 	}
 
 	c.Running = -1
@@ -464,13 +466,6 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 			}
 		}
 	case "deployments":
-		if s.engine != nil {
-			tasks, err := s.engine.ServiceTasks(ctx, docker.ServiceName(c.App.ID))
-			if err != nil {
-				logFrom(r).Warn("appDetail: service tasks", "err", err, "app_id", c.App.ID)
-			}
-			c.Tasks = tasks
-		}
 		deps, err := s.q.ListDeploymentSummariesByApplication(ctx, c.App.ID)
 		if err != nil {
 			logFrom(r).Error("appDetail: failed to list deployments", "err", err, "app_id", c.App.ID)
@@ -478,6 +473,16 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 			return false
 		}
 		c.Deps = deps
+		// The head and the "runs on" list from one read, as the deployments
+		// poll that refreshes them both.
+		if live := s.readAppLive(r, c.App, len(deps) > 0, true); live.read {
+			c.HeadStatus, c.Tasks = live.head, live.tasks
+			// The controls and the pending markers follow the same read.
+			if live.status != c.App.Status {
+				c.App.Status = live.status
+				c.Pending = s.appPending(ctx, c.App)
+			}
+		}
 	case "metrics":
 		c.MetricsEnabled, c.MetricsTokenEnv = c.App.MetricsEnabled, c.App.MetricsTokenEnv
 		eps, err := s.q.ListMetricsEndpointsByApplication(ctx, c.App.ID)
@@ -675,19 +680,92 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	status := c.App.Status
-	running := -1
-	if s.engine != nil {
-		if st, err := s.engine.ServiceState(r.Context(), dockerName(c.App.ID)); err == nil {
-			running = int(st.Running)
-			status = deploy.DisplayStatus(st, c.App.Status, s.deployedApps(r.Context(), []int64{c.App.ID})[c.App.ID])
-		} else {
-			logFrom(r).Error("appStatus: failed to query engine service state", "err", err, "app_id", c.App.ID)
-		}
-		live, nerr := s.engine.Nodes(r.Context())
-		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
+	live := s.readAppLive(r, c.App, s.deployedApps(r.Context(), []int64{c.App.ID})[c.App.ID], false)
+	render(w, r, http.StatusOK, templates.AppStatePoll(c, live.head, live.running))
+}
+
+// appLive is one read of an app's state from Swarm, for the sheet head's
+// polls (its own and the deployments tab's).
+type appLive struct {
+	status  string // derived from Swarm; the stored one when Swarm does not answer
+	head    string // status, or a node badge for a pinned app with no live node
+	running int    // running replicas, -1 when unknown
+	nodes   []docker.SwarmNode
+	nodesOK bool
+	// tasks are the service's desired-running tasks, read only on request;
+	// the status is then counted from them, so the two cannot disagree.
+	tasks []docker.TaskPlacement
+	// read says the status (and the tasks, when requested) came from Swarm.
+	read bool
+}
+
+// readAppLive reads app's live state. deployed says whether the app has any
+// deployment (see deploy.DisplayStatus); withTasks also reads the tasks of
+// the deployments tab's "runs on" list.
+func (s *Server) readAppLive(r *http.Request, app db.Application, deployed, withTasks bool) appLive {
+	l := appLive{status: app.Status, head: app.Status, running: -1}
+	if s.engine == nil {
+		return l
 	}
-	render(w, r, http.StatusOK, templates.AppStatePoll(c, status, running))
+	st, err := s.engine.ServiceState(r.Context(), dockerName(app.ID))
+	if err != nil {
+		logFrom(r).Error("readAppLive: failed to query engine service state", "err", err, "app_id", app.ID)
+	} else {
+		l.read = true
+		// A service that is not there has no tasks; asking for them is an error.
+		if withTasks && st.Found {
+			if tasks, terr := s.engine.ServiceTasks(r.Context(), docker.ServiceName(app.ID)); terr != nil {
+				logFrom(r).Warn("readAppLive: service tasks", "err", terr, "app_id", app.ID)
+				l.read = false
+			} else {
+				l.tasks, st = tasks, countTasks(st, tasks)
+			}
+		}
+		l.running = st.Running
+		l.status = deploy.DisplayStatus(st, app.Status, deployed)
+	}
+	var nerr error
+	l.nodes, nerr = s.engine.Nodes(r.Context())
+	l.nodesOK = nerr == nil
+	l.head = displayAppStatus(l.status, app.PlacementMode, app.PlacementNodes, l.nodes, l.nodesOK)
+	return l
+}
+
+// countTasks recounts st's running and failed replicas from tasks, the same
+// service's desired-running tasks, as ServiceState counts them. ServiceState
+// and ServiceTasks list tasks in two requests; a task that starts or stops
+// between them would otherwise put "online" next to a lone "starting" row.
+func countTasks(st docker.ServiceState, tasks []docker.TaskPlacement) docker.ServiceState {
+	st.Running, st.Failed = 0, 0
+	for _, t := range tasks {
+		switch t.State {
+		case "running":
+			st.Running++
+		case "failed", "rejected":
+			st.Failed++
+		}
+	}
+	switch {
+	case st.Global:
+		st.Desired = len(tasks)
+	case st.Desired == 0 && len(tasks) > 0:
+		// Read at zero just before a Start (or just after a Stop whose tasks
+		// Swarm still wants running): count the tasks the list shows, or the
+		// response would pair "stopped" with a running row.
+		st.Desired = len(tasks)
+	}
+	return st
+}
+
+// fillNodeNames sets the names the sheet shows for the cluster's nodes.
+func (s *Server) fillNodeNames(ctx context.Context, c *templates.AppCtx, nodes []docker.SwarmNode, nodesOK bool) {
+	c.NodeLabels = s.nodeLabelMap(ctx)
+	c.NodeNames = map[string]string{}
+	if nodesOK {
+		for _, n := range nodes {
+			c.NodeNames[n.ID] = nodeDisplayName(n, c.NodeLabels)
+		}
+	}
 }
 
 func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {

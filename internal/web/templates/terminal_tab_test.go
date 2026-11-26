@@ -37,7 +37,7 @@ func TestTerminalConnectFollowsReplicas(t *testing.T) {
 		}
 	}
 	var buf bytes.Buffer
-	if err := AppStateBadge("running", "/s", 2).Render(context.Background(), &buf); err != nil {
+	if err := AppStateBadge("running", "/s", 2, false).Render(context.Background(), &buf); err != nil {
 		t.Fatal(err)
 	}
 	if !regexp.MustCompile(`data-running="2"`).MatchString(buf.String()) {
