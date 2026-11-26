@@ -173,11 +173,27 @@ templ bar(s Shell) {
 			</button>
 		</div>
 	</header>
+	if s.Env != nil {
+		// Inside an environment the organization's tabs get a row of their
+		// own under the bar on a desktop (they do not fit beside the
+		// environment's); on narrow screens they stay in the bar's menu.
+		<nav class="orgrow" aria-label={ i18n.T(ctx, "nav.org_tabs") }>
+			<span class="orgrow-name">{ s.Org.Name }</span>
+			for _, t := range orgTabs(ctx, s.Org.ID, s.Role) {
+				<a href={ templ.SafeURL(t.Href) }>
+					{ t.Label }
+					if t.Key == "settings" && auth.IsInstanceAdmin(ctx) && nav.UpdateAvailable(ctx) != "" {
+						<span class="tab-badge" title={ i18n.Tf(ctx, "nav.update_badge_title", nav.UpdateAvailable(ctx)) }>{ i18n.T(ctx, "nav.update_badge") }</span>
+					}
+				</a>
+			}
+		</nav>
+	}
 }
 
 // orgCrumb is the organization crumb. Its menu lists the organization's
 // sections first (the same ones, behind the same gates, as the organization
-// tabs, which an environment's bar hides on a desktop), then the organization
+// tabs), then the organization
 // switcher, loaded on first open into its own part so the sections stay.
 templ orgCrumb(s Shell) {
 	<details class="envpick envpick--org">
