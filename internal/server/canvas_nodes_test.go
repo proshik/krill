@@ -56,11 +56,14 @@ func TestCanvasNodeChips(t *testing.T) {
 	// badges: the app moves from n2 to n1, and its card follows.
 	tasks = []docker.TaskInfo{{ServiceName: "krill-" + i64(app.ID), NodeID: "n1", State: "running", Desired: "running"}}
 	poll := getWithCookie(t, h, path+"/statuses", loginAs(t, q, "chips-member@k.local")).Body.String()
-	where := `id="cw-s-app-` + i64(app.ID) + `"`
-	if !strings.Contains(poll, where) || !strings.Contains(poll, `data-nodes="n1"`) || !strings.Contains(poll, `hx-swap-oob="true"`) {
+	// Each element is swapped out of band only with an explicit value: htmx 2
+	// reads a bare hx-swap-oob as none, and the poll (hx-swap="none") then
+	// drops the element.
+	where := `id="cw-s-app-` + i64(app.ID) + `" data-nodes="n1" hx-swap-oob="true"`
+	if !strings.Contains(poll, where) {
 		t.Fatalf("the poll does not refresh where the app runs:\n%s", poll)
 	}
-	if !strings.Contains(poll, `id="cn-n1"`) || !strings.Contains(poll, `id="cs-app-`+i64(app.ID)+`"`) {
+	if !strings.Contains(poll, `id="cn-n1" hx-swap-oob="true"`) || !strings.Contains(poll, `id="cs-app-`+i64(app.ID)+`"`) {
 		t.Fatalf("the poll lacks the node counts or the badge:\n%s", poll)
 	}
 

@@ -167,7 +167,7 @@ templ canvasPending(elemID string, pending bool, oob bool) {
 // what the node filter matches; the status poll replaces it (oob) with the
 // placement of the same snapshot as the badges.
 templ canvasWhere(c CanvasCard, oob bool) {
-	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } hx-swap-oob?={ oob }>
+	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { swapOOB(oob)... }>
 		if len(c.Nodes) > 0 {
 			@ui.Icon("i-node")
 			{ joinComma(c.Nodes) }
@@ -179,7 +179,7 @@ templ canvasWhere(c CanvasCard, oob bool) {
 
 // canvasNodeCount is a node chip's count of cards, refreshed by the poll.
 templ canvasNodeCount(n CanvasNode, oob bool) {
-	<span class="chip-count" id={ "cn-" + n.ID } hx-swap-oob?={ oob }>{ nodeCountLabel(n) }</span>
+	<span class="chip-count" id={ "cn-" + n.ID } { swapOOB(oob)... }>{ nodeCountLabel(n) }</span>
 }
 
 // CanvasRefresh is the canvas's status poll: every card's state badge and
