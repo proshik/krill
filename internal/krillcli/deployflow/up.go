@@ -444,15 +444,16 @@ func (f *Flow) Follow(ctx context.Context, id int64, timeout time.Duration, stre
 // roughly half a minute of trying.
 const maxWatchTransportFailures = 5
 
-// Server-side wait windows. The server holds a deployment request for up to
-// 120 s and answers the moment the deployment ends, so one request covers two
-// minutes of waiting. It sends the build log only when it answers, though, so
-// while that log is being streamed to a terminal the window is shorter: the
-// output keeps moving, and the end is still reported the moment it comes.
-const (
-	serverWaitMax       = 120 * time.Second
-	serverWaitStreaming = 15 * time.Second
-)
+// serverWait is how long each request asks the server to hold its answer:
+// the server's own maximum. It answers the moment the deployment ends, so one
+// request covers two minutes of waiting. A shorter window would buy nothing
+// for a terminal either — the server saves the build log only when the
+// deployment ends, so a running deployment's answer carries no new log.
+const serverWait = 120 * time.Second
+
+// watchGrace is how long past the watch's deadline an answer may still
+// arrive: the server's closing reads and the network, never another wait.
+const watchGrace = 5 * time.Second
 
 // await waits for one deployment to reach a terminal state, streaming new log
 // output to logOut and one-off notes to noteOut when they are non-nil, and
@@ -464,13 +465,15 @@ const (
 // waits out the ordinary poll schedule first. Without that, an old server
 // would be asked again immediately, over and over, and the per-token budget of
 // 60 requests a minute would be gone in seconds.
+//
+// Every request and every pause runs on a context that ends at the deadline
+// (plus watchGrace), so a stalled request or a long Retry-After cannot carry
+// the watch past --timeout.
 func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut io.Writer) (client.DeploymentDetail, error) {
 	start := f.now()
 	deadline := start.Add(o.Timeout)
-	window := serverWaitMax
-	if logOut != nil {
-		window = serverWaitStreaming
-	}
+	wctx, cancel := context.WithTimeout(ctx, o.Timeout+watchGrace)
+	defer cancel()
 	anchor := ""
 	var pause time.Duration
 	pauses := 0
@@ -491,6 +494,14 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 		}
 		return d
 	}
+	// stopped tells the caller's interrupt (Ctrl-C) from the watch's own
+	// deadline, which is a timeout like any other.
+	stopped := func() error {
+		if ctx.Err() != nil {
+			return fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+		}
+		return f.timedOut(o, id, lastTransportErr, last.Settling)
+	}
 
 	for {
 		// Checked at the TOP so every path through the loop is bounded by the
@@ -502,8 +513,10 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 			return last, f.timedOut(o, id, lastTransportErr, last.Settling)
 		}
 		if pause > 0 {
-			if err := f.Sleep(ctx, pause); err != nil {
-				return last, fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+			// Never past the deadline: a Retry-After longer than what is
+			// left ends the watch when the time is up, not after it.
+			if err := f.Sleep(wctx, min(pause, deadline.Sub(f.now()))); err != nil {
+				return last, stopped()
 			}
 			pause = 0
 			if !f.now().Before(deadline) {
@@ -511,29 +524,31 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 			}
 		}
 
-		wait := min(window, deadline.Sub(f.now()))
+		wait := min(serverWait, deadline.Sub(f.now()))
 		asked := f.now()
-		d, err := f.API.DeploymentWait(ctx, id, wait)
+		d, err := f.API.DeploymentWait(wctx, id, wait)
 		took := f.now().Sub(asked)
 		if err != nil {
-			if ctx.Err() != nil {
-				return last, fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+			if wctx.Err() != nil {
+				return last, stopped()
 			}
 			var ae *client.APIError
-			if errors.As(err, &ae) {
+			switch {
+			case errors.As(err, &ae) && ae.IsRetryable():
 				// A shared budget means somebody else's traffic can push this
 				// over; skipping a poll is the correct response, not failing.
-				if ae.IsRetryable() {
-					pause = nextPause(ae.RetryAfter)
-					continue
-				}
+				pause = nextPause(ae.RetryAfter)
+				continue
+			case errors.As(err, &ae) && !proxyGaveUp(ae):
 				return last, f.authAware(err, "lost track of deployment #%d", id)
 			}
 			// Not an answer from Krill at all — a dropped link, a proxy
-			// hiccup. The deployment is running on the SERVER and is not
-			// affected by this machine losing the connection, so reporting a
-			// failed deployment here would be a lie; keep polling, and if it
-			// never comes back report it as unknown rather than as failed.
+			// hiccup, or a proxy in front of Krill that gave up on the held
+			// request (502/504). The deployment is running on the SERVER and
+			// is not affected by this machine losing the connection, so
+			// reporting a failed deployment here would be a lie; keep polling,
+			// and if it never comes back report it as unknown rather than as
+			// failed.
 			lastTransportErr = err
 			transportFailures++
 			if transportFailures > maxWatchTransportFailures {
@@ -572,6 +587,20 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut i
 			pause = nextPause(0)
 		}
 	}
+}
+
+// proxyGaveUp is a 502 or 504: a proxy in front of Krill that could not get,
+// or stopped waiting for, Krill's answer — a lost connection, not Krill's
+// verdict on the request.
+func proxyGaveUp(ae *client.APIError) bool {
+	return ae.HTTPStatus == 502 || ae.HTTPStatus == 504
+}
+
+// ProxyGaveUp reports a 502/504 from a proxy in front of Krill, for the other
+// watchers in this module.
+func ProxyGaveUp(err error) bool {
+	var ae *client.APIError
+	return errors.As(err, &ae) && proxyGaveUp(ae)
 }
 
 // timedOut is the one "we stopped watching" message, which is never a failure

@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -261,5 +262,82 @@ func TestWellFormedRef(t *testing.T) {
 		if got := client.WellFormedRef(ref); got != want {
 			t.Errorf("WellFormedRef(%q) = %v, want %v", ref, got, want)
 		}
+	}
+}
+
+// TestHeldCallsOutliveTheOrdinaryTimeout: a deployment or log wait is held
+// open by the server for up to two minutes, past the 30 s every other call
+// is bounded by. Here the ordinary timeout is 100ms and the server holds 300ms.
+func TestHeldCallsOutliveTheOrdinaryTimeout(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		if r.URL.Query().Has("wait_for") {
+			_, _ = w.Write([]byte(`{"found":true,"stopped_by":"match","lines":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":5,"status":"done"}`))
+	})
+	client.SetOrdinaryTimeout(c, 100*time.Millisecond)
+
+	if _, err := c.Deployment(context.Background(), 5); err == nil {
+		t.Fatal("the ordinary call should have hit its 100ms timeout; the test proves nothing")
+	}
+	if _, err := c.DeploymentWait(context.Background(), 5, time.Second); err != nil {
+		t.Fatalf("a deployment wait was cut by the ordinary timeout: %v", err)
+	}
+	if _, err := c.WaitLog(context.Background(), "17", "x", 0, time.Second); err != nil {
+		t.Fatalf("a log wait was cut by the ordinary timeout: %v", err)
+	}
+
+	// And a held call still ends when its caller does.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := c.DeploymentWait(ctx, 5, time.Minute); err == nil {
+		t.Fatal("a cancelled wait reported success")
+	}
+	if time.Since(start) > 250*time.Millisecond {
+		t.Fatalf("a cancelled wait took %s to end", time.Since(start))
+	}
+}
+
+// TestWhoamiKeepsAnOldServersMissingInstance: --json prints what the server
+// sent, so an older server's absent instance must stay absent rather than
+// become {"version":""}, which reads as "the field is supported".
+func TestWhoamiKeepsAnOldServersMissingInstance(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"org_name":"acme","level":"read","role":"member"}`))
+	})
+	who, err := c.Whoami(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if who.Instance != nil || who.InstanceVersion() != "" {
+		t.Fatalf("instance = %+v", who.Instance)
+	}
+	b, _ := json.Marshal(who)
+	if strings.Contains(string(b), "instance") {
+		t.Fatalf("re-encoded answer invents an instance: %s", b)
+	}
+}
+
+// TestThrottledProbeIsReportedAsThrottled: the whoami that tells an older
+// server from a switched-off API can itself be refused with 429. That must
+// come back as the 429 (retry later), not as the bare 404 the CLI explains as
+// a switched-off API.
+func TestThrottledProbeIsReportedAsThrottled(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/whoami" {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":"rate_limited","message":"slow down"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	_, err := c.Backups(context.Background(), client.BackupFilter{})
+	var ae *client.APIError
+	if !errors.As(err, &ae) || !ae.IsRateLimited() || ae.RetryAfter != 7*time.Second {
+		t.Fatalf("want the probe's 429, got %v", err)
 	}
 }

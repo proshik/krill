@@ -193,7 +193,7 @@ func TestWhoamiShowsTheInstance(t *testing.T) {
 
 	code, out, _, _ = runCLI(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, currentWhoami) }, "--json", "whoami")
 	var who client.Whoami
-	if code != 0 || json.Unmarshal([]byte(out), &who) != nil || who.Instance.Version != "v0.14.0" || who.Instance.URL == "" {
+	if code != 0 || json.Unmarshal([]byte(out), &who) != nil || who.InstanceVersion() != "v0.14.0" || who.Instance.URL == "" {
 		t.Fatalf("exit %d, json %q", code, out)
 	}
 
@@ -306,5 +306,77 @@ func TestAwaitBackupTimesOut(t *testing.T) {
 	_, err := awaitBackup(context.Background(), w, client.BackupStarted{Kind: "volume", ID: 4, StartedAt: "2026-11-26T10:00:00Z"}, 2*time.Minute)
 	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
 		t.Fatalf("want ExitTimeout, got %v", err)
+	}
+}
+
+// TestEmptyWaitForIsRefused: `--wait-for "$READY_LINE"` with the variable
+// unset must not become an ordinary read that exits 0.
+func TestEmptyWaitForIsRefused(t *testing.T) {
+	for _, v := range []string{"", "  "} {
+		code, _, _, n := runCLI(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, `[]`) },
+			"logs", "17", "--wait-for", v)
+		if code != deployflow.ExitUsage || n != 0 {
+			t.Fatalf("--wait-for %q: exit %d after %d requests, want 2 and none", v, code, n)
+		}
+	}
+}
+
+// TestBackupRunRefusesABadTimeoutBeforeStarting: the run applies retention,
+// so a mistyped --timeout must not start one.
+func TestBackupRunRefusesABadTimeoutBeforeStarting(t *testing.T) {
+	for _, d := range []string{"0s", "-1s"} {
+		code, _, _, n := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, 200, `{"kind":"database","id":3,"status":"started","started_at":"2026-11-26T10:00:00.000000Z"}`)
+		}, "backups", "run", "database", "3", "--wait", "--timeout", d)
+		if code != deployflow.ExitUsage || n != 0 {
+			t.Fatalf("--timeout %s: exit %d after %d requests, want 2 and none", d, code, n)
+		}
+	}
+}
+
+// TestLogWaitWithNoAnswerIsUnknown: a held log wait that gets no answer (a
+// proxy giving up with 504, a dropped link) says nothing about the line.
+func TestLogWaitWithNoAnswerIsUnknown(t *testing.T) {
+	code, _, errOut, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
+	}, "logs", "17", "--wait-for", "listening", "--timeout", "5s")
+	if code != deployflow.ExitTimeout || !strings.Contains(errOut, "unknown") {
+		t.Fatalf("exit %d, stderr %q", code, errOut)
+	}
+}
+
+func TestWhoamiHidesCredentialsInTheServerURL(t *testing.T) {
+	if got := displayURL("https://user:s3cret@krill.example.com/base?x=1#f"); got != "https://krill.example.com/base" {
+		t.Fatalf("displayURL = %q", got)
+	}
+}
+
+func TestWhoamiJSONOnAnOldServerHasNoInstance(t *testing.T) {
+	code, out, _, _ := runCLI(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, `{"org_name":"acme","level":"read","role":"member"}`)
+	}, "--json", "whoami")
+	if code != 0 || strings.Contains(out, "instance") {
+		t.Fatalf("exit %d, json %s", code, out)
+	}
+}
+
+// TestAwaitBackupStalledListIsCutAtTheDeadline: a list request that never
+// answers must not carry --wait past --timeout.
+func TestAwaitBackupStalledListIsCutAtTheDeadline(t *testing.T) {
+	w := backupWaiter{
+		List: func(ctx context.Context) ([]client.BackupInfo, error) {
+			<-ctx.Done()
+			return nil, errors.New("cannot reach https://k: " + ctx.Err().Error())
+		},
+		Sleep: sleepCtx,
+		Now:   time.Now,
+	}
+	start := time.Now()
+	_, err := awaitBackup(context.Background(), w, client.BackupStarted{Kind: "volume", ID: 4, StartedAt: "2026-11-26T10:00:00Z"}, 100*time.Millisecond)
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout || strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("want a timeout, got %v", err)
+	}
+	if took := time.Since(start); took > 6*time.Second {
+		t.Fatalf("waited %s on a 100ms timeout", took)
 	}
 }

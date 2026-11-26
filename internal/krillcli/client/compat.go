@@ -75,6 +75,13 @@ func (c *Client) routeMissing(ctx context.Context, err error, op string) error {
 		return err
 	}
 	if _, werr := c.Whoami(ctx); werr != nil {
+		// A throttled or briefly unavailable probe proves nothing either
+		// way: report that, with its Retry-After, rather than the bare 404
+		// the CLI would explain as a switched-off API.
+		var we *APIError
+		if errors.As(werr, &we) && we.IsRetryable() {
+			return werr
+		}
 		return err
 	}
 	return &OldServerError{Op: op}
@@ -94,7 +101,7 @@ func (c *Client) requireDiagnostics(ctx context.Context, op string) error {
 	if err != nil {
 		return err
 	}
-	if who.Instance.Version == "" {
+	if who.InstanceVersion() == "" {
 		return &OldServerError{Op: op}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -49,17 +50,29 @@ func printWhoami(w io.Writer, s *session, who client.Whoami) {
 	if ctxName == "" {
 		ctxName = "(KRILL_TOKEN)"
 	}
-	fmt.Fprintf(w, "context   %s  (%s)\n", ctxName, s.api.Server())
-	switch {
-	case who.Instance.Version == "":
+	fmt.Fprintf(w, "context   %s  (%s)\n", ctxName, displayURL(s.api.Server()))
+	switch inst := who.Instance; {
+	case inst == nil || inst.Version == "":
 		fmt.Fprintf(w, "instance  not reported — this Krill is older than the agent API diagnostics\n")
-	case who.Instance.URL == "":
-		fmt.Fprintf(w, "instance  %s  (no public URL configured)\n", who.Instance.Version)
+	case inst.URL == "":
+		fmt.Fprintf(w, "instance  %s  (no public URL configured)\n", inst.Version)
 	default:
-		fmt.Fprintf(w, "instance  %s  %s\n", who.Instance.URL, who.Instance.Version)
+		fmt.Fprintf(w, "instance  %s  %s\n", inst.URL, inst.Version)
 	}
 	fmt.Fprintf(w, "org       %s  (id %d)\n", who.OrgName, who.OrgID)
 	fmt.Fprintf(w, "token     level %s · role %s · can write: %s\n", who.Level, who.Role, yesNo(who.CanWrite))
+}
+
+// displayURL is a server URL without the parts that can carry a credential:
+// a base URL may hold a proxy's user and password, and the bearer token
+// travels separately, so a request with them succeeds and the URL would be
+// printed as typed.
+func displayURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "(unreadable server URL)"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
 
 func newConfigCmd() *cobra.Command {
@@ -393,6 +406,12 @@ running when --timeout ran out or a later run overwrote the result.`,
 			if err != nil {
 				return usageErr(fmt.Errorf("backup id must be a number, got %q", args[1]))
 			}
+			// Checked before the run starts: a mistyped duration must not
+			// leave a backup running (and applying retention) behind an
+			// error about a flag.
+			if wait && timeout <= 0 {
+				return usageErr(fmt.Errorf("--timeout must be positive, got %s", timeout))
+			}
 			s, err := connect(false)
 			if err != nil {
 				return err
@@ -460,27 +479,40 @@ func awaitBackup(ctx context.Context, w backupWaiter, started client.BackupStart
 	if err != nil {
 		return client.BackupInfo{}, fmt.Errorf("the server's started_at %q is not a time: %w", started.StartedAt, err)
 	}
+	// Every request and pause ends at the deadline (plus a moment for an
+	// answer in flight), so a stalled list or a long Retry-After cannot carry
+	// the wait past --timeout.
+	wctx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
+	defer cancel()
+	timedOut := func() error {
+		if ctx.Err() != nil {
+			return &deployflow.Failure{Code: deployflow.ExitTimeout, Err: errors.New("interrupted while waiting for the backup")}
+		}
+		return &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
+			"%s backup %d is still running after %s — it may still succeed; check it with `krill-cli backups`",
+			started.Kind, started.ID, timeout)}
+	}
 	transport := 0
 	var last client.BackupInfo
 	for attempt := 0; ; attempt++ {
 		if !w.Now().Before(deadline) {
-			return last, &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
-				"%s backup %d is still running after %s — it may still succeed; check it with `krill-cli backups`",
-				started.Kind, started.ID, timeout)}
+			return last, timedOut()
 		}
 		delay := deployflow.PollDelay(attempt, w.Now().Sub(begin))
-		list, err := w.List(ctx)
+		list, err := w.List(wctx)
 		if err != nil {
-			if ctx.Err() != nil {
-				return last, &deployflow.Failure{Code: deployflow.ExitTimeout, Err: errors.New("interrupted while waiting for the backup")}
+			if wctx.Err() != nil {
+				return last, timedOut()
 			}
 			var ae *client.APIError
 			switch {
 			case errors.As(err, &ae) && ae.IsRetryable():
 				delay = max(delay, ae.RetryAfter)
-			case errors.As(err, &ae):
+			case errors.As(err, &ae) && !deployflow.ProxyGaveUp(err):
 				return last, err
 			default:
+				// A dropped link or a proxy that gave up (502/504): the run
+				// on the server is unaffected.
 				transport++
 				if transport > 5 {
 					return last, &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
@@ -503,8 +535,8 @@ func awaitBackup(ctx context.Context, w backupWaiter, started client.BackupStart
 				return last, backupVerdict(last, startedAt)
 			}
 		}
-		if err := w.Sleep(ctx, delay); err != nil {
-			return last, &deployflow.Failure{Code: deployflow.ExitTimeout, Err: errors.New("interrupted while waiting for the backup")}
+		if err := w.Sleep(wctx, min(delay, deadline.Sub(w.Now()))); err != nil {
+			return last, timedOut()
 		}
 	}
 }

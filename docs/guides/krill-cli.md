@@ -85,8 +85,12 @@ Apple-silicon laptop and deployed to an amd64 server loads fine and dies on star
 `backups [run]` · `stop` · `reload` · `rebuild` · `version` · `completion`
 
 Every command takes `-c/--context NAME` (which stored login to use) and `--json`. With `--json`,
-stdout carries only the server's answer, as JSON; messages go to stderr. An `APP` argument is a
-numeric id or a `project/environment/app` path and defaults to `krill.yaml`'s `app`.
+the read commands (`whoami`, `apps`, `status`, `config`, `domains`, `logs`, `deployments`,
+`deployment`, `env`, `backups`), `deployment ID --watch`, `rebuild` and `backups run` print only
+the server's answer on stdout, as JSON, and messages go to stderr. `deploy`, `stop`, `reload`
+and `env set|rm` print progress or a confirmation line whatever `--json` says — read their exit
+code. An `APP` argument is a numeric id or a `project/environment/app` path and defaults to
+`krill.yaml`'s `app`.
 
 | Command | What it shows or does |
 |---------|-----------------------|
@@ -101,11 +105,13 @@ numeric id or a `project/environment/app` path and defaults to `krill.yaml`'s `a
 
 **Waiting happens on the server.** `deploy`, `rebuild --watch` and `deployment ID --watch` ask
 Krill to hold each request while the deployment runs and to answer the moment it ends, so a
-ten-minute build costs a handful of requests. While the build log streams to your terminal a
-request waits up to 15 s, so the log keeps moving; with `--json` it waits the full 2 minutes and
-prints only the final deployment. Against a Krill too old to wait, the CLI notices the immediate
+ten-minute build costs a handful of requests (each waits up to 2 minutes, never past
+`--timeout`). Krill saves the build log when the deployment ends, so the log tail is printed
+then; with `--json`, `deployment ID --watch` and `rebuild --watch` print no log and end with the
+last deployment the server sent. Against a Krill too old to wait, the CLI notices the immediate
 answers and falls back to its old poll schedule (1, 2, 3, then every 5–10 s), which stays inside
-the token's rate limit.
+the token's rate limit. A `502`/`504` from a proxy in front of Krill counts as lost contact: it
+is retried, and a watch that never gets an answer exits `4`, not `1`.
 
 **An older Krill.** `whoami` shows no instance, and `config`, `domains`, `backups`,
 `logs --since/--until/--contains` and `logs --wait-for` exit `2` saying the server needs an

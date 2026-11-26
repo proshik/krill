@@ -73,8 +73,8 @@ Two things this branch does not change. **Rule 4 still applies** — building an
 
 Use the `krill-cli` command line when the krill MCP server is not connected, when more than one Krill installation is in play, or when the user names a particular one. `krill-cli` keeps one stored login (context) per installation, so it reaches any of them from the shell; `krill-cli context` lists them. On this path:
 
-- **Always pass `-c CONTEXT` and `--json`**, on every call: the default context is whatever was used last, and the human output is not a contract. With `--json` stdout is the server's answer only; messages go to stderr.
-- **Before every write, run `krill-cli -c CONTEXT --json whoami`** and check `instance.url` (and `can_write`) against the installation the user means — the same check as with several MCP servers above. Address apps by `project/environment/app`, not by id.
+- **Always pass `-c CONTEXT` and `--json`**, on every call: without `-c` the CLI acts on the stored current context (or the one `krill.yaml` pins), which may be another installation, and the human output is not a contract. With `--json` the read commands, `deployment --watch`, `rebuild` and `backups run` print only JSON on stdout; `deploy`, `stop`, `reload` and `env set|rm` print a progress or confirmation line instead — rely on their exit code.
+- **Before every write, run `krill-cli -c CONTEXT --json whoami`** and check `instance.url` (and `can_write`) against the installation the user means — the same check as with several MCP servers above. Address apps by `project/environment/app`, not by id, and name the app in every write (`--app` for `deploy`) rather than relying on `krill.yaml`. A missing `instance` means a Krill older than these commands: `config`, `domains`, `backups` and the log window and wait options exit `2` there.
 - **Never put a token on the command line** — not as an argument, not in a `KRILL_TOKEN=…` prefix you type. If a context is missing or its token is rejected (exit `6`), ask the user to run `krill-cli login --server URL --name NAME` themselves; it reads the token from stdin.
 
 | MCP tool | krill-cli (`-c CONTEXT --json` …) |
@@ -89,7 +89,7 @@ Use the `krill-cli` command line when the krill MCP server is not connected, whe
 | `krill_app_config` | `config APP` |
 | `krill_list_backups` | `backups [--app APP \| --env PROJECT/ENV]` |
 | `krill_domain_status` | `domains APP` |
-| `krill_deploy` | `deploy` builds locally (see above); an existing tag without a build: `deploy --skip-build --skip-push --tag TAG`, in the app's repository |
+| `krill_deploy` | `deploy --app APP` builds locally (see above); an existing tag without a build: `deploy --app APP --skip-build --skip-push --tag TAG`, in the app's repository. Always pass `--app`: without it the app comes from `krill.yaml`, which may name another app on that installation |
 | `krill_rebuild` | `rebuild APP [--watch]` |
 | `krill_reload` | `reload APP` |
 | `krill_stop` | `stop APP` |

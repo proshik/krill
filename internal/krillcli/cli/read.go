@@ -139,7 +139,13 @@ that authenticates with a browser session cookie, which an API token cannot
 produce. Watch a deploy with ` + "`krill-cli deployment ID --watch`" + `.`,
 		Args: usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			waiting := waitFor != ""
+			// Wait mode is the flag's presence, not its value: an empty
+			// pattern from an unset shell variable must not quietly turn a
+			// readiness check into an ordinary read that exits 0.
+			waiting := cmd.Flags().Changed("wait-for")
+			if waiting && strings.TrimSpace(waitFor) == "" {
+				return usageErr(errors.New("--wait-for needs the text to wait for; it was empty"))
+			}
 			if waiting && (since != "" || until != "" || contains != "" || level != "") {
 				return usageErr(errors.New("--wait-for waits for new lines only and cannot be combined with --since, --until, --contains or --level; " +
 					"search earlier lines with --since and --contains first"))
@@ -204,7 +210,17 @@ const maxLogWait = 120 * time.Second
 func waitLog(cmd *cobra.Command, s *session, ref, text string, tail int, timeout time.Duration) error {
 	res, err := s.api.WaitLog(cmd.Context(), ref, text, tail, timeout)
 	if err != nil {
-		return err
+		var ae *client.APIError
+		var old *client.OldServerError
+		if errors.As(err, &old) || (errors.As(err, &ae) && !deployflow.ProxyGaveUp(err)) {
+			return err
+		}
+		// No answer at all — the link dropped, the request outlived its
+		// deadline, a proxy gave up on it: whether the line came is unknown,
+		// which is what 4 says.
+		return &deployflow.Failure{Code: deployflow.ExitTimeout, Err: fmt.Errorf(
+			"the wait for %q got no answer (%v); whether the line was written is unknown — "+
+				"check with --since and --contains", text, err)}
 	}
 	if g.asJSON {
 		if err := printJSON(res); err != nil {

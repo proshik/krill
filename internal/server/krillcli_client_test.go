@@ -35,7 +35,7 @@ func TestKrillCLIClientAgainstTheServer(t *testing.T) {
 	}
 
 	who, err := c.Whoami(ctx)
-	if err != nil || who.Instance.Version == "" {
+	if err != nil || who.InstanceVersion() == "" {
 		t.Fatalf("whoami: %+v, %v", who, err)
 	}
 

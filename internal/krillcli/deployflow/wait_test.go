@@ -2,6 +2,7 @@ package deployflow_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -141,21 +142,20 @@ func TestCurrentServerHoldsTheAnswer(t *testing.T) {
 	}
 }
 
-// TestStreamingWaitsInShortWindows: the server sends the build log only when
-// it answers, so a terminal that shows the log asks in short windows.
-func TestStreamingWaitsInShortWindows(t *testing.T) {
+// TestStreamingWaitsTheFullWindowToo: the server saves the build log only
+// when a deployment ends, so a terminal showing the log gains nothing from
+// shorter requests — it asks for the full two minutes like everyone else.
+func TestStreamingWaitsTheFullWindowToo(t *testing.T) {
 	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
-	srv := &waitServer{clock: clock, holds: true, doneAt: clock.t.Add(time.Minute)}
+	srv := &waitServer{clock: clock, holds: true, doneAt: clock.t.Add(3 * time.Minute)}
 	var out strings.Builder
 	f, _ := waitFlow(srv, &out)
 
 	if _, err := f.Follow(context.Background(), 7, 10*time.Minute, true); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
-	for _, w := range srv.asked {
-		if w > 15*time.Second {
-			t.Fatalf("a streaming watch asked to wait %s: %v", w, srv.asked)
-		}
+	if len(srv.asked) != 2 || srv.asked[0] != 120*time.Second {
+		t.Fatalf("asked %v, want two requests of up to 120s", srv.asked)
 	}
 }
 
@@ -194,5 +194,74 @@ func TestSettlingIsStillRunning(t *testing.T) {
 	}
 	if n := strings.Count(out.String(), "Swarm is still converging"); n != 1 {
 		t.Fatalf("the settling note was printed %d times:\n%s", n, out.String())
+	}
+}
+
+// stallingAPI never answers: its request blocks until the context ends.
+type stallingAPI struct{ waitServer }
+
+func (s *stallingAPI) DeploymentWait(ctx context.Context, _ int64, _ time.Duration) (client.DeploymentDetail, error) {
+	<-ctx.Done()
+	return client.DeploymentDetail{}, errors.New("cannot reach https://k: " + ctx.Err().Error())
+}
+
+// TestStalledRequestIsCutAtTheDeadline: a server that never answers must
+// not carry the watch past --timeout by the HTTP client's own slack.
+func TestStalledRequestIsCutAtTheDeadline(t *testing.T) {
+	f := &deployflow.Flow{API: &stallingAPI{}, Sleep: func(context.Context, time.Duration) error { return nil }}
+	start := time.Now()
+	_, err := f.Follow(context.Background(), 7, 100*time.Millisecond, false)
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if took := time.Since(start); took > 100*time.Millisecond+6*time.Second {
+		t.Fatalf("the watch ran %s past a 100ms timeout", took)
+	}
+	if strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("the watch's own deadline was reported as an interrupt: %v", err)
+	}
+}
+
+// TestRetryAfterIsCappedByTheDeadline: a Retry-After longer than what is left
+// of the watch must not be slept in full.
+func TestRetryAfterIsCappedByTheDeadline(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
+	var slept []time.Duration
+	api := &throttledServer{waitServer: waitServer{clock: clock, doneAt: clock.t.Add(time.Hour)}}
+	f := &deployflow.Flow{API: api, Now: clock.now, Sleep: func(_ context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		clock.t = clock.t.Add(d)
+		return nil
+	}}
+	_, err := f.Follow(context.Background(), 7, 10*time.Second, false)
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %v", err)
+	}
+	for _, d := range slept {
+		if d > 10*time.Second {
+			t.Fatalf("slept %s inside a 10s watch", d)
+		}
+	}
+}
+
+type throttledServer struct{ waitServer }
+
+func (s *throttledServer) DeploymentWait(context.Context, int64, time.Duration) (client.DeploymentDetail, error) {
+	return client.DeploymentDetail{}, &client.APIError{HTTPStatus: 429, Code: "rate_limited", RetryAfter: time.Minute}
+}
+
+// TestProxyTimeoutIsLostContactNotFailure: a proxy in front of Krill that gives
+// up on a held request answers 504. That says nothing about the deployment, so
+// it is retried and, if it persists, unknown (4) — never "failed" (1).
+func TestProxyTimeoutIsLostContactNotFailure(t *testing.T) {
+	api := okAPI()
+	api.statusErrAlways = &client.APIError{HTTPStatus: 504, Code: "http_504", Message: "Gateway Timeout"}
+	f, _ := newFlow(api, &fakeDocker{outValue: "sha256:abc"})
+	_, err := f.Follow(context.Background(), 7, time.Minute, false)
+	if deployflow.CodeOf(err) != deployflow.ExitTimeout {
+		t.Fatalf("want ExitTimeout, got %d (%v)", deployflow.CodeOf(err), err)
+	}
+	if api.statusCall < 2 {
+		t.Fatalf("a 504 was not retried (%d calls)", api.statusCall)
 	}
 }

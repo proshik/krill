@@ -18,10 +18,25 @@ type Whoami struct {
 	Level    string `json:"level"`
 	Role     string `json:"role"`
 	CanWrite bool   `json:"can_write"`
-	Instance struct {
-		URL     string `json:"url,omitempty"`
-		Version string `json:"version"`
-	} `json:"instance"`
+	// Instance is nil on a server older than the agent API diagnostics,
+	// which sends no instance at all: a pointer keeps that absence in the
+	// --json output instead of inventing an empty object.
+	Instance *Instance `json:"instance,omitempty"`
+}
+
+// Instance is the Krill installation that answered.
+type Instance struct {
+	URL     string `json:"url,omitempty"`
+	Version string `json:"version"`
+}
+
+// InstanceVersion is the answering installation's version, "" when the
+// server does not report one.
+func (w Whoami) InstanceVersion() string {
+	if w.Instance == nil {
+		return ""
+	}
+	return w.Instance.Version
 }
 
 // App is one application. Image is the repository alone; Tag is what it is
