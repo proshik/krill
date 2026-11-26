@@ -12,7 +12,7 @@ Krill exposes twenty tools. Sixteen **read and operate what already exists**; fo
 | `krill_whoami` | read | Who the token acts as, which org, whether it may write, and which installation answered (`instance.url`, `instance.version`) |
 | `krill_list_apps` | read | Every app in the org: path, id, status, source type, image repository + tag, domains |
 | `krill_app_status` | read | One app: status, `running/desired` replicas, node, domains, last deployment; `image` is the repository, `tag` the configured tag. Also, when Swarm answers: recent `tasks` (node, state, error, exit code), `failed_since_deploy`, container `health`, `usage` (memory, CPU when attributable) |
-| `krill_app_logs` | read | Runtime log, parsed, most recent lines across all tasks; `tail` (default 200, max 1000), a minimum `level` (lines with no detected level always pass), a window `since`/`until` (RFC3339 or `10m`), `contains` (ignores case). With `wait_for` (+ `timeout`, max 120 s) it waits for a line instead |
+| `krill_app_logs` | read | Runtime log, parsed, most recent lines across all tasks; `tail` (default 200, max 1000), a minimum `level` (lines with no detected level always pass), a window `since`/`until` (RFC3339 or `10m`), `contains` (ignores case). With `wait_for` (+ `timeout`, max 120 s) it waits for a **new** line instead — written after the call (`following_since`); it does not search earlier lines and takes no `since` |
 | `krill_deployments` | read | Deployment history, newest first |
 | `krill_deployment_status` | read | One deployment: status plus the tail of its build log; `wait` (max 120 s) answers when it ends; `settling: true` = applied, Swarm still converging |
 | `krill_list_env` | read | Environment variable **names** and their source — never values |
@@ -43,7 +43,10 @@ An app is addressed as `project/environment/app` or by numeric id — `krill_lis
    - **`krill_rebuild`** when the build must not reuse cached layers (`dockerfile` apps only).
    - **`krill_reload`** when nothing was rebuilt and the process just needs a bounce.
 4. `krill_deploy` and `krill_rebuild` are asynchronous: they return a `deployment_id` right away and the build runs on the server. Wait with `krill_deployment_status` and `wait: 120` (rule 1); repeat while it still says `running`. `settling: true` means the spec is applied and Swarm is still rolling it out — not done yet.
-5. On `done`, verify with `krill_app_status` that replicas read `n/n` and the status is `running`, and that `failed_since_deploy` is 0 and `health` (if any) is `healthy`. A green deployment with `0/1` replicas or failed tasks means the container started and died — go to the diagnose branch. To confirm the app really came up, `krill_app_logs` with `wait_for` set to its ready line (for example `listening`) and `since` set to the deployment's `started_at`.
+5. On `done`, verify with `krill_app_status` that replicas read `n/n` and the status is `running`, and that `failed_since_deploy` is 0 and `health` (if any) is `healthy`. A green deployment with `0/1` replicas or failed tasks means the container started and died — go to the diagnose branch. To confirm the app really came up, look for its ready line (for example `listening`) in three steps, so no moment goes unseen:
+   1. `krill_app_logs` with `contains: "listening"` and `since` = the deployment's `started_at`. Found — done.
+   2. Otherwise `krill_app_logs` with `wait_for: "listening"` and a `timeout` (up to 120). It only watches lines written after it started (`following_since`).
+   3. On a timeout, step 1 once more: it covers the moments between steps 1 and 2. Still nothing — the app did not get there; go to the diagnose branch.
 6. On `error`, read the `log_tail` the same call returned, name the cause, and stop (rule 2).
 
 `krill_set_env` writes the variable but does **not** restart anything: the app keeps running the old value until the next deploy. If the change is meant to take effect, deploy after it — and say that you are about to.
@@ -79,7 +82,7 @@ Finish with a hypothesis and the evidence for it: which deployment, which log li
 
 ## Four rules
 
-**1. Wait on the server, do not poll.** Call `krill_deployment_status` with `wait: 120`: it answers as soon as the deployment ends, or after two minutes with the state at that moment; repeat while it says `running`, and stop at about ten minutes — report where it got to and hand back. The same goes for a log line: `krill_app_logs` with `wait_for`, not a loop of log reads. Polling every few seconds fills your own context with identical "running" answers and evicts the task you were called for, and it burns the per-token budget of 60 requests/minute, which the user's other calls share; a waiting call costs one request however long it waits.
+**1. Wait on the server, do not poll.** Call `krill_deployment_status` with `wait: 120`: it answers as soon as the deployment ends, or after two minutes with the state at that moment; repeat while it says `running`, and stop at about ten minutes — report where it got to and hand back. The same goes for a log line: `krill_app_logs` with `wait_for` (after a `contains` read, as in step 5 above), not a loop of log reads. Polling every few seconds fills your own context with identical "running" answers and evicts the task you were called for, and it burns the per-token budget of 60 requests/minute, which the user's other calls share; a waiting call costs one request however long it waits.
 
 **2. Do not retry a failed deploy.** Nothing changed between the two attempts, so the same code fails the same way, and the second identical failure buries the first one's cause under a fresh log. Pull the log tail, name the cause, stop. Retry only after the user has changed something — and then say what changed.
 

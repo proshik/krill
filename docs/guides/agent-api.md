@@ -123,18 +123,25 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
 
 ### Waiting for a log line
 
-`GET /api/v1/apps/{app}/logs?wait_for=listening&timeout=90` reads the app's log until a line
-containing `listening` (ignoring case) appears, at most `timeout` seconds (default 60, max 120).
-It looks at the lines written from the moment of the call on, whatever their timestamps (a
-worker's clock may lag), and, with `since`, first at the lines logged since then — pass the
-deployment's `started_at` to catch a line written before the call. The answer is an object:
-`{"found", "stopped_by", "match", "lines", "incomplete"}` — `stopped_by` is `match`, `timeout`,
-`ended` (the service went away), `error` (the live read broke; `incomplete` is set),
-`shutdown` (Krill is restarting) or `cancelled`; `lines` are the
-`tail` lines before the match (default 20), the match and a few after it; `incomplete` says part
-of the history could not be read, so a timeout is no proof the line never appeared.
-`wait_for` cannot be combined with `contains`, `until` or `level`. An installation runs a few log waits at once;
-a further one answers `503 unavailable` — retry shortly.
+`GET /api/v1/apps/{app}/logs?wait_for=listening&timeout=90` watches the app's log for a **new**
+line containing `listening` (ignoring case), at most `timeout` seconds (default 60, max 120). It
+looks only at lines written after the call opened the live stream, whatever their timestamps (a
+worker's clock may lag); it does not search what was logged before. The answer is an object:
+`{"found", "stopped_by", "match", "lines", "following_since", "incomplete"}` — `stopped_by` is
+`match`, `timeout`, `ended` (the service went away), `error` (the live read broke),
+`shutdown` (Krill is restarting) or `cancelled`; `lines` are the `tail` lines before the match
+(default 20), the match and a few after it; `following_since` is when the live stream was open —
+lines written before it are not covered; `incomplete` says the live read broke, so a missing match
+is no proof the line never appeared. `wait_for` cannot be combined with `since`, `until`,
+`contains` or `level`. An installation runs a few log waits at once; a further one answers
+`503 unavailable` — retry shortly.
+
+To wait for a line after a deploy without a gap between calls:
+
+1. Read with `contains=listening&since=<the deployment's started_at>`. If the line is there, done.
+2. Otherwise wait: `wait_for=listening&timeout=90`.
+3. On a timeout, read with `contains` and the same `since` once more. It covers the moments
+   between steps 1 and 2 that neither call saw.
 
 ## Notes
 
