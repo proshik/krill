@@ -116,6 +116,8 @@ make test-integration   # adds tests tagged `integration`
 ```
 
 Database tests start throwaway Postgres (and MinIO) containers through testcontainers.
+`testutil.NewTestDB(t)` starts one Postgres container per test binary, migrates a template
+database once, and gives each call a fresh database cloned from it, dropped when the test ends.
 
 **Colima:** the testcontainers cleanup container can't mount Colima's socket, and tests fail
 with a socket-mount error unless both of these are set. `make test` sets them:
