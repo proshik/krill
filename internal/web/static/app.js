@@ -1348,16 +1348,31 @@ function mountWiredMap(map) {
         apply();
       });
     });
+    // A wheel gesture pans, or zooms with ctrl/meta (a trackpad pinch), but a
+    // horizontal-dominant one is left alone, so the browser's two-finger swipe
+    // goes back or forward (any preventDefault in it cancels the navigation).
+    // The choice is made on a gesture's first event and kept until the wheel
+    // has been quiet for 150ms, so a diagonal swipe (or its momentum) does not
+    // flip between panning and navigating halfway. Shift+wheel pans sideways.
+    let wheelNav = false, wheelLast = -Infinity;
     canvas.addEventListener("wheel", function (e) {
       if (!map.hasAttribute("data-zoomed")) return;
+      const zooming = e.ctrlKey || e.metaKey;
+      if (e.timeStamp - wheelLast > 150) {
+        wheelNav = !zooming && !e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      }
+      wheelLast = e.timeStamp;
+      if (wheelNav && !zooming) return;
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey) {
+      if (zooming) {
         const before = zoom;
         zoom = Math.max(0.3, Math.min(2, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
         const r = canvas.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
         px = mx - (mx - px) * zoom / before;
         py = my - (my - py) * zoom / before;
+      } else if (e.shiftKey) {
+        px -= e.deltaX || e.deltaY;
       } else {
         px -= e.deltaX;
         py -= e.deltaY;
