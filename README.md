@@ -12,7 +12,7 @@ Deploy apps and managed databases to your own servers from a single Go binary.
 [![Go version](https://img.shields.io/github/go-mod/go-version/proshik/krill)](go.mod)
 [![License: MIT](https://img.shields.io/github/license/proshik/krill)](LICENSE)
 
-[Install](docs/install.md) · [Documentation](#documentation) · [Roadmap](ROADMAP.md)
+[Website](https://proshik.github.io/krill/) · [Install](docs/install.md) · [Documentation](#documentation) · [Roadmap](ROADMAP.md)
 
 </div>
 
