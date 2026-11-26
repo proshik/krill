@@ -26,17 +26,19 @@ import (
 type fakeBackups struct {
 	mu      sync.Mutex
 	started []string
+	at      time.Time // the run time the last Start was given
 	running map[string]bool
 	err     error
 }
 
-func (b *fakeBackups) Start(kind string, id int64, _ time.Time) error {
+func (b *fakeBackups) Start(kind string, id int64, now time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.err != nil {
 		return b.err
 	}
 	b.started = append(b.started, kind)
+	b.at = now
 	return nil
 }
 
@@ -237,11 +239,20 @@ func TestBackupErrorSummaryNeverPassesStoredText(t *testing.T) {
 	}
 }
 
+// stalledGateway never answers until its context ends.
+type stalledGateway struct{}
+
+func (stalledGateway) Locate(ctx context.Context) ([]string, string, error) {
+	<-ctx.Done()
+	return nil, "", ctx.Err()
+}
+
 // fakeGateway knows its addresses and where to dial.
 type fakeGateway struct{ addrs []string }
 
-func (g fakeGateway) Addresses(context.Context) ([]string, error) { return g.addrs, nil }
-func (fakeGateway) DialAddr() string                              { return "gateway.internal" }
+func (g fakeGateway) Locate(context.Context) ([]string, string, error) {
+	return g.addrs, "gateway.internal", nil
+}
 
 func selfSigned(t *testing.T, cn string, notAfter time.Time) *x509.Certificate {
 	t.Helper()
@@ -299,7 +310,7 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 			case "old.example.test":
 				return []string{"198.51.100.7"}, nil
 			}
-			return nil, errors.New("no such host")
+			return nil, &net.DNSError{Err: "no such host", Name: host, Server: "10.0.0.53:53", IsNotFound: true}
 		},
 		func(_ context.Context, addr, sni string) ([]*x509.Certificate, error) {
 			mu.Lock()
@@ -332,7 +343,7 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 	if old.PointsAtGateway == nil || *old.PointsAtGateway || old.Certificate == nil || !old.Certificate.DefaultCert || old.Certificate.Trusted {
 		t.Fatalf("old: %+v %+v", old, old.Certificate)
 	}
-	if plain.DNS.Error == "" || plain.PointsAtGateway != nil || plain.Certificate != nil {
+	if plain.DNS.Error != "no such host" || plain.PointsAtGateway != nil || plain.Certificate != nil {
 		t.Fatalf("plain (no TLS, unresolvable): %+v", plain)
 	}
 	// Only the gateway's own address is ever dialed, with the host as SNI.
@@ -355,6 +366,22 @@ func TestDomainStatusChecksDNSAndCertificate(t *testing.T) {
 	nx := got["nxdomain.example.test"]
 	if nx.Certificate == nil || strings.Contains(nx.Certificate.Error, "gateway.internal") || strings.Contains(nx.Certificate.Error, "10.0.0.53") {
 		t.Fatalf("a dial DNS failure must not name the gateway's host or the resolver: %+v", nx.Certificate)
+	}
+
+	// A gateway lookup that stalls must leave the DNS checks time to run.
+	f.svc.SetGateway(stalledGateway{})
+	start := time.Now()
+	res, err = f.svc.DomainStatus(ctx, f.readIdent, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range res.Domains {
+		if d.Host == "hook.example.test" && len(d.DNS.Addresses) == 0 {
+			t.Fatalf("a stalled gateway lookup left DNS unchecked: %+v", d)
+		}
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("took %s", time.Since(start))
 	}
 
 	// Gateway addresses unknown: only the resolution is reported.
@@ -404,18 +431,18 @@ func TestListBackupsKeepsRunningWhenARunEndsDuringTheRead(t *testing.T) {
 
 func TestBackupNowStartedAtMatchesTheStoredRunTime(t *testing.T) {
 	f := newBackupFixture(t)
-	f.svc.SetBackups(&fakeBackups{})
+	bk := &fakeBackups{}
+	f.svc.SetBackups(bk)
 	res, err := f.svc.BackupNow(t.Context(), f.ident, api.BackupDatabase, f.dbBackup)
 	if err != nil {
 		t.Fatal(err)
 	}
-	at, err := time.Parse(time.RFC3339Nano, res.StartedAt)
-	if err != nil || !strings.Contains(res.StartedAt, ".") {
-		t.Fatalf("started_at must carry microseconds: %q (%v)", res.StartedAt, err)
+	if !strings.Contains(res.StartedAt, ".") {
+		t.Fatalf("started_at must carry microseconds: %q", res.StartedAt)
 	}
-	// The service records the run under this very time; read back, it is
-	// the same string.
-	if err := f.q.SetBackupResult(t.Context(), db.SetBackupResultParams{ID: f.dbBackup, LastRunAt: pgtype.Timestamptz{Time: at, Valid: true}, LastStatus: "ok"}); err != nil {
+	// The backup service records the run under the time it was started
+	// with — the one Start received, not the answer's.
+	if err := f.q.SetBackupResult(t.Context(), db.SetBackupResultParams{ID: f.dbBackup, LastRunAt: pgtype.Timestamptz{Time: bk.at, Valid: true}, LastStatus: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	all, err := f.svc.ListBackups(t.Context(), f.readIdent, api.BackupFilter{})

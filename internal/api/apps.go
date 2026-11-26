@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/proshik/krill/internal/buildinfo"
@@ -117,9 +119,20 @@ func (s *Service) Whoami(ctx context.Context, id Identity) (WhoamiResult, error)
 func (s *Service) instance(ctx context.Context) InstanceInfo {
 	info := InstanceInfo{Version: buildinfo.String()}
 	if s.instanceURL != nil {
-		info.URL = s.instanceURL(ctx)
+		info.URL = publicBaseURL(s.instanceURL(ctx))
 	}
 	return info
+}
+
+// publicBaseURL is a base URL fit to show a token holder: scheme, host and
+// path only — KRILL_PUBLIC_URL may carry a reverse proxy's credentials in
+// its userinfo or query. A value that does not parse as one is not shown.
+func publicBaseURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Opaque != "" {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
 }
 
 // appRow is one application together with the project/environment names that

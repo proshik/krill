@@ -31,11 +31,19 @@ func (gatewayEngine) Nodes(context.Context) ([]docker.SwarmNode, error) {
 // manager, plus at the configured advertise address.
 func TestAPIGatewayAddressesFollowTheGatewayTask(t *testing.T) {
 	s := &Server{cfg: config.Config{AdvertiseAddr: "198.51.100.9"}, engine: gatewayEngine{}}
-	got, err := apiGateway{s: s}.Addresses(t.Context())
+	got, dial, err := apiGateway{s: s}.Locate(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0] != "198.51.100.9" || got[1] != "192.0.2.2" {
 		t.Fatalf("addresses %v", got)
+	}
+	// The TLS check goes where the gateway runs, not to another manager.
+	if dial != "192.0.2.2" {
+		t.Fatalf("dial %q", dial)
+	}
+	_, dial, _ = apiGateway{s: &Server{cfg: config.Config{AdvertiseAddr: "198.51.100.9"}}}.Locate(t.Context())
+	if dial != "198.51.100.9" {
+		t.Fatalf("without Swarm, the advertised address: %q", dial)
 	}
 }

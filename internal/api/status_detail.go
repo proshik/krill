@@ -91,6 +91,11 @@ func (s *Service) appStatusDetail(ctx context.Context, app db.Application, lastD
 		if !ok {
 			out.node = s.runningNode(ctx, name)
 		} else {
+			// The CPU samples are read before the tasks, so any task whose
+			// container a sample measured is in the task snapshot: a
+			// replacement started after the snapshot cannot lend its sample
+			// to the task it replaces.
+			samples := s.cpuSamples(ctx, app.ID)
 			tctx, cancel := context.WithTimeout(ctx, statusTaskTimeout)
 			recs, err := th.ServiceTaskHistory(tctx, name, statusTaskHistory)
 			cancel()
@@ -104,7 +109,7 @@ func (s *Service) appStatusDetail(ctx context.Context, app db.Application, lastD
 					out.failed, out.failedSince = &n, lastDeploy.Format(time.RFC3339)
 				}
 				out.health, out.usage = s.probeTasks(ctx, app.ID, recs)
-				s.attributeCPU(ctx, app.ID, recs, out.usage)
+				s.attributeCPU(ctx, app.ID, recs, out.usage, samples)
 			}
 		}
 	}
@@ -243,33 +248,18 @@ func (s *Service) probeTasks(ctx context.Context, appID int64, recs []docker.Tas
 // node's samples under (cmd/krill); workers use their cluster_nodes name.
 const controlPlaneNode = "control-plane"
 
-// attributeCPU fills in the CPU of each usage entry from the monitoring
-// sampler, but only where the sample can only be that task's container: the
-// sampler keys rows by node and service, not by container. That holds when
-// the task is the only one of the service meant to run on its node, and the
-// sample was taken after the task was created and after every other task of
-// the service on that node last changed state (a predecessor stopping during
-// a rolling update is sampled under the same key) — by a full sampler
-// interval, since a row's time is when it was inserted, which can be a while
-// after the container was measured. A sample older than a few sampler
-// intervals is stale and not used either.
-func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.TaskRecord, usage []TaskUsage) {
-	if len(usage) == 0 {
-		return
-	}
-	interval := s.metricsInterval
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
+// cpuSamples is the latest monitoring sample of the app's service on each
+// node, from the last few sampler intervals; nil when none or unreadable.
+func (s *Service) cpuSamples(ctx context.Context, appID int64) map[string]db.MetricSamplesSinceForComponentsRow {
 	rows, err := s.q.MetricSamplesSinceForComponents(ctx, db.MetricSamplesSinceForComponentsParams{
-		Ts: time.Now().Add(-usageWindowIntervals * interval), Components: []string{docker.ServiceName(appID)},
+		Ts: time.Now().Add(-usageWindowIntervals * s.samplerInterval()), Components: []string{docker.ServiceName(appID)},
 	})
 	if err != nil {
 		slog.Warn("app status: usage samples unavailable", "app_id", appID, "err", err)
-		return
+		return nil
 	}
 	if len(rows) == 0 {
-		return
+		return nil
 	}
 	latest := map[string]db.MetricSamplesSinceForComponentsRow{}
 	for _, r := range rows {
@@ -277,6 +267,35 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 			latest[r.Node] = r
 		}
 	}
+	return latest
+}
+
+func (s *Service) samplerInterval() time.Duration {
+	if s.metricsInterval <= 0 {
+		return 30 * time.Second
+	}
+	return s.metricsInterval
+}
+
+// cpuMarginIntervals is how many sampler intervals a sample must be newer
+// than a task's start (and its predecessor's last change) to count as that
+// task's: a row's time is when it was inserted, which can trail the
+// measurement by a tick that waited for slow workers.
+const cpuMarginIntervals = 2
+
+// attributeCPU fills in the CPU of each usage entry from the monitoring
+// sampler, but only where the sample can only be that task's container: the
+// sampler keys rows by node and service, not by container. That holds when
+// the task is the only one of the service meant to run on its node, and the
+// sample is newer, by cpuMarginIntervals sampler intervals, than the task's
+// creation and every other task of the service on that node's last change
+// (a predecessor stopping during a rolling update is sampled under the same
+// key). Anything less certain leaves the CPU out.
+func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.TaskRecord, usage []TaskUsage, latest map[string]db.MetricSamplesSinceForComponentsRow) {
+	if len(usage) == 0 || len(latest) == 0 {
+		return
+	}
+	margin := cpuMarginIntervals * s.samplerInterval()
 	names, err := s.samplerNodeNames(ctx)
 	if err != nil {
 		slog.Warn("app status: node names unavailable", "app_id", appID, "err", err)
@@ -312,7 +331,7 @@ func (s *Service) attributeCPU(ctx context.Context, appID int64, recs []docker.T
 		if node == "" {
 			node = controlPlaneNode
 		}
-		if smp, ok := latest[node]; ok && smp.Ts.After(cutoff.Add(interval)) {
+		if smp, ok := latest[node]; ok && smp.Ts.After(cutoff.Add(margin)) {
 			cpu := float64(smp.CpuPct)
 			usage[i].CPUPct, usage[i].CPUSampledAt = &cpu, formatTime(smp.Ts)
 		}

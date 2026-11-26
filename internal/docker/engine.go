@@ -295,6 +295,13 @@ type LogWindow struct {
 	Since, Until time.Time
 	Tail         int
 	Follow       bool
+	// NoDetails leaves docker's log details (the task id, and whatever
+	// attributes a logging driver adds — environment values among them) out
+	// of the stream. Docker prefixes them per frame, not per line, so a line
+	// assembled from two frames can carry a second prefix mid-line that
+	// logparse.ParseLogLine does not strip; a reader that does not need the
+	// task should not receive them at all.
+	NoDetails bool
 }
 
 // TailAll is a LogWindow.Tail that keeps every line of the window.

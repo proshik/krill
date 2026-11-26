@@ -116,7 +116,7 @@ func (s *Service) openLog(name string, w logWindow, tail int) func(context.Conte
 			// Swarm's task log API takes no "until": the engine uses it only
 			// to skip tasks created after it, and the window's end is applied
 			// to the lines read (logWindow.holds).
-			return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Since: w.since, Until: w.until, Tail: tail})
+			return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Since: w.since, Until: w.until, Tail: tail, NoDetails: true})
 		}
 		if tail == docker.TailAll {
 			tail = maxWindowScanLines
@@ -164,16 +164,18 @@ type windowRead struct {
 }
 
 // readWindow reads the window and hands each line inside it to visit, in
-// stream order (task by task), until visit returns true or the read ends.
-// Lines without a timestamp are windowed with the line before them. With
-// capPerTask > 0, a task that delivers that many lines may have had more
-// in the window, and the read is reported cut.
-func (s *Service) readWindow(ctx context.Context, name string, w logWindow, tail, capPerTask int, visit func(at time.Time, l LogLine) bool) (windowRead, error) {
+// stream order (task by task), until visit returns true or the read ends:
+// l carries the message cut for the answer, full the whole of it for a
+// filter to match. Lines without a timestamp are windowed with the line
+// before them. With capPerTask > 0 the engine returned at most that many
+// lines of each task; the read is reported cut once that many were scanned,
+// since some task may have had more (the stream carries no task ids — see
+// docker.LogWindow.NoDetails — so this errs on the side of saying so).
+func (s *Service) readWindow(ctx context.Context, name string, w logWindow, tail, capPerTask int, visit func(at time.Time, l LogLine, full string) bool) (windowRead, error) {
 	var out windowRead
 	var last time.Time
 	var stop atomic.Bool
 	scanned := 0
-	perTask := map[string]int{}
 	open := s.openLog(name, w, tail)
 	wrapped := func(ctx context.Context) (io.ReadCloser, error) {
 		rc, err := open(ctx)
@@ -191,20 +193,17 @@ func (s *Service) readWindow(ctx context.Context, name string, w logWindow, tail
 			stop.Store(true)
 			out.cut = true
 		}
-		parsed := logparse.ParseLogLine(raw)
-		if capPerTask > 0 && parsed.Task != "" {
-			perTask[parsed.Task]++
-			if perTask[parsed.Task] == capPerTask {
-				out.cut = true
-			}
+		if capPerTask > 0 && scanned == capPerTask {
+			out.cut = true
 		}
+		parsed := logparse.ParseLogLine(raw)
 		if ts, err := time.Parse(time.RFC3339Nano, parsed.Time); err == nil {
 			last = ts
 		}
 		if !w.holds(last) {
 			return
 		}
-		if visit(last, LogLine{Time: parsed.Time, Level: parsed.Level, Message: truncMessage(parsed.Msg)}) {
+		if visit(last, LogLine{Time: parsed.Time, Level: parsed.Level, Message: truncMessage(parsed.Msg)}, parsed.Msg) {
 			stop.Store(true)
 		}
 	})
@@ -259,13 +258,13 @@ func (s *Service) appLogs(ctx context.Context, app db.Application, in LogsInput)
 		capPerTask = containsScanLines
 	}
 	var entries []timedLine
-	ws, err := s.readWindow(ctx, docker.ServiceName(app.ID), logWindow{since: since, until: until}, tail, capPerTask, func(at time.Time, l LogLine) bool {
+	ws, err := s.readWindow(ctx, docker.ServiceName(app.ID), logWindow{since: since, until: until}, tail, capPerTask, func(at time.Time, l LogLine, full string) bool {
 		if minRank >= 0 {
 			if r, ok := logLevelRank(l.Level); ok && r < minRank {
 				return false
 			}
 		}
-		if needle != "" && !strings.Contains(strings.ToLower(l.Message), needle) {
+		if needle != "" && !strings.Contains(strings.ToLower(full), needle) {
 			return false
 		}
 		entries = append(entries, timedLine{at: at, line: l})
@@ -362,12 +361,18 @@ func clampWait(name string, sec, def, max int) (time.Duration, error) {
 	return time.Duration(sec) * time.Second, nil
 }
 
+// maxLogWaits bounds the log waits running at once across every caller:
+// each holds a live log stream and a buffer of lines for up to two minutes.
+const maxLogWaits = 8
+
 // waitForLog waits until a line containing in.WaitFor appears in the app's
-// log: first among the lines since in.Since, read from history, then among
-// new lines as they are written. The follow stream is opened before history
-// is read, with no time bound — Docker sends what is written from then on —
-// so nothing written meanwhile is missed, and a worker whose clock lags the
-// control plane's cannot hide a new line behind a timestamp cut.
+// log. The live stream is opened first, with no time bound — Docker sends
+// what is written from then on, so a worker whose clock lags the control
+// plane's cannot hide a new line behind a timestamp cut. Then the history
+// from in.Since (default: the moment of the call) up to the moment the live
+// stream was open is read, which covers what was written while it opened.
+// Then the live lines. Lines are matched on their whole message; only the
+// returned copies are cut.
 func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInput) (LogWaitResult, error) {
 	if in.Contains != "" || in.Until != "" || in.Level != "" {
 		return LogWaitResult{}, Invalid("wait_for cannot be combined with contains, until or level")
@@ -389,13 +394,22 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	if err != nil {
 		return LogWaitResult{}, err
 	}
+	if since.IsZero() || since.After(t0) {
+		since = t0
+	}
 	if s.engine == nil {
 		return LogWaitResult{}, Unavailable("logs are unavailable: no docker engine")
+	}
+	select {
+	case s.logWaits <- struct{}{}:
+		defer func() { <-s.logWaits }()
+	default:
+		return LogWaitResult{}, Unavailable("too many log waits are running on this Krill; retry in a minute")
 	}
 	ctx, cancel, stoppedBy := s.waitContext(ctx, d)
 	defer cancel()
 	name := docker.ServiceName(app.ID)
-	matches := func(l LogLine) bool { return strings.Contains(strings.ToLower(l.Message), needle) }
+	matches := func(full string) bool { return strings.Contains(strings.ToLower(full), needle) }
 
 	rc, err := s.openFollow(ctx, name)
 	if err != nil {
@@ -404,42 +418,42 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 		}
 		return LogWaitResult{}, fmt.Errorf("wait for log: follow: %w", err)
 	}
-	lines, followErr := followLines(ctx, rc)
+	t1 := time.Now()
+	lines, followErr := followLines(ctx, rc, matches)
 
 	var res LogWaitResult
 	before := newLineRing(nCtx)
-	// History first: the lines in [since, t0], streamed — only the context
-	// ring and the match are kept, never the whole window.
-	if !since.IsZero() && since.Before(t0) {
-		var after []LogLine
-		wr, err := s.readWindow(ctx, name, logWindow{since: since, until: t0}, docker.TailAll, 0, func(_ time.Time, l LogLine) bool {
-			if res.Found {
-				after = append(after, l)
-				return len(after) >= waitAfterLines
-			}
-			if !matches(l) {
-				before.add(l)
-				return false
-			}
-			m := l
-			res.Found, res.StoppedBy, res.Match = true, "match", &m
-			return false
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				return LogWaitResult{StoppedBy: stoppedBy(), Lines: before.lines()}, nil
-			}
-			return LogWaitResult{}, fmt.Errorf("wait for log: read history: %w", err)
-		}
-		res.Incomplete = wr.cut || wr.scanErr != nil
+	// History first: [since, t1], streamed — only the context ring and the
+	// match are kept, never the whole window. A line written while the live
+	// stream opened may come again on it; the wait has ended by then.
+	var after []LogLine
+	wr, err := s.readWindow(ctx, name, logWindow{since: since, until: t1}, docker.TailAll, 0, func(_ time.Time, l LogLine, full string) bool {
 		if res.Found {
-			res.Lines = append(append(before.lines(), *res.Match), after...)
-			return res, nil
+			after = append(after, l)
+			return len(after) >= waitAfterLines
 		}
+		if !matches(full) {
+			before.add(l)
+			return false
+		}
+		m := l
+		res.Found, res.StoppedBy, res.Match = true, "match", &m
+		return false
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return LogWaitResult{StoppedBy: stoppedBy(), Lines: before.lines()}, nil
+		}
+		return LogWaitResult{}, fmt.Errorf("wait for log: read history: %w", err)
+	}
+	res.Incomplete = wr.cut || wr.scanErr != nil
+	if res.Found {
+		res.Lines = append(append(before.lines(), *res.Match), after...)
+		return res, nil
 	}
 
 	// Then new lines, as they are written.
-	var after []LogLine
+	after = nil
 	var grace <-chan time.Time
 	finish := func(stopped string) (LogWaitResult, error) {
 		if res.Found {
@@ -451,7 +465,7 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 	}
 	for {
 		select {
-		case raw, ok := <-lines:
+		case fl, ok := <-lines:
 			if !ok {
 				if ctx.Err() != nil {
 					return finish(stoppedBy())
@@ -467,19 +481,18 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 				// scaled away; there is nothing more to wait for.
 				return finish("ended")
 			}
-			p := logparse.ParseLogLine(raw)
-			l := LogLine{Time: p.Time, Level: p.Level, Message: truncMessage(p.Msg)}
 			if res.Found {
-				after = append(after, l)
+				after = append(after, fl.line)
 				if len(after) >= waitAfterLines {
 					return finish("match")
 				}
 				continue
 			}
-			if !matches(l) {
-				before.add(l)
+			if !fl.match {
+				before.add(fl.line)
 				continue
 			}
+			l := fl.line
 			res.Found, res.StoppedBy, res.Match = true, "match", &l
 			res.Lines = append(before.lines(), l)
 			t := time.NewTimer(waitAfterGrace)
@@ -497,16 +510,24 @@ func (s *Service) waitForLog(ctx context.Context, app db.Application, in LogsInp
 // openFollow opens a following read of the lines written from now on.
 func (s *Service) openFollow(ctx context.Context, name string) (io.ReadCloser, error) {
 	if wl, ok := s.engine.(docker.WindowedLogs); ok {
-		return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Tail: 0, Follow: true})
+		return wl.ServiceLogsWindow(ctx, name, docker.LogWindow{Tail: 0, Follow: true, NoDetails: true})
 	}
 	return s.engine.ServiceLogs(ctx, name, true, 0)
+}
+
+// followed is one live line, already parsed, cut for the answer and matched
+// on its whole message — so the queue between reader and waiter holds small
+// lines, not raw ones of up to 1 MiB.
+type followed struct {
+	line  LogLine
+	match bool
 }
 
 // followLines delivers rc's lines until rc ends or ctx does; then rc is
 // closed and the channel closed. The error channel then carries the read's
 // error (nil for a clean end), once.
-func followLines(ctx context.Context, rc io.ReadCloser) (<-chan string, <-chan error) {
-	out := make(chan string, 64)
+func followLines(ctx context.Context, rc io.ReadCloser, matches func(full string) bool) (<-chan followed, <-chan error) {
+	out := make(chan followed, 64)
 	errc := make(chan error, 1)
 	stop := context.AfterFunc(ctx, func() { rc.Close() })
 	go func() {
@@ -516,8 +537,10 @@ func followLines(ctx context.Context, rc io.ReadCloser) (<-chan string, <-chan e
 		sc := bufio.NewScanner(rc)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
+			p := logparse.ParseLogLine(sc.Text())
+			fl := followed{line: LogLine{Time: p.Time, Level: p.Level, Message: truncMessage(p.Msg)}, match: matches(p.Msg)}
 			select {
-			case out <- sc.Text():
+			case out <- fl:
 			case <-ctx.Done():
 				errc <- nil
 				return

@@ -111,7 +111,7 @@ func TestAppStatusReportsTasksHealthAndUsage(t *testing.T) {
 	svc := api.NewService(f.q, eng, nil)
 	// A sample counts for a task only a full sampler interval after the task
 	// (and its predecessor's last change): a row's time is its insert time.
-	svc.SetMetricsInterval(time.Second)
+	svc.SetMetricsInterval(500 * time.Millisecond)
 	time.Sleep(1200 * time.Millisecond)
 	// A sample of krill-<app> on the control plane taken after the running
 	// task started (and after its predecessor on that node stopped).
@@ -325,10 +325,14 @@ func TestWaitForLogFollowsNewLines(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("a match must answer within the after-match grace, took %s", time.Since(start))
 	}
-	// The follow takes what is written from now on, with no time bound: a
-	// worker's clock behind the control plane's cannot hide a line.
-	if w := eng.lastWindow(); !w.Follow || !w.Since.IsZero() || w.Tail != 0 {
-		t.Fatalf("follow window: %+v", w)
+	// The follow takes what is written from now on, with no time bound (a
+	// worker's clock behind the control plane's cannot hide a line), and
+	// without docker's log details (they can carry env values).
+	eng.mu.Lock()
+	follow := eng.windows[0]
+	eng.mu.Unlock()
+	if !follow.Follow || !follow.Since.IsZero() || follow.Tail != 0 || !follow.NoDetails {
+		t.Fatalf("follow window: %+v", follow)
 	}
 }
 
@@ -383,18 +387,142 @@ func TestWaitForLogEndsOnShutdownAndTimeout(t *testing.T) {
 	}
 }
 
+// splitLogsEngine serves history and the live stream from separate readers.
+type splitLogsEngine struct {
+	docker.Engine
+	history io.Reader
+	live    string
+}
+
+func (e *splitLogsEngine) ServiceLogs(_ context.Context, _ string, follow bool, _ int) (io.ReadCloser, error) {
+	if follow {
+		return io.NopCloser(strings.NewReader(e.live)), nil
+	}
+	return io.NopCloser(e.history), nil
+}
+
 func TestWaitForLogReportsIncompleteHistory(t *testing.T) {
 	f := newAPIFixture(t)
-	eng := &stubLogsEngine{body: windowLogBody, readErr: errors.New("task skipped")}
-	svc := api.NewService(f.q, eng, nil)
-	// The fallback engine has no following read: ServiceLogs(follow) returns
-	// the same short body, which ends at once.
-	res, err := svc.Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Since: "2026-11-20T13:00:00Z", Timeout: 2})
+	eng := &splitLogsEngine{
+		history: &errAfterReader{r: strings.NewReader(windowLogBody), err: errors.New("task skipped")},
+		live:    "", // ends cleanly at once
+	}
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Since: "2026-11-20T13:00:00Z", Timeout: 5})
 	if err != nil {
 		t.Fatalf("wait: %v", err)
 	}
-	if w := res.(api.LogWaitResult); w.Found || !w.Incomplete {
-		t.Fatalf("a broken history read must be reported: %+v", w)
+	if w := res.(api.LogWaitResult); w.Found || !w.Incomplete || w.StoppedBy != "ended" {
+		t.Fatalf("a broken history read must be reported even when the live stream ends cleanly: %+v", w)
+	}
+}
+
+func TestWaitForLogMatchesBeyondTheDisplayCut(t *testing.T) {
+	f := newAPIFixture(t)
+	long := "2026-11-20T14:00:00.000Z " + strings.Repeat("x", 20<<10) + " READY\n"
+	eng := &splitLogsEngine{history: strings.NewReader(long)}
+	res, err := api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "ready", Since: "2026-11-20T13:00:00Z", Timeout: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := res.(api.LogWaitResult); !w.Found || len(w.Match.Message) > 17<<10 {
+		t.Fatalf("a match past 16 KB must be found, and returned cut: found=%v", w.Found)
+	}
+	// The cut marker itself must not match.
+	eng = &splitLogsEngine{history: strings.NewReader(long)}
+	res, err = api.NewService(f.q, eng, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "truncated", Since: "2026-11-20T13:00:00Z", Timeout: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := res.(api.LogWaitResult); w.Found {
+		t.Fatal("the truncation marker must not match")
+	}
+	out, err := api.NewService(f.q, &diagEngine{backlog: long}, nil).Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{Contains: "ready"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := out.([]api.LogLine); len(lines) != 1 {
+		t.Fatalf("contains must match the whole message: %d lines", len(lines))
+	}
+}
+
+func TestLogWaitsAreBoundedAcrossCallers(t *testing.T) {
+	f := newAPIFixture(t)
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	opened := make(chan struct{}, 16)
+	eng := &diagEngine{follow: func(ctx context.Context) io.ReadCloser {
+		pr, pw := io.Pipe()
+		go func() {
+			select {
+			case <-block:
+			case <-ctx.Done():
+			}
+			pw.Close()
+		}()
+		opened <- struct{}{}
+		return pr
+	}}
+	svc := api.NewService(f.q, eng, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = svc.Logs(ctx, f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Timeout: 30})
+		}()
+	}
+	for i := 0; i < 8; i++ {
+		select {
+		case <-opened:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the eight waits did not start")
+		}
+	}
+	_, err := svc.Logs(t.Context(), f.readIdent, f.appIDString, api.LogsInput{WaitFor: "never", Timeout: 1})
+	var aerr *api.Error
+	if !errors.As(err, &aerr) || aerr.Code != api.CodeUnavailable {
+		t.Fatalf("a ninth concurrent wait must be refused, got %v", err)
+	}
+	cancel()
+	wg.Wait()
+}
+
+func TestWhoamiShowsTheBaseURLWithoutCredentials(t *testing.T) {
+	f := newAPIFixture(t)
+	f.svc.SetInstanceURL(func(context.Context) string { return "https://proxy:s3cret@krill.example.test/base?token=abc" })
+	res, err := f.svc.Whoami(t.Context(), f.readIdent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Instance.URL != "https://krill.example.test/base" {
+		t.Fatalf("instance url %q", res.Instance.URL)
+	}
+}
+
+func TestAppConfigIgnoresAnInvalidInstanceDefault(t *testing.T) {
+	f := newAPIFixture(t)
+	f.svc.SetResourceDefaults("lots", "0.5")
+	cfg, err := f.svc.AppConfig(t.Context(), f.readIdent, f.appIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Resources.MemoryLimitSource != "none" || cfg.Resources.CPULimitSource != "default" || cfg.Resources.CPULimit != "0.5" {
+		t.Fatalf("resources: %+v", cfg.Resources)
+	}
+}
+
+func TestDeploymentStatusWaitNotFoundWhenTheAppIsDeleted(t *testing.T) {
+	f := newAPIFixture(t)
+	depID := f.seedDeployment(t)
+	time.AfterFunc(700*time.Millisecond, func() {
+		_ = f.q.DeleteApplication(context.Background(), f.appID)
+	})
+	_, err := f.svc.DeploymentStatusWait(t.Context(), f.readIdent, depID, 10)
+	var aerr *api.Error
+	if !errors.As(err, &aerr) || aerr.Code != api.CodeNotFound {
+		t.Fatalf("a deployment deleted during the wait: %v", err)
 	}
 }
 
@@ -448,7 +576,9 @@ func TestDeploymentStatusWaitTimesOutAndStopsOnShutdown(t *testing.T) {
 	if err != nil || d.Status != "running" {
 		t.Fatalf("timeout: %+v %v", d, err)
 	}
-	if el := time.Since(start); el < 900*time.Millisecond || el > 5*time.Second {
+	// The answer comes by the deadline; a tenth of the wait is kept for the
+	// final reads.
+	if el := time.Since(start); el < 850*time.Millisecond || el > 1100*time.Millisecond {
 		t.Fatalf("waited %s for a 1 s wait", el)
 	}
 	stopping, stop := context.WithCancel(context.Background())
@@ -650,12 +780,12 @@ func TestLogsTruncateAnOversizedLine(t *testing.T) {
 	}
 }
 
-// A deploy that ends right before the wait's deadline, after its last poll,
-// is reported ended, not running.
+// A deploy that ends after the wait's last poll, near its deadline, is
+// reported ended, not running.
 func TestDeploymentStatusWaitReadsOnceMoreAtTheDeadline(t *testing.T) {
 	f := newAPIFixture(t)
 	depID := f.seedDeployment(t)
-	time.AfterFunc(950*time.Millisecond, func() {
+	time.AfterFunc(750*time.Millisecond, func() {
 		_ = f.q.FinishDeployment(context.Background(), db.FinishDeploymentParams{ID: depID, Status: "error", Log: "boom"})
 	})
 	d, err := f.svc.DeploymentStatusWait(t.Context(), f.readIdent, depID, 1)

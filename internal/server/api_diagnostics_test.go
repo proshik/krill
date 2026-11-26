@@ -165,7 +165,9 @@ func TestAPIDiagnosticRoutes(t *testing.T) {
 	t.Run("whoami names the instance", func(t *testing.T) {
 		rec := apiDo(t, h, http.MethodGet, "/api/v1/whoami", fx.token)
 		var got api.WhoamiResult
-		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Instance.URL == "" || got.Instance.Version == "" {
+		// This test server has no public address configured, so the URL is
+		// left out rather than shown malformed; the version is always there.
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Instance.Version == "" || !strings.Contains(rec.Body.String(), `"instance":{`) {
 			t.Fatalf("whoami: %s (%v)", rec.Body.String(), err)
 		}
 	})

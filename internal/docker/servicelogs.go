@@ -68,7 +68,7 @@ func logsOptions(w LogWindow) container.LogsOptions {
 		Follow:     w.Follow,
 		Tail:       "all",
 		Timestamps: true,
-		Details:    true,
+		Details:    !w.NoDetails,
 	}
 	if w.Tail >= 0 {
 		opts.Tail = strconv.Itoa(w.Tail)

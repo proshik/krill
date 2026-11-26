@@ -21,6 +21,9 @@ func TestLogsOptionsWindow(t *testing.T) {
 	if o.Tail != "all" {
 		t.Fatalf("TailAll must read the whole window, got %q", o.Tail)
 	}
+	if o := logsOptions(LogWindow{NoDetails: true}); o.Details {
+		t.Fatal("NoDetails must leave docker's log details out")
+	}
 	if o := logsOptions(LogWindow{Follow: true}); o.Tail != "0" {
 		t.Fatalf("tail 0 must stay 0 (new lines only), got %q", o.Tail)
 	}

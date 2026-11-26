@@ -32,6 +32,7 @@ type Service struct {
 	backups         Backups
 	gateway         Gateway
 	domains         domainProbe
+	logWaits        chan struct{} // slots of the log waits running at once
 }
 
 // NewService wires a Service on top of the generated queries, the Docker
@@ -40,7 +41,7 @@ type Service struct {
 // engine may be nil in tests that only exercise resolution/tenancy/env — every
 // docker-touching path checks for that and falls back to stored state.
 func NewService(q *db.Queries, eng docker.Engine, dep *deploy.Deployer) *Service {
-	return &Service{q: q, engine: eng, dep: dep, domains: systemDomainProbe()}
+	return &Service{q: q, engine: eng, dep: dep, domains: systemDomainProbe(), logWaits: make(chan struct{}, maxLogWaits)}
 }
 
 // SetInstanceURL wires the installation's externally reachable base URL (the
@@ -59,8 +60,20 @@ func (s *Service) SetMetricsInterval(d time.Duration) { s.metricsInterval = d }
 
 // SetResourceDefaults wires the instance-wide memory and CPU limits a deploy
 // applies to an app without its own (KRILL_DEFAULT_MEMORY_LIMIT/_CPU_LIMIT).
+// A value the deployer cannot parse is one it does not apply (it warns at
+// startup and uses none), so it is not reported as a default either.
 func (s *Service) SetResourceDefaults(mem, cpu string) {
-	s.memDefault, s.cpuDefault = strings.TrimSpace(mem), strings.TrimSpace(cpu)
+	s.memDefault, s.cpuDefault = "", ""
+	if mem = strings.TrimSpace(mem); mem != "" {
+		if n, err := docker.ParseMemoryBytes(mem); err == nil && n > 0 {
+			s.memDefault = mem
+		}
+	}
+	if cpu = strings.TrimSpace(cpu); cpu != "" {
+		if n, err := docker.ParseNanoCPUs(cpu); err == nil && n > 0 {
+			s.cpuDefault = cpu
+		}
+	}
 }
 
 // SetBackups wires the backup services ListBackups and BackupNow use.

@@ -18,12 +18,11 @@ import (
 // Gateway is what Krill knows about its own gateway (Traefik on the manager
 // nodes, publishing 80/443 in host mode). The server implements it.
 type Gateway interface {
-	// Addresses are the IPs the gateway can be reached at as far as Krill
-	// knows; empty when it does not know them.
-	Addresses(ctx context.Context) ([]string, error)
-	// DialAddr is the host a TLS check connects to: always Krill's own
-	// gateway, never an address taken from DNS.
-	DialAddr() string
+	// Locate returns the IPs the gateway can be reached at as far as Krill
+	// knows (empty when it does not know them) and the host a TLS check
+	// connects to: always Krill's own gateway — the node its task runs on
+	// when known — never an address taken from DNS.
+	Locate(ctx context.Context) (addrs []string, dialAddr string, err error)
 }
 
 // DomainStatusResult is the DNS and certificate state of an app's domains.
@@ -80,10 +79,11 @@ type CertCheck struct {
 const traefikDefaultCN = "TRAEFIK DEFAULT CERT"
 
 const (
-	domainLookupTimeout = 3 * time.Second
-	domainTLSTimeout    = 5 * time.Second
-	domainStatusBudget  = 15 * time.Second
-	domainParallel      = 4
+	gatewayLocateTimeout = 3 * time.Second
+	domainLookupTimeout  = 3 * time.Second
+	domainTLSTimeout     = 5 * time.Second
+	domainStatusBudget   = 15 * time.Second
+	domainParallel       = 4
 )
 
 // domainProbe is how DomainStatus resolves names and fetches certificates;
@@ -156,8 +156,12 @@ func (s *Service) DomainStatus(ctx context.Context, id Identity, ref string) (Do
 	gw := map[string]bool{}
 	dialAddr := ""
 	if s.gateway != nil {
-		dialAddr = s.gateway.DialAddr()
-		addrs, err := s.gateway.Addresses(ctx)
+		// A bound of its own, so a slow Swarm cannot eat the budget the DNS
+		// and TLS checks need.
+		gctx, gcancel := context.WithTimeout(ctx, gatewayLocateTimeout)
+		addrs, dial, err := s.gateway.Locate(gctx)
+		gcancel()
+		dialAddr = dial
 		if err != nil {
 			slog.Warn("domain status: gateway addresses unavailable", "app_id", app.ID, "err", err)
 		}
@@ -195,7 +199,7 @@ func (s *Service) checkDomain(ctx context.Context, c *DomainCheck, gw map[string
 	addrs, err := s.domains.lookup(lctx, c.Host)
 	cancel()
 	if err != nil {
-		c.DNS.Error = err.Error()
+		c.DNS.Error = lookupError(err)
 	} else {
 		c.DNS.Addresses = addrs
 		if len(gw) > 0 {
@@ -273,6 +277,19 @@ func handshakeError(err error, dialAddr string) string {
 		return "could not connect"
 	}
 	return scrub(err.Error(), dialAddr)
+}
+
+// lookupError describes a failed DNS lookup in words of its own: the
+// resolver's error names the resolver's address, which is operator data.
+func lookupError(err error) string {
+	var dnsErr *net.DNSError
+	switch {
+	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+		return "no such host"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &dnsErr) && dnsErr.IsTimeout:
+		return "the lookup timed out"
+	}
+	return "the lookup failed"
 }
 
 // scrub removes the dialed address from a message, in case a library put it

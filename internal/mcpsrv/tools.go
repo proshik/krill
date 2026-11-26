@@ -356,7 +356,7 @@ func registerAppStatus(srv *mcp.Server, svc *api.Service) {
 func registerAppLogs(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppLogs,
-		Description: "Read an application's runtime log across all of its tasks, merged by time: the most recent lines, oldest first, parsed into structured lines. Optional window (since, until), case-insensitive substring filter (contains) and minimum severity (level). The level filter only drops lines whose detected level is below it; a line with no detected level (lvl \"\") is always kept, so most of an app's unstructured output passes whatever level is asked for. With wait_for it instead waits (timeout, max 120 s) for a line containing that text and answers {found, stopped_by, match, lines, incomplete}.",
+		Description: "Read an application's runtime log across all of its tasks, merged by time: the most recent lines, oldest first, parsed into structured lines. Optional window (since, until), case-insensitive substring filter (contains) and minimum severity (level). The level filter only drops lines whose detected level is below it; a line with no detected level (lvl \"\") is always kept, so most of an app's unstructured output passes whatever level is asked for. With wait_for it instead waits (timeout, max 120 s) for a line containing that text — among the lines since since (default: now) and the new ones — and answers {found, stopped_by, match, lines, incomplete}; at most a few waits run at once on an installation, a further one is refused as unavailable.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in logsArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
@@ -632,7 +632,7 @@ func registerListBackups(srv *mcp.Server, svc *api.Service) {
 func registerBackupNow(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolBackupNow,
-		Description: "Start an existing configured backup now, like the web UI's Back up now. Asynchronous: answers started with started_at; follow it with krill_list_backups until running is false — its result is the one whose last_run_at is not before started_at (an older last_run_at means it recorded nothing: treat it as failed). Needs a write-level token.",
+		Description: "Start an existing configured backup now, like the web UI's Back up now. Asynchronous: answers started with started_at; follow it with krill_list_backups until running is false — its result is the one whose last_run_at equals started_at (a later last_run_at is another run's and leaves this one's outcome unknown; an earlier one means it recorded nothing: treat it as failed). The run applies the backup's retention, which can delete the oldest stored copies. Needs a write-level token.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in backupNowArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {

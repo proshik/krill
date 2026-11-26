@@ -71,19 +71,13 @@ func (b apiBackups) Running(kind string, id int64) bool {
 // apiGateway is what Krill knows of its gateway: Traefik publishes 80/443 in
 // host mode, so it answers at the addresses of the nodes its task runs on —
 // not at every manager — and, as configured evidence, at the manager's
-// advertised address.
+// advertised address. A TLS check dials the node the task runs on when that
+// is known, else the advertised address, else loopback (Krill runs on a
+// manager).
 type apiGateway struct{ s *Server }
 
-func (g apiGateway) DialAddr() string {
-	if g.s.cfg.AdvertiseAddr != "" {
-		return g.s.cfg.AdvertiseAddr
-	}
-	// Krill runs on a manager, where the gateway listens.
-	return "127.0.0.1"
-}
-
-func (g apiGateway) Addresses(ctx context.Context) ([]string, error) {
-	var out []string
+func (g apiGateway) Locate(ctx context.Context) ([]string, string, error) {
+	var addrs []string
 	var errs []error
 	if a := g.s.cfg.AdvertiseAddr; a != "" {
 		ips, err := resolveHostIPs(ctx, a)
@@ -91,36 +85,46 @@ func (g apiGateway) Addresses(ctx context.Context) ([]string, error) {
 			errs = append(errs, fmt.Errorf("resolve KRILL_ADVERTISE_ADDR: %w", err))
 		}
 		for _, ip := range ips {
-			out = append(out, ip.String())
+			addrs = append(addrs, ip.String())
 		}
 	}
-	if g.s.engine != nil {
-		tasks, err := g.s.engine.ServiceTasks(ctx, traefik.ServiceName)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("gateway tasks: %w", err))
-		}
-		onNode := map[string]bool{}
-		for _, t := range tasks {
-			if t.State == "running" {
-				onNode[t.NodeID] = true
-			}
-		}
-		if len(onNode) > 0 {
-			nodes, err := g.s.engine.Nodes(ctx)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("list swarm nodes: %w", err))
-			}
-			for _, n := range nodes {
-				if !onNode[n.ID] {
-					continue
-				}
-				if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
-					out = append(out, ip.String())
-				}
-			}
+	dial := g.s.cfg.AdvertiseAddr
+	if dial == "" {
+		dial = "127.0.0.1"
+	}
+	if g.s.engine == nil {
+		return addrs, dial, errors.Join(errs...)
+	}
+	tasks, err := g.s.engine.ServiceTasks(ctx, traefik.ServiceName)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("gateway tasks: %w", err))
+	}
+	onNode := map[string]bool{}
+	for _, t := range tasks {
+		if t.State == "running" {
+			onNode[t.NodeID] = true
 		}
 	}
-	return out, errors.Join(errs...)
+	if len(onNode) == 0 {
+		return addrs, dial, errors.Join(errs...)
+	}
+	nodes, err := g.s.engine.Nodes(ctx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list swarm nodes: %w", err))
+	}
+	var taskAddrs []string
+	for _, n := range nodes {
+		if !onNode[n.ID] {
+			continue
+		}
+		if ip := net.ParseIP(n.Addr); ip != nil && !ip.IsUnspecified() {
+			taskAddrs = append(taskAddrs, ip.String())
+		}
+	}
+	if len(taskAddrs) > 0 {
+		dial = taskAddrs[0]
+	}
+	return append(addrs, taskAddrs...), dial, errors.Join(errs...)
 }
 
 // apiAppConfig reports an app's saved settings, never a secret.
