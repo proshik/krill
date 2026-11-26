@@ -161,6 +161,14 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
 -- name: ListBackupRunsSince :many
 SELECT * FROM backup_runs WHERE org_id = $1 AND finished_at >= $2 ORDER BY finished_at;
 
+-- name: ListLatestOkBackupRuns :many
+-- The latest successful run of each backup configuration of an organization
+-- that has one on record (rows are kept 30 days).
+SELECT kind, source_id, max(finished_at)::timestamptz AS finished_at
+FROM backup_runs
+WHERE org_id = $1 AND status = 'ok'
+GROUP BY kind, source_id;
+
 -- name: PruneBackupRuns :exec
 DELETE FROM backup_runs WHERE finished_at < $1;
 

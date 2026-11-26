@@ -1,17 +1,20 @@
 # Agent and CI API (REST + MCP)
 
-Krill exposes sixteen operations for AI agents and CI pipelines over two surfaces backed by the
+Krill exposes twenty operations for AI agents and CI pipelines over two surfaces backed by the
 same code: **REST/JSON at `/api/v1`** for scripts, and an **MCP server (streamable HTTP) at
 `/mcp`** for agents. Both use the same organization-scoped bearer tokens and the same tenancy
 checks.
 
-Twelve **operate apps that already exist** — status, logs, deploy / rebuild / reload / stop, and
-single-variable env edits. Four more **create** what moving an app onto Krill needs — a logical
-database, an image app, a domain, a database link — and only for a token issued at the
-**provision** level. There are no destructive operations: nothing deletes or changes an existing
-organization, project, environment, app, database, domain or volume, and there is no shell into
-a container. The blast radius is bounded by the surface itself — a list of sixteen operations
-can be checked by eye.
+Sixteen **read and operate what already exists** — status (with Swarm tasks, container health and
+memory/CPU), logs (with a time window, a substring filter and waiting for a line), saved settings,
+backups, a DNS and certificate check of an app's domains, deploy / rebuild / reload / stop,
+single-variable env edits and starting a configured backup. Four more **create** what moving an
+app onto Krill needs — a logical database, an image app, a domain, a database link — and only for
+a token issued at the **provision** level. There are no destructive operations: nothing deletes
+or changes an existing organization, project, environment, app, database, domain or volume, and
+there is no shell into a container. The one thing a write token can remove is old backup copies:
+a backup started through the API applies its configured retention, as a scheduled one does. The blast radius is bounded by the surface itself — a list of
+twenty operations can be checked by eye.
 
 ## 1. Issue a token
 
@@ -37,16 +40,16 @@ claude mcp add --transport http krill https://krill.example.com/mcp \
 
 | Level | Tools |
 |-------|-------|
-| read | `krill_whoami`, `krill_list_apps`, `krill_app_status`, `krill_app_logs`, `krill_deployments`, `krill_deployment_status`, `krill_list_env` |
-| write | `krill_deploy`, `krill_rebuild`, `krill_reload`, `krill_stop`, `krill_set_env` |
+| read | `krill_whoami`, `krill_list_apps`, `krill_app_status`, `krill_app_logs`, `krill_deployments`, `krill_deployment_status`, `krill_list_env`, `krill_app_config`, `krill_list_backups`, `krill_domain_status` |
+| write | `krill_deploy`, `krill_rebuild`, `krill_reload`, `krill_stop`, `krill_set_env`, `krill_backup_now` |
 | provision | `krill_create_database`, `krill_create_app`, `krill_add_domain`, `krill_link_database` |
 
 Apps are addressed by a `project/environment/app` path or a numeric id; `krill_list_apps`
 returns both.
 
 [`skills/krill-deploy`](../../skills/krill-deploy/SKILL.md) teaches an agent the
-deploy-and-verify and diagnose-a-failure runbooks: poll on a widening interval, don't retry a
-failed deploy, never invent a variable's value, ask before touching production. It is meant to
+deploy-and-verify and diagnose-a-failure runbooks: wait on the server instead of polling, don't
+retry a failed deploy, never invent a variable's value, ask before touching production. It is meant to
 be used from your application's repository, so install it globally:
 
 ```sh
@@ -67,24 +70,29 @@ DEPLOY=$(curl -sS -X POST \
   https://krill.example.com/api/v1/apps/acme/production/bot/deploy)
 
 ID=$(echo "$DEPLOY" | jq -r .deployment_id)
+# Answers once the deployment is done or failed, or after 120 s
 curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
-  "https://krill.example.com/api/v1/deployments/$ID"
+  "https://krill.example.com/api/v1/deployments/$ID?wait=120"
 ```
 
 | Route | Level | Notes |
 |-------|-------|-------|
-| `GET /api/v1/whoami` | read | User, organization, token level, live role, `can_write`. |
+| `GET /api/v1/whoami` | read | User, organization, token level, live role, `can_write`, and `instance` — this installation's public URL and version, to tell installations apart (app ids repeat across them). |
 | `GET /api/v1/apps` | read | Every app in the organization: path, id, status, source type, image and tag, domains. |
-| `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment. |
-| `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`) is always kept. The level comes from a `level=` field or a severity word (`INFO`, `WARN`, `ERROR`, …) near the start of the line, so most unstructured output has none and passes the filter. |
+| `GET /api/v1/apps/{app}` | read | One app: status, `running/desired` replicas, node, domains, last deployment; and, when Swarm answers, its five newest `tasks` (node, state, desired state, error, exit code, times — what `docker service ps` shows), `failed_since_deploy` (tasks created since the last deployment started that crashed, were refused or exited; a lower bound, as Swarm keeps about five tasks per replica), `health` of each container meant to run (status, failing streak, last probe's exit code and time — never its output) and `usage` (memory read live; CPU from the monitoring sampler when it can only be that container's). A part that cannot be read is left out. |
+| `GET /api/v1/apps/{app}/logs` | read | Runtime log tail: the most recent lines across all of the app's tasks (current and recently stopped), merged by time, oldest first. `?tail=` (default 200, max 1000), `?level=` (`trace` … `fatal`) — drops only lines whose detected level is below it; a line with no detected level (`"lvl": ""`) is always kept. The level comes from a `level=` field or a severity word (`INFO`, `WARN`, `ERROR`, …) near the start of the line, so most unstructured output has none and passes the filter. `?since=` and `?until=` take an RFC3339 time or a duration ago (`10m`, `2h`); `until` needs `since`. `?contains=` keeps lines whose message contains the text, ignoring case (it searches up to each task's last 10 000 lines of the window, or 50 000 lines in all for a window with an end; a search that may have missed lines ends with a "log read incomplete" line). A line over 16 KB is cut, saying so. `?wait_for=` waits instead — see below. |
 | `GET /api/v1/apps/{app}/deployments` | read | History, newest first. `?limit=` (default 20, max 50). |
-| `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. |
+| `GET /api/v1/deployments/{id}` | read | One deployment and the last ~8 KB of its build log. `?wait=` (seconds, max 120) waits while it is still running and answers once it is done or failed, or when the time is up (plus at most a quarter second for the closing reads — give a client timeout of the wait plus a few seconds). `"settling": true` means the spec is applied and Swarm is still converging — still `running`, not done. |
+| `GET /api/v1/apps/{app}/config` | read | Saved settings, never a secret: source (image and tag, or git repository — scheme, host and path only, left out when it cannot be read safely —, branch, Dockerfile path, build args and secrets by name), resources (replicas, memory/CPU limits and whether they are the app's own or the instance default, restart policy, placement), healthcheck timing (not its command), ports, volumes, domains (paths, exposed, HTTPS, redirect, which protection kinds), links by variable, and `pending` — the settings sections saved but not applied yet. |
+| `GET /api/v1/apps/{app}/domain-status` | read | For each domain: what DNS resolves it to from the control plane, whether that is one of the addresses Krill knows for its gateway — `KRILL_ADVERTISE_ADDR` and the node its gateway task runs on (`points_at_gateway`; `gateway_known` is false when Krill knows none, and the addresses themselves are not listed — they are the nodes'). Behind NAT or a private network, the public address can be none of them, and for an HTTPS domain the certificate the gateway serves for it — issuer, validity, `days_left`, `trusted`, `default_cert` (Traefik's own self-signed certificate: none issued yet). |
+| `GET /api/v1/backups` | read | Every configured backup of the organization — `database` (pg_dump), `volume` and `bucket` — with target, destination, schedule, retention, `enabled`, `running`, last run (`last_run_at`, to the microsecond; `last_status`; `last_error` — a summary Krill writes of what went wrong, never the stored text, which can carry a credential: the full error is on the backup's page in the UI) and `last_success_at`. `?app=` (its volumes and the databases and buckets it is linked to) or `?environment=project/env`. |
 | `GET /api/v1/apps/{app}/env` | read | Variable **names** and their source (`literal` / `db-link` / `bucket-link`) — never values. |
 | `POST /api/v1/apps/{app}/deploy` | write | Optional body `{"tag":"v1.2.3"}` for image apps — a bare tag, not a full image reference. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/rebuild` | write | Build without cache; Dockerfile apps only. Returns `{deployment_id, status}`. |
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull (`{"action":"restart","status":"ok"}`). A stopped app is deployed instead: `{"action":"deploy","status":"running","deployment_id":…}`. |
 | `POST /api/v1/apps/{app}/stop` | write | Scale to zero; a deploy brings it back. A deploy that has not applied its spec yet is cancelled — but a tag it carried is already the app's tag, so a later deploy without `tag` ships that one; pass the previous tag to go back. If Stop answers with an error, the service may already be scaled to zero while the cancelled deploy still reads `running` (its outcome could not be written); call Stop again before a new deploy — it retries the write. |
 | `POST /api/v1/apps/{app}/env` | write | `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, the rest untouched. The value must be a single line (base64-encode a PEM key or JSON). |
+| `POST /api/v1/backups/{kind}/{id}/run` | write | Start a configured backup now, like **Back up now** in the UI. It applies the backup's retention like a scheduled run, so it can delete the oldest stored copies (with retention 1, the only older one). Answers `{"status":"started","started_at":…}`; follow it in `GET /api/v1/backups` until `running` is false — its result is the one whose `last_run_at` equals `started_at` (a later one is a later run's; an earlier one means this run recorded nothing). `409` when a backup or restore of it is already running. |
 | `POST /api/v1/environments/{project}/{env}/databases` | provision | `{"name":"app","server":"main"}` (+ optional `db_name`, `username`) — a logical database and its owner user inside an existing Postgres server, which must be running. The password is never returned. |
 | `POST /api/v1/environments/{project}/{env}/apps` | provision | `{"name":"bot","image":"ghcr.io/acme/bot","tag":"v1","port":8080}` (+ optional `registry`, `domain`) — an image app, **not deployed**. `domain` is `{"host","tls","exposed","paths"}`; without it the app gets `<name>.<base domain>`, internal and without HTTPS. |
 | `POST /api/v1/apps/{app}/domains` | provision | `{"host":"bot.example.com","tls":true,"exposed":true,"paths":["/webhook"]}` — another domain of the app; routing applies at once to a deployed app. A host other apps already use has one HTTPS setting for all of them: omit `tls` to take it, or pass the same value. |
@@ -102,7 +110,8 @@ settings answers `409 conflict` and changes nothing. Changing or deleting a reso
 the web UI.
 
 Deploys are **asynchronous**: `deploy` and `rebuild` return a `deployment_id` at once, and the
-caller polls `GET /api/v1/deployments/{id}` until `running` becomes `done` or `error`. `done`
+caller waits with `GET /api/v1/deployments/{id}?wait=120` (repeat while it still says `running`)
+until `running` becomes `done` or `error`. `done`
 means Swarm finished the rolling update with the new tasks running. A deployment is `running`
 while it waits in the queue and builds, then for the convergence wait —
 `KRILL_CONVERGE_TIMEOUT`, or a healthcheck's start period plus a minute when that is longer —
@@ -110,8 +119,46 @@ and, if the service is still starting then (an image still pulling), for up to 2
 minutes before it becomes `done` or `error`; keep polling. While it runs, `log_tail` is empty — the build log is saved
 when the deployment ends, and the live log is on the app's Deploys tab. A deploy that never
 converges ends `error` with `⚠ service still starting` and `❌ service did not converge` in its
-log. An env
+log. While it is in that last phase the answer says `"settling": true`. An env
 edit changes the app's configuration but restarts nothing; it takes effect on the next deploy.
+
+### Waiting for a log line
+
+`GET /api/v1/apps/{app}/logs?wait_for=listening&timeout=90` watches the app's log for a **new**
+line containing `listening` (ignoring case), at most `timeout` seconds (default 60, max 120). It
+looks only at lines written after the call opened the live stream, whatever their timestamps (a
+worker's clock may lag); it does not search what was logged before. The answer is an object:
+`{"found", "stopped_by", "match", "lines", "following_since", "incomplete"}` — `stopped_by` is
+`match`, `timeout`, `ended` (the service went away), `error` (the live read broke),
+`shutdown` (Krill is restarting) or `cancelled`; `lines` are the `tail` lines before the match
+(default 20), the match and a few after it; `following_since` is when Docker accepted the live
+read — lines written before it are not covered, and neither, possibly, are the first moments after
+it (Docker attaches each task's reader a little later and does not say when); `incomplete` says the
+live read broke, so a missing match is no proof the line never appeared. `wait_for` cannot be combined with `since`, `until`,
+`contains` or `level`. An installation runs a few log waits at once; a further one answers
+`503 unavailable` — retry shortly.
+
+To look for a line after a deploy across the gaps between calls:
+
+1. Read with `contains=listening&since=<the deployment's started_at>`. If the line is there, done.
+2. Otherwise wait: `wait_for=listening&timeout=90`.
+3. If the wait ends without a match — a timeout, `ended` or `error` — read with `contains` and the
+   same `since` once more. It covers the moments between steps 1 and 2 and the start of the wait.
+
+The last read is bounded too (a scan cap and a time limit): when it ends with the "log read
+incomplete" line, or the wait said `incomplete`, the answer is inconclusive, not "not there". And a
+generic line such as `listening` can come from the previous release's task while a rollout is under
+way — `since` is the time the deploy was queued, not when the new task started. To prove the new
+release is up, look for a line only it prints (its version), and check the replicas and `health`
+in the app status as well.
+
+**Known limitation — lines over 16 KB.** Docker's `json-file` logging driver stores a line longer
+than 16 KB as several records, each with its own timestamp, and Krill joins them as they come
+without telling the pieces apart. So a `contains` or `wait_for` text that falls across the join
+of two pieces is not found, and the joined line carries the second piece's timestamp inside its
+message. Within one task, an unfinished stdout piece can also run into a stderr record that
+follows it; when the two sit on either side of `until`, the stderr text is let into the window
+under the earlier piece's time. Shorter lines are not affected. A fix is planned.
 
 ## Notes
 
@@ -119,7 +166,8 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
   and `/mcp` answer 404.
 - **60 requests per minute per token**, then `429` with `Retry-After`. MCP spends the budget
   faster than REST: a session costs an `initialize` and a `tools/list` before the first call.
-  Give each machine or agent its own token.
+  Give each machine or agent its own token. A call that waits (`wait`, `wait_for`) counts once,
+  however long it waits, and ends early when Krill shuts down.
 - `401` means the token was rejected; `503` with `code: "unavailable"` means it couldn't be
   checked (the database is down) — retry that one rather than reissuing the token.
 - A deploy, rebuild or reload that is not accepted creates no deployment and changes nothing:
@@ -134,7 +182,12 @@ edit changes the app's configuration but restarts nothing; it takes effect on th
 - Every write is logged with the token id and user id — never the token or an env value.
 - An app named like one of the route verbs (`logs`, `env`, `deployments`, `deploy`, `rebuild`,
   `reload`, `stop`) can only be addressed over REST by its numeric id; one named `domains` or
-  `db-links` only for the provisioning POSTs.
+  `db-links` only for the provisioning POSTs. One named `config` or `domain-status` keeps its
+  status route: those two words are verbs only after a full `project/environment/app` path or an id.
+- Several installations: app ids repeat across them. Check `instance` in `whoami` before a write
+  and address apps by path. `instance.url` tells installations apart only when each has its own
+  `KRILL_PUBLIC_URL` or panel domain; two that both say `http://localhost` cannot be told apart
+  this way.
 
 ## Webhooks
 

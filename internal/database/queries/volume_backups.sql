@@ -28,3 +28,18 @@ DELETE FROM volume_backups WHERE id = $1;
 SELECT av.id AS app_volume_id, av.application_id, av.name AS volume_name, a.replicas
 FROM app_volumes av JOIN applications a ON av.application_id = a.id
 WHERE av.id = $1;
+
+-- name: ListOrgVolumeBackups :many
+-- Every backup of an organization's app volumes (see ListOrgDatabaseBackups).
+SELECT vb.id, vb.schedule, vb.retention, vb.enabled, vb.last_run_at, vb.last_status, vb.last_error,
+       v.name AS volume_name, a.id AS application_id, a.name AS application_name,
+       e.id AS environment_id, e.name AS environment_name, p.name AS project_name,
+       d.name AS destination_name
+FROM volume_backups vb
+JOIN app_volumes v ON v.id = vb.app_volume_id
+JOIN applications a ON a.id = v.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN destinations d ON d.id = vb.destination_id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, a.name, v.name, vb.id;

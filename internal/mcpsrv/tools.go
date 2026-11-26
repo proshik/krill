@@ -45,13 +45,19 @@ const (
 	toolCreateApp      = "krill_create_app"
 	toolAddDomain      = "krill_add_domain"
 	toolLinkDatabase   = "krill_link_database"
+
+	// Diagnostics added for agents that used to fall back to ssh.
+	toolAppConfig    = "krill_app_config"
+	toolListBackups  = "krill_list_backups"
+	toolBackupNow    = "krill_backup_now"
+	toolDomainStatus = "krill_domain_status"
 )
 
 // --- Argument shapes -------------------------------------------------------
 //
 // Field names are chosen to match the REST adapter's JSON request bodies
 // exactly (apiDeployRequest.Tag and apiSetEnvRequest.{Key,Value,Remove} in
-// internal/server/api_handlers.go): two adapters fronting the same twelve
+// internal/server/api_handlers.go): two adapters fronting the same
 // operations that disagreed on field names would be a bug waiting to happen.
 
 type appRefArgs struct {
@@ -64,9 +70,24 @@ type deployArgs struct {
 }
 
 type logsArgs struct {
-	App   string `json:"app"`
-	Tail  int    `json:"tail,omitempty" jsonschema:"lines to return, default 200, max 1000"`
-	Level string `json:"level,omitempty" jsonschema:"minimum level: trace, debug, info, warn, error, fatal. A line's level is detected from a level= field or a severity word near the start of the line; a line with no detected level is always kept, since it cannot be ranked"`
+	App      string `json:"app"`
+	Tail     int    `json:"tail,omitempty" jsonschema:"lines to return, default 200, max 1000; with wait_for: lines before the match, default 20, max 200"`
+	Level    string `json:"level,omitempty" jsonschema:"minimum level: trace, debug, info, warn, error, fatal. A line's level is detected from a level= field or a severity word near the start of the line; a line with no detected level is always kept, since it cannot be ranked"`
+	Since    string `json:"since,omitempty" jsonschema:"start of the window: an RFC3339 time, or a duration ago such as 10m or 2h"`
+	Until    string `json:"until,omitempty" jsonschema:"end of the window, same forms as since; needs since"`
+	Contains string `json:"contains,omitempty" jsonschema:"keep only lines whose message contains this text, case-insensitive"`
+	WaitFor  string `json:"wait_for,omitempty" jsonschema:"wait until a line containing this text (case-insensitive) is written AFTER the call, and return whether it was found with the lines around it and following_since, when Docker accepted the live read (the first moments after it may not be covered either); earlier lines are not searched (read them with since and contains); not combinable with since, until, contains or level"`
+	Timeout  int    `json:"timeout,omitempty" jsonschema:"seconds wait_for waits, default 60, max 120"`
+}
+
+type backupsArgs struct {
+	App         string `json:"app,omitempty" jsonschema:"only the backups of this app's volumes and of the databases and buckets it is linked to: numeric id or project/environment/app path"`
+	Environment string `json:"environment,omitempty" jsonschema:"only the backups of this project/environment"`
+}
+
+type backupNowArgs struct {
+	Kind string `json:"kind" jsonschema:"database, volume or bucket, as krill_list_backups names it"`
+	ID   int64  `json:"id" jsonschema:"the backup's id from krill_list_backups"`
 }
 
 type deploymentsArgs struct {
@@ -76,6 +97,7 @@ type deploymentsArgs struct {
 
 type deploymentArgs struct {
 	DeploymentID int64 `json:"deployment_id"`
+	Wait         int   `json:"wait,omitempty" jsonschema:"seconds to wait while the deployment is still running before answering, max 120; 0 answers at once"`
 }
 
 type setEnvArgs struct {
@@ -141,6 +163,10 @@ var toolRegistrations = []toolRegistration{
 	{toolCreateApp, registerCreateApp},
 	{toolAddDomain, registerAddDomain},
 	{toolLinkDatabase, registerLinkDatabase},
+	{toolAppConfig, registerAppConfig},
+	{toolListBackups, registerListBackups},
+	{toolBackupNow, registerBackupNow},
+	{toolDomainStatus, registerDomainStatus},
 }
 
 // ToolNames returns the exact set of tool names this adapter registers.
@@ -190,6 +216,29 @@ func callerIdentity(ctx context.Context, req *mcp.CallToolRequest) (context.Cont
 	reqID := middleware.GetReqID(ctx)
 	slog.Error("mcp: identity missing from the request; a tool ran outside RequireAPIToken", "request_id", reqID)
 	return ctx, api.Identity{}, errorResult(fmt.Sprintf("internal error, see server logs (request_id=%s)", reqID))
+}
+
+// requestScoped returns ctx ended also when the HTTP request that carried
+// this call goes away. A tool handler runs on its session's context, which a
+// disconnected POST does not end, so a tool that waits needs this to stop
+// working for a caller that left. cancel must be called.
+func requestScoped(ctx context.Context, req *mcp.CallToolRequest) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	if req == nil || req.Extra == nil || req.Extra.TokenInfo == nil {
+		return ctx, cancel
+	}
+	done, ok := req.Extra.TokenInfo.Extra[extraRequestDone].(<-chan struct{})
+	if !ok || done == nil {
+		return ctx, cancel
+	}
+	go func() {
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
 }
 
 // errorResult builds an isError CallToolResult carrying msg as its only
@@ -256,7 +305,7 @@ var okResult = map[string]string{"status": "ok"}
 func registerWhoami(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolWhoami,
-		Description: "Report the caller's own resolved identity: user, organization, and access level.",
+		Description: "Report the caller's own resolved identity: user, organization, access level, and which Krill installation answered (instance url and version).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ emptyArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
@@ -290,7 +339,7 @@ func registerListApps(srv *mcp.Server, svc *api.Service) {
 func registerAppStatus(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppStatus,
-		Description: "Report one application's live status: running/desired replicas, node, image, domains, and its most recent deployment.",
+		Description: "Report one application's live status: running/desired replicas, node, image, domains, its most recent deployment, its recent Swarm tasks (node, state, error, exit code), how many tasks ended since the last deploy, container health and memory/CPU. The Swarm, health and usage parts are left out when they cannot be read.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
@@ -307,13 +356,18 @@ func registerAppStatus(srv *mcp.Server, svc *api.Service) {
 func registerAppLogs(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolAppLogs,
-		Description: "Tail an application's runtime log across all of its tasks, merged by time: the most recent lines, oldest first, parsed into structured lines and optionally filtered to a minimum severity. The level filter only drops lines whose detected level is below it; a line with no detected level (lvl \"\") is always kept, so most of an app's unstructured output passes whatever level is asked for.",
+		Description: "Read an application's runtime log across all of its tasks, merged by time: the most recent lines, oldest first, parsed into structured lines. Optional window (since, until), case-insensitive substring filter (contains) and minimum severity (level). The level filter only drops lines whose detected level is below it; a line with no detected level (lvl \"\") is always kept, so most of an app's unstructured output passes whatever level is asked for. With wait_for it instead waits (timeout, max 120 s) for a NEW line containing that text — written after the call; earlier lines are not searched — and answers {found, stopped_by, match, lines, following_since, incomplete}. To look for a line after a deploy across the gaps between calls: read with contains and since = the deployment's start; if absent, wait_for; if the wait ends without a match, read with contains and since again. A missing line after an incomplete read is inconclusive, and a generic line can come from the previous release during a rollout. At most a few waits run at once on an installation; a further one is refused as unavailable.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in logsArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
-		res, err := svc.AppLogs(ctx, id, in.App, in.Tail, in.Level)
+		ctx, cancel := requestScoped(ctx, req)
+		defer cancel()
+		res, err := svc.Logs(ctx, id, in.App, api.LogsInput{
+			Tail: in.Tail, Level: in.Level, Since: in.Since, Until: in.Until,
+			Contains: in.Contains, WaitFor: in.WaitFor, Timeout: in.Timeout,
+		})
 		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
@@ -359,13 +413,15 @@ func registerDeployments(srv *mcp.Server, svc *api.Service) {
 func registerDeploymentStatus(srv *mcp.Server, svc *api.Service) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolDeploymentStatus,
-		Description: "Report one deployment's status and its bounded build log tail.",
+		Description: "Report one deployment's status and its bounded build log tail. With wait (seconds, max 120) it first waits while the deployment is still running and answers when it is done or failed, or when the time is up. settling=true means the spec is applied and Swarm is still converging: the deployment is still running, not done.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in deploymentArgs) (*mcp.CallToolResult, any, error) {
 		ctx, id, errRes := callerIdentity(ctx, req)
 		if errRes != nil {
 			return errRes, nil, nil
 		}
-		res, err := svc.DeploymentStatus(ctx, id, in.DeploymentID)
+		ctx, cancel := requestScoped(ctx, req)
+		defer cancel()
+		res, err := svc.DeploymentStatusWait(ctx, id, in.DeploymentID, in.Wait)
 		if err != nil {
 			return toolError(ctx, err), nil, nil
 		}
@@ -535,6 +591,75 @@ func registerLinkDatabase(srv *mcp.Server, svc *api.Service) {
 			return toolError(ctx, err), nil, nil
 		}
 		slog.InfoContext(ctx, "mcp link database", "app_ref", in.App, "link_id", res.ID, "var", res.Var, "created", res.Created, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerAppConfig(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolAppConfig,
+		Description: "Report an application's saved settings without secrets: source (image and tag, or git repository, branch and Dockerfile path), resources and placement, healthcheck timing (not its command), ports, volumes, domains with their routing and protection kinds, database/server/bucket links by variable, and which settings sections are saved but not applied yet (pending). Never env values, commands, passwords or tokens.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.AppConfig(ctx, id, in.App)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerListBackups(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolListBackups,
+		Description: "List the organization's configured backups — database (pg_dump), volume and bucket — with schedule, retention, whether one is running, and the last run's time, status and error, plus the last success. Optionally only one app's or one environment's.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in backupsArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.ListBackups(ctx, id, api.BackupFilter{App: in.App, Environment: in.Environment})
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerBackupNow(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolBackupNow,
+		Description: "Start an existing configured backup now, like the web UI's Back up now. Asynchronous: answers started with started_at; follow it with krill_list_backups until running is false — its result is the one whose last_run_at equals started_at (a later last_run_at is another run's and leaves this one's outcome unknown; an earlier one means it recorded nothing: treat it as failed). The run applies the backup's retention, which can delete the oldest stored copies. Needs a write-level token.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in backupNowArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.BackupNow(ctx, id, in.Kind, in.ID)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
+		slog.InfoContext(ctx, "mcp backup now requested", "kind", in.Kind, "backup_id", in.ID, "token_id", id.TokenID, "user_id", id.UserID, "request_id", middleware.GetReqID(ctx))
+		return jsonResult(ctx, res), nil, nil
+	})
+}
+
+func registerDomainStatus(srv *mcp.Server, svc *api.Service) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        toolDomainStatus,
+		Description: "Check each domain of an app: what DNS resolves it to from the control plane, whether that is Krill's gateway, and for an HTTPS domain which certificate the gateway serves for it (issuer, validity, trusted, and default_cert when it is Traefik's own self-signed one — no certificate issued yet).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in appRefArgs) (*mcp.CallToolResult, any, error) {
+		ctx, id, errRes := callerIdentity(ctx, req)
+		if errRes != nil {
+			return errRes, nil, nil
+		}
+		res, err := svc.DomainStatus(ctx, id, in.App)
+		if err != nil {
+			return toolError(ctx, err), nil, nil
+		}
 		return jsonResult(ctx, res), nil, nil
 	})
 }

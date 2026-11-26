@@ -35,9 +35,10 @@ const noIdleTimeout = 0
 // The list only ever changes together with this test, deliberately.
 func TestToolListMatchesRegistry(t *testing.T) {
 	want := []string{
-		"krill_add_domain", "krill_app_logs", "krill_app_status", "krill_create_app",
-		"krill_create_database", "krill_deploy", "krill_deployment_status",
-		"krill_deployments", "krill_link_database", "krill_list_apps", "krill_list_env",
+		"krill_add_domain", "krill_app_config", "krill_app_logs", "krill_app_status",
+		"krill_backup_now", "krill_create_app", "krill_create_database", "krill_deploy",
+		"krill_deployment_status", "krill_deployments", "krill_domain_status",
+		"krill_link_database", "krill_list_apps", "krill_list_backups", "krill_list_env",
 		"krill_rebuild", "krill_reload", "krill_set_env", "krill_stop", "krill_whoami",
 	}
 	got := mcpsrv.ToolNames()

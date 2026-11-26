@@ -50,15 +50,31 @@ func decodeAPIBody(r *http.Request, v any) error {
 
 // apiVerbs are the recognized trailing-segment verbs on /api/v1/apps/*.
 var apiVerbs = map[string]bool{
-	"logs":        true,
-	"env":         true,
-	"deployments": true,
-	"deploy":      true,
-	"rebuild":     true,
-	"reload":      true,
-	"stop":        true,
-	"domains":     true,
-	"db-links":    true,
+	"logs":          true,
+	"env":           true,
+	"deployments":   true,
+	"deploy":        true,
+	"rebuild":       true,
+	"reload":        true,
+	"stop":          true,
+	"domains":       true,
+	"db-links":      true,
+	"config":        true,
+	"domain-status": true,
+}
+
+// refShapedVerbs were added after apps could take those names, so they are
+// peeled off only when what precedes them is itself a well-formed reference
+// (a numeric id or a project/environment/app path): an app literally named
+// "config" keeps its path-form status route, acme/production/config.
+var refShapedVerbs = map[string]bool{"config": true, "domain-status": true}
+
+// wellFormedRef reports a numeric id or a three-segment path.
+func wellFormedRef(ref string) bool {
+	if _, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		return true
+	}
+	return strings.Count(ref, "/") == 2
 }
 
 // postOnlyVerbs are verbs only POST routes use. On any other method they are
@@ -120,6 +136,9 @@ func SplitAppRef(rest string) (ref, verb string) {
 	}
 	last := rest[idx+1:]
 	if apiVerbs[last] {
+		if refShapedVerbs[last] && !wellFormedRef(rest[:idx]) {
+			return rest, ""
+		}
 		return rest[:idx], last
 	}
 	return rest, ""
@@ -177,6 +196,10 @@ func (s *Server) apiAppRouter(w http.ResponseWriter, r *http.Request) {
 		s.apiListEnv(w, r, ref)
 	case r.Method == http.MethodGet && verb == "deployments":
 		s.apiListDeployments(w, r, ref)
+	case r.Method == http.MethodGet && verb == "config":
+		s.apiAppConfig(w, r, ref)
+	case r.Method == http.MethodGet && verb == "domain-status":
+		s.apiDomainStatus(w, r, ref)
 	case r.Method == http.MethodPost && verb == "deploy":
 		s.apiDeploy(w, r, ref)
 	case r.Method == http.MethodPost && verb == "rebuild":
@@ -211,32 +234,50 @@ func (s *Server) apiAppStatus(w http.ResponseWriter, r *http.Request, ref string
 	writeAPIJSON(w, status)
 }
 
-// apiAppLogs tails an application's runtime log. Query parameters: tail
-// (line count, clamped server-side) and level (minimum severity filter).
-// Both are parsed defensively — a non-numeric tail is api.Invalid, not a
-// panic or a silently-ignored value.
+// apiAppLogs reads an application's runtime log. Query parameters: tail
+// (line count, clamped server-side), level (minimum severity filter), since,
+// until, contains, and wait_for with timeout (seconds) to wait for a line.
+// Numbers are parsed defensively — a non-numeric tail is api.Invalid, not a
+// panic or a silently-ignored value. Without wait_for the answer is the
+// array of lines; with it, the wait's result object.
 func (s *Server) apiAppLogs(w http.ResponseWriter, r *http.Request, ref string) {
 	ident, ok := api.IdentityFrom(r.Context())
 	if !ok {
 		writeAPIError(w, r, errAPIIdentityMissing)
 		return
 	}
-	tail := 0
-	if v := r.URL.Query().Get("tail"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil {
-			writeAPIError(w, r, api.Invalid(fmt.Sprintf("tail must be a number, got %q", v)))
-			return
-		}
-		tail = n
-	}
-	level := r.URL.Query().Get("level")
-	lines, err := s.apiSvc.AppLogs(r.Context(), ident, ref, tail, level)
+	q := r.URL.Query()
+	tail, err := queryInt(q.Get("tail"), "tail")
 	if err != nil {
 		writeAPIError(w, r, err)
 		return
 	}
-	writeAPIJSON(w, lines)
+	timeout, err := queryInt(q.Get("timeout"), "timeout")
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	res, err := s.apiSvc.Logs(r.Context(), ident, ref, api.LogsInput{
+		Tail: tail, Level: q.Get("level"), Since: q.Get("since"), Until: q.Get("until"),
+		Contains: q.Get("contains"), WaitFor: q.Get("wait_for"), Timeout: timeout,
+	})
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	writeAPIJSON(w, res)
+}
+
+// queryInt parses an optional numeric query parameter; "" is 0.
+func queryInt(v, name string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, api.Invalid(fmt.Sprintf("%s must be a number, got %q", name, v))
+	}
+	return n, nil
 }
 
 // apiListEnv lists an application's environment variable names — never values.
@@ -279,7 +320,8 @@ func (s *Server) apiListDeployments(w http.ResponseWriter, r *http.Request, ref 
 	writeAPIJSON(w, deps)
 }
 
-// apiDeploymentStatus reports one deployment's status and bounded build log.
+// apiDeploymentStatus reports one deployment's status and bounded build log;
+// ?wait= (seconds, max 120) first waits while it is still running.
 // A deployment is addressed directly by numeric id (no app in the path), so
 // unlike the /apps/* routes it is registered as an ordinary chi path param.
 func (s *Server) apiDeploymentStatus(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +336,12 @@ func (s *Server) apiDeploymentStatus(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, r, api.Invalid(fmt.Sprintf("deployment id must be a number, got %q", raw)))
 		return
 	}
-	detail, err := s.apiSvc.DeploymentStatus(r.Context(), ident, id)
+	wait, err := queryInt(r.URL.Query().Get("wait"), "wait")
+	if err != nil {
+		writeAPIError(w, r, err)
+		return
+	}
+	detail, err := s.apiSvc.DeploymentStatusWait(r.Context(), ident, id, wait)
 	if err != nil {
 		writeAPIError(w, r, err)
 		return

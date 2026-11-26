@@ -107,7 +107,7 @@ Before changing a feature, read the internals file in the right column.
 | Cluster, topology, systems, monitoring | SSH worker join and placement, node-aware exec, topology map, environment canvas, cluster-wide stats | [cluster.md](docs/internals/cluster.md) |
 | Self-update, state backup | install a release from Settings → Updates with dead-man rollback; age-encrypted `pg_dump` of Krill's own DB to S3 | [operations.md](docs/internals/operations.md) |
 | Observability, metrics, notifications, logs, terminal | Alloy node agent and app collector, Telegram alerts and digest, structured log viewer, web terminal | [operations.md](docs/internals/operations.md) |
-| Agent API | twelve operations plus four provisioning ones over `/api/v1` and `/mcp`, org-scoped bearer tokens | [agent-api.md](docs/internals/agent-api.md) |
+| Agent API | sixteen operations (status with Swarm tasks/health/usage, windowed logs and waiting for a line, waiting deploys, config, backups, domain checks) plus four provisioning ones over `/api/v1` and `/mcp`, org-scoped bearer tokens | [agent-api.md](docs/internals/agent-api.md) |
 | Auth and secrets | tenancy chain, RBAC, instance operator, password changes, `secret.Enc`/`Dec` | [security.md](docs/internals/security.md) |
 | Web UI | page frame, CSS, i18n, `app.js` helpers | [ui.md](docs/internals/ui.md) |
 | Packages, data model, migrations | detailed package map, data-model facts, migration policy | [code-map.md](docs/internals/code-map.md) |

@@ -165,6 +165,74 @@ func (q *Queries) ListEnabledBucketBackups(ctx context.Context) ([]BucketBackup,
 	return items, nil
 }
 
+const listOrgBucketBackups = `-- name: ListOrgBucketBackups :many
+SELECT bb.id, bb.schedule, bb.retention, bb.enabled, bb.last_run_at, bb.last_status, bb.last_error,
+       bk.id AS bucket_id, bk.name AS bucket_name, i.name AS server_name,
+       e.id AS environment_id, e.name AS environment_name, p.name AS project_name,
+       d.name AS destination_name
+FROM bucket_backups bb
+JOIN s3_buckets bk ON bk.id = bb.bucket_id
+JOIN db_instances i ON i.id = bk.instance_id
+JOIN environments e ON e.id = bk.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN destinations d ON d.id = bb.destination_id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, bk.name, bb.id
+`
+
+type ListOrgBucketBackupsRow struct {
+	ID              int64              `json:"id"`
+	Schedule        string             `json:"schedule"`
+	Retention       int32              `json:"retention"`
+	Enabled         bool               `json:"enabled"`
+	LastRunAt       pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus      string             `json:"last_status"`
+	LastError       string             `json:"last_error"`
+	BucketID        int64              `json:"bucket_id"`
+	BucketName      string             `json:"bucket_name"`
+	ServerName      string             `json:"server_name"`
+	EnvironmentID   int64              `json:"environment_id"`
+	EnvironmentName string             `json:"environment_name"`
+	ProjectName     string             `json:"project_name"`
+	DestinationName string             `json:"destination_name"`
+}
+
+// Every backup of an organization's buckets (see ListOrgDatabaseBackups).
+func (q *Queries) ListOrgBucketBackups(ctx context.Context, organizationID int64) ([]ListOrgBucketBackupsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgBucketBackups, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgBucketBackupsRow
+	for rows.Next() {
+		var i ListOrgBucketBackupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Schedule,
+			&i.Retention,
+			&i.Enabled,
+			&i.LastRunAt,
+			&i.LastStatus,
+			&i.LastError,
+			&i.BucketID,
+			&i.BucketName,
+			&i.ServerName,
+			&i.EnvironmentID,
+			&i.EnvironmentName,
+			&i.ProjectName,
+			&i.DestinationName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setBucketBackupEnabled = `-- name: SetBucketBackupEnabled :exec
 UPDATE bucket_backups SET enabled = $2 WHERE id = $1
 `

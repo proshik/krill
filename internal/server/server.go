@@ -274,6 +274,14 @@ func (s *Server) SetAPI(a *api.Authenticator, svc *api.Service) {
 	s.apiLimiter = newTokenLimiter(apiTokenRateLimit, apiTokenRateWindow)
 	if svc != nil {
 		svc.SetProvisioner(apiProvisioner{s: s})
+		svc.SetInstanceURL(s.baseURL)
+		// A wait (a deployment, a log line) ends when Krill starts shutting
+		// down: StopStreams runs on http.Server.RegisterOnShutdown.
+		svc.SetStopping(s.streams())
+		svc.SetMetricsInterval(s.cfg.MetricsInterval)
+		svc.SetResourceDefaults(s.cfg.DefaultMemoryLimit, s.cfg.DefaultCPULimit)
+		svc.SetBackups(apiBackups{s: s})
+		svc.SetGateway(apiGateway{s: s})
 		s.mcpHandler = mcpsrv.New(svc, s.cfg.MCPSessionTimeout).Handler()
 	}
 }
@@ -368,6 +376,8 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.RequireAPIToken)
 			r.Get("/whoami", s.apiWhoami)
 			r.Get("/deployments/{deployID}", s.apiDeploymentStatus)
+			r.Get("/backups", s.apiListBackups)
+			r.Post("/backups/{kind}/{backupID}/run", s.apiBackupNow)
 			// Provisioning (provision-level tokens only): create, never delete.
 			r.Post("/environments/{project}/{env}/databases", s.apiCreateDatabase)
 			r.Post("/environments/{project}/{env}/apps", s.apiCreateApp)
@@ -382,7 +392,7 @@ func (s *Server) Router() http.Handler {
 			})
 		})
 
-		// MCP adapter: the same twelve operations over streamable HTTP, behind
+		// MCP adapter: the same operations over streamable HTTP, behind
 		// the same bearer-token middleware as the REST surface — the caller's
 		// Identity travels from RequireAPIToken (api.WithIdentity) into every
 		// tool handler through the SDK's per-request TokenInfo, never through

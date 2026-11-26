@@ -10,6 +10,8 @@
 // and the dependency arrow only ever points CLI -> api, never back.
 package client
 
+import "encoding/json"
+
 // Whoami is the caller's resolved identity.
 type Whoami struct {
 	UserID   int64  `json:"user_id"`
@@ -18,6 +20,10 @@ type Whoami struct {
 	Level    string `json:"level"`
 	Role     string `json:"role"`
 	CanWrite bool   `json:"can_write"`
+	Instance struct {
+		URL     string `json:"url,omitempty"`
+		Version string `json:"version"`
+	} `json:"instance"`
 }
 
 // App is one application. Image is the repository alone; Tag is what it is
@@ -42,6 +48,14 @@ type AppStatus struct {
 	LastDeployID   int64  `json:"last_deploy_id,omitempty"`
 	LastDeployAt   string `json:"last_deploy_at,omitempty"`
 	LastDeployStat string `json:"last_deploy_status,omitempty"`
+
+	// The server's diagnostics of the service; the CLI does not read them,
+	// so they stay raw.
+	Tasks             json.RawMessage `json:"tasks,omitempty"`
+	FailedSinceDeploy *int            `json:"failed_since_deploy,omitempty"`
+	FailedSince       string          `json:"failed_since,omitempty"`
+	Health            json.RawMessage `json:"health,omitempty"`
+	Usage             json.RawMessage `json:"usage,omitempty"`
 }
 
 // EnvKey is a variable name and where it comes from. Values are never
@@ -74,6 +88,8 @@ type Deployment struct {
 type DeploymentDetail struct {
 	Deployment
 	LogTail string `json:"log_tail"`
+	// Settling: applied, Swarm still converging — still running.
+	Settling bool `json:"settling,omitempty"`
 }
 
 // Accepted is the answer to an enqueued deploy or rebuild. Status is always

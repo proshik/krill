@@ -1019,6 +1019,20 @@ func (d *Deployer) supersedeSettle(appID, by int64) {
 	}
 }
 
+// Settling reports whether deployID applied its spec and is being watched in
+// the background while Swarm converges (startSettle): the deployment is still
+// running, but nothing of it is left to build or apply.
+func (d *Deployer) Settling(deployID int64) bool {
+	d.settleMu.Lock()
+	defer d.settleMu.Unlock()
+	for _, w := range d.settling {
+		if w.deployID == deployID {
+			return true
+		}
+	}
+	return false
+}
+
 // startSettle keeps watching a deploy that had not converged by its deadline,
 // off the build worker, and records the real outcome: done once Swarm reports
 // the update completed with every task running, error on a rollback, a crash

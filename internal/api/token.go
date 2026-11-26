@@ -1,5 +1,5 @@
 // Package api holds the agent-facing operations shared by the REST and MCP
-// adapters: identity resolution, tenancy checks and the twelve operations.
+// adapters: identity resolution, tenancy checks and the operations.
 package api
 
 import (

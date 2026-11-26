@@ -170,6 +170,13 @@ func (s *Service) InFlight() int {
 	return len(s.inFlight)
 }
 
+// Running reports whether a backup or restore of id is under way.
+func (s *Service) Running(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight[id]
+}
+
 func (s *Service) claim(id int64) (func(), bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -517,8 +524,19 @@ func (s *Service) resolve(ctx context.Context, id int64) (Row, Target, backup.De
 	return row, t, dst, nil
 }
 
+// resultWriteTimeout bounds recording a failed run's result.
+const resultWriteTimeout = 10 * time.Second
+
 func (s *Service) fail(ctx context.Context, id int64, now time.Time, err error) error {
-	_ = s.store.SetBackupResult(context.WithoutCancel(ctx), id, now, "error", err.Error())
+	// A run that failed because its deadline passed must still record the
+	// failure, or the previous "ok" would stand for it: the write gets a
+	// context of its own, bounded so a stalled database cannot hold the run's
+	// claim (and keep the backup "running") indefinitely.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resultWriteTimeout)
+	defer cancel()
+	if werr := s.store.SetBackupResult(wctx, id, now, "error", err.Error()); werr != nil {
+		slog.Error("bucket backup: could not record the failed run", "bucket_backup_id", id, "err", werr)
+	}
 	if s.notifier != nil {
 		s.notifier.BucketBackupFailed(ctx, id, err.Error())
 	}

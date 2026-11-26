@@ -22,3 +22,18 @@ UPDATE bucket_backups SET last_restore_at = $2, last_restore_status = $3, last_r
 
 -- name: DeleteBucketBackup :exec
 DELETE FROM bucket_backups WHERE id = $1;
+
+-- name: ListOrgBucketBackups :many
+-- Every backup of an organization's buckets (see ListOrgDatabaseBackups).
+SELECT bb.id, bb.schedule, bb.retention, bb.enabled, bb.last_run_at, bb.last_status, bb.last_error,
+       bk.id AS bucket_id, bk.name AS bucket_name, i.name AS server_name,
+       e.id AS environment_id, e.name AS environment_name, p.name AS project_name,
+       d.name AS destination_name
+FROM bucket_backups bb
+JOIN s3_buckets bk ON bk.id = bb.bucket_id
+JOIN db_instances i ON i.id = bk.instance_id
+JOIN environments e ON e.id = bk.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN destinations d ON d.id = bb.destination_id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, bk.name, bb.id;

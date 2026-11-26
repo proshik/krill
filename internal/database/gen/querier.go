@@ -178,6 +178,9 @@ type Querier interface {
 	GetDeployment(ctx context.Context, id int64) (Deployment, error)
 	GetDeploymentAppliedConfig(ctx context.Context, id int64) ([]byte, error)
 	GetDeploymentRelease(ctx context.Context, arg GetDeploymentReleaseParams) (DeploymentRelease, error)
+	// The status alone, for a caller waiting on a deployment (the log can reach
+	// ~256 KB, too much to read once a second).
+	GetDeploymentStatus(ctx context.Context, id int64) (string, error)
 	GetDeploymentVersion(ctx context.Context, id int64) (string, error)
 	GetDestination(ctx context.Context, id int64) (Destination, error)
 	GetDomain(ctx context.Context, id int64) (Domain, error)
@@ -293,6 +296,9 @@ type Querier interface {
 	// done row) and the partial running index, so the cost does not grow with the
 	// history the deployments poll keeps asking about.
 	ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error)
+	// The latest successful run of each backup configuration of an organization
+	// that has one on record (rows are kept 30 days).
+	ListLatestOkBackupRuns(ctx context.Context, orgID int64) ([]ListLatestOkBackupRunsRow, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
@@ -304,8 +310,17 @@ type Querier interface {
 	ListNodeDisks(ctx context.Context) ([]NodeDisk, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
 	ListOrgApps(ctx context.Context, organizationID int64) ([]ListOrgAppsRow, error)
+	// The kind and id of every backup configuration of an organization.
+	ListOrgBackupIDs(ctx context.Context, organizationID int64) ([]ListOrgBackupIDsRow, error)
+	// Every backup of an organization's buckets (see ListOrgDatabaseBackups).
+	ListOrgBucketBackups(ctx context.Context, organizationID int64) ([]ListOrgBucketBackupsRow, error)
+	// Every pg_dump backup of an organization's logical databases, with where it
+	// lives.
+	ListOrgDatabaseBackups(ctx context.Context, organizationID int64) ([]ListOrgDatabaseBackupsRow, error)
 	// An organization's deployments that finished since $2 (the digest window).
 	ListOrgDeploymentsSince(ctx context.Context, arg ListOrgDeploymentsSinceParams) ([]ListOrgDeploymentsSinceRow, error)
+	// Every backup of an organization's app volumes (see ListOrgDatabaseBackups).
+	ListOrgVolumeBackups(ctx context.Context, organizationID int64) ([]ListOrgVolumeBackupsRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizationsForUser(ctx context.Context, userID int64) ([]Organization, error)
 	ListPinnedApplications(ctx context.Context) ([]ListPinnedApplicationsRow, error)
