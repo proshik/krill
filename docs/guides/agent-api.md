@@ -91,7 +91,7 @@ curl -sS -H "Authorization: Bearer $KRILL_TOKEN" \
 | `POST /api/v1/apps/{app}/reload` | write | Restart the tasks in place — same image, no build, no pull (`{"action":"restart","status":"ok"}`). A stopped app is deployed instead: `{"action":"deploy","status":"running","deployment_id":…}`. |
 | `POST /api/v1/apps/{app}/stop` | write | Scale to zero; a deploy brings it back. A deploy that has not applied its spec yet is cancelled — but a tag it carried is already the app's tag, so a later deploy without `tag` ships that one; pass the previous tag to go back. If Stop answers with an error, the service may already be scaled to zero while the cancelled deploy still reads `running` (its outcome could not be written); call Stop again before a new deploy — it retries the write. |
 | `POST /api/v1/apps/{app}/env` | write | `{"key":"K","value":"V"}` or `{"key":"K","remove":true}` — one line, the rest untouched. The value must be a single line (base64-encode a PEM key or JSON). |
-| `POST /api/v1/backups/{kind}/{id}/run` | write | Start a configured backup now, like **Back up now** in the UI. Answers `{"status":"started","started_at":…}`; follow it in `GET /api/v1/backups` until `running` is false — its result is the one whose `last_run_at` equals `started_at` (a later one is a later run's; an earlier one means this run recorded nothing). `409` when a backup or restore of it is already running. |
+| `POST /api/v1/backups/{kind}/{id}/run` | write | Start a configured backup now, like **Back up now** in the UI. It applies the backup's retention like a scheduled run, so it can delete the oldest stored copies (with retention 1, the only older one). Answers `{"status":"started","started_at":…}`; follow it in `GET /api/v1/backups` until `running` is false — its result is the one whose `last_run_at` equals `started_at` (a later one is a later run's; an earlier one means this run recorded nothing). `409` when a backup or restore of it is already running. |
 | `POST /api/v1/environments/{project}/{env}/databases` | provision | `{"name":"app","server":"main"}` (+ optional `db_name`, `username`) — a logical database and its owner user inside an existing Postgres server, which must be running. The password is never returned. |
 | `POST /api/v1/environments/{project}/{env}/apps` | provision | `{"name":"bot","image":"ghcr.io/acme/bot","tag":"v1","port":8080}` (+ optional `registry`, `domain`) — an image app, **not deployed**. `domain` is `{"host","tls","exposed","paths"}`; without it the app gets `<name>.<base domain>`, internal and without HTTPS. |
 | `POST /api/v1/apps/{app}/domains` | provision | `{"host":"bot.example.com","tls":true,"exposed":true,"paths":["/webhook"]}` — another domain of the app; routing applies at once to a deployed app. A host other apps already use has one HTTPS setting for all of them: omit `tls` to take it, or pass the same value. |
@@ -133,7 +133,8 @@ deployment's `started_at` to catch a line written before the call. The answer is
 `shutdown` (Krill is restarting) or `cancelled`; `lines` are the
 `tail` lines before the match (default 20), the match and a few after it; `incomplete` says part
 of the history could not be read, so a timeout is no proof the line never appeared.
-`wait_for` cannot be combined with `contains`, `until` or `level`.
+`wait_for` cannot be combined with `contains`, `until` or `level`. An installation runs a few log waits at once;
+a further one answers `503 unavailable` — retry shortly.
 
 ## Notes
 
@@ -160,7 +161,9 @@ of the history could not be read, so a timeout is no proof the line never appear
   `db-links` only for the provisioning POSTs. One named `config` or `domain-status` keeps its
   status route: those two words are verbs only after a full `project/environment/app` path or an id.
 - Several installations: app ids repeat across them. Check `instance` in `whoami` before a write
-  and address apps by path.
+  and address apps by path. `instance.url` tells installations apart only when each has its own
+  `KRILL_PUBLIC_URL` or panel domain; two that both say `http://localhost` cannot be told apart
+  this way.
 
 ## Webhooks
 
