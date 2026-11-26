@@ -42,7 +42,7 @@ var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntim
 
 // fingerprintVersion changes when what a section covers changes; a stored
 // fingerprint of another version is unknown, not changed.
-const fingerprintVersion = 1
+const fingerprintVersion = 2 // 2: app-bound digests, predeploy apart from runtime
 
 // fingerprintPurpose separates these digests from any other secret.Fingerprint use.
 const fingerprintPurpose = "deploy config v1"

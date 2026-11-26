@@ -210,6 +210,11 @@ func TestConfigFingerprintKeyedMode(t *testing.T) {
 	if plain.comparable(keyed) || keyed.comparable(plain) {
 		t.Fatal("fingerprints under different keys must not be compared")
 	}
+	older := keyed
+	older.Version = fingerprintVersion - 1
+	if older.comparable(keyed) {
+		t.Fatal("a fingerprint of an earlier scheme must be unknown, not changed")
+	}
 	secret.Init("another-key")
 	if keyed.comparable(d.configFingerprint(fingerprintApp())) {
 		t.Fatal("a rotated key must make old fingerprints unknown, not changed")
