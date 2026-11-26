@@ -66,6 +66,13 @@ func (s *VolumeService) InFlight() int {
 	return len(s.inFlight)
 }
 
+// Running reports whether a backup or restore of id is under way.
+func (s *VolumeService) Running(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight[id]
+}
+
 func volKey(appID int64, volumeName string) string {
 	return strconv.FormatInt(appID, 10) + "-" + volumeName
 }
@@ -201,7 +208,9 @@ func (s *VolumeService) runVolumeBackup(ctx context.Context, volBackupID int64, 
 }
 
 func (s *VolumeService) fail(ctx context.Context, id int64, now time.Time, err error) error {
-	_ = s.store.SetVolumeBackupResult(ctx, id, now, "error", err.Error())
+	// WithoutCancel: a run that failed because its deadline passed must still
+	// record the failure, or the previous "ok" would stand for it.
+	_ = s.store.SetVolumeBackupResult(context.WithoutCancel(ctx), id, now, "error", err.Error())
 	if s.notifier != nil {
 		s.notifier.VolumeBackupFailed(ctx, id, err.Error())
 	}
