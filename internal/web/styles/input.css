@@ -987,6 +987,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     .canvas.is-panning { cursor: grabbing; user-select: none; }
     .canvas.is-panning .svc { pointer-events: none; }
   }
+  /* A map-mode plane is drawn first at its CSS place (.plane, .has-sheet
+     .plane) and then moved, maybe rescaled, by app.js's fit(), which sets
+     data-zoomed: it jumped on every load. Keep it hidden until fitted. Not
+     without scripts, and not in the narrow list, where fit() never runs
+     (its wires are display: none there). */
+  @media (scripting: enabled) and (min-width: 60.0625rem) {
+    .canvas .plane:not([data-zoomed]) { visibility: hidden; }
+  }
   .mini-svc--warn::after { background: var(--color-warn); }
   .project-desc { margin-inline: var(--space-xs); }
   @media (max-width: 60rem) {

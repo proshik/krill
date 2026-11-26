@@ -1400,9 +1400,18 @@ function mountWiredMap(map) {
   map.__krillRedraw();
   if (document.fonts) document.fonts.ready.then(function () { if (map.isConnected) map.__krillRedraw(); });
 }
+// The stylesheet hides a map-mode canvas plane until fit() marks it
+// data-zoomed, so it does not paint at its CSS place first and then jump.
+// Should mounting fail before the fit, the plane is shown where it is rather
+// than left invisible.
 function krillMountMaps() {
   document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
-    if (!m.__krillMounted) mountWiredMap(m);
+    if (m.__krillMounted) return;
+    try {
+      mountWiredMap(m);
+    } finally {
+      if (m.classList.contains("plane") && !m.hasAttribute("data-zoomed")) m.style.visibility = "visible";
+    }
   });
 }
 document.addEventListener("DOMContentLoaded", krillMountMaps);
