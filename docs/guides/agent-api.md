@@ -152,6 +152,14 @@ way — `since` is the time the deploy was queued, not when the new task started
 release is up, look for a line only it prints (its version), and check the replicas and `health`
 in the app status as well.
 
+**Known limitation — lines over 16 KB.** Docker's `json-file` logging driver stores a line longer
+than 16 KB as several records, each with its own timestamp, and Krill joins them as they come
+without telling the pieces apart. So a `contains` or `wait_for` text that falls across the join
+of two pieces is not found, and the joined line carries the second piece's timestamp inside its
+message. Within one task, an unfinished stdout piece can also run into a stderr record that
+follows it; when the two sit on either side of `until`, the stderr text is let into the window
+under the earlier piece's time. Shorter lines are not affected. A fix is planned.
+
 ## Notes
 
 - `KRILL_AGENT_API_ENABLED` (default `true`) switches **both** surfaces; with `false`, `/api/v1`
