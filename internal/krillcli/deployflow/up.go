@@ -20,7 +20,9 @@ type API interface {
 	Whoami(ctx context.Context) (client.Whoami, error)
 	AppStatus(ctx context.Context, ref string) (client.AppStatus, error)
 	Deployments(ctx context.Context, ref string, limit int) ([]client.Deployment, error)
-	Deployment(ctx context.Context, id int64) (client.DeploymentDetail, error)
+	// DeploymentWait asks the server to hold the answer while the deployment
+	// is running, for at most wait.
+	DeploymentWait(ctx context.Context, id int64, wait time.Duration) (client.DeploymentDetail, error)
 	Deploy(ctx context.Context, ref, tag string) (client.Accepted, error)
 }
 
@@ -65,12 +67,21 @@ type Options struct {
 	Timeout time.Duration
 }
 
-// Flow carries the collaborators. Sleep is injectable so tests do not wait.
+// Flow carries the collaborators. Sleep and Now are injectable so tests do
+// not wait and can play a server that holds its answer.
 type Flow struct {
 	API    API
 	Docker Docker
 	Out    io.Writer
 	Sleep  func(ctx context.Context, d time.Duration) error
+	Now    func() time.Time
+}
+
+func (f *Flow) now() time.Time {
+	if f.Now != nil {
+		return f.Now()
+	}
+	return time.Now()
 }
 
 // Run executes the whole deploy and returns a *Failure carrying an exit code.
@@ -296,7 +307,7 @@ func (f *Flow) resolveConflict(ctx context.Context, o Options, tag string) (clie
 	if err != nil || len(deps) == 0 {
 		return client.Accepted{}, fail(ExitBusy, "another deployment is running and its id could not be read; try again shortly")
 	}
-	if err := f.await(ctx, o, deps[0].ID, nil); err != nil {
+	if _, err := f.await(ctx, o, deps[0].ID, nil, nil); err != nil {
 		// The other deployment's outcome is not this command's result; only
 		// its completion matters.
 		var fl *Failure
@@ -350,7 +361,7 @@ func (f *Flow) postDeploy(ctx context.Context, o Options, tag string) (client.Ac
 }
 
 func (f *Flow) watch(ctx context.Context, o Options, id int64) error {
-	if err := f.await(ctx, o, id, f.Out); err != nil {
+	if _, err := f.await(ctx, o, id, f.Out, f.Out); err != nil {
 		return err
 	}
 	// A deployment can report done while the container starts and dies, so
@@ -407,20 +418,25 @@ func (f *Flow) printDomains(st client.AppStatus) {
 }
 
 // Follow watches an existing deployment to completion, printing new log
-// output as it arrives.
+// output as it arrives when streamLog is set, and returns the deployment as
+// the server last reported it.
 //
 // It shares await with the deploy flow rather than reimplementing the loop, so
 // rejoining a deployment behaves identically to watching one: the same
-// widening poll, the same Retry-After handling, the same bounded wait, and the
-// same refusal to call a lost connection a failed deployment.
-func (f *Flow) Follow(ctx context.Context, id int64, timeout time.Duration) error {
+// server-side wait, the same Retry-After handling, the same bounded wait, and
+// the same refusal to call a lost connection a failed deployment.
+func (f *Flow) Follow(ctx context.Context, id int64, timeout time.Duration, streamLog bool) (client.DeploymentDetail, error) {
 	if f.Sleep == nil {
 		f.Sleep = sleep
 	}
 	if timeout <= 0 {
 		timeout = 10 * time.Minute
 	}
-	return f.await(ctx, Options{Timeout: timeout}, id, f.Out)
+	var logOut io.Writer
+	if streamLog {
+		logOut = f.Out
+	}
+	return f.await(ctx, Options{Timeout: timeout}, id, logOut, f.Out)
 }
 
 // maxWatchTransportFailures bounds how many consecutive unreachable polls are
@@ -428,47 +444,90 @@ func (f *Flow) Follow(ctx context.Context, id int64, timeout time.Duration) erro
 // roughly half a minute of trying.
 const maxWatchTransportFailures = 5
 
-// await polls one deployment to a terminal state, streaming new log output to
-// logOut when it is non-nil.
-func (f *Flow) await(ctx context.Context, o Options, id int64, logOut io.Writer) error {
-	deadline := time.Now().Add(o.Timeout)
-	start := time.Now()
+// Server-side wait windows. The server holds a deployment request for up to
+// 120 s and answers the moment the deployment ends, so one request covers two
+// minutes of waiting. It sends the build log only when it answers, though, so
+// while that log is being streamed to a terminal the window is shorter: the
+// output keeps moving, and the end is still reported the moment it comes.
+const (
+	serverWaitMax       = 120 * time.Second
+	serverWaitStreaming = 15 * time.Second
+)
+
+// await waits for one deployment to reach a terminal state, streaming new log
+// output to logOut and one-off notes to noteOut when they are non-nil, and
+// returns the last answer.
+//
+// Each request asks the server to wait (?wait=). A server older than that
+// parameter answers at once; an answer back in under half the requested wait
+// with the deployment still running is treated as one, and the next request
+// waits out the ordinary poll schedule first. Without that, an old server
+// would be asked again immediately, over and over, and the per-token budget of
+// 60 requests a minute would be gone in seconds.
+func (f *Flow) await(ctx context.Context, o Options, id int64, logOut, noteOut io.Writer) (client.DeploymentDetail, error) {
+	start := f.now()
+	deadline := start.Add(o.Timeout)
+	window := serverWaitMax
+	if logOut != nil {
+		window = serverWaitStreaming
+	}
 	anchor := ""
-	var retryAfter time.Duration
+	var pause time.Duration
+	pauses := 0
 	transportFailures := 0
 	var lastTransportErr error
+	var last client.DeploymentDetail
+	settlingNoted := false
 
-	for attempt := 0; ; attempt++ {
+	// nextPause is the ordinary poll schedule, used whenever the server did
+	// not do the waiting: an old server, a throttled one, a dropped link.
+	nextPause := func(floor time.Duration) time.Duration {
+		d := PollDelay(pauses, f.now().Sub(start))
+		pauses++
+		if floor > d {
+			// The server said how long to wait; guessing shorter just
+			// earns another 429.
+			d = floor
+		}
+		return d
+	}
+
+	for {
 		// Checked at the TOP so every path through the loop is bounded by the
 		// timeout. Checking only after a successful poll means the branches
 		// that `continue` — a throttled server, an unreachable one — never
 		// reach it, and the watch runs forever on a deploy the user asked to
 		// wait two minutes for.
-		if time.Now().After(deadline) {
-			return f.timedOut(o, id, lastTransportErr)
+		if !f.now().Before(deadline) {
+			return last, f.timedOut(o, id, lastTransportErr, last.Settling)
 		}
-		delay := PollDelay(attempt, time.Since(start))
-		if retryAfter > delay {
-			// The server said how long to wait; guessing shorter just earns
-			// another 429.
-			delay = retryAfter
-		}
-		retryAfter = 0
-		if err := f.Sleep(ctx, delay); err != nil {
-			return fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+		if pause > 0 {
+			if err := f.Sleep(ctx, pause); err != nil {
+				return last, fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+			}
+			pause = 0
+			if !f.now().Before(deadline) {
+				return last, f.timedOut(o, id, lastTransportErr, last.Settling)
+			}
 		}
 
-		d, err := f.API.Deployment(ctx, id)
+		wait := min(window, deadline.Sub(f.now()))
+		asked := f.now()
+		d, err := f.API.DeploymentWait(ctx, id, wait)
+		took := f.now().Sub(asked)
 		if err != nil {
+			if ctx.Err() != nil {
+				return last, fail(ExitTimeout, "interrupted while waiting for deployment #%d", id)
+			}
 			var ae *client.APIError
 			if errors.As(err, &ae) {
 				// A shared budget means somebody else's traffic can push this
 				// over; skipping a poll is the correct response, not failing.
 				if ae.IsRetryable() {
-					retryAfter = ae.RetryAfter
+					pause = nextPause(ae.RetryAfter)
 					continue
 				}
-				return f.authAware(err, "lost track of deployment #%d", id)
+				return last, f.authAware(err, "lost track of deployment #%d", id)
 			}
 			// Not an answer from Krill at all — a dropped link, a proxy
 			// hiccup. The deployment is running on the SERVER and is not
@@ -478,11 +537,13 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut io.Writer)
 			lastTransportErr = err
 			transportFailures++
 			if transportFailures > maxWatchTransportFailures {
-				return f.timedOut(o, id, err)
+				return last, f.timedOut(o, id, err, last.Settling)
 			}
+			pause = nextPause(0)
 			continue
 		}
 		transportFailures, lastTransportErr = 0, nil
+		last = d
 
 		if logOut != nil && d.LogTail != "" {
 			out, elided := NewTail(anchor, d.LogTail)
@@ -497,21 +558,36 @@ func (f *Flow) await(ctx context.Context, o Options, id int64, logOut io.Writer)
 
 		switch d.Status {
 		case "done":
-			return nil
+			return d, nil
 		case "error":
-			return fail(ExitFailed, "deployment #%d failed", id)
+			return d, fail(ExitFailed, "deployment #%d failed", id)
+		}
+		if d.Settling && !settlingNoted && noteOut != nil {
+			// Still running, not done: the spec is applied and Swarm is
+			// rolling it out (an image still pulling, a slow healthcheck).
+			fmt.Fprintf(noteOut, "· rollout  applied; Swarm is still converging — waiting\n")
+			settlingNoted = true
+		}
+		if took < wait/2 {
+			pause = nextPause(0)
 		}
 	}
 }
 
 // timedOut is the one "we stopped watching" message, which is never a failure
 // verdict: the deployment is the server's and may still succeed.
-func (f *Flow) timedOut(o Options, id int64, transport error) error {
+func (f *Flow) timedOut(o Options, id int64, transport error, settling bool) error {
 	if transport != nil {
 		return fail(ExitTimeout,
 			"lost contact with the server while watching deployment #%d (%v).\n"+
 				"The deployment is unaffected and may still succeed — rejoin with `krill-cli deployment %d --watch`",
 			id, transport, id)
+	}
+	if settling {
+		return fail(ExitTimeout,
+			"deployment #%d is applied, but Swarm is still converging after %s — it may still succeed.\n"+
+				"Rejoin with `krill-cli deployment %d --watch`",
+			id, o.Timeout, id)
 	}
 	return fail(ExitTimeout,
 		"deployment #%d is still running after %s — it may still succeed.\nRejoin with `krill-cli deployment %d --watch`",

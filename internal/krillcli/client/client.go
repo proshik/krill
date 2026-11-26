@@ -27,6 +27,11 @@ type Client struct {
 
 	// hc handles ordinary calls, which are small and quick.
 	hc *http.Client
+	// long handles the calls the server holds open on purpose (a deployment
+	// wait, a log wait: up to two minutes). hc's 30-second Client.Timeout would
+	// cut every one of them short, so this client has none and each call is
+	// bounded by its own deadline instead (doLong).
+	long *http.Client
 	// upload handles the image upload. Nothing calls it yet — the upload
 	// delivery mode is refused at pre-flight until the server endpoint exists
 	// (see "Direct image upload" in ROADMAP.md) — and it
@@ -63,6 +68,7 @@ func New(server, token, userAgent string) (*Client, error) {
 		token:  strings.TrimSpace(token),
 		ua:     userAgent,
 		hc:     &http.Client{Timeout: 30 * time.Second, CheckRedirect: noRedirect},
+		long:   &http.Client{CheckRedirect: noRedirect},
 		upload: &http.Client{CheckRedirect: noRedirect},
 	}, nil
 }
@@ -115,9 +121,25 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body io.Re
 	return req, nil
 }
 
+// longSlack is how much longer than the wait it asked for a held-open call
+// may take: the server's closing reads, a slow link, a proxy's buffering.
+const longSlack = 30 * time.Second
+
 // do performs a request and decodes a JSON response into out (which may be
 // nil to discard the body).
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	return c.doWith(ctx, c.hc, method, path, in, out)
+}
+
+// doLong is do for a call the server may hold open for up to wait: it runs
+// on the client without a fixed timeout, bounded by wait plus longSlack.
+func (c *Client) doLong(ctx context.Context, wait time.Duration, method, path string, in, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, wait+longSlack)
+	defer cancel()
+	return c.doWith(ctx, c.long, method, path, in, out)
+}
+
+func (c *Client) doWith(ctx context.Context, hc *http.Client, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -134,7 +156,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.hc.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		// The URL is echoed by url.Error and the token is not in it, but the
 		// error is rebuilt from scratch anyway rather than wrapped, so no

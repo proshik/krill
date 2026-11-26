@@ -64,6 +64,14 @@ func classify(err error) error {
 	if errors.As(err, &f) {
 		return err
 	}
+	// A server too old for the operation, or a reference refused before
+	// anything was sent: both are something to fix in the setup or the
+	// invocation, and nothing was attempted.
+	var old *client.OldServerError
+	var ue *client.UsageError
+	if errors.As(err, &old) || errors.As(err, &ue) {
+		return &deployflow.Failure{Code: deployflow.ExitUsage, Err: err}
+	}
 	var ae *client.APIError
 	if errors.As(err, &ae) {
 		switch {
@@ -141,11 +149,15 @@ this tool only deploys ones that already exist.`,
 		newLoginCmd(),
 		newContextCmd(),
 		newAppsCmd(),
+		newWhoamiCmd(),
 		newStatusCmd(),
+		newConfigCmd(),
+		newDomainsCmd(),
 		newLogsCmd(),
 		newDeploymentsCmd(),
 		newDeploymentCmd(),
 		newEnvCmd(),
+		newBackupsCmd(),
 		newStopCmd(),
 		newReloadCmd(),
 		newRebuildCmd(),

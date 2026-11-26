@@ -85,7 +85,7 @@ func (a *fakeAPI) Deployments(context.Context, string, int) ([]client.Deployment
 	return a.deps, nil
 }
 
-func (a *fakeAPI) Deployment(_ context.Context, id int64) (client.DeploymentDetail, error) {
+func (a *fakeAPI) DeploymentWait(_ context.Context, id int64, _ time.Duration) (client.DeploymentDetail, error) {
 	call := a.statusCall
 	a.statusCall++
 	if a.statusErrAlways != nil {
@@ -424,12 +424,12 @@ type rateLimitedAPI struct {
 	seen       int
 }
 
-func (a *rateLimitedAPI) Deployment(ctx context.Context, id int64) (client.DeploymentDetail, error) {
+func (a *rateLimitedAPI) DeploymentWait(ctx context.Context, id int64, wait time.Duration) (client.DeploymentDetail, error) {
 	a.seen++
 	if a.seen <= a.limitFirst {
 		return client.DeploymentDetail{}, &client.APIError{HTTPStatus: 429, Code: "rate_limited", RetryAfter: time.Minute}
 	}
-	return a.fakeAPI.Deployment(ctx, id)
+	return a.fakeAPI.DeploymentWait(ctx, id, wait)
 }
 
 func TestDryRunTouchesNothing(t *testing.T) {
