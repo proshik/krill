@@ -1375,13 +1375,56 @@ func (e *dockerEngine) ServiceTaskHistory(ctx context.Context, name string, limi
 	out := make([]TaskRecord, 0, len(tasks))
 	for _, t := range tasks {
 		rec := TaskRecord{
-			ID: t.ID, NodeName: id2name[t.NodeID], State: string(t.Status.State), Desired: string(t.DesiredState),
-			Message: t.Status.Message, Err: t.Status.Err, Updated: t.Status.Timestamp,
+			ID: t.ID, NodeID: t.NodeID, NodeName: id2name[t.NodeID], State: string(t.Status.State), Desired: string(t.DesiredState),
+			Message: t.Status.Message, Err: t.Status.Err, Updated: t.Status.Timestamp, Created: t.Meta.CreatedAt,
 		}
 		if t.Status.ContainerStatus != nil {
 			rec.ExitCode = t.Status.ContainerStatus.ExitCode
+			rec.ContainerID = t.Status.ContainerStatus.ContainerID
 		}
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+// ProbeContainer implements ContainerProber: one inspection and one one-shot
+// stats read of the container, on the node it runs on, over one client.
+func (e *dockerEngine) ProbeContainer(ctx context.Context, nodeID, containerID string) (ContainerProbe, error) {
+	cli, release, err := selectClient(ctx, e.cli, e.remoteProvider, nodeID)
+	if err != nil {
+		return ContainerProbe{}, fmt.Errorf("reach node %s: %w", nodeID, err)
+	}
+	defer release()
+	info, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return ContainerProbe{}, err
+	}
+	var out ContainerProbe
+	if info.State != nil {
+		out.Running = info.State.Running
+		if info.State.Health != nil {
+			h := healthOf(info.State.Health)
+			out.Health = &h
+		}
+	}
+	if out.Running {
+		if st, ok := statsOneShot(ctx, cli, containerID); ok {
+			out.MemOK = true
+			out.MemBytes = int64(workingSet(st.MemoryStats))
+			out.MemLimitBytes = int64(st.MemoryStats.Limit)
+		}
+	}
+	return out, nil
+}
+
+// healthOf maps docker's health record, keeping only the latest probe's exit
+// code and time.
+func healthOf(h *container.Health) ContainerHealth {
+	out := ContainerHealth{Status: h.Status, FailingStreak: h.FailingStreak}
+	if n := len(h.Log); n > 0 && h.Log[n-1] != nil {
+		last := h.Log[n-1]
+		out.LastExitCode = last.ExitCode
+		out.LastAt = last.End
+	}
+	return out
 }

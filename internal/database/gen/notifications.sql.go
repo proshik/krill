@@ -453,6 +453,41 @@ func (q *Queries) ListBackupRunsSince(ctx context.Context, arg ListBackupRunsSin
 	return items, nil
 }
 
+const listLatestOkBackupRuns = `-- name: ListLatestOkBackupRuns :many
+SELECT kind, source_id, max(finished_at)::timestamptz AS finished_at
+FROM backup_runs
+WHERE org_id = $1 AND status = 'ok'
+GROUP BY kind, source_id
+`
+
+type ListLatestOkBackupRunsRow struct {
+	Kind       string    `json:"kind"`
+	SourceID   int64     `json:"source_id"`
+	FinishedAt time.Time `json:"finished_at"`
+}
+
+// The latest successful run of each backup configuration of an organization
+// that has one on record (rows are kept 30 days).
+func (q *Queries) ListLatestOkBackupRuns(ctx context.Context, orgID int64) ([]ListLatestOkBackupRunsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestOkBackupRuns, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestOkBackupRunsRow
+	for rows.Next() {
+		var i ListLatestOkBackupRunsRow
+		if err := rows.Scan(&i.Kind, &i.SourceID, &i.FinishedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrgApps = `-- name: ListOrgApps :many
 SELECT a.id AS app_id, p.id AS project_id, e.id AS env_id, a.name AS app_name, e.name AS env_name, p.name AS project_name
 FROM applications a

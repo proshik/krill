@@ -218,6 +218,19 @@ func (q *Queries) GetDeploymentAppliedConfig(ctx context.Context, id int64) ([]b
 	return applied_config, err
 }
 
+const getDeploymentStatus = `-- name: GetDeploymentStatus :one
+SELECT status FROM deployments WHERE id = $1
+`
+
+// The status alone, for a caller waiting on a deployment (the log can reach
+// ~256 KB, too much to read once a second).
+func (q *Queries) GetDeploymentStatus(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRow(ctx, getDeploymentStatus, id)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const getDeploymentVersion = `-- name: GetDeploymentVersion :one
 SELECT COALESCE(version, '')::text AS version FROM deployments WHERE id = $1
 `

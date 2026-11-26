@@ -24,17 +24,14 @@ import (
 var taskLogTimeout = 5 * time.Second
 
 func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool, tail int) (io.ReadCloser, error) {
-	opts := container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Follow:     follow,
-		Tail:       strconv.Itoa(tail),
-		Timestamps: true,
-		// Each line carries its task: the log viewer keeps its place per task
-		// (logparse.Cursor), and logparse.ParseLogLine strips the attributes.
-		Details: true,
-	}
-	if follow {
+	return e.ServiceLogsWindow(ctx, name, LogWindow{Tail: tail, Follow: follow})
+}
+
+// ServiceLogsWindow implements WindowedLogs. ServiceLogs is a window without
+// time bounds.
+func (e *dockerEngine) ServiceLogsWindow(ctx context.Context, name string, w LogWindow) (io.ReadCloser, error) {
+	opts := logsOptions(w)
+	if w.Follow {
 		rc, err := e.cli.ServiceLogs(ctx, name, opts)
 		if err != nil {
 			return nil, err
@@ -55,10 +52,61 @@ func (e *dockerEngine) ServiceLogs(ctx context.Context, name string, follow bool
 	// Closing the reader cancels the task reads behind it: one still waiting
 	// on a silent task would otherwise only notice at its next write.
 	ctx, cancel := context.WithCancel(ctx)
-	rc := taskLogsStream(ctx, logTasks(tasks), func(ctx context.Context, id string) (io.ReadCloser, error) {
+	rc := taskLogsStream(ctx, logTasks(inWindow(tasks, w.Since, w.Until)), func(ctx context.Context, id string) (io.ReadCloser, error) {
 		return e.cli.TaskLogs(ctx, id, opts)
 	})
 	return cancelOnClose{ReadCloser: rc, cancel: cancel}, nil
+}
+
+// logsOptions is the docker log request for a window. Lines carry docker's
+// timestamp and, with Details, their task: the log viewer keeps its place per
+// task (logparse.Cursor), and logparse.ParseLogLine strips the attributes.
+func logsOptions(w LogWindow) container.LogsOptions {
+	opts := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     w.Follow,
+		Tail:       "all",
+		Timestamps: true,
+		Details:    true,
+	}
+	if w.Tail >= 0 {
+		opts.Tail = strconv.Itoa(w.Tail)
+	}
+	if !w.Since.IsZero() {
+		opts.Since = unixNano(w.Since)
+	}
+	if !w.Until.IsZero() {
+		opts.Until = unixNano(w.Until)
+	}
+	return opts
+}
+
+// unixNano formats t the way the docker API takes a log bound: seconds with
+// a nanosecond fraction.
+func unixNano(t time.Time) string {
+	return fmt.Sprintf("%d.%09d", t.Unix(), t.Nanosecond())
+}
+
+// inWindow drops the tasks that cannot have a line in [since, until]: one
+// that stopped before since (its last state change is before it) or was
+// created after until. Running tasks are always kept.
+func inWindow(tasks []swarm.Task, since, until time.Time) []swarm.Task {
+	if since.IsZero() && until.IsZero() {
+		return tasks
+	}
+	out := tasks[:0:0]
+	for _, t := range tasks {
+		ended := t.Status.State != swarm.TaskStateRunning && t.Status.State != swarm.TaskStateStarting
+		if !since.IsZero() && ended && !t.Status.Timestamp.IsZero() && t.Status.Timestamp.Before(since) {
+			continue
+		}
+		if !until.IsZero() && !t.Meta.CreatedAt.IsZero() && t.Meta.CreatedAt.After(until) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // cancelOnClose cancels a context when its reader is closed.

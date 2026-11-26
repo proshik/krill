@@ -119,3 +119,8 @@ JOIN LATERAL (
     ORDER BY dd.started_at DESC, dd.id DESC
     LIMIT 1
 ) d ON true;
+
+-- name: GetDeploymentStatus :one
+-- The status alone, for a caller waiting on a deployment (the log can reach
+-- ~256 KB, too much to read once a second).
+SELECT status FROM deployments WHERE id = $1;

@@ -147,6 +147,74 @@ func (q *Queries) ListEnabledVolumeBackups(ctx context.Context) ([]VolumeBackup,
 	return items, nil
 }
 
+const listOrgVolumeBackups = `-- name: ListOrgVolumeBackups :many
+SELECT vb.id, vb.schedule, vb.retention, vb.enabled, vb.last_run_at, vb.last_status, vb.last_error,
+       v.name AS volume_name, a.id AS application_id, a.name AS application_name,
+       e.id AS environment_id, e.name AS environment_name, p.name AS project_name,
+       d.name AS destination_name
+FROM volume_backups vb
+JOIN app_volumes v ON v.id = vb.app_volume_id
+JOIN applications a ON a.id = v.application_id
+JOIN environments e ON e.id = a.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN destinations d ON d.id = vb.destination_id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, a.name, v.name, vb.id
+`
+
+type ListOrgVolumeBackupsRow struct {
+	ID              int64              `json:"id"`
+	Schedule        string             `json:"schedule"`
+	Retention       int32              `json:"retention"`
+	Enabled         bool               `json:"enabled"`
+	LastRunAt       pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus      string             `json:"last_status"`
+	LastError       string             `json:"last_error"`
+	VolumeName      string             `json:"volume_name"`
+	ApplicationID   int64              `json:"application_id"`
+	ApplicationName string             `json:"application_name"`
+	EnvironmentID   int64              `json:"environment_id"`
+	EnvironmentName string             `json:"environment_name"`
+	ProjectName     string             `json:"project_name"`
+	DestinationName string             `json:"destination_name"`
+}
+
+// Every backup of an organization's app volumes (see ListOrgDatabaseBackups).
+func (q *Queries) ListOrgVolumeBackups(ctx context.Context, organizationID int64) ([]ListOrgVolumeBackupsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgVolumeBackups, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgVolumeBackupsRow
+	for rows.Next() {
+		var i ListOrgVolumeBackupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Schedule,
+			&i.Retention,
+			&i.Enabled,
+			&i.LastRunAt,
+			&i.LastStatus,
+			&i.LastError,
+			&i.VolumeName,
+			&i.ApplicationID,
+			&i.ApplicationName,
+			&i.EnvironmentID,
+			&i.EnvironmentName,
+			&i.ProjectName,
+			&i.DestinationName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVolumeBackupsByVolume = `-- name: ListVolumeBackupsByVolume :many
 SELECT id, app_volume_id, destination_id, schedule, prefix, retention, enabled, last_run_at, last_status, last_error, created_at
 FROM volume_backups WHERE app_volume_id = $1 ORDER BY created_at

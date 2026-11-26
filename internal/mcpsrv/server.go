@@ -1,6 +1,6 @@
 // Package mcpsrv is the MCP (Model Context Protocol) adapter over
 // internal/api.Service: a streamable-HTTP MCP server exposing the same
-// twelve agent-facing operations the REST adapter (internal/server's
+// agent-facing operations the REST adapter (internal/server's
 // /api/v1) exposes, mapped onto MCP tools instead of HTTP routes. Both
 // adapters share the exact same tenancy/permission logic in
 // internal/api.Service; this package is deliberately thin — it only reads
@@ -39,7 +39,7 @@ import (
 // descriptive metadata; it has no effect on behavior.
 const serverVersion = "0.1.0"
 
-// Server is the MCP adapter: one shared *mcp.Server with all twelve tools
+// Server is the MCP adapter: one shared *mcp.Server with all of its tools
 // registered once, wrapped in a streamable-HTTP handler that is itself built
 // once and reused for every mount point (see Handler).
 type Server struct {
@@ -112,6 +112,9 @@ func New(svc *api.Service, sessionTimeout time.Duration) *Server {
 const (
 	extraIdentity  = "krill.identity"
 	extraRequestID = "krill.request_id"
+	// extraRequestDone is the Done channel of the HTTP request that carried
+	// the call: a tool that waits ends with it (see requestScoped).
+	extraRequestDone = "krill.request_done"
 )
 
 // bindSession turns the Identity RequireAPIToken resolved for this request
@@ -128,8 +131,9 @@ func bindSession(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInf
 	return &auth.TokenInfo{
 		UserID: "token:" + strconv.FormatInt(id.TokenID, 10),
 		Extra: map[string]any{
-			extraIdentity:  id,
-			extraRequestID: middleware.GetReqID(ctx),
+			extraIdentity:    id,
+			extraRequestID:   middleware.GetReqID(ctx),
+			extraRequestDone: ctx.Done(),
 		},
 	}, nil
 }

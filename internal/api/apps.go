@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/proshik/krill/internal/buildinfo"
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/deploy"
 	"github.com/proshik/krill/internal/docker"
@@ -14,12 +15,23 @@ import (
 // WhoamiResult reports the caller's own resolved identity: which user and
 // organization the token maps to, and what it is allowed to do.
 type WhoamiResult struct {
-	UserID   int64  `json:"user_id"`
-	OrgID    int64  `json:"org_id"`
-	OrgName  string `json:"org_name"`
-	Level    string `json:"level"`
-	Role     string `json:"role"`
-	CanWrite bool   `json:"can_write"`
+	UserID   int64        `json:"user_id"`
+	OrgID    int64        `json:"org_id"`
+	OrgName  string       `json:"org_name"`
+	Level    string       `json:"level"`
+	Role     string       `json:"role"`
+	CanWrite bool         `json:"can_write"`
+	Instance InstanceInfo `json:"instance"`
+}
+
+// InstanceInfo names the Krill installation that answered: an agent that
+// talks to several of them tells them apart by it (app ids repeat across
+// installations).
+type InstanceInfo struct {
+	// URL is the externally reachable base URL webhook addresses use; empty
+	// when the server did not wire it.
+	URL     string `json:"url,omitempty"`
+	Version string `json:"version"`
 }
 
 // AppSummary is the list-view shape of one application.
@@ -64,6 +76,18 @@ type AppStatus struct {
 	LastDeployID   int64  `json:"last_deploy_id,omitempty"`
 	LastDeployAt   string `json:"last_deploy_at,omitempty"` // RFC3339
 	LastDeployStat string `json:"last_deploy_status,omitempty"`
+
+	// The parts below are best-effort: each is left out when it cannot be
+	// read (no Swarm, an unreachable node, no sampler data).
+	Tasks []TaskStatus `json:"tasks,omitempty"` // most recent first
+	// FailedSinceDeploy counts the tasks created since FailedSince (the
+	// latest deployment's start) that ended on their own: crashed, refused,
+	// or exited and restarted. Swarm keeps a few tasks per replica slot, so
+	// it is a lower bound.
+	FailedSinceDeploy *int         `json:"failed_since_deploy,omitempty"`
+	FailedSince       string       `json:"failed_since,omitempty"`
+	Health            []TaskHealth `json:"health,omitempty"`
+	Usage             []TaskUsage  `json:"usage,omitempty"`
 }
 
 // EnvKey names one environment variable without ever carrying its value.
@@ -85,7 +109,17 @@ func (s *Service) Whoami(ctx context.Context, id Identity) (WhoamiResult, error)
 		Level:    string(id.Level),
 		Role:     id.Role.String(),
 		CanWrite: id.CanWrite(),
+		Instance: s.instance(ctx),
 	}, nil
+}
+
+// instance reports this installation's base URL and version.
+func (s *Service) instance(ctx context.Context) InstanceInfo {
+	info := InstanceInfo{Version: buildinfo.String()}
+	if s.instanceURL != nil {
+		info.URL = s.instanceURL(ctx)
+	}
+	return info
 }
 
 // appRow is one application together with the project/environment names that
@@ -238,7 +272,6 @@ func (s *Service) AppStatus(ctx context.Context, id Identity, ref string) (AppSt
 	}
 
 	var state docker.ServiceState
-	var node string
 	if s.engine != nil {
 		name := docker.ServiceName(app.ID)
 		states, serr := s.engine.ServiceStates(ctx, []string{name})
@@ -246,17 +279,18 @@ func (s *Service) AppStatus(ctx context.Context, id Identity, ref string) (AppSt
 			return AppStatus{}, fmt.Errorf("app status: service states: %w", serr)
 		}
 		state = states[name]
-		// Node placement is supplementary detail: best-effort, not worth failing
-		// the whole status call over if it errors.
-		if tasks, terr := s.engine.ServiceTasks(ctx, name); terr == nil {
-			for _, t := range tasks {
-				if t.State == "running" {
-					node = t.NodeName
-					break
-				}
-			}
-		}
 	}
+	deploys, err := s.q.ListDeploymentsByApplication(ctx, app.ID)
+	if err != nil {
+		return AppStatus{}, fmt.Errorf("app status: list deployments: %w", err)
+	}
+	var lastDeploy time.Time
+	if len(deploys) > 0 {
+		lastDeploy = deploys[0].StartedAt // ORDER BY started_at DESC — most recent first
+	}
+	// Node placement, tasks, health and usage are supplementary detail:
+	// best-effort, never worth failing the whole status call over.
+	detail := s.appStatusDetail(ctx, app, lastDeploy)
 
 	// state.Found is false whenever the engine is nil or the service was never
 	// deployed — the running count is then simply unknown, not zero, so the
@@ -278,13 +312,13 @@ func (s *Service) AppStatus(ctx context.Context, id Identity, ref string) (AppSt
 			Status:     deploy.DeriveStatus(state, app.Status),
 			Domains:    domains,
 		},
-		Replicas: replicas,
-		Node:     node,
-	}
-
-	deploys, err := s.q.ListDeploymentsByApplication(ctx, app.ID)
-	if err != nil {
-		return AppStatus{}, fmt.Errorf("app status: list deployments: %w", err)
+		Replicas:          replicas,
+		Node:              detail.node,
+		Tasks:             detail.tasks,
+		FailedSinceDeploy: detail.failed,
+		FailedSince:       detail.failedSince,
+		Health:            detail.health,
+		Usage:             detail.usage,
 	}
 	if len(deploys) > 0 {
 		last := deploys[0] // ORDER BY started_at DESC — most recent first

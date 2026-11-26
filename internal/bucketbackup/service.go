@@ -170,6 +170,13 @@ func (s *Service) InFlight() int {
 	return len(s.inFlight)
 }
 
+// Running reports whether a backup or restore of id is under way.
+func (s *Service) Running(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight[id]
+}
+
 func (s *Service) claim(id int64) (func(), bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

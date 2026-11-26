@@ -643,7 +643,7 @@ func run() error {
 		slog.Warn("observability unavailable: the docker engine cannot manage swarm configs and secrets")
 	}
 
-	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same twelve
+	// Agent-facing API: REST (/api/v1) and MCP (/mcp) over the same
 	// operations, the same bearer tokens and the same tenancy checks in
 	// internal/api. KRILL_AGENT_API_ENABLED=false leaves the authenticator unwired,
 	// which unmounts both surfaces (RequireAPIToken 404s) — the whole agent

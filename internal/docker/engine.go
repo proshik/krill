@@ -267,6 +267,7 @@ const DefaultOverlayMTU = 1450
 // TaskRecord is one task of a service, current or recent, for diagnostics.
 type TaskRecord struct {
 	ID       string
+	NodeID   string
 	NodeName string
 	State    string // swarm task state; "starting" until a healthcheck passes
 	Desired  string
@@ -274,12 +275,66 @@ type TaskRecord struct {
 	Err      string
 	ExitCode int
 	Updated  time.Time
+	// Created is when Swarm created the task; zero when it did not say.
+	Created time.Time
+	// ContainerID is the task's container, "" before one was created.
+	ContainerID string
 }
 
 // TaskHistory is the optional capability to read a service's recent tasks,
 // terminated ones included. Only the real *dockerEngine implements it.
 type TaskHistory interface {
 	ServiceTaskHistory(ctx context.Context, name string, limit int) ([]TaskRecord, error)
+}
+
+// LogWindow selects part of a service's log. Since and Until bound it by time
+// (zero: unbounded); Tail keeps the last Tail lines of each task's part
+// (TailAll: all of them; 0: none, which with Follow reads new lines only);
+// Follow keeps the read open for new lines.
+type LogWindow struct {
+	Since, Until time.Time
+	Tail         int
+	Follow       bool
+}
+
+// TailAll is a LogWindow.Tail that keeps every line of the window.
+const TailAll = -1
+
+// WindowedLogs is the optional capability to read a time window of a
+// service's log. A non-following read goes task by task like ServiceLogs; a
+// following one uses the service's own log stream. Only the real
+// *dockerEngine implements it.
+type WindowedLogs interface {
+	ServiceLogsWindow(ctx context.Context, name string, w LogWindow) (io.ReadCloser, error)
+}
+
+// ContainerHealth is the healthcheck state of one container: its status
+// ("starting", "healthy", "unhealthy"), how many probes failed in a row, and
+// the latest probe's exit code and time. The probe's output is deliberately
+// not carried: a probe can print an environment value or a credential.
+type ContainerHealth struct {
+	Status        string
+	FailingStreak int
+	LastExitCode  int
+	LastAt        time.Time
+}
+
+// ContainerProbe is what ContainerProber reads of one container. Health is
+// nil for a container without a healthcheck; MemOK is false when its memory
+// could not be read.
+type ContainerProbe struct {
+	Running       bool
+	Health        *ContainerHealth
+	MemOK         bool
+	MemBytes      int64
+	MemLimitBytes int64
+}
+
+// ContainerProber is the optional capability to inspect a container on the
+// node it runs on (through the remote client provider for a worker): its
+// healthcheck state and a one-shot memory reading.
+type ContainerProber interface {
+	ProbeContainer(ctx context.Context, nodeID, containerID string) (ContainerProbe, error)
 }
 
 // SwarmObjects is the optional capability to manage Swarm configs and secrets.
@@ -332,4 +387,7 @@ type ServiceInspector interface {
 var (
 	_ TaskAddresser    = (*dockerEngine)(nil)
 	_ ServiceInspector = (*dockerEngine)(nil)
+	_ TaskHistory      = (*dockerEngine)(nil)
+	_ WindowedLogs     = (*dockerEngine)(nil)
+	_ ContainerProber  = (*dockerEngine)(nil)
 )

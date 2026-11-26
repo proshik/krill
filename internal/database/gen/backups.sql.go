@@ -216,6 +216,75 @@ func (q *Queries) ListEnabledBackups(ctx context.Context) ([]ListEnabledBackupsR
 	return items, nil
 }
 
+const listOrgDatabaseBackups = `-- name: ListOrgDatabaseBackups :many
+SELECT b.id, b.schedule, b.retention, b.enabled, b.last_run_at, b.last_status, b.last_error,
+       ld.id AS logical_database_id, ld.name AS database_name, i.name AS server_name,
+       e.id AS environment_id, e.name AS environment_name, p.name AS project_name,
+       d.name AS destination_name
+FROM backups b
+JOIN logical_databases ld ON ld.id = b.logical_database_id
+JOIN db_instances i ON i.id = ld.instance_id
+JOIN environments e ON e.id = ld.environment_id
+JOIN projects p ON p.id = e.project_id
+JOIN destinations d ON d.id = b.destination_id
+WHERE p.organization_id = $1
+ORDER BY p.name, e.name, ld.name, b.id
+`
+
+type ListOrgDatabaseBackupsRow struct {
+	ID                int64              `json:"id"`
+	Schedule          string             `json:"schedule"`
+	Retention         int32              `json:"retention"`
+	Enabled           bool               `json:"enabled"`
+	LastRunAt         pgtype.Timestamptz `json:"last_run_at"`
+	LastStatus        string             `json:"last_status"`
+	LastError         string             `json:"last_error"`
+	LogicalDatabaseID int64              `json:"logical_database_id"`
+	DatabaseName      string             `json:"database_name"`
+	ServerName        string             `json:"server_name"`
+	EnvironmentID     int64              `json:"environment_id"`
+	EnvironmentName   string             `json:"environment_name"`
+	ProjectName       string             `json:"project_name"`
+	DestinationName   string             `json:"destination_name"`
+}
+
+// Every pg_dump backup of an organization's logical databases, with where it
+// lives.
+func (q *Queries) ListOrgDatabaseBackups(ctx context.Context, organizationID int64) ([]ListOrgDatabaseBackupsRow, error) {
+	rows, err := q.db.Query(ctx, listOrgDatabaseBackups, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgDatabaseBackupsRow
+	for rows.Next() {
+		var i ListOrgDatabaseBackupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Schedule,
+			&i.Retention,
+			&i.Enabled,
+			&i.LastRunAt,
+			&i.LastStatus,
+			&i.LastError,
+			&i.LogicalDatabaseID,
+			&i.DatabaseName,
+			&i.ServerName,
+			&i.EnvironmentID,
+			&i.EnvironmentName,
+			&i.ProjectName,
+			&i.DestinationName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setBackupEnabled = `-- name: SetBackupEnabled :exec
 UPDATE backups SET enabled = $2 WHERE id = $1
 `
