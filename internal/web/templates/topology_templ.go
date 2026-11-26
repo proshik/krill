@@ -709,7 +709,7 @@ func topoCardBody(c TopoCard) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = ui.Glyph(c.Glyph).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = ui.KindGlyph(c.Glyph, ui.GlyphKind(c.Glyph)).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

@@ -22,6 +22,14 @@ templ Glyph(id string) {
 	<svg class="glyph" aria-hidden="true"><use href={ "#" + id }></use></svg>
 }
 
+// KindGlyph draws a card's glyph on a plate colored by the card's kind:
+// "app", "db" (databases and storage) or "sys" (Krill's own services).
+templ KindGlyph(id, kind string) {
+	<span class={ "svc-ico", "svc-ico--" + kind }>
+		@Glyph(id)
+	</span>
+}
+
 // Sig is the status signal: ok (dot), err (diamond), warn (triangle), idle (ring).
 templ Sig(kind string) {
 	<svg class={ "sig", "sig--" + SigKind(kind) } aria-hidden="true"><use href={ "#s-" + SigKind(kind) }></use></svg>

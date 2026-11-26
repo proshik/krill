@@ -25,6 +25,22 @@ templ Sheet(title, glyph, closeURL string) {
 	</aside>
 }
 
+// sheetActs is a resource sheet's head controls: the width toggle and the
+// close link. The sheet spans the page unless krill-sheet says "compact";
+// CSS shows the toggle's icon for the action from <html data-sheet>, and
+// app.js flips the state and names the button.
+templ sheetActs(closeURL string) {
+	<div class="sheet-acts">
+		<button type="button" class="pill pill--icon" data-sheet-expand aria-pressed="true" aria-label={ i18n.T(ctx, "sheet.collapse") } title={ i18n.T(ctx, "sheet.collapse") } data-label-collapse={ i18n.T(ctx, "sheet.collapse") } data-label-expand={ i18n.T(ctx, "sheet.expand") }>
+			@ui.Icon("i-collapse")
+			@ui.Icon("i-expand")
+		</button>
+		<a class="pill pill--icon" href={ templ.SafeURL(closeURL) } aria-label={ i18n.T(ctx, "common.close") } data-sheet-close>
+			@ui.Icon("i-close")
+		</a>
+	</div>
+}
+
 // NewAppSheet creates an app in the environment.
 templ NewAppSheet(s Shell, registries []db.Registry) {
 	@Sheet(i18n.T(ctx, "app.new_modal_title"), "i-app", envURL(s.Org.ID, s.Env.Project.ID, s.Env.Env.ID)) {

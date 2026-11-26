@@ -134,7 +134,7 @@ templ canvasCard(v CanvasView, key string, x, y int) {
 			{ ariaCurrent(key == v.Current, "true")... }
 		>
 			<span class="svc-head">
-				@ui.Glyph(c.Glyph)
+				@ui.KindGlyph(c.Glyph, ui.GlyphKind(c.Glyph))
 				<span class="svc-name">{ c.Name }</span>
 				if c.App {
 					@canvasPending(c.ElemID, c.Pending, false)
@@ -165,10 +165,17 @@ templ canvasPending(elemID string, pending bool, oob bool) {
 
 // canvasWhere is where a card's tasks run. Its data-nodes (Swarm node IDs) is
 // what the node filter matches; the status poll replaces it (oob) with the
-// placement of the same snapshot as the badges.
+// placement of the same snapshot as the badges. On several nodes it shows
+// their count (the names in its tooltip) so the footer stays one line, and
+// its where--2/where--3 class draws the card as a stack: one edge behind it
+// for two nodes, two for three or more.
 templ canvasWhere(c CanvasCard, oob bool) {
-	<span class="where" id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { swapOOB(oob)... }>
-		if len(c.Nodes) > 0 {
+	<span class={ "where", templ.KV("where--2", len(c.Nodes) == 2), templ.KV("where--3", len(c.Nodes) > 2) } id={ "cw-" + c.ElemID } data-nodes={ joinSpace(c.NodeIDs) } { whereTitle(c.Nodes)... } { swapOOB(oob)... }>
+		if len(c.Nodes) > 1 {
+			@ui.Icon("i-node")
+			<span aria-hidden="true">{ i18n.Tn(ctx, "canvas.node_count", len(c.Nodes)) }</span>
+			<span class="visually-hidden">{ joinComma(c.Nodes) }</span>
+		} else if len(c.Nodes) > 0 {
 			@ui.Icon("i-node")
 			{ joinComma(c.Nodes) }
 		} else {
@@ -204,7 +211,7 @@ templ CanvasRefresh(v CanvasView) {
 templ ghostCard(y int) {
 	<div class="svc svc--ghost" id="s-ghost" style={ templ.SafeCSS(canvasStyle(24, y)) } aria-hidden="true">
 		<span class="svc-head">
-			@ui.Glyph("i-app")
+			@ui.KindGlyph("i-app", "app")
 			<span class="svc-name" data-ghost-name>{ i18n.T(ctx, "canvas.new_app") }</span>
 		</span>
 		<span class="svc-sub">{ i18n.T(ctx, "canvas.new_app") }</span>

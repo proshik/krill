@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/a-h/templ"
+	db"github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/docker"
 	"github.com/proshik/krill/internal/topology"
 	"github.com/proshik/krill/internal/web/i18n"
@@ -89,8 +90,8 @@ func planeStyle(c topology.Canvas) string {
 func ghostY(g topology.CanvasGroup) int {
 	y := 64
 	for _, it := range g.Items {
-		if it.X < 200 && it.Y+114 > y {
-			y = it.Y + 114
+		if it.X < 200 && it.Y+topology.CanvasRow > y {
+			y = it.Y + topology.CanvasRow
 		}
 	}
 	return y
@@ -98,7 +99,7 @@ func ghostY(g topology.CanvasGroup) int {
 
 func ghostGroupStyle(g topology.CanvasGroup) string {
 	h := g.H
-	if gy := ghostY(g) + 114 + 8; gy > h {
+	if gy := ghostY(g) + topology.CanvasRow + 8; gy > h {
 		h = gy
 	}
 	return "--x:" + strconv.Itoa(g.X) + "px;--y:" + strconv.Itoa(g.Y) + "px;--w:" + strconv.Itoa(g.W) + "px;--h:" + strconv.Itoa(h) + "px"
@@ -120,12 +121,21 @@ func ghostOnlyStyle(c topology.Canvas) string {
 	if len(c.Groups) > 0 {
 		x = 760
 	}
-	return "--x:" + strconv.Itoa(x) + "px;--y:0px;--w:336px;--h:186px"
+	return "--x:" + strconv.Itoa(x) + "px;--y:0px;--w:336px;--h:" + strconv.Itoa(64+topology.CanvasRow+8) + "px"
 }
 
 func nodeCountLabel(n CanvasNode) string { return strconv.Itoa(n.Count) }
 
 func joinSpace(s []string) string { return strings.Join(s, " ") }
+
+// whereTitle names the nodes in a tooltip when the card shows only their
+// count.
+func whereTitle(nodes []string) templ.Attributes {
+	if len(nodes) < 2 {
+		return nil
+	}
+	return templ.Attributes{"title": joinComma(nodes)}
+}
 
 // ago is a short relative time: "just now", "12 min ago", "3 h ago", "2 d ago".
 func ago(ctx context.Context, t time.Time) string {

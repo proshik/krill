@@ -1070,10 +1070,40 @@ function krillSyncBodyClass() {
 document.addEventListener("htmx:afterSwap", krillSyncBodyClass);
 document.addEventListener("htmx:historyRestore", krillSyncBodyClass);
 
-// Per page: the theme button's name, server toasts' timers, conditional fields.
+// A resource sheet (.sheet--wide) spans the page unless the stored
+// krill-sheet is "compact"; the head script puts that on <html> before the
+// first paint, and CSS keys the width and the toggle's icon off it.
+function krillSheetCompact() {
+  return document.documentElement.dataset.sheet === "compact";
+}
+function krillSheetSize() {
+  const compact = krillSheetCompact();
+  document.querySelectorAll("[data-sheet-expand]").forEach(function (b) {
+    const label = compact ? b.dataset.labelExpand : b.dataset.labelCollapse;
+    b.setAttribute("aria-pressed", compact ? "false" : "true");
+    if (label) { b.setAttribute("aria-label", label); b.setAttribute("title", label); }
+  });
+}
+document.addEventListener("click", function (e) {
+  const b = e.target.closest && e.target.closest("[data-sheet-expand]");
+  if (!b) return;
+  const compact = !krillSheetCompact();
+  if (compact) document.documentElement.dataset.sheet = "compact";
+  else delete document.documentElement.dataset.sheet;
+  try {
+    if (compact) localStorage.setItem("krill-sheet", "compact");
+    else localStorage.removeItem("krill-sheet");
+  } catch (_) { /* storage blocked: the choice lasts until the next full load */ }
+  krillSheetSize();
+  document.querySelectorAll(".plane").forEach(function (m) { if (m.__krillFit) m.__krillFit(); });
+});
+
+// Per page: the theme button's name, the sheet toggle's name, server toasts'
+// timers, conditional fields.
 function krillShellEnhance() {
   krillSyncBodyClass();
   krillModeName();
+  krillSheetSize();
   document.querySelectorAll("[data-toast-auto]").forEach(function (el) {
     el.removeAttribute("data-toast-auto");
     krillToastLater(el);
@@ -1294,8 +1324,11 @@ function mountWiredMap(map) {
     const fit = function () {
       if (getComputedStyle(svg).display === "none") return;
       map.setAttribute("data-zoomed", "");
+      // A wide resource sheet covers the whole canvas: fit to the canvas then,
+      // and again when the sheet turns compact (the toggle's click handler).
       const sheet = document.querySelector(".sheet");
-      const cw = canvas.clientWidth - (sheet ? sheet.offsetWidth + 24 : 0);
+      const beside = sheet && !(sheet.classList.contains("sheet--wide") && !krillSheetCompact());
+      const cw = canvas.clientWidth - (beside ? sheet.offsetWidth + 24 : 0);
       const top = 84, ch = canvas.clientHeight - top - 24;
       zoom = Math.max(0.3, Math.min(1, (cw - 48) / map.offsetWidth, ch / map.offsetHeight));
       px = Math.max(24, (cw - map.offsetWidth * zoom) / 2);
@@ -1315,16 +1348,31 @@ function mountWiredMap(map) {
         apply();
       });
     });
+    // A wheel gesture pans, or zooms with ctrl/meta (a trackpad pinch), but a
+    // horizontal-dominant one is left alone, so the browser's two-finger swipe
+    // goes back or forward (any preventDefault in it cancels the navigation).
+    // The choice is made on a gesture's first event and kept until the wheel
+    // has been quiet for 150ms, so a diagonal swipe (or its momentum) does not
+    // flip between panning and navigating halfway. Shift+wheel pans sideways.
+    let wheelNav = false, wheelLast = -Infinity;
     canvas.addEventListener("wheel", function (e) {
       if (!map.hasAttribute("data-zoomed")) return;
+      const zooming = e.ctrlKey || e.metaKey;
+      if (e.timeStamp - wheelLast > 150) {
+        wheelNav = !zooming && !e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      }
+      wheelLast = e.timeStamp;
+      if (wheelNav && !zooming) return;
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey) {
+      if (zooming) {
         const before = zoom;
         zoom = Math.max(0.3, Math.min(2, zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
         const r = canvas.getBoundingClientRect();
         const mx = e.clientX - r.left, my = e.clientY - r.top;
         px = mx - (mx - px) * zoom / before;
         py = my - (my - py) * zoom / before;
+      } else if (e.shiftKey) {
+        px -= e.deltaX || e.deltaY;
       } else {
         px -= e.deltaX;
         py -= e.deltaY;
@@ -1352,9 +1400,18 @@ function mountWiredMap(map) {
   map.__krillRedraw();
   if (document.fonts) document.fonts.ready.then(function () { if (map.isConnected) map.__krillRedraw(); });
 }
+// The stylesheet hides a map-mode canvas plane until fit() marks it
+// data-zoomed, so it does not paint at its CSS place first and then jump.
+// Should mounting fail before the fit, the plane is shown where it is rather
+// than left invisible.
 function krillMountMaps() {
   document.querySelectorAll(".plane, .lanemap, .topomap").forEach(function (m) {
-    if (!m.__krillMounted) mountWiredMap(m);
+    if (m.__krillMounted) return;
+    try {
+      mountWiredMap(m);
+    } finally {
+      if (m.classList.contains("plane") && !m.hasAttribute("data-zoomed")) m.style.visibility = "visible";
+    }
   });
 }
 document.addEventListener("DOMContentLoaded", krillMountMaps);

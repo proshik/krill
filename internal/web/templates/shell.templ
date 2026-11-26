@@ -11,8 +11,10 @@ import (
 
 // themeScript picks the theme before the first paint: the stored choice, or
 // the system's while there is none. It follows the system's changes whenever
-// no choice is stored, also after the toggle has gone back to "system".
-const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode')}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
+// no choice is stored, also after the toggle has gone back to "system". It
+// also marks a compact resource sheet (krill-sheet), so a sheet does not open
+// wide and then shrink.
+const themeScript = `(function(){var d=document.documentElement,m=null;try{m=localStorage.getItem('krill-mode');if(localStorage.getItem('krill-sheet')==='compact')d.dataset.sheet='compact'}catch(e){}var q=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)');d.dataset.mode=m||(q&&q.matches?'dark':'light');d.dataset.choice=m||'system';if(q&&q.addEventListener)q.addEventListener('change',function(e){var s=null;try{s=localStorage.getItem('krill-mode')}catch(_){}if(!s)d.dataset.mode=e.matches?'dark':'light'})})()`
 
 // docHead is the shared <head>: metadata, the theme script, styles and scripts.
 templ docHead(title string) {
@@ -22,6 +24,13 @@ templ docHead(title string) {
 	<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 	<title>{ title } · Krill</title>
 	@templ.Raw("<script>" + themeScript + "</script>")
+	// Preload the fonts the first paint needs, so text does not flash in a
+	// fallback face; Cyrillic only where the UI is Russian.
+	<link rel="preload" href="/static/fonts/onest-latin.woff2" as="font" type="font/woff2" crossorigin/>
+	<link rel="preload" href="/static/fonts/outfit-latin.woff2" as="font" type="font/woff2" crossorigin/>
+	if i18n.Current(ctx) == "ru" {
+		<link rel="preload" href="/static/fonts/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin/>
+	}
 	<link rel="stylesheet" href="/static/xterm.css"/>
 	<link rel="stylesheet" href={ "/static/app.css?v=" + web.AssetVersion }/>
 	<script src="/static/htmx.min.js"></script>
