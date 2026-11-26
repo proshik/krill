@@ -24,6 +24,13 @@ templ docHead(title string) {
 	<link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
 	<title>{ title } · Krill</title>
 	@templ.Raw("<script>" + themeScript + "</script>")
+	// Preload the fonts the first paint needs, so text does not flash in a
+	// fallback face; Cyrillic only where the UI is Russian.
+	<link rel="preload" href="/static/fonts/onest-latin.woff2" as="font" type="font/woff2" crossorigin/>
+	<link rel="preload" href="/static/fonts/outfit-latin.woff2" as="font" type="font/woff2" crossorigin/>
+	if i18n.Current(ctx) == "ru" {
+		<link rel="preload" href="/static/fonts/onest-cyrillic.woff2" as="font" type="font/woff2" crossorigin/>
+	}
 	<link rel="stylesheet" href="/static/xterm.css"/>
 	<link rel="stylesheet" href={ "/static/app.css?v=" + web.AssetVersion }/>
 	<script src="/static/htmx.min.js"></script>

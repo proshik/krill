@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -30,7 +31,6 @@ import (
 	"github.com/proshik/krill/internal/org"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/volume"
-	"github.com/proshik/krill/internal/web"
 	"github.com/proshik/krill/internal/web/i18n"
 )
 
@@ -347,7 +347,12 @@ func (s *Server) Router() http.Handler {
 		})
 	})
 
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(web.Static())))
+	static, err := embeddedStatic()
+	if err != nil {
+		// The assets are embedded in the binary: this cannot fail at run time.
+		panic(fmt.Errorf("static assets: %w", err))
+	}
+	r.Handle("/static/*", http.StripPrefix("/static/", static))
 
 	r.Get("/login", s.loginPage)
 	// Rate-limit login attempts per source IP to bound online password guessing.
