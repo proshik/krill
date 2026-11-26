@@ -109,7 +109,10 @@ Verified in code and tests, but not yet exercised on a real environment:
    real two-node cluster (v0.3.2): all twelve tools, against a live app. The per-request identity and
    session-to-token binding of v0.3.2 is covered by `TestMCPSessionSeesDemotion` and
    `TestMCPSessionRejectsAnotherToken` only; that install has a single member and no client that can
-   swap the token inside a session. Still open: a real CI job calling the REST deploy hook.
+   swap the token inside a session. Still open: a real CI job calling the REST deploy hook, and the
+   2026-11-26 diagnostics against a live install — `krill_app_status` tasks/health/usage on a
+   worker node, `krill_app_logs` windows and `wait_for`, `krill_deployment_status` `wait` through a
+   real settle, `krill_domain_status` against real DNS and ACME, `krill_backup_now`.
 6. `krill-cli` end to end against a real Krill and a real registry. Everything except `deploy` with a
    local image build (and `context rm`) passed on 2026-09-23 against a real install; that install's
    app is built by CI, so there was nothing for the CLI to build.
