@@ -477,6 +477,11 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 		// poll that refreshes them both.
 		if live := s.readAppLive(r, c.App, len(deps) > 0, true); live.read {
 			c.HeadStatus, c.Tasks = live.head, live.tasks
+			// The controls and the pending markers follow the same read.
+			if live.status != c.App.Status {
+				c.App.Status = live.status
+				c.Pending = s.appPending(ctx, c.App)
+			}
 		}
 	case "metrics":
 		c.MetricsEnabled, c.MetricsTokenEnv = c.App.MetricsEnabled, c.App.MetricsTokenEnv
@@ -740,7 +745,13 @@ func countTasks(st docker.ServiceState, tasks []docker.TaskPlacement) docker.Ser
 			st.Failed++
 		}
 	}
-	if st.Global {
+	switch {
+	case st.Global:
+		st.Desired = len(tasks)
+	case st.Desired == 0 && len(tasks) > 0:
+		// Read at zero just before a Start (or just after a Stop whose tasks
+		// Swarm still wants running): count the tasks the list shows, or the
+		// response would pair "stopped" with a running row.
 		st.Desired = len(tasks)
 	}
 	return st

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -38,6 +39,18 @@ func (e *metricsEngine) ServiceState(ctx context.Context, name string) (docker.S
 		return *e.state, nil
 	}
 	return e.noopEngine.ServiceState(ctx, name)
+}
+
+// ServiceTasks lists as many running tasks as the state counts.
+func (e *metricsEngine) ServiceTasks(ctx context.Context, name string) ([]docker.TaskPlacement, error) {
+	if e.state == nil {
+		return e.noopEngine.ServiceTasks(ctx, name)
+	}
+	var out []docker.TaskPlacement
+	for i := 0; i < e.state.Running; i++ {
+		out = append(out, docker.TaskPlacement{ID: "t" + strconv.Itoa(i), State: "running", Desired: "running"})
+	}
+	return out, nil
 }
 
 func (e *metricsEngine) TaskAddresses(context.Context) ([]docker.TaskAddress, error) {

@@ -27,7 +27,8 @@ type runsSnapshot struct {
 	stateTasks []docker.TaskPlacement
 	tasksErr   error
 	taskReads  int
-	nodes      []docker.SwarmNode // nil: one ready control plane
+	nodes      []docker.SwarmNode   // nil: one ready control plane
+	bulk       *docker.ServiceState // when set, what the canvas's bulk read sees
 }
 
 func (e runsEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
@@ -48,6 +49,9 @@ func (e runsEngine) ServiceStates(_ context.Context, names []string) (map[string
 	out := map[string]docker.ServiceState{}
 	for _, n := range names {
 		out[n] = e.snap.state
+		if e.snap.bulk != nil {
+			out[n] = *e.snap.bulk
+		}
 	}
 	return out, nil
 }
@@ -156,6 +160,12 @@ func TestHeadAndRunsOnAgree(t *testing.T) {
 		// count is its task list.
 		{"global, one node still starting", runsSnapshot{state: docker.ServiceState{Found: true, Global: true, Desired: 2, Running: 2}, tasks: []docker.TaskPlacement{running, starting}},
 			"deploying", []string{"control-plane running", "control-plane starting"}},
+		// A node left between the reads: one task, and it runs.
+		{"global, a node gone between reads", runsSnapshot{state: docker.ServiceState{Found: true, Global: true, Desired: 2, Running: 1}, tasks: []docker.TaskPlacement{running}},
+			"online", []string{"control-plane running"}},
+		// Read at zero just before a Start; the tasks then show it running.
+		{"started between reads", runsSnapshot{state: docker.ServiceState{Found: true}, tasks: []docker.TaskPlacement{running}},
+			"online", []string{"control-plane running"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,5 +265,21 @@ func TestHeadNodeBadgeOnEveryPath(t *testing.T) {
 		if got := headState(f.get(t, path)); got != "node down" {
 			t.Errorf("%s: head reads %q, want node down", path, got)
 		}
+	}
+}
+
+// The app was stopped between the canvas's read and the tab's own: the
+// first render's controls follow the tab's read, as the head does, so a
+// stopped app is offered Start, not Stop.
+func TestFirstRenderControlsFollowTheHead(t *testing.T) {
+	snap := &runsSnapshot{state: docker.ServiceState{Found: true}, bulk: &docker.ServiceState{Found: true, Desired: 1, Running: 1}}
+	f := newSheetFixture(t, runsEngine{snap: snap}, "image")
+	f.deploy(t, "nginx:1.0")
+	page := f.get(t, f.base+"?tab=deployments")
+	if got := headState(page); got != "stopped" {
+		t.Fatalf("head reads %q, want stopped", got)
+	}
+	if strings.Contains(page, `form="stop-form"`) || !strings.Contains(page, `>start<`) {
+		t.Fatal("the controls follow the canvas's older read, not the head's")
 	}
 }

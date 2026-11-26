@@ -57,6 +57,12 @@ func (e *pendingEngine) state() docker.ServiceState {
 func (e *pendingEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
 	return e.state(), nil
 }
+func (e *pendingEngine) ServiceTasks(context.Context, string) ([]docker.TaskPlacement, error) {
+	if e.stopped.Load() {
+		return nil, nil
+	}
+	return []docker.TaskPlacement{{ID: "t1", State: "running", Desired: "running"}}, nil
+}
 func (e *pendingEngine) ServiceStates(_ context.Context, names []string) (map[string]docker.ServiceState, error) {
 	m := map[string]docker.ServiceState{}
 	for _, n := range names {
@@ -175,9 +181,9 @@ func TestPendingChangesOnTheAppSheet(t *testing.T) {
 	}
 	// The deployments poll refreshes the header, tabs and canvas marker.
 	poll := getWithCookie(t, h, base+"/deployments-list", cookie).Body.String()
-	for _, oob := range []string{`id="app-pending" hx-swap-oob="true">`, `id="tab-dot-variables" hx-swap-oob="true">`, `id="cp-s-app-` + i64(appID) + `" hx-swap-oob="true">`} {
+	for _, oob := range []string{`id="app-pending" hx-swap-oob="true"><span class="state state--warn"`, `id="tab-dot-variables" hx-swap-oob="true"><span class="tab-dot"`, `id="cp-s-app-` + i64(appID) + `" hx-swap-oob="true"><span class="pending-dot"`} {
 		if !strings.Contains(poll, oob) {
-			t.Fatalf("poll lacks %s", oob)
+			t.Fatalf("poll lacks the marker %s", oob)
 		}
 	}
 
