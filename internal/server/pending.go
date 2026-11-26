@@ -43,6 +43,22 @@ func (s *Server) pendingChanges(ctx context.Context, apps []db.Application) map[
 	return out
 }
 
+// appPending is pendingChanges for one app's own page, with "apply settings"
+// confirmed against its live service, as the apply itself will check it.
+func (s *Server) appPending(ctx context.Context, app db.Application) templates.PendingView {
+	if s.deployer == nil || app.Status != deploy.StatusRunning {
+		return templates.PendingView{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, pendingTimeout)
+	defer cancel()
+	p, ok := s.deployer.PendingChanges(ctx, []int64{app.ID})[app.ID]
+	if !ok {
+		return templates.PendingView{}
+	}
+	p = s.deployer.ConfirmApply(ctx, app.ID, p)
+	return templates.PendingView{Changed: p.Changed, CanApply: p.CanApply}
+}
+
 // markPending finds which running apps on the canvas v have saved settings
 // that are not live yet and marks their cards. Only pages that render the
 // markers call it: the canvas status poll does not, as each app costs a
@@ -89,8 +105,10 @@ func (s *Server) applyAppSettings(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, deploy.ErrNothingToApply):
 			s.flashErrT(w, r, "flash.err.apply_nothing")
-		case errors.Is(err, deploy.ErrApplyNeedsDeploy):
+		case errors.Is(err, deploy.ErrApplyNeedsDeploy), errors.Is(err, deploy.ErrApplyTargetMoved):
 			s.flashErrT(w, r, "flash.err.apply_needs_deploy")
+		case errors.Is(err, deploy.ErrApplyStopped):
+			s.flashErrT(w, r, "flash.err.apply_stopped")
 		default:
 			s.flashErrT(w, r, deployRefusalKey(err, "flash.err.queue_deploy"))
 		}

@@ -245,6 +245,22 @@ templ DeploymentsPoll(c AppCtx, deps []db.ListDeploymentSummariesByApplicationRo
 	@canvasPending(appElemID(c.App.ID), c.Pending.Any(), true)
 }
 
+// AppStatePoll is the state badge's poll response. It looks no pending
+// changes up (it runs every 3 s on every tab), but clears the markers of an
+// app that no longer runs: they are never shown for a stopped app.
+templ AppStatePoll(c AppCtx, status string, running int) {
+	@AppStateBadge(status, c.base()+"/status", running)
+	if status != "running" {
+		@PendingMarker(PendingView{}, true)
+		for _, t := range c.appTabs(ctx) {
+			if len(tabSections(t.Key)) > 0 {
+				@tabDot(PendingView{}, t.Key, true)
+			}
+		}
+		@canvasPending(appElemID(c.App.ID), false, true)
+	}
+}
+
 // AppStateBadge is the app's live state in the sheet head; it refreshes itself.
 // running (-1 when unknown) lets the terminal tab follow its replicas: see
 // krillTermState in app.js.

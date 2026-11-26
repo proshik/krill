@@ -190,6 +190,16 @@ type Deployer struct {
 	// count zero in flight and both queue a deploy.
 	admitMu sync.Mutex
 
+	// appStops counts the Stops under way per app (under admitMu): an apply
+	// is not admitted while one runs, as it could pass its checks before the
+	// Stop scales the service and run its predeploy command meanwhile.
+	appStops map[int64]int
+
+	// applied holds what a successful deploy applied from complete until
+	// finishAs writes it with the done status.
+	appliedMu sync.Mutex
+	applied   map[int64]AppliedConfig
+
 	// tracked holds every accepted deploy, by deployment id, until its outcome
 	// is recorded: what StopApp needs to cancel the ones that have not applied
 	// their service spec yet (see stop.go).
@@ -416,6 +426,9 @@ func (d *Deployer) enqueue(appID int64, trigger string, opts job) (int64, error)
 	}
 	d.admitMu.Lock()
 	defer d.admitMu.Unlock()
+	if opts.applyImage != "" && d.appStops[appID] > 0 {
+		return 0, ErrApplyStopped
+	}
 	// Refuse a second deploy for an app that already has one in flight. The
 	// queue is 64 deep, drained by a single worker and shared by every tenant,
 	// so a caller retrying the same app — an agent in a retry loop is the
@@ -579,11 +592,16 @@ func (d *Deployer) run(ctx context.Context, j job) {
 		// against the pinned image actually deployed.
 		app, err = d.store.GetDeploymentApp(ctx, deployID, ImageRef{CredentialImage: j.applyImage})
 		if err == nil && d.configFingerprint(app).Sections[SectionSource] != j.applySource {
-			err = ErrApplyNeedsDeploy
+			err = applySkip{ErrApplyNeedsDeploy}
 		}
 		imageTag = j.applyImage
 	} else {
 		app, err = d.store.GetDeploymentApp(ctx, deployID, ImageRef{Image: j.image, Tag: j.tag})
+	}
+	if err != nil && j.applyImage != "" && errors.As(err, new(applySkip)) {
+		fmt.Fprintf(out, "⏹ %v\n", err)
+		d.finishApplySkipped(deployID, j.appID, j.applyImage, err.Error())
+		return
 	}
 	if err != nil {
 		message := err.Error()
@@ -680,20 +698,29 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	// New configuration-only clones have no node labels until explicit Deploy.
 	// Failed/ambiguous mutations remain associated with this existing app ID;
 	// cloning itself never creates labels requiring external compensation.
-	if err == nil && j.rollbackID == 0 {
-		err = d.ensurePlacement(ctx, app)
-	}
-	// An apply changes nothing before it knows the service still runs, settled,
-	// the image it was queued for, and that a local build is on every node it
-	// may run on: the predeploy command and the volume chown below already act.
+	// An apply changes nothing — not the placement labels, not through the
+	// predeploy command or the volume chown below — before it knows the
+	// history it was queued on still holds, the service still runs, settled,
+	// the image it was queued for, and a local build is on every node the app
+	// is to run on.
 	if err == nil && j.applyImage != "" {
-		var p docker.ServiceProgress
-		if p, err = d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil); err == nil {
-			err = checkApplyTarget(p, imageTag)
+		err = d.checkApplyFresh(ctx, j, app)
+		if err == nil {
+			var p docker.ServiceProgress
+			if p, err = d.engine.ServiceProgress(ctx, docker.ServiceName(app.ID), nil); err == nil {
+				if e := checkApplyTarget(p, imageTag); e != nil {
+					err = applySkip{e}
+				}
+			}
 		}
 		if err == nil {
-			err = d.validateApplyImage(ctx, app, imageTag)
+			if e := d.validateApplyImage(ctx, app, imageTag, false); e != nil {
+				err = applySkip{e}
+			}
 		}
+	}
+	if err == nil && j.rollbackID == 0 {
+		err = d.ensurePlacement(ctx, app)
 	}
 
 	if err == nil && app.PredeployCommand != "" && !j.skipPredeploy {
@@ -791,10 +818,10 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			// before this apply was admitted found nothing to cancel.
 			if j.applyImage != "" {
 				if err := checkApplyTarget(prev, imageTag); err != nil {
-					return err
+					return applySkip{err}
 				}
-				if err := d.validateApplyImage(ctx, app, imageTag); err != nil {
-					return err
+				if err := d.validateApplyImage(ctx, app, imageTag, true); err != nil {
+					return applySkip{err}
 				}
 			}
 			// A deploy of this app still watched in the background (only a
@@ -812,6 +839,12 @@ func (d *Deployer) run(ctx context.Context, j job) {
 	if err != nil && d.stopRecorded(deployID) {
 		// Stopped before it applied anything: StopApp records it.
 		slog.Info("deploy ended by a stop of the app", "deploy", deployID, "app", app.ID, "err", err)
+		return
+	}
+	if j.applyImage != "" && errors.As(err, new(applySkip)) {
+		fmt.Fprintf(out, "⏹ %v\n", err)
+		slog.Info("settings apply skipped", "deploy", deployID, "app", app.ID, "err", err)
+		d.finishApplySkipped(deployID, app.ID, imageTag, err.Error())
 		return
 	}
 	if errors.Is(err, errStoppedMeanwhile) {
@@ -1107,7 +1140,13 @@ func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTa
 	// (graceful shutdown), so deployments don't get stuck as running/deploying.
 	wctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := d.store.FinishDeployment(wctx, deployID, depStatus, imageTag, errMsg, full); err != nil {
+	// What a successful deploy applied is written with its done status, in
+	// one update: a row never reads done without it, nor failed with it.
+	if c, ok := d.takeAppliedConfig(deployID); ok && depStatus == "done" {
+		if err := d.store.(configStore).FinishDeploymentApplied(wctx, deployID, depStatus, imageTag, errMsg, full, c); err != nil {
+			slog.Error("finish deployment failed", "deploy", deployID, "err", err)
+		}
+	} else if err := d.store.FinishDeployment(wctx, deployID, depStatus, imageTag, errMsg, full); err != nil {
 		slog.Error("finish deployment failed", "deploy", deployID, "err", err)
 	}
 	if appID != 0 && appStatus != "" {

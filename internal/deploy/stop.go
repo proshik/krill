@@ -283,6 +283,18 @@ func (d *Deployer) StopApp(ctx context.Context, appID int64, by string, stop fun
 	if err := d.lockAdmit(lctx); err != nil {
 		return nil, fmt.Errorf("wait for a deploy being queued: %w", err)
 	}
+	// No apply is admitted until this Stop has returned (see enqueue).
+	if d.appStops == nil {
+		d.appStops = map[int64]int{}
+	}
+	d.appStops[appID]++
+	defer func() {
+		d.admitMu.Lock()
+		if d.appStops[appID]--; d.appStops[appID] <= 0 {
+			delete(d.appStops, appID)
+		}
+		d.admitMu.Unlock()
+	}()
 	var cancelled, applying []int64
 	var waits []chan struct{}
 	d.trackMu.Lock()

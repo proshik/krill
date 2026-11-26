@@ -9,3 +9,5 @@ ALTER TABLE deployments ADD COLUMN applied_config JSONB;
 -- Deploys in flight per app: the pending-changes check and the enqueue guard
 -- ask for them on every poll and deploy; history only grows.
 CREATE INDEX deployments_running_idx ON deployments (application_id) WHERE status = 'running';
+-- The newest successful deployment per app, without walking past failures.
+CREATE INDEX deployments_done_idx ON deployments (application_id, started_at DESC, id DESC) WHERE status = 'done';

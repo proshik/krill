@@ -26,12 +26,33 @@ type releaseEngine struct {
 	updateState string
 	liveImage   string // overrides the image of the last deploy
 	stopped     bool   // the service stands at zero (guarded by digestMockEngine.mu)
+	nodes       []docker.SwarmNode
+	labelWrites int // NodeSetLabel/NodeDeleteLabel calls
+}
+
+func (e *releaseEngine) Nodes(context.Context) ([]docker.SwarmNode, error) { return e.nodes, nil }
+func (e *releaseEngine) NodeSetLabel(context.Context, string, string, string) error {
+	e.labelWrites++
+	return nil
+}
+func (e *releaseEngine) NodeDeleteLabel(context.Context, string, string) error {
+	e.labelWrites++
+	return nil
 }
 
 func (e *releaseEngine) setUpdateState(v string) {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	e.updateState = v
+}
+
+func (e *releaseEngine) ServiceState(context.Context, string) (docker.ServiceState, error) {
+	e.digestMockEngine.mu.Lock()
+	defer e.digestMockEngine.mu.Unlock()
+	if e.stopped {
+		return docker.ServiceState{Found: true}, nil
+	}
+	return docker.ServiceState{Found: true, Running: 1, Desired: 1}, nil
 }
 
 func (e *releaseEngine) ValidateRelease(context.Context, docker.ServiceSpec, []string) error {

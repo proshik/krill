@@ -21,6 +21,7 @@ type pendingEngine struct {
 	resolves atomic.Int32
 	stopped  atomic.Bool
 	image    atomic.Value // the image of the last ServiceDeploy
+	live     atomic.Value // when set, the image the service runs instead
 }
 
 func (e *pendingEngine) ServiceDeploy(_ context.Context, s docker.ServiceSpec) error {
@@ -33,6 +34,9 @@ func (e *pendingEngine) ServiceProgress(context.Context, string, []string) (dock
 		p.Running, p.Desired = 0, 0
 	}
 	if img, ok := e.image.Load().(string); ok {
+		p.Image = img
+	}
+	if img, ok := e.live.Load().(string); ok && img != "" {
 		p.Image = img
 	}
 	return p, nil
@@ -210,6 +214,11 @@ func TestPendingChangesOnTheAppSheet(t *testing.T) {
 	if body := page(cookie, ""); pendingMarker.MatchString(body) || canvasDot(body, appID) {
 		t.Fatal("marker while a deploy is in flight")
 	}
+	// An open canvas drops the marker at its next status poll.
+	envPoll := base[:strings.Index(base, "/apps/")] + "/statuses"
+	if poll := getWithCookie(t, h, envPoll, cookie).Body.String(); !strings.Contains(poll, `id="cp-s-app-`+i64(appID)+`" hx-swap-oob="true"></span>`) {
+		t.Fatal("the canvas poll keeps the marker of an app being deployed")
+	}
 	if err := q.FinishDeployment(ctx, db.FinishDeploymentParams{ID: running.ID, Status: "error", ErrorMessage: "test"}); err != nil {
 		t.Fatal(err)
 	}
@@ -220,8 +229,25 @@ func TestPendingChangesOnTheAppSheet(t *testing.T) {
 		t.Fatal("the status poll touched the marker of a running app")
 	}
 
+	// History naming another image than the one that runs: no apply offered.
+	eng.live.Store("nginx@sha256:" + strings.Repeat("c", 64))
+	if body := page(cookie, ""); !pendingMarker.MatchString(body) || strings.Contains(body, applyButton+` class`) || !strings.Contains(body, `form="deploy-again" class="pill pill--primary"`) {
+		t.Fatal("another live image: want the marker, no apply button, deploy again highlighted")
+	}
+	if rec := postForm(t, h, base+"/apply-settings", cookie, url.Values{}); !hasErrFlash(rec) {
+		t.Fatal("apply accepted while the service runs another image")
+	}
+	eng.live.Store("")
+	if poll := getWithCookie(t, h, base+"/status", cookie).Body.String(); strings.Contains(poll, "hx-swap-oob") {
+		t.Fatal("the state poll of a running app touches its markers")
+	}
+
 	// A stopped app shows nothing and cannot apply.
 	eng.stopped.Store(true)
+	// The sheet's state poll clears the header marker and the tab dots.
+	if poll := getWithCookie(t, h, base+"/status", cookie).Body.String(); !strings.Contains(poll, `id="app-pending" hx-swap-oob="true"></span>`) || !strings.Contains(poll, `id="tab-dot-variables" hx-swap-oob="true"></span>`) {
+		t.Fatal("the state poll does not clear the markers of a stopped app")
+	}
 	if body := page(cookie, ""); pendingMarker.MatchString(body) || canvasDot(body, appID) {
 		t.Fatal("marker on a stopped app")
 	}

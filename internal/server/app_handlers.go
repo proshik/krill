@@ -428,11 +428,7 @@ func (s *Server) fillAppSheet(w http.ResponseWriter, r *http.Request, c *templat
 			c.App.Status = a.Status // live, as on the canvas
 		}
 	}
-	if p, checked := c.Canvas.PendingApps[c.App.ID]; checked {
-		c.Pending = p
-	} else {
-		c.Pending = s.pendingChanges(ctx, []db.Application{c.App})[c.App.ID]
-	}
+	c.Pending = s.appPending(ctx, c.App)
 	if doms, err := s.q.ListDomainsByApplication(ctx, c.App.ID); err != nil {
 		logFrom(r).Error("appDetail: failed to list domains", "err", err, "app_id", c.App.ID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -691,7 +687,7 @@ func (s *Server) appStatus(w http.ResponseWriter, r *http.Request) {
 		live, nerr := s.engine.Nodes(r.Context())
 		status = displayAppStatus(status, c.App.PlacementMode, c.App.PlacementNodes, live, nerr == nil)
 	}
-	render(w, r, http.StatusOK, templates.AppStateBadge(status, appURL(c)+"/status", running))
+	render(w, r, http.StatusOK, templates.AppStatePoll(c, status, running))
 }
 
 func (s *Server) appTags(w http.ResponseWriter, r *http.Request) {

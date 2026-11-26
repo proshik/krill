@@ -32,8 +32,9 @@ type CanvasCard struct {
 	Detected  []string // the subset of To only found in env values
 	App       bool     // an app card (the others are resources)
 	Pending   bool     // an app whose saved settings are not live yet
-	// NotRunning is an app whose live status is not running: it shows no
-	// pending marker, and the status poll clears one shown before.
+	// NotRunning is an app whose live status is not running, or that has a
+	// deploy queued or running: it shows no pending marker, and the status
+	// poll clears one shown before.
 	NotRunning bool
 }
 

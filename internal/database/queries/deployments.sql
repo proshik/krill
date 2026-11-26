@@ -88,6 +88,14 @@ SELECT id, status FROM deployments WHERE id = ANY(@ids::bigint[]);
 -- no service either, see docker ServiceScale).
 SELECT DISTINCT application_id FROM deployments WHERE application_id = ANY(@ids::bigint[]);
 
+-- name: FinishDeploymentApplied :exec
+-- FinishDeployment for a deploy that ended done, with what it applied: one
+-- update, so no row reads done without it or failed with it.
+UPDATE deployments
+SET status = @status, image_tag = @image_tag, error_message = @error_message, log = @log,
+    finished_at = now(), applied_config = @applied_config
+WHERE id = @id;
+
 -- name: SetDeploymentAppliedConfig :exec
 -- The configuration fingerprint a successful deployment applied.
 UPDATE deployments SET applied_config = @applied_config WHERE id = @id;

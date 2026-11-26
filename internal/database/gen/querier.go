@@ -156,6 +156,9 @@ type Querier interface {
 	// run at startup only — a just-booted control plane has no deploy in flight.
 	FailOrphanedDeployments(ctx context.Context) (int64, error)
 	FinishDeployment(ctx context.Context, arg FinishDeploymentParams) error
+	// FinishDeployment for a deploy that ended done, with what it applied: one
+	// update, so no row reads done without it or failed with it.
+	FinishDeploymentApplied(ctx context.Context, arg FinishDeploymentAppliedParams) error
 	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
 	GetAlertState(ctx context.Context, arg GetAlertStateParams) (NotifyAlertState, error)
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)

@@ -658,14 +658,16 @@ func (s *DBStore) HealStoppedAppStatus(ctx context.Context, appID int64, from st
 	return n > 0, err
 }
 
-// SaveAppliedConfig records the configuration fingerprint a successful
-// deployment applied.
-func (s *DBStore) SaveAppliedConfig(ctx context.Context, deployID int64, c AppliedConfig) error {
+// FinishDeploymentApplied records a deployment that ended done together with
+// what it applied.
+func (s *DBStore) FinishDeploymentApplied(ctx context.Context, deployID int64, status, imageTag, errMsg, log string, c AppliedConfig) error {
 	b, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return s.q.SetDeploymentAppliedConfig(ctx, db.SetDeploymentAppliedConfigParams{ID: deployID, AppliedConfig: b})
+	return s.q.FinishDeploymentApplied(ctx, db.FinishDeploymentAppliedParams{
+		ID: deployID, Status: status, ImageTag: imageTag, ErrorMessage: errMsg, Log: log, AppliedConfig: b,
+	})
 }
 
 // DeploymentAppliedConfig reads one deployment's fingerprint (found false

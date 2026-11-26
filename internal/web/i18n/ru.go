@@ -1685,6 +1685,7 @@ var ru = map[string]string{
 	"pending.section.source":           "источник",
 	"pending.section.env":              "переменные",
 	"pending.section.metrics":          "токен метрик",
+	"pending.section.predeploy":        "команда перед деплоем",
 	"pending.section.runtime":          "ресурсы",
 	"pending.section.volumes":          "тома",
 	"pending.section.ports":            "опубликованные порты",

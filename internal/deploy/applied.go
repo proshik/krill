@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"maps"
 	"net/url"
+	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,21 +22,23 @@ import (
 // The settings sections a deploy applies, each one an editor tab or card the
 // user can find: source (the settings tab's source and build cards), env (the
 // variables tab, database and bucket links included), metrics (the metrics
-// token the metrics tab sets), runtime (resources, command, predeploy,
-// healthcheck), volumes, ports and placement (their settings cards). Domains
-// are not here: they apply at once.
+// token the metrics tab sets), runtime (resources, command, healthcheck),
+// predeploy (the pre-deploy command, apart because some deploys skip it),
+// volumes, ports and placement (their settings cards). Domains are not here:
+// they apply at once.
 const (
 	SectionSource    = "source"
 	SectionEnv       = "env"
 	SectionMetrics   = "metrics"
 	SectionRuntime   = "runtime"
+	SectionPredeploy = "predeploy"
 	SectionVolumes   = "volumes"
 	SectionPorts     = "ports"
 	SectionPlacement = "placement"
 )
 
 // Sections lists every section in display order.
-var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionVolumes, SectionPorts, SectionPlacement}
+var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionPredeploy, SectionVolumes, SectionPorts, SectionPlacement}
 
 // fingerprintVersion changes when what a section covers changes; a stored
 // fingerprint of another version is unknown, not changed.
@@ -87,6 +91,7 @@ func configSections(a App) map[string]any {
 		if dockerfile == "" {
 			dockerfile = "Dockerfile"
 		}
+		dockerfile = path.Clean(dockerfile) // ./Dockerfile is the same file
 		source = struct {
 			Type, GitURL, Branch, Dockerfile string
 			BuildArgs, BuildSecrets          map[string]string
@@ -111,8 +116,7 @@ func configSections(a App) map[string]any {
 		RestartCondition   string
 		RestartMaxAttempts uint64
 		Healthcheck        *docker.HealthcheckSpec
-		Predeploy          string
-	}{slices.Clip(a.Args), a.Port, replicas, a.MemoryLimitBytes, a.NanoCPUs, a.RestartCondition, a.RestartMaxAttempts, a.Healthcheck, a.PredeployCommand}
+	}{slices.Clip(a.Args), a.Port, replicas, a.MemoryLimitBytes, a.NanoCPUs, a.RestartCondition, a.RestartMaxAttempts, a.Healthcheck}
 	if len(runtime.Args) == 0 {
 		runtime.Args = nil
 	}
@@ -141,12 +145,13 @@ func configSections(a App) map[string]any {
 	slices.Sort(nodes)
 
 	return map[string]any{
-		SectionSource:  source,
-		SectionEnv:     env,
-		SectionMetrics: metrics,
-		SectionRuntime: runtime,
-		SectionVolumes: mounts,
-		SectionPorts:   ports,
+		SectionSource:    source,
+		SectionEnv:       env,
+		SectionMetrics:   metrics,
+		SectionRuntime:   runtime,
+		SectionPredeploy: a.PredeployCommand,
+		SectionVolumes:   mounts,
+		SectionPorts:     ports,
 		SectionPlacement: struct {
 			Mode  string
 			Nodes []string
@@ -162,16 +167,19 @@ func nonNil(m map[string]string) map[string]string {
 }
 
 // configFingerprint is the fingerprint of the configuration a deploy of a
-// would apply, the instance-wide resource defaults included.
+// would apply, the instance-wide resource defaults included. The digests are
+// bound to the app: equal settings of two apps give different digests, so
+// one app's history says nothing about another's secrets.
 func (d *Deployer) configFingerprint(a App) AppliedConfig {
 	a = d.withResourceDefaults(a)
 	out := AppliedConfig{Version: fingerprintVersion, Key: secret.FingerprintKeyID(), Sections: map[string]string{}}
+	purpose := fingerprintPurpose + "/app:" + strconv.FormatInt(a.ID, 10) + "/"
 	for name, v := range configSections(a) {
 		b, err := json.Marshal(v)
 		if err != nil {
 			continue // unknown, never a false "changed"
 		}
-		out.Sections[name] = secret.Fingerprint(fingerprintPurpose+"/"+name, b)
+		out.Sections[name] = secret.Fingerprint(purpose+name, b)
 	}
 	return out
 }
@@ -179,7 +187,9 @@ func (d *Deployer) configFingerprint(a App) AppliedConfig {
 // configStore is the optional store capability behind applied-configuration
 // tracking (the database store has it; small test stores need not).
 type configStore interface {
-	SaveAppliedConfig(ctx context.Context, deployID int64, c AppliedConfig) error
+	// FinishDeploymentApplied is FinishDeployment for a deploy that ended
+	// done, recording what it applied in the same write.
+	FinishDeploymentApplied(ctx context.Context, deployID int64, status, imageTag, errMsg, log string, c AppliedConfig) error
 	DeploymentAppliedConfig(ctx context.Context, deployID int64) (AppliedConfig, bool, error)
 	LatestApplied(ctx context.Context, appIDs []int64) (map[int64]LatestApplied, error)
 }
@@ -192,10 +202,12 @@ type LatestApplied struct {
 	InFlight     bool           // a deploy of the app is queued or running
 }
 
-// recordAppliedConfig stores what a successful deploy applied. A rollback's
-// app is loaded without its build settings, so its source section is the one
-// the deployment it returns to recorded (or unknown when that has none).
-// Best-effort: without it the app only shows no pending changes.
+// recordAppliedConfig works out what a successful deploy applied; finishAs
+// writes it with the done status, in one update. What a deploy did not apply
+// itself comes from the deployment it took it from: a rollback's app is
+// loaded without its build settings (source) and skips the predeploy command,
+// as the network migration's system deploy does, so those sections are the
+// rollback source's, or the previous deploy's, or unknown.
 func (d *Deployer) recordAppliedConfig(deployID int64, j job, app App) {
 	cs, ok := d.store.(configStore)
 	if !ok {
@@ -204,17 +216,47 @@ func (d *Deployer) recordAppliedConfig(deployID int64, j job, app App) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	c := d.configFingerprint(app)
+	var inherit []string
 	if j.rollbackID != 0 {
-		delete(c.Sections, SectionSource)
-		if src, found, err := cs.DeploymentAppliedConfig(ctx, j.rollbackID); err == nil && found && src.comparable(c) {
-			if v, ok := src.Sections[SectionSource]; ok {
-				c.Sections[SectionSource] = v
+		inherit = append(inherit, SectionSource)
+	}
+	if j.skipPredeploy {
+		inherit = append(inherit, SectionPredeploy)
+	}
+	if len(inherit) > 0 {
+		var from *AppliedConfig
+		if j.rollbackID != 0 {
+			if src, found, err := cs.DeploymentAppliedConfig(ctx, j.rollbackID); err == nil && found {
+				from = &src
+			}
+		} else if latest, err := cs.LatestApplied(ctx, []int64{app.ID}); err == nil {
+			// This deploy is not done yet: the latest done one is the previous.
+			from = latest[app.ID].Config
+		}
+		for _, s := range inherit {
+			delete(c.Sections, s)
+			if from != nil && from.comparable(c) {
+				if v, ok := from.Sections[s]; ok {
+					c.Sections[s] = v
+				}
 			}
 		}
 	}
-	if err := cs.SaveAppliedConfig(ctx, deployID, c); err != nil {
-		slog.Warn("record applied configuration failed", "deploy", deployID, "app", app.ID, "err", err)
+	d.appliedMu.Lock()
+	if d.applied == nil {
+		d.applied = map[int64]AppliedConfig{}
 	}
+	d.applied[deployID] = c
+	d.appliedMu.Unlock()
+}
+
+// takeAppliedConfig hands finishAs what recordAppliedConfig worked out.
+func (d *Deployer) takeAppliedConfig(deployID int64) (AppliedConfig, bool) {
+	d.appliedMu.Lock()
+	defer d.appliedMu.Unlock()
+	c, ok := d.applied[deployID]
+	delete(d.applied, deployID)
+	return c, ok
 }
 
 // Pending is what an app's saved settings would change if deployed now.
@@ -225,6 +267,8 @@ type Pending struct {
 	// CanApply says "apply settings" can deploy them: the source is known and
 	// unchanged and the running image is pinned (content-addressed).
 	CanApply bool
+	// image is the image apply settings would deploy.
+	image string
 }
 
 // Any reports whether some section changed.
@@ -307,6 +351,7 @@ func (d *Deployer) pendingFor(ctx context.Context, appID int64, l LatestApplied)
 	}
 	src, known := l.Config.Sections[SectionSource]
 	p.CanApply = p.Any() && known && src == now.Sections[SectionSource] && docker.IsImmutableImage(l.ImageTag)
+	p.image = l.ImageTag
 	return p, true
 }
 
@@ -321,7 +366,16 @@ var (
 	// apply was queued for (a newer deploy, a rollout Swarm finished after
 	// Krill stopped watching, a rollback in progress).
 	ErrApplyTargetMoved = errors.New("the service no longer runs the image this apply was queued for: deploy instead")
+	// ErrApplyStopped: the app is stopped, or a Stop of it is under way.
+	ErrApplyStopped = errors.New("the application is stopped: start it to deploy the saved settings")
 )
+
+// applySkip is an apply refused before it changed anything: it is recorded
+// without an alert, and the app's status is read from its service again
+// (finishApplySkipped) rather than set to error.
+type applySkip struct{ error }
+
+func (e applySkip) Unwrap() error { return e.error }
 
 // checkApplyTarget reports whether an apply may replace the service p: it
 // must run (a stopped app is the stop's: errStoppedMeanwhile), its last update
@@ -331,10 +385,71 @@ func checkApplyTarget(p docker.ServiceProgress, image string) error {
 	if !p.Found || (!p.Global && p.Desired == 0) {
 		return errStoppedMeanwhile
 	}
-	if !docker.UpdateSettled(p.UpdateState) || p.Image != image {
+	// No task running (it exited for good, or is crash-looping): the app
+	// does not run, and an apply would start it.
+	if p.Running == 0 || !docker.UpdateSettled(p.UpdateState) || p.Image != image {
 		return ErrApplyTargetMoved
 	}
 	return nil
+}
+
+// ConfirmApply checks a Pending's CanApply against the live service, as the
+// apply itself will: deployment history can name another image than the one
+// that runs. One service read; for a single app's page.
+func (d *Deployer) ConfirmApply(ctx context.Context, appID int64, p Pending) Pending {
+	if !p.CanApply {
+		return p
+	}
+	live, err := d.engine.ServiceProgress(ctx, docker.ServiceName(appID), nil)
+	if err != nil || checkApplyTarget(live, p.image) != nil {
+		p.CanApply = false
+	}
+	return p
+}
+
+// checkApplyFresh refuses an apply queued on history that has changed since:
+// another deploy finished (a second apply of the same settings would run the
+// predeploy command and roll the service again), or the saved settings went
+// back to what runs.
+func (d *Deployer) checkApplyFresh(ctx context.Context, j job, app App) error {
+	cs, ok := d.store.(configStore)
+	if !ok {
+		return nil
+	}
+	latest, err := cs.LatestApplied(ctx, []int64{app.ID})
+	if err != nil {
+		return err
+	}
+	l := latest[app.ID]
+	if l.DeploymentID != j.applyFrom {
+		return applySkip{ErrApplyTargetMoved}
+	}
+	if l.Config != nil {
+		now := d.configFingerprint(app)
+		if l.Config.comparable(now) {
+			for _, s := range Sections {
+				if v, known := l.Config.Sections[s]; known && v != now.Sections[s] {
+					return nil
+				}
+			}
+			return applySkip{ErrNothingToApply}
+		}
+	}
+	return nil
+}
+
+// finishApplySkipped records an apply refused before it changed anything:
+// no alert, and the app's status from its service (the queue set it to
+// deploying), idle when the service is at zero or gone.
+func (d *Deployer) finishApplySkipped(deployID, appID int64, imageTag, msg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	st, err := d.engine.ServiceState(ctx, docker.ServiceName(appID))
+	cancel()
+	status := ""
+	if err == nil {
+		status = DeriveStatus(st, StatusIdle)
+	}
+	d.finishAs(deployID, appID, "error", status, imageTag, msg)
 }
 
 // EnqueueApplySettings deploys the app's current settings on the image its
@@ -347,6 +462,11 @@ func (d *Deployer) EnqueueApplySettings(ctx context.Context, appID int64, trigge
 	if !ok {
 		return 0, ErrNothingToApply
 	}
+	if n, err := d.store.CountRunningDeployments(ctx, appID); err != nil {
+		return 0, fmt.Errorf("check deployments in progress: %w", err)
+	} else if n > 0 {
+		return 0, ErrDeployInFlight
+	}
 	latest, err := cs.LatestApplied(ctx, []int64{appID})
 	if err != nil {
 		return 0, err
@@ -355,9 +475,6 @@ func (d *Deployer) EnqueueApplySettings(ctx context.Context, appID int64, trigge
 	if !ok || l.Config == nil {
 		return 0, ErrNothingToApply
 	}
-	if l.InFlight {
-		return 0, ErrDeployInFlight
-	}
 	p, ok := d.pendingFor(ctx, appID, l)
 	if !ok || !p.Any() {
 		return 0, ErrNothingToApply
@@ -365,14 +482,26 @@ func (d *Deployer) EnqueueApplySettings(ctx context.Context, appID int64, trigge
 	if !p.CanApply {
 		return 0, ErrApplyNeedsDeploy
 	}
+	live, err := d.engine.ServiceProgress(ctx, docker.ServiceName(appID), nil)
+	if err != nil {
+		return 0, fmt.Errorf("read the app's service: %w", err)
+	}
+	switch err := checkApplyTarget(live, l.ImageTag); {
+	case errors.Is(err, errStoppedMeanwhile):
+		return 0, ErrApplyStopped
+	case err != nil:
+		return 0, err
+	}
 	return d.enqueue(appID, trigger, job{applyImage: l.ImageTag, applyFrom: l.DeploymentID, applySource: l.Config.Sections[SectionSource]})
 }
 
 // validateApplyImage checks, for a locally built image (a sha256: image ID,
 // which Swarm cannot pull), that it is on every node the app may run on. A
 // registry digest needs no check: Swarm pulls it by digest where it lacks it.
-// Volumes are left out: a new volume is what an apply may well add.
-func (d *Deployer) validateApplyImage(ctx context.Context, app App, image string) error {
+// Volumes are left out: a new volume is what an apply may well add. Before
+// the placement labels are reconciled (checkLabels false) only the nodes the
+// app is to run on are checked, not whether their labels already agree.
+func (d *Deployer) validateApplyImage(ctx context.Context, app App, image string, checkLabels bool) error {
 	if !strings.HasPrefix(image, "sha256:") {
 		return nil
 	}
@@ -382,6 +511,9 @@ func (d *Deployer) validateApplyImage(ctx context.Context, app App, image string
 	}
 	spec := d.buildSpec(app, image)
 	spec.Mounts = nil
+	if !checkLabels {
+		spec.Constraints = nil
+	}
 	var selected []string
 	if app.PlacementMode == "pin" || app.PlacementMode == "global" {
 		selected = app.PlacementNodes
@@ -390,4 +522,26 @@ func (d *Deployer) validateApplyImage(ctx context.Context, app App, image string
 		return fmt.Errorf("the built image is not on every node the app may run on, deploy instead: %w", err)
 	}
 	return nil
+}
+
+// AppsDeploying reports which of the apps (those with a successful
+// deployment) have a deploy queued or running, in one query: a page that
+// does not look pending changes up can still hide their markers then.
+func (d *Deployer) AppsDeploying(ctx context.Context, appIDs []int64) map[int64]bool {
+	out := map[int64]bool{}
+	cs, ok := d.store.(configStore)
+	if !ok || len(appIDs) == 0 {
+		return out
+	}
+	latest, err := cs.LatestApplied(ctx, appIDs)
+	if err != nil {
+		slog.Warn("pending changes: deploys in flight", "err", err)
+		return out
+	}
+	for id, l := range latest {
+		if l.InFlight {
+			out[id] = true
+		}
+	}
+	return out
 }

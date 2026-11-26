@@ -9,13 +9,18 @@ deploy. Once you save one of them while the app runs, the app's header shows
 environment canvas get a dot, and the current deployment on the **Deployments**
 tab names what changed after it. Domains apply at once and are not marked.
 
-**Reload** restarts the containers on the settings they run with; it never
-applies saved changes. **Apply settings** deploys the saved settings on the image
-the app runs now: it does not pull the image's tag again or rebuild the source.
-It is offered when the image or build settings themselves did not change and the
-running image is pinned by digest (registry images whose digest Krill resolved,
-and Dockerfile builds when `KRILL_SECRET_KEY` is set or a pre-deploy command
-exists). Otherwise **deploy again** is the highlighted action. A stopped app shows
+**Reload** of a running app restarts the containers on the settings they run
+with; it never applies saved changes. (Reload of a stopped app deploys it, with
+the saved settings, like Start.) **Apply settings** deploys the saved settings on
+the image the app runs now: it does not pull the image's tag again or rebuild the
+source, and runs the pre-deploy command as a deploy would. It is offered when the
+image or build settings themselves did not change and the running image is
+pinned by digest (registry images whose digest Krill resolved, and Dockerfile
+builds when `KRILL_SECRET_KEY` is set or a pre-deploy command exists). A node
+that lacks a registry image pulls it by digest, which needs the registry. A
+Dockerfile build exists only where it was built: Apply settings is refused
+unless every node the app may run on has it, so pin such an app to that node.
+Otherwise **deploy again** is the highlighted action. A stopped app shows
 nothing: starting it deploys the current settings. Apps deployed before Krill
 recorded what a deploy applies show nothing until their next deploy.
 

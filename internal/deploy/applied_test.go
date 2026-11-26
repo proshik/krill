@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -91,7 +92,7 @@ func TestConfigFingerprintChangesExactlyOneSection(t *testing.T) {
 		{"restart", func(a *App) { a.RestartCondition = "on-failure" }, SectionRuntime},
 		{"restart attempts", func(a *App) { a.RestartMaxAttempts = 5 }, SectionRuntime},
 		{"healthcheck", func(a *App) { a.Healthcheck = &docker.HealthcheckSpec{Test: []string{"CMD-SHELL", "true"}} }, SectionRuntime},
-		{"predeploy", func(a *App) { a.PredeployCommand = "migrate" }, SectionRuntime},
+		{"predeploy", func(a *App) { a.PredeployCommand = "migrate" }, SectionPredeploy},
 		{"volume added", func(a *App) {
 			a.Mounts = append(a.Mounts, docker.MountSpec{Type: "volume", Source: "v-c", Target: "/c"})
 		}, SectionVolumes},
@@ -131,6 +132,11 @@ func TestConfigFingerprintDockerfileSource(t *testing.T) {
 		}
 	}
 	// The builder's defaults are the same settings as their explicit form.
+	dot := base
+	dot.DockerfilePath = "./Dockerfile"
+	if got := changedSections(fp, d.configFingerprint(dot)); len(got) != 0 {
+		t.Errorf("./Dockerfile changed %v", got)
+	}
 	a0 := base
 	a0.DockerfilePath, a0.GitBranch = "", ""
 	explicit := base
@@ -147,6 +153,18 @@ func TestConfigFingerprintDockerfileSource(t *testing.T) {
 }
 
 // A global service runs one task per node: its replica count is not applied.
+// Digests are bound to the app: equal settings of two apps never compare.
+func TestConfigFingerprintBoundToTheApp(t *testing.T) {
+	secret.Init("k")
+	defer secret.Init("")
+	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
+	a, b := fingerprintApp(), fingerprintApp()
+	b.ID = a.ID + 1
+	if got := changedSections(d.configFingerprint(a), d.configFingerprint(b)); len(got) != len(Sections) {
+		t.Fatalf("two apps with equal settings share digests: only %v differ", got)
+	}
+}
+
 func TestConfigFingerprintIgnoresReplicasOfAGlobalService(t *testing.T) {
 	secret.Init("")
 	d := newDeployer(&mockEngine{}, &mockBuilder{}, newFakeStore(imageApp()))
@@ -510,14 +528,174 @@ func TestApplySettingsRefusedWhenTheServiceRunsAnotherImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.liveImage = "nginx@sha256:" + strings.Repeat("7", 64)
-	predeploys, deploys := len(e.calls), len(e.deployed)
+	e.nodes = []docker.SwarmNode{{ID: "node-1", State: "ready", Availability: "active"}}
+	predeploys, deploys, labels := len(e.calls), len(e.deployed), e.labelWrites
 	runReleaseJob(t, d, id)
 	requireDeployment(t, q, id, "error")
 	if dep, _ := q.GetDeployment(ctx, id); dep.ErrorMessage != ErrApplyTargetMoved.Error() {
 		t.Fatalf("error = %q", dep.ErrorMessage)
 	}
+	if len(e.calls) != predeploys || len(e.deployed) != deploys || e.labelWrites != labels {
+		t.Fatal("a refused apply ran its predeploy command, wrote placement labels or changed the service")
+	}
+	// Nothing changed: the app is not marked failed.
+	if a, _ := q.GetApplication(ctx, appID); a.Status != StatusRunning {
+		t.Fatalf("app status after a refused apply = %q", a.Status)
+	}
+	// The page no longer offers apply settings for this app either.
+	if p := d.ConfirmApply(ctx, appID, d.PendingChanges(ctx, []int64{appID})[appID]); p.CanApply || !p.Any() {
+		t.Fatalf("pending with another live image = %+v", p)
+	}
+	if _, err := d.EnqueueApplySettings(ctx, appID, TriggerManual); !errors.Is(err, ErrApplyTargetMoved) {
+		t.Fatalf("admission with another live image = %v", err)
+	}
+}
+
+func TestCheckApplyTarget(t *testing.T) {
+	const img = "repo@sha256:aa"
+	ok := docker.ServiceProgress{Found: true, Desired: 1, Running: 1, Image: img}
+	for name, c := range map[string]struct {
+		p    docker.ServiceProgress
+		want error
+	}{
+		"running":          {ok, nil},
+		"gone":             {docker.ServiceProgress{}, errStoppedMeanwhile},
+		"scaled to zero":   {docker.ServiceProgress{Found: true, Image: img}, errStoppedMeanwhile},
+		"no task running":  {docker.ServiceProgress{Found: true, Desired: 1, Image: img}, ErrApplyTargetMoved},
+		"update under way": {docker.ServiceProgress{Found: true, Desired: 1, Running: 1, UpdateState: "updating", Image: img}, ErrApplyTargetMoved},
+		"another image":    {docker.ServiceProgress{Found: true, Desired: 1, Running: 1, Image: "repo@sha256:bb"}, ErrApplyTargetMoved},
+		"global running":   {docker.ServiceProgress{Found: true, Global: true, Running: 2, Image: img}, nil},
+	} {
+		if got := checkApplyTarget(c.p, img); !errors.Is(got, c.want) || (c.want == nil && got != nil) {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// Two applies admitted on the same history: the second finds the first's
+// deployment done and changes nothing (its predeploy command would run again).
+func TestApplySettingsQueuedOnStaleHistoryIsSkipped(t *testing.T) {
+	q, st, d, e, appID, _ := configFixture(t)
+	ctx := t.Context()
+	if _, err := st.pool.Exec(ctx, "UPDATE applications SET predeploy_command='migrate' WHERE id=$1", appID); err != nil {
+		t.Fatal(err)
+	}
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := st.LatestApplied(ctx, []int64{appID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := job{applyImage: latest[appID].ImageTag, applyFrom: latest[appID].DeploymentID, applySource: latest[appID].Config.Sections[SectionSource]}
+	id, err := d.EnqueueApplySettings(ctx, appID, TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runReleaseJob(t, d, id)
+	requireDeployment(t, q, id, "done")
+	second, err := d.enqueue(appID, TriggerManual, stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	predeploys, deploys := len(e.calls), len(e.deployed)
+	runReleaseJob(t, d, second)
+	requireDeployment(t, q, second, "error")
 	if len(e.calls) != predeploys || len(e.deployed) != deploys {
-		t.Fatal("a refused apply ran its predeploy command or changed the service")
+		t.Fatal("a stale apply ran its predeploy command again or rolled the service")
+	}
+	if a, _ := q.GetApplication(ctx, appID); a.Status != StatusRunning {
+		t.Fatalf("app status = %q", a.Status)
+	}
+}
+
+// Saved settings put back to what runs while the apply waited: nothing to do.
+func TestApplySettingsWithNothingLeftIsSkipped(t *testing.T) {
+	q, _, d, e, appID, _ := configFixture(t)
+	ctx := t.Context()
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	app, _ := q.GetApplication(ctx, appID)
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.EnqueueApplySettings(ctx, appID, TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: app.EnvText, EnvPublicKeys: app.EnvPublicKeys}); err != nil {
+		t.Fatal(err)
+	}
+	deploys := len(e.deployed)
+	runReleaseJob(t, d, id)
+	requireDeployment(t, q, id, "error")
+	if dep, _ := q.GetDeployment(ctx, id); dep.ErrorMessage != ErrNothingToApply.Error() || len(e.deployed) != deploys {
+		t.Fatalf("reverted settings: error %q, deploys %d -> %d", dep.ErrorMessage, deploys, len(e.deployed))
+	}
+}
+
+// An apply is not admitted while a Stop of the app runs: it could pass its
+// checks before the Stop scales the service.
+func TestApplySettingsRefusedDuringAStop(t *testing.T) {
+	q, _, d, _, appID, _ := configFixture(t)
+	ctx := t.Context()
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	if err := q.UpdateApplicationEnvClassified(ctx, db.UpdateApplicationEnvClassifiedParams{ID: appID, EnvText: "PUBLIC=changed", EnvPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	var during error
+	if _, err := d.StopApp(ctx, appID, "ops@example.com", func(context.Context) error {
+		_, during = d.EnqueueApplySettings(ctx, appID, TriggerManual)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(during, ErrApplyStopped) {
+		t.Fatalf("apply during a stop = %v, want ErrApplyStopped", during)
+	}
+	if n := len(d.appStops); n != 0 {
+		t.Fatalf("%d stops still counted after StopApp returned", n)
+	}
+}
+
+// With a deploy in flight the refusal says so, whatever history holds.
+func TestApplySettingsInFlightFirst(t *testing.T) {
+	q, st, d, _, appID, _ := configFixture(t)
+	ctx := t.Context()
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	if _, err := st.pool.Exec(ctx, "UPDATE deployments SET applied_config = NULL WHERE id = $1", first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateDeployment(ctx, db.CreateDeploymentParams{ApplicationID: appID, Trigger: TriggerManual}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.EnqueueApplySettings(ctx, appID, TriggerManual); !errors.Is(err, ErrDeployInFlight) {
+		t.Fatalf("apply with a deploy in flight = %v", err)
+	}
+}
+
+// The network migration's system deploy skips the predeploy command, so a
+// command saved before it is still pending afterwards.
+func TestSystemDeployKeepsThePredeployCommandPending(t *testing.T) {
+	q, st, d, _, appID, _ := configFixture(t)
+	ctx := t.Context()
+	if _, err := st.pool.Exec(ctx, "UPDATE applications SET predeploy_command='migrate-a' WHERE id=$1", appID); err != nil {
+		t.Fatal(err)
+	}
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	if _, err := st.pool.Exec(ctx, "UPDATE applications SET predeploy_command='migrate-b' WHERE id=$1", appID); err != nil {
+		t.Fatal(err)
+	}
+	sys := d.EnqueueSystem(ctx, appID)
+	runReleaseJob(t, d, sys)
+	requireDeployment(t, q, sys, "done")
+	if p := d.PendingChanges(ctx, []int64{appID})[appID]; !reflect.DeepEqual(p.Changed, []string{SectionPredeploy}) {
+		t.Fatalf("pending after a system deploy = %+v, want the predeploy command", p)
 	}
 }
 

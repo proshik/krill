@@ -1685,6 +1685,7 @@ var en = map[string]string{
 	"pending.section.source":           "source",
 	"pending.section.env":              "variables",
 	"pending.section.metrics":          "metrics token",
+	"pending.section.predeploy":        "pre-deploy command",
 	"pending.section.runtime":          "resources",
 	"pending.section.volumes":          "volumes",
 	"pending.section.ports":            "published ports",

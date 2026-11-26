@@ -282,7 +282,7 @@ func tabSections(tab string) []string {
 	case "metrics":
 		return []string{"metrics"}
 	case "settings":
-		return []string{"source", "runtime", "volumes", "ports", "placement"}
+		return []string{"source", "runtime", "predeploy", "volumes", "ports", "placement"}
 	}
 	return nil
 }

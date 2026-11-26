@@ -153,6 +153,36 @@ func (q *Queries) FinishDeployment(ctx context.Context, arg FinishDeploymentPara
 	return err
 }
 
+const finishDeploymentApplied = `-- name: FinishDeploymentApplied :exec
+UPDATE deployments
+SET status = $1, image_tag = $2, error_message = $3, log = $4,
+    finished_at = now(), applied_config = $5
+WHERE id = $6
+`
+
+type FinishDeploymentAppliedParams struct {
+	Status        string `json:"status"`
+	ImageTag      string `json:"image_tag"`
+	ErrorMessage  string `json:"error_message"`
+	Log           string `json:"log"`
+	AppliedConfig []byte `json:"applied_config"`
+	ID            int64  `json:"id"`
+}
+
+// FinishDeployment for a deploy that ended done, with what it applied: one
+// update, so no row reads done without it or failed with it.
+func (q *Queries) FinishDeploymentApplied(ctx context.Context, arg FinishDeploymentAppliedParams) error {
+	_, err := q.db.Exec(ctx, finishDeploymentApplied,
+		arg.Status,
+		arg.ImageTag,
+		arg.ErrorMessage,
+		arg.Log,
+		arg.AppliedConfig,
+		arg.ID,
+	)
+	return err
+}
+
 const getDeployment = `-- name: GetDeployment :one
 SELECT id, application_id, status, trigger, image_tag, log, error_message, started_at, finished_at, rollback_source_id, version, applied_config FROM deployments WHERE id = $1
 `
