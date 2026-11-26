@@ -165,8 +165,8 @@ type fixture struct {
 	id     *age.X25519Identity
 }
 
-// newFixture builds a Service on a real DBStore. With minio it also starts an
-// S3 server and creates the "state" bucket in it.
+// newFixture builds a Service on a real DBStore. With minio it also creates a
+// "state" bucket of the test's own on the shared S3 server.
 func newFixture(t *testing.T, dsn string, minio bool) *fixture {
 	t.Helper()
 	id, err := age.GenerateX25519Identity()
@@ -181,7 +181,7 @@ func newFixture(t *testing.T, dsn string, minio bool) *fixture {
 	}
 	if minio {
 		m := testutil.NewMinio(t)
-		f.dst = backup.Destination{Endpoint: m.Endpoint, Bucket: "state", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+		f.dst = backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "state"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 		if err := backup.CreateBucket(context.Background(), f.dst, true); err != nil {
 			t.Fatalf("create bucket: %v", err)
 		}

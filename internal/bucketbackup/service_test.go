@@ -96,7 +96,7 @@ func (s *memStore) restoreStatus() (string, string) {
 func fixture(t *testing.T) (*Service, *memIO, *memStore) {
 	t.Helper()
 	m := testutil.NewMinio(t)
-	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: "backups", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "backups"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	if err := backup.CreateBucket(context.Background(), dst, true); err != nil {
 		t.Fatal(err)
 	}

@@ -88,7 +88,7 @@ func TestBucketBackupAndRestoreOnSilo(t *testing.T) {
 	}
 
 	m := testutil.NewMinio(t)
-	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: "backups", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "backups"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	if err := backup.CreateBucket(ctx, dst, true); err != nil {
 		t.Fatal(err)
 	}
