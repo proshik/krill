@@ -57,13 +57,25 @@ type Client struct {
 	status ClientStatus
 	wake   chan struct{}
 	cur    *yamux.Session
-	lat    atomic.Int64
+	// gen counts Wake calls: an attempt that read the settings before the
+	// latest one (a Forget, a new pairing) must not become the session.
+	gen     uint64
+	pending map[string]pendingKey // pairing keys by the code's secret hash
+	lat     atomic.Int64
+}
+
+// pendingKey is the key of a pairing attempt that has not been stored yet. A
+// retry of the same code reuses it, so a relay that already redeemed the code
+// for it answers with the same certificate.
+type pendingKey struct {
+	keyPEM, csrPEM string
+	until          time.Time
 }
 
 func newClient(store *Store, version string) *Client {
 	d := &net.Dialer{Timeout: dialLimit}
 	return &Client{store: store, version: version, dial: d.DialContext,
-		wake: make(chan struct{}, 1), status: ClientStatus{State: StateOff}}
+		wake: make(chan struct{}, 1), status: ClientStatus{State: StateOff}, pending: map[string]pendingKey{}}
 }
 
 // Status returns a copy of the client's state.
@@ -94,6 +106,7 @@ func (c *Client) fail(cat, msg string) {
 // re-paired.
 func (c *Client) Wake() {
 	c.mu.Lock()
+	c.gen++
 	cur := c.cur
 	c.mu.Unlock()
 	if cur != nil {
@@ -119,6 +132,9 @@ func (c *Client) run(ctx context.Context) {
 			case <-time.After(jitter(delay)):
 			}
 		}
+		c.mu.Lock()
+		gen := c.gen
+		c.mu.Unlock()
 		m, err := c.store.Client(ctx)
 		if ctx.Err() != nil {
 			return
@@ -147,7 +163,7 @@ func (c *Client) run(ctx context.Context) {
 				s.State = StateConnecting
 			}
 		})
-		connected := c.once(ctx, m)
+		connected := c.once(ctx, m, gen)
 		if connected {
 			delay = 0
 		}
@@ -156,7 +172,7 @@ func (c *Client) run(ctx context.Context) {
 }
 
 // once runs one session attempt and reports whether it got connected.
-func (c *Client) once(ctx context.Context, m ClientMaterial) bool {
+func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 	id, err := tlsCert(m.Identity)
 	if err != nil {
 		c.fail(CatTLS, "the client certificate is unusable")
@@ -198,6 +214,11 @@ func (c *Client) once(ctx context.Context, m ClientMaterial) bool {
 		return false
 	}
 	c.mu.Lock()
+	if c.gen != gen {
+		// Forgotten or re-paired while this attempt was connecting.
+		c.mu.Unlock()
+		return false
+	}
 	c.cur = mux
 	c.status = ClientStatus{State: StateConnected, Since: time.Now(), RelayVersion: reply.KrillVersion, CertNotAfter: c.status.CertNotAfter}
 	c.mu.Unlock()
@@ -289,8 +310,14 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 	check := time.NewTicker(renewCheck)
 	defer check.Stop()
 	var pendingKey string
+	// One renewal per session: the session stays authenticated by the
+	// certificate it connected with, and the relay keeps that one valid
+	// only until the first connect with the new one. A second renewal here
+	// would retire the stored certificate in favour of one whose answer
+	// might be lost.
+	renewed := false
 	ask := func() {
-		if pendingKey != "" || !needsRenewal(cert.NotBefore, cert.NotAfter, time.Now()) {
+		if renewed || pendingKey != "" || !needsRenewal(cert.NotBefore, cert.NotAfter, time.Now()) {
 			return
 		}
 		key, csr, err := NewCSR()
@@ -333,13 +360,11 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 				continue
 			}
 			if saved {
-				nc, _ := ParseCert(next.CertPEM)
-				if nc != nil {
-					cert = nc
+				renewed = true
+				if nc, _ := ParseCert(next.CertPEM); nc != nil {
 					c.set(func(s *ClientStatus) { s.CertNotAfter = nc.NotAfter })
+					slog.Info("link: certificate renewed", "not_after", nc.NotAfter.Format(time.DateOnly))
 				}
-				m.Identity = next
-				slog.Info("link: certificate renewed", "not_after", cert.NotAfter.Format(time.DateOnly))
 			}
 		}
 	}
@@ -361,7 +386,7 @@ func (c *Client) Pair(ctx context.Context, raw string) error {
 	if err != nil {
 		return err
 	}
-	key, csr, err := NewCSR()
+	key, csr, err := c.pairingKey(code)
 	if err != nil {
 		return err
 	}
@@ -373,6 +398,10 @@ func (c *Client) Pair(ctx context.Context, raw string) error {
 			break
 		}
 	}
+	var refused *PairRefusedError
+	if errors.As(err, &refused) {
+		c.dropPairingKey(code) // the code is dead for this key
+	}
 	if err != nil {
 		return err
 	}
@@ -383,8 +412,39 @@ func (c *Client) Pair(ctx context.Context, raw string) error {
 	if err := c.store.SavePaired(ctx, code, id); err != nil {
 		return err
 	}
+	c.dropPairingKey(code)
 	c.Wake()
 	return nil
+}
+
+// pairingKey returns the key of an earlier attempt with the same code that
+// never got stored — its answer lost, or the local write failed — or a new
+// one.
+func (c *Client) pairingKey(code PairingCode) (string, string, error) {
+	h := SecretSHA256(code.Secret)
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, p := range c.pending {
+		if now.After(p.until) {
+			delete(c.pending, k)
+		}
+	}
+	if p, ok := c.pending[h]; ok {
+		return p.keyPEM, p.csrPEM, nil
+	}
+	key, csr, err := NewCSR()
+	if err != nil {
+		return "", "", err
+	}
+	c.pending[h] = pendingKey{keyPEM: key, csrPEM: csr, until: now.Add(CodeLifetime)}
+	return key, csr, nil
+}
+
+func (c *Client) dropPairingKey(code PairingCode) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.pending, SecretSHA256(code.Secret))
 }
 
 // PairRefusedError is the relay's own refusal of a pairing attempt.
@@ -425,7 +485,15 @@ func (c *Client) pairOnce(ctx context.Context, code PairingCode, csr string) (st
 		return "", &PairFailedError{Category: category(err), Err: err}
 	}
 	if reply.Type != "cert" {
-		return "", &PairRefusedError{Category: reply.Category, Message: reply.Message}
+		// The relay's words are shown and logged: accept only the known
+		// categories, and keep its message out of the log.
+		cat := reply.Category
+		switch cat {
+		case pairRefused, pairRateLimited, pairPeerExists, pairInternal:
+		default:
+			cat = pairRefused
+		}
+		return "", &PairRefusedError{Category: cat, Message: reply.Message}
 	}
 	return reply.Cert, nil
 }

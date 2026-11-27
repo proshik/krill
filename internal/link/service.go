@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,10 @@ type Service struct {
 	relay  *Relay
 	client *Client
 
+	// opMu serializes the operator's changes — role, pairing, forgetting —
+	// so that a pairing that answers late cannot undo a role change or a
+	// Forget made meanwhile.
+	opMu        sync.Mutex
 	mu          sync.Mutex // role transitions
 	role        atomic.Value
 	listener    *GatewayListener
@@ -80,7 +85,72 @@ func (s *Service) Start(ctx context.Context) error {
 	if err := s.store.Init(ctx); err != nil {
 		return fmt.Errorf("init link settings: %w", err)
 	}
+	if err := s.renewServerIfDue(ctx); err != nil {
+		slog.Error("link: renew the relay's server certificate failed", "err", err)
+	}
+	go s.maintain()
 	return s.apply(ctx)
+}
+
+// serverRenewBefore is how long before its expiry the relay's server
+// certificate is reissued; maintainEvery is how often that is checked.
+const (
+	serverRenewBefore = 90 * 24 * time.Hour
+	maintainEvery     = 24 * time.Hour
+)
+
+// maintain reissues the relay's server certificate before it expires, for as
+// long as the service runs.
+func (s *Service) maintain() {
+	t := time.NewTicker(maintainEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-t.C:
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
+		renewed, err := s.renewServerIfDueReport(ctx)
+		if err != nil {
+			slog.Error("link: renew the relay's server certificate failed", "err", err)
+		} else if renewed {
+			if err := s.apply(ctx); err != nil {
+				slog.Error("link: reload after renewing the server certificate failed", "err", err)
+			}
+		}
+		cancel()
+	}
+}
+
+func (s *Service) renewServerIfDue(ctx context.Context) error {
+	_, err := s.renewServerIfDueReport(ctx)
+	return err
+}
+
+// renewServerIfDueReport reissues the relay's server certificate under the
+// same CA when it expires within serverRenewBefore. Clients pin the CA, not
+// the server certificate, so they notice nothing.
+func (s *Service) renewServerIfDueReport(ctx context.Context) (bool, error) {
+	row, err := s.store.Row(ctx)
+	if err != nil {
+		return false, err
+	}
+	host := deref(row.LinkHost)
+	if row.Role != RoleRelay || host == "" || deref(row.ServerCert) == "" {
+		return false, nil
+	}
+	c, err := ParseCert(*row.ServerCert)
+	if err == nil && time.Until(c.NotAfter) > serverRenewBefore {
+		return false, nil
+	}
+	if err := s.hosts.ReserveLinkHost(ctx, host, func(q *db.Queries) error {
+		return s.writeRelay(ctx, q, host, true)
+	}); err != nil {
+		return false, err
+	}
+	slog.Info("link: relay server certificate reissued", "link_host", host)
+	return true, nil
 }
 
 // Close stops the listener and every session.
@@ -98,6 +168,15 @@ func (s *Service) Close() {
 
 // Role is the role currently running.
 func (s *Service) Role() string { return s.role.Load().(string) }
+
+// applyAfterWrite runs apply once a role change is stored. The change is
+// already visible to the page and the gateway's poll, so the running parts
+// must follow even when the request that made it is cancelled meanwhile.
+func (s *Service) applyAfterWrite(ctx context.Context) error {
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	return s.apply(actx)
+}
 
 // apply brings the running parts in line with the stored role.
 func (s *Service) apply(ctx context.Context) error {
@@ -163,9 +242,9 @@ func (s *Service) stopListenerLocked() {
 }
 
 // dispatch hands an authenticated connection to the running role.
-func (s *Service) dispatch(conn net.Conn, src netip.AddrPort) {
+func (s *Service) dispatch(conn net.Conn, src netip.AddrPort, release func()) {
 	if s.Role() == RoleRelay {
-		s.relay.ServeConn(conn, src)
+		s.relay.ServeConn(conn, src, release)
 		return
 	}
 	// A client's listener has nothing to serve until egress (KRL-002).
@@ -196,9 +275,38 @@ func (s *Service) stopClientLocked() {
 	s.clientStop, s.clientDone = nil, nil
 }
 
+// ErrLinkPortTaken means KRILL_LINK_LISTEN_ADDR's port is one the firewall
+// lockdown already admits from anywhere (SSH, HTTP, HTTPS, the UI port): the
+// listener would then be reachable from the world, not from the gateway only.
+var ErrLinkPortTaken = errors.New("KRILL_LINK_LISTEN_ADDR uses a port the firewall keeps public")
+
+// ListenRequirement explains why the link listener cannot be used in any role,
+// nil when it can.
+func (s *Service) ListenRequirement() error {
+	port, err := ListenPort(s.cfg.LinkListenAddr)
+	if err != nil {
+		return err
+	}
+	public := []int{22, 80, 443}
+	if _, ui, err := net.SplitHostPort(s.cfg.ListenAddr); err == nil {
+		if p, err := strconv.Atoi(ui); err == nil {
+			public = append(public, p)
+		}
+	}
+	for _, p := range public {
+		if p == port {
+			return ErrLinkPortTaken
+		}
+	}
+	return nil
+}
+
 // RelayRequirement explains why this installation cannot be a relay, nil when
 // it can.
 func (s *Service) RelayRequirement() error {
+	if err := s.ListenRequirement(); err != nil {
+		return err
+	}
 	_, err := Upstream(s.cfg.AdvertiseAddr, s.cfg.ListenAddr, s.cfg.LinkListenAddr)
 	return err
 }
@@ -237,20 +345,27 @@ func (s *Service) Settings(ctx context.Context) (db.LinkSetting, error) { return
 // SetOff turns the link off: the listener closes and every session ends. Key
 // material and peers stay, so turning the role back on needs no re-pairing.
 func (s *Service) SetOff(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 	if err := s.store.q.SetLinkRoleOff(ctx); err != nil {
 		return err
 	}
 	slog.Info("link: role off")
-	return s.apply(ctx)
+	return s.applyAfterWrite(ctx)
 }
 
 // SetClient makes the installation a client.
 func (s *Service) SetClient(ctx context.Context) error {
+	if err := s.ListenRequirement(); err != nil {
+		return err
+	}
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 	if err := s.store.q.SetLinkRoleClient(ctx); err != nil {
 		return err
 	}
 	slog.Info("link: role client")
-	return s.apply(ctx)
+	return s.applyAfterWrite(ctx)
 }
 
 // SetRelay makes the installation a relay routing host (normalized by the
@@ -261,9 +376,27 @@ func (s *Service) SetRelay(ctx context.Context, host string) error {
 	if err := s.RelayRequirement(); err != nil {
 		return err
 	}
-	row, err := s.store.Row(ctx)
-	if err != nil {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if err := s.hosts.ReserveLinkHost(ctx, host, func(q *db.Queries) error {
+		return s.writeRelay(ctx, q, host, false)
+	}); err != nil {
 		return err
+	}
+	slog.Info("link: role relay", "link_host", host)
+	return s.applyAfterWrite(ctx)
+}
+
+// writeRelay stores the relay role for host. It locks the settings row and
+// picks the key material from what that row holds now, so two first
+// enablements cannot each create a CA and one replace the other after a
+// client pinned it. It keeps the CA (creating one on first use, or when it
+// can no longer be decrypted) and reissues the server certificate when the
+// host changes, the certificate is unusable or renew is set.
+func (s *Service) writeRelay(ctx context.Context, q *db.Queries, host string, renew bool) error {
+	row, err := q.LockLinkSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("lock link settings: %w", err)
 	}
 	now := time.Now()
 	ca, err := pair(row.CaCert, row.CaKey)
@@ -276,18 +409,12 @@ func (s *Service) SetRelay(ctx context.Context, host string) error {
 		}
 	}
 	srv, err := pair(row.ServerCert, row.ServerKey)
-	if err != nil || deref(row.LinkHost) != host || !issuedBy(srv, ca) {
+	if renew || err != nil || deref(row.LinkHost) != host || !issuedBy(srv, ca) {
 		if srv, err = IssueServer(ca, host, now); err != nil {
 			return err
 		}
 	}
-	if err := s.hosts.ReserveLinkHost(ctx, host, func(q *db.Queries) error {
-		return relayWrite(ctx, q, host, ca, srv)
-	}); err != nil {
-		return err
-	}
-	slog.Info("link: role relay", "link_host", host)
-	return s.apply(ctx)
+	return relayWrite(ctx, q, host, ca, srv)
 }
 
 // issuedBy reports whether srv was signed by ca.
@@ -343,6 +470,8 @@ func (s *Service) RemovePeer(ctx context.Context, id int64) error {
 
 // Pair redeems a pairing code from the relay operator.
 func (s *Service) Pair(ctx context.Context, code string) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 	if s.Role() != RoleClient {
 		return ErrWrongRole
 	}
@@ -350,11 +479,13 @@ func (s *Service) Pair(ctx context.Context, code string) error {
 		return err
 	}
 	slog.Info("link: paired with the relay")
-	return s.apply(ctx)
+	return s.applyAfterWrite(ctx)
 }
 
 // ForgetRelay erases the client's key and certificate and drops its session.
 func (s *Service) ForgetRelay(ctx context.Context) error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
 	if err := s.store.Forget(ctx); err != nil {
 		return err
 	}
@@ -371,7 +502,7 @@ type PeerView struct {
 	Peer      db.LinkPeer
 	Session   PeerSession
 	Connected bool
-	Duplicate *DuplicateAttempt
+	Refusal   *Refusal
 }
 
 // Peers lists the relay's peers with their sessions.
@@ -384,8 +515,8 @@ func (s *Service) Peers(ctx context.Context) ([]PeerView, error) {
 	for _, p := range rows {
 		v := PeerView{Peer: p}
 		v.Session, v.Connected = s.relay.Session(p.ID)
-		if d, ok := s.relay.Duplicate(p.ID); ok {
-			v.Duplicate = &d
+		if d, ok := s.relay.LastRefusal(p.ID); ok {
+			v.Refusal = &d
 		}
 		out = append(out, v)
 	}
@@ -408,43 +539,62 @@ func (s *Service) LinkHostConflicts(ctx context.Context) ([]hostshare.HostHolder
 	if row.Role != RoleRelay || deref(row.LinkHost) == "" {
 		return nil, nil
 	}
-	return s.hosts.LinkHostHolders(ctx, *row.LinkHost)
+	return s.hosts.LinkHostHolders(ctx, *row.LinkHost, nil)
 }
 
-// GatewayTCP is the tcp section for /_krill/gateway/config, nil when there is
-// no route to publish: the role is not relay, the relay requirements fail, or
-// the link host is held by the panel or a domain — which a release without
-// the link could have handed out. That check runs before every publication,
-// under the host lock.
-func (s *Service) GatewayTCP(ctx context.Context) (map[string]any, error) {
+// GatewayTCP is the tcp section for /_krill/gateway/config and the link host
+// it routes; nil when there is no route to publish: the role is not relay, the
+// relay requirements fail, or the link host is held by the panel, a domain or
+// an ingress host — which a release without the link could have handed out.
+// That check runs before every publication under the host lock, and the
+// configuration is built from the settings re-read under the same lock, so a
+// relay turned off or moved meanwhile is not published either.
+func (s *Service) GatewayTCP(ctx context.Context) (map[string]any, string, error) {
 	row, err := s.store.Row(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	host := deref(row.LinkHost)
 	if row.Role != RoleRelay || host == "" {
-		return nil, nil
+		return nil, "", nil
 	}
 	upstream, err := Upstream(s.cfg.AdvertiseAddr, s.cfg.ListenAddr, s.cfg.LinkListenAddr)
-	if err != nil {
-		return nil, nil
+	if err != nil || s.ListenRequirement() != nil {
+		return nil, "", nil
 	}
-	holders, err := s.hosts.LinkHostHolders(ctx, host)
+	var cfg map[string]any
+	holders, err := s.hosts.LinkHostHolders(ctx, host, func(q *db.Queries, holders []hostshare.HostHolder) error {
+		if len(holders) > 0 {
+			return nil
+		}
+		now, err := q.GetLinkSettings(ctx)
+		if err != nil {
+			return err
+		}
+		if now.Role != RoleRelay || deref(now.LinkHost) != host {
+			return nil
+		}
+		local, err := localFromRow(now)
+		if err != nil {
+			return err
+		}
+		cfg = GatewayConfig(host, upstream, local)
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(holders) > 0 {
 		if !s.conflictLog.Swap(true) {
-			slog.Warn("link: link host is also held by the panel or an app domain; its route is not published", "link_host", host, "holders", len(holders))
+			slog.Warn("link: link host is also held by the panel, an app domain or an ingress host; its route is not published", "link_host", host, "holders", len(holders))
 		}
-		return nil, nil
+		return nil, "", nil
 	}
 	if s.conflictLog.Swap(false) {
 		slog.Info("link: link host conflict resolved; route published", "link_host", host)
 	}
-	local, err := s.store.Local(ctx)
-	if err != nil {
-		return nil, err
+	if cfg == nil {
+		return nil, "", nil
 	}
-	return GatewayConfig(host, upstream, local), nil
+	return cfg, host, nil
 }

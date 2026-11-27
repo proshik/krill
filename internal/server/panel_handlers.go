@@ -217,16 +217,23 @@ func (s *Server) gatewayConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	cfg := panel.DynamicConfig(panel.SettingsFromRow(row), s.panel.upstream, s.panel.tokens.Forwarded)
+	settings := panel.SettingsFromRow(row)
+	cfg := panel.DynamicConfig(settings, s.panel.upstream, s.panel.tokens.Forwarded)
 	if s.link != nil {
 		// The relay's link host: a TCP passthrough router beside the panel's
 		// HTTP routers, published only while no domain or the panel holds the
 		// host (re-checked under the host lock on every poll).
-		tcp, err := s.link.GatewayTCP(r.Context())
+		tcp, host, err := s.link.GatewayTCP(r.Context())
 		if err != nil {
 			logFrom(r).Error("gatewayConfig: build link routes failed", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		// The panel row above was read before that check: should the panel
+		// have held the link host then, one answer would route the host both
+		// ways. Publish neither the link's route until the next poll agrees.
+		if settings.State != panel.StateOff && strings.EqualFold(settings.Host, host) {
+			tcp = nil
 		}
 		cfg = link.Merge(cfg, tcp)
 	}

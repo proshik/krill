@@ -57,6 +57,8 @@ func relayRequirementKey(err error) string {
 		return "link.req.loopback"
 	case errors.Is(err, link.ErrLinkListenLoopback):
 		return "link.req.link_loopback"
+	case errors.Is(err, link.ErrLinkPortTaken):
+		return "link.req.port_taken"
 	}
 	return "link.req.listen"
 }
@@ -82,6 +84,7 @@ func (s *Server) linkPage(w http.ResponseWriter, r *http.Request) {
 	v.Role = row.Role
 	v.ListenAddr = s.cfg.LinkListenAddr
 	v.RelayReqKey = relayRequirementKey(s.link.RelayRequirement())
+	v.ClientReqKey = relayRequirementKey(s.link.ListenRequirement())
 	if err := s.link.ListenError(); err != nil {
 		v.ListenFailed = true
 	}
@@ -102,8 +105,8 @@ func (s *Server) linkPage(w http.ResponseWriter, r *http.Request) {
 			logFrom(r).Error("linkPage: re-check link host failed", "err", err)
 		}
 		for _, h := range holders {
-			c := templates.LinkConflict{Panel: h.Panel}
-			if !h.Panel {
+			c := templates.LinkConflict{Panel: h.Panel, Ingress: h.Ingress}
+			if !h.Panel && !h.Ingress {
 				c.App = h.Project + "/" + h.Env + "/" + h.AppName
 				c.URL = "/orgs/" + strconv.FormatInt(h.OrgID, 10) + "/projects/" + strconv.FormatInt(h.ProjectID, 10) +
 					"/environments/" + strconv.FormatInt(h.EnvID, 10) + "/apps/" + strconv.FormatInt(h.AppID, 10) + "/domains"
@@ -127,9 +130,11 @@ func (s *Server) linkPage(w http.ResponseWriter, r *http.Request) {
 			if p.Peer.LastDisconnectedAt.Valid {
 				pr.LastSeen = p.Peer.LastDisconnectedAt.Time
 			}
-			if p.Duplicate != nil {
-				pr.DuplicateFrom = p.Duplicate.From.String()
-				pr.DuplicateAt = p.Duplicate.At
+			if p.Refusal != nil {
+				pr.RefusalCategory = p.Refusal.Category
+				pr.RefusalProto = p.Refusal.Proto
+				pr.RefusalFrom = p.Refusal.From.String()
+				pr.RefusalAt = p.Refusal.At
 			}
 			v.Peers = append(v.Peers, pr)
 		}
@@ -212,6 +217,10 @@ func (s *Server) setLinkRole(w http.ResponseWriter, r *http.Request) {
 	case link.RoleOff:
 		err = s.link.SetOff(ctx)
 	case link.RoleClient:
+		if key := relayRequirementKey(s.link.ListenRequirement()); key != "" {
+			s.flashErrT(w, r, key)
+			return
+		}
 		err = s.link.SetClient(ctx)
 	case link.RoleRelay:
 		if key := relayRequirementKey(s.link.RelayRequirement()); key != "" {

@@ -16,6 +16,7 @@ const countLinkIngressHostsByHost = `-- name: CountLinkIngressHostsByHost :one
 SELECT count(*) FROM link_ingress_hosts WHERE host = $1
 `
 
+// A relay ingress host (stage 2), kept by a rollback.
 func (q *Queries) CountLinkIngressHostsByHost(ctx context.Context, host string) (int64, error) {
 	row := q.db.QueryRow(ctx, countLinkIngressHostsByHost, host)
 	var count int64
@@ -354,7 +355,7 @@ func (q *Queries) ListOpenLinkPairingCodes(ctx context.Context) ([]ListOpenLinkP
 }
 
 const lockLinkPairingCode = `-- name: LockLinkPairingCode :one
-SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > now())::boolean AS live
+SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > clock_timestamp())::boolean AS live
 FROM link_pairing_codes WHERE secret_sha256 = $1 FOR UPDATE
 `
 
@@ -367,6 +368,8 @@ type LockLinkPairingCodeRow struct {
 	Live       bool               `json:"live"`
 }
 
+// clock_timestamp(), not now(): the row lock may be granted after the code
+// expired, and now() is the start of the transaction.
 func (q *Queries) LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error) {
 	row := q.db.QueryRow(ctx, lockLinkPairingCode, secretSha256)
 	var i LockLinkPairingCodeRow
@@ -441,7 +444,7 @@ func (q *Queries) MarkLinkPeerDisconnected(ctx context.Context, id int64) error 
 const redeemLinkPairingCode = `-- name: RedeemLinkPairingCode :execrows
 UPDATE link_pairing_codes
 SET used_at = now(), key_sha256 = $2, issued_cert = $3
-WHERE secret_sha256 = $1 AND used_at IS NULL AND expires_at > now()
+WHERE secret_sha256 = $1 AND used_at IS NULL AND expires_at > clock_timestamp()
 `
 
 type RedeemLinkPairingCodeParams struct {

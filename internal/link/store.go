@@ -386,6 +386,10 @@ func (s *Store) Local(ctx context.Context) (LocalMaterial, error) {
 	if err != nil {
 		return LocalMaterial{}, err
 	}
+	return localFromRow(row)
+}
+
+func localFromRow(row db.LinkSetting) (LocalMaterial, error) {
 	gw, err := pair(row.GatewayCert, row.GatewayKey)
 	if err != nil {
 		return LocalMaterial{}, fmt.Errorf("gateway certificate: %w", err)

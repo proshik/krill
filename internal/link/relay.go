@@ -35,22 +35,25 @@ type Relay struct {
 	tls     atomic.Pointer[relayTLS]
 	ctx     context.Context
 
-	mu   sync.Mutex
-	dups map[int64]DuplicateAttempt // the latest refused second session per peer
+	mu       sync.Mutex
+	refusals map[int64]Refusal // the latest refused session per known peer
 }
 
-// DuplicateAttempt is a refused second session for a peer: a clone of the
-// client (restored from a state backup) is the usual cause.
-type DuplicateAttempt struct {
-	From netip.Addr
-	At   time.Time
+// Refusal is a refused session of a known peer: a second session while the
+// first lives (a clone restored from a state backup is the usual cause), or a
+// link protocol version the relay does not speak.
+type Refusal struct {
+	Category string // duplicate | incompatible
+	Proto    int    // the client's protocol version, for incompatible
+	From     netip.Addr
+	At       time.Time
 }
 
 // newRelay creates a relay; ctx bounds every database call of its sessions.
 func newRelay(ctx context.Context, store *Store, version string) *Relay {
 	return &Relay{
 		store: store, version: version, reg: newRegistry(), ctx: ctx,
-		limit: newRateLimiter(10, time.Minute), dups: map[int64]DuplicateAttempt{},
+		limit: newRateLimiter(10, time.Minute), refusals: map[int64]Refusal{},
 	}
 }
 
@@ -132,18 +135,28 @@ func (r *Relay) Session(id int64) (PeerSession, bool) {
 		Latency: time.Duration(s.latency.Load()), Streams: int(s.streams.Load())}, true
 }
 
-// Duplicate returns the latest refused second session of a peer.
-func (r *Relay) Duplicate(id int64) (DuplicateAttempt, bool) {
+// LastRefusal returns the latest refused session of a peer.
+func (r *Relay) LastRefusal(id int64) (Refusal, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	d, ok := r.dups[id]
+	d, ok := r.refusals[id]
 	return d, ok
+}
+
+func (r *Relay) refused(id int64, f Refusal) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.refusals[id] = f
 }
 
 // ServeConn serves one connection the gateway listener authenticated; src is
 // its original source from the PROXY header. It returns when the connection
-// ends.
-func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort) {
+// ends. release frees the listener's slot for not yet admitted connections:
+// it is called once the connection is admitted, paired or refused.
+func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort, release func()) {
+	var once sync.Once
+	done := func() { once.Do(release) }
+	defer done()
 	defer conn.Close()
 	t := r.tls.Load()
 	if t == nil {
@@ -186,7 +199,7 @@ func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort) {
 		_ = first.Close()
 		return
 	}
-	r.session(mux, first, body, Fingerprint(certs[0].Raw), src, t.ca)
+	r.session(mux, first, body, Fingerprint(certs[0].Raw), src, t, done)
 }
 
 // pair handles the one pair stream of a connection without a certificate.
@@ -227,7 +240,8 @@ func (r *Relay) pair(st *yamux.Stream, body []byte, src netip.AddrPort, ca KeyPa
 }
 
 // session admits a peer and serves its session until it ends.
-func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp string, src netip.AddrPort, ca KeyPair) {
+func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp string, src netip.AddrPort, t *relayTLS, admitted func()) {
+	ca := t.ca
 	refuse := func(cat, msg string) {
 		_ = writeMessage(ctl, message{Type: "error", Category: cat, Message: msg})
 		_ = ctl.Close()
@@ -249,12 +263,19 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		return
 	}
 	if hello.Proto != ProtoVersion {
+		r.refused(peer.ID, Refusal{Category: CatIncompatible, Proto: hello.Proto, From: src.Addr(), At: time.Now()})
 		slog.Warn("link: incompatible protocol", "peer", peer.Name, "proto", hello.Proto, "category", CatIncompatible)
 		refuse(CatIncompatible, "link protocol "+strconv.Itoa(hello.Proto)+" is not supported by the relay (it speaks "+strconv.Itoa(ProtoVersion)+"); update Krill on one side")
 		return
 	}
 	s := &relaySession{mux: mux, peerID: peer.ID, peer: peer.Name, fp: fp, src: src, since: time.Now(), version: hello.KrillVersion}
 	err = r.reg.admit(peer.ID, s, func() error {
+		// The relay that accepted this connection is still the running one:
+		// unload (role off, Krill stopping) closes every registered session
+		// after it stops serving, so one registered after that must not be.
+		if r.tls.Load() != t {
+			return ErrPeerGone
+		}
 		// Re-read by ID under the peer's lock: a removal since the
 		// fingerprint check above must win.
 		p, err := r.store.Peer(r.ctx, peer.ID)
@@ -272,9 +293,7 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 	})
 	switch {
 	case errors.Is(err, ErrDuplicate):
-		r.mu.Lock()
-		r.dups[peer.ID] = DuplicateAttempt{From: src.Addr(), At: time.Now()}
-		r.mu.Unlock()
+		r.refused(peer.ID, Refusal{Category: CatDuplicate, From: src.Addr(), At: time.Now()})
 		slog.Warn("link: duplicate session refused", "peer", peer.Name, "from", src.Addr(), "category", CatDuplicate)
 		refuse(CatDuplicate, "another installation holds this peer's session (a clone restored from a backup?)")
 		return
@@ -287,6 +306,7 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		return
 	}
 	defer r.reg.release(peer.ID, s)
+	admitted()
 	if err := writeMessage(ctl, message{Type: "hello", Proto: ProtoVersion, KrillVersion: r.version}); err != nil {
 		return
 	}
@@ -316,12 +336,14 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 			_ = mux.Close()
 			return
 		}
-		if s.streams.Add(1) > MaxStreamsPerPeer {
-			s.streams.Add(-1)
+		// yamux keeps a closed stream until the other side closes it too,
+		// so the session's own count is what bounds the peer.
+		if mux.NumStreams() > MaxStreamsPerPeer {
 			slog.Warn("link: stream refused, per-peer limit", "peer", peer.Name, "limit", MaxStreamsPerPeer)
 			_ = st.Close()
 			continue
 		}
+		s.streams.Add(1)
 		go func() {
 			defer s.streams.Add(-1)
 			defer st.Close()

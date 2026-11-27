@@ -81,8 +81,12 @@ func (w *fakeWS) Close(websocket.StatusCode, string) error {
 	w.mu.Unlock()
 	return nil
 }
-func (w *fakeWS) writes() []wsFrame { w.mu.Lock(); defer w.mu.Unlock(); return append([]wsFrame(nil), w.written...) }
-func (w *fakeWS) isClosed() bool    { w.mu.Lock(); defer w.mu.Unlock(); return w.closed }
+func (w *fakeWS) writes() []wsFrame {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]wsFrame(nil), w.written...)
+}
+func (w *fakeWS) isClosed() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.closed }
 
 type fakeSession struct {
 	mu      sync.Mutex
@@ -117,8 +121,16 @@ func (s *fakeSession) Resize(_ context.Context, rows, cols uint) error {
 	return nil
 }
 func (s *fakeSession) Close() error { s.once.Do(func() { close(s.closed) }); return nil }
-func (s *fakeSession) stdinBytes() []byte     { s.mu.Lock(); defer s.mu.Unlock(); return append([]byte(nil), s.stdin...) }
-func (s *fakeSession) resizeCalls() [][2]uint { s.mu.Lock(); defer s.mu.Unlock(); return append([][2]uint(nil), s.resizes...) }
+func (s *fakeSession) stdinBytes() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.stdin...)
+}
+func (s *fakeSession) resizeCalls() [][2]uint {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][2]uint(nil), s.resizes...)
+}
 func (s *fakeSession) isClosedHelper() bool {
 	select {
 	case <-s.closed:

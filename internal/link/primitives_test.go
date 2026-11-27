@@ -2,6 +2,7 @@ package link
 
 import (
 	"bytes"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -248,5 +249,32 @@ func TestStreamHeaderTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("timeout took far too long")
+	}
+}
+
+// A relay certificate that fails the pinned check is a TLS failure on the
+// page, not a network one.
+func TestPinnedFailureIsTLS(t *testing.T) {
+	now := time.Now()
+	ca, _ := NewCA(now)
+	srv, _ := IssueServer(ca, "link.example.com", now)
+	chain, err := tlsCert(srv, ca.CertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := NewCA(now)
+	otherFP, _ := CertFingerprint(other.CertPEM)
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		_ = tls.Server(b, &tls.Config{Certificates: []tls.Certificate{chain}, MinVersion: tls.VersionTLS13}).Handshake()
+	}()
+	err = tls.Client(a, pinnedTLS("link.example.com", otherFP, nil)).Handshake()
+	if err == nil {
+		t.Fatal("a relay with another CA passed the pin")
+	}
+	if got := category(err); got != CatTLS {
+		t.Fatalf("category %q, want tls (err %v)", got, err)
 	}
 }

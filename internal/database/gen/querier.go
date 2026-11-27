@@ -46,6 +46,7 @@ type Querier interface {
 	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
+	// A relay ingress host (stage 2), kept by a rollback.
 	CountLinkIngressHostsByHost(ctx context.Context, host string) (int64, error)
 	CountLinkPeersByName(ctx context.Context, name string) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
@@ -383,6 +384,8 @@ type Querier interface {
 	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
+	// clock_timestamp(), not now(): the row lock may be granted after the code
+	// expired, and now() is the start of the transaction.
 	LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error)
 	LockLinkSettings(ctx context.Context) (LinkSetting, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/yamux"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/proshik/krill/internal/hostshare"
@@ -217,7 +218,7 @@ func TestLinkPairConnectAndRefusals(t *testing.T) {
 			t.Fatal("the original session must survive a refused duplicate")
 		}
 		pv, _ := relay.svc.Peers(ctx)
-		if pv[0].Duplicate == nil {
+		if pv[0].Refusal == nil || pv[0].Refusal.Category != CatDuplicate {
 			t.Fatal("the relay must show the duplicate attempt")
 		}
 		clone.svc.Close()
@@ -241,6 +242,10 @@ func TestLinkPairConnectAndRefusals(t *testing.T) {
 		reply, err := readMessage(newMessageReader(ctl))
 		if err != nil || reply.Type != "error" || reply.Category != CatIncompatible {
 			t.Fatalf("reply %+v, %v; want incompatible", reply, err)
+		}
+		pv, _ := relay.svc.Peers(ctx)
+		if pv[0].Refusal == nil || pv[0].Refusal.Category != CatIncompatible || pv[0].Refusal.Proto != 2 {
+			t.Fatalf("the relay page must show why: %+v", pv[0].Refusal)
 		}
 	})
 
@@ -347,10 +352,11 @@ func startGatewayOn(t *testing.T, relay install, addr string) *fakeGateway {
 }
 
 // A certificate renewed over the live session is stored by the client and
-// accepted on the next connect.
+// accepted on the next connect. A session renews once: a second renewal while
+// it still runs on the old certificate would retire the stored one.
 func TestLinkRenewal(t *testing.T) {
 	prevLife, prevCheck := PeerLifetime, renewCheck
-	PeerLifetime, renewCheck = 6*time.Second, 200*time.Millisecond
+	PeerLifetime, renewCheck = 12*time.Second, 200*time.Millisecond
 	t.Cleanup(func() { PeerLifetime, renewCheck = prevLife, prevCheck })
 	ctx := context.Background()
 	relay, client, _ := pairedPair(t)
@@ -358,77 +364,268 @@ func TestLinkRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "a renewed certificate", 15*time.Second, func() bool {
+	var renewed ClientMaterial
+	eventually(t, "a renewed certificate", 20*time.Second, func() bool {
 		m, err := client.svc.store.Client(ctx)
+		renewed = m
 		return err == nil && m.Identity.CertPEM != first.Identity.CertPEM
 	})
-	// Drop the session; the client reconnects with the new certificate.
+	// Past two thirds of the renewed certificate's life, the same session
+	// has not renewed again: the stored certificate is still the relay's.
+	nc, _ := ParseCert(renewed.Identity.CertPEM)
+	time.Sleep(time.Until(nc.NotBefore.Add(backdate).Add(PeerLifetime*2/3 + time.Second)))
+	now, err := client.svc.store.Client(ctx)
+	if err != nil || now.Identity.CertPEM != renewed.Identity.CertPEM {
+		t.Fatal("the session renewed a second time")
+	}
+	fp, _ := CertFingerprint(renewed.Identity.CertPEM)
+	peers, _ := relay.svc.Peers(ctx)
+	if peers[0].Peer.CertSha256 != fp {
+		t.Fatal("the relay no longer holds the stored certificate")
+	}
+	// Drop the session; the client reconnects with the new certificate. That
+	// retires the first one; the new session may at once renew the second,
+	// which then stays valid as the previous one.
 	client.svc.client.Wake()
+	oldFP, _ := CertFingerprint(first.Identity.CertPEM)
 	eventually(t, "a connect with the renewed certificate", 15*time.Second, func() bool {
 		peers, _ := relay.svc.Peers(ctx)
-		return len(peers) == 1 && peers[0].Connected && peers[0].Peer.PrevCertSha256 == nil
+		if len(peers) != 1 || !peers[0].Connected {
+			return false
+		}
+		prev := peers[0].Peer.PrevCertSha256
+		return (prev == nil || *prev == fp) && peers[0].Peer.CertSha256 != oldFP
+	})
+}
+
+// clientMux opens a raw session with the paired client's identity, through
+// the gateway, without the client's own loop.
+func clientMux(t *testing.T, client install) *yamux.Session {
+	t.Helper()
+	ctx := context.Background()
+	m, err := client.svc.store.Client(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := tlsCert(m.Identity)
+	mux, err := client.svc.client.connect(ctx, m.Addr, pinnedTLS(m.SNI, m.CASHA256, &id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mux.Close() })
+	return mux
+}
+
+func hello(t *testing.T, mux *yamux.Session) (message, error) {
+	t.Helper()
+	ctl, err := mux.OpenStream()
+	if err != nil {
+		return message{}, err
+	}
+	if err := WriteHeader(ctl, StreamControl, helloHeader{Proto: ProtoVersion}); err != nil {
+		return message{}, err
+	}
+	_ = ctl.SetReadDeadline(time.Now().Add(10 * time.Second))
+	return readMessage(newMessageReader(ctl))
+}
+
+// A connection that finished its handshake before the relay was turned off
+// must not be admitted after it: turning off ends every session.
+func TestRelayOffRefusesAPendingSession(t *testing.T) {
+	ctx := context.Background()
+	relay, client, _ := pairedPair(t)
+	if err := client.svc.SetOff(ctx); err != nil { // free the peer's one session
+		t.Fatal(err)
+	}
+	eventually(t, "the client session to end", 15*time.Second, func() bool { return connectedPeers(t, relay) == 0 })
+	mux := clientMux(t, client) // TLS done, no hello yet
+	if err := relay.svc.SetOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if reply, err := hello(t, mux); err == nil && reply.Type == "hello" {
+		t.Fatal("a session was admitted after the relay was turned off")
+	}
+	if connectedPeers(t, relay) != 0 {
+		t.Fatal("the relay lists a session while off")
+	}
+}
+
+// An attempt that read the settings before a Wake (Forget, a new pairing)
+// must not become the client's session.
+func TestClientStaleAttemptIsDropped(t *testing.T) {
+	ctx := context.Background()
+	relay, client, _ := pairedPair(t)
+	if err := client.svc.SetOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the client session to end", 15*time.Second, func() bool { return connectedPeers(t, relay) == 0 })
+	c := client.svc.client
+	m, err := client.svc.store.Client(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	stale := c.gen
+	c.gen++
+	c.mu.Unlock()
+	if c.once(ctx, m, stale) {
+		t.Fatal("a stale attempt reported a session")
+	}
+	c.mu.Lock()
+	cur := c.cur
+	c.mu.Unlock()
+	if cur != nil {
+		t.Fatal("a stale attempt became the session")
+	}
+	eventually(t, "the relay to drop the stale session", 15*time.Second, func() bool { return connectedPeers(t, relay) == 0 })
+}
+
+// The per-peer stream limit counts what the session holds, the control
+// stream included; a stream over it is closed at once.
+func TestStreamLimitPerPeer(t *testing.T) {
+	prev := MaxStreamsPerPeer
+	MaxStreamsPerPeer = 3
+	t.Cleanup(func() { MaxStreamsPerPeer = prev })
+	_, client, _ := pairedPair(t)
+	client.svc.client.mu.Lock()
+	mux := client.svc.client.cur
+	client.svc.client.mu.Unlock()
+	var held []*yamux.Stream
+	for i := 0; i < 2; i++ { // control + 2 = the limit
+		st, err := mux.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = st.Write([]byte{byte(StreamEgress)}) // a header that never completes
+		held = append(held, st)
+	}
+	over, err := mux.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = over.Write([]byte{byte(StreamEgress)})
+	_ = over.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if _, err := over.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("a stream over the limit: read %v, want EOF at once", err)
+	}
+	_ = held
+}
+
+// The relay reissues its server certificate before it expires, under the
+// same CA, so clients that pinned the CA keep connecting.
+func TestRelayServerCertificateRenewal(t *testing.T) {
+	ctx := context.Background()
+	relay, client, _ := pairedPair(t)
+	before, err := relay.svc.store.Relay(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the server certificate with one that expires in ten days.
+	old, err := IssueServer(before.CA, testLinkHost, time.Now().Add(-serverLifetime+10*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := relay.svc.store.pool.Exec(ctx, "UPDATE link_settings SET server_cert = $1, server_key = $2", old.CertPEM, old.KeyPEM); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := relay.svc.renewServerIfDueReport(ctx)
+	if err != nil || !renewed {
+		t.Fatalf("renewed=%v err=%v", renewed, err)
+	}
+	after, err := relay.svc.store.Relay(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.CA.CertPEM != before.CA.CertPEM {
+		t.Fatal("the CA changed")
+	}
+	c, _ := ParseCert(after.Server.CertPEM)
+	if time.Until(c.NotAfter) < serverLifetime-time.Hour || !issuedBy(after.Server, after.CA) {
+		t.Fatalf("new server certificate until %v", c.NotAfter)
+	}
+	if again, err := relay.svc.renewServerIfDueReport(ctx); err != nil || again {
+		t.Fatalf("a fresh certificate was renewed again: %v %v", again, err)
+	}
+	if err := relay.svc.apply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	client.svc.client.Wake()
+	eventually(t, "a reconnect with the reissued server certificate", 15*time.Second, func() bool {
+		return client.svc.ClientStatus().State == StateConnected && connectedPeers(t, relay) == 1
 	})
 }
 
 // A direct connection to the listener — a forged PROXY header without the
-// gateway's certificate, or no PROXY header — is closed before its stream is
-// read.
+// gateway's certificate or with another one, or the gateway's certificate
+// without a PROXY header — is closed before its stream is read, promptly
+// rather than by the test's own deadline; the same connection done right
+// passes.
 func TestListenerRefusesForgedProxy(t *testing.T) {
 	ctx := context.Background()
 	relay := newInstall(t, freePort(t))
 	if err := relay.svc.SetRelay(ctx, testLinkHost); err != nil {
 		t.Fatal(err)
 	}
+	local, err := relay.svc.store.Local(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gwCert, _ := tlsCert(local.Gateway)
+	listenerCert, _ := ParseCert(local.Listener.CertPEM)
+	roots := x509.NewCertPool()
+	roots.AddCert(listenerCert)
+	foreign, _ := NewSelfSigned("krill-link-gateway", time.Now())
+	foreignCert, _ := tlsCert(foreign)
 	addr := "127.0.0.1:" + strconv.Itoa(relay.port)
 	src := netip.MustParseAddrPort("203.0.113.9:4444")
-	dst := netip.MustParseAddrPort("127.0.0.1:" + strconv.Itoa(relay.port))
+	dst := netip.MustParseAddrPort(addr)
 
-	t.Run("forged proxy, no client certificate", func(t *testing.T) {
+	// try connects, optionally sends a PROXY header, opens TLS with cert and
+	// reports the first error and how long it took to come.
+	try := func(proxy bool, cert *tls.Certificate) (error, time.Duration) {
 		c, err := net.Dial("tcp", addr)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer c.Close()
-		_, _ = c.Write(EncodeProxyHeader(src, dst))
-		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}) //nolint:gosec
-		_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
-		err = tc.Handshake()
-		if err == nil {
-			_, err = tc.Read(make([]byte, 1))
+		start := time.Now()
+		if proxy {
+			_, _ = c.Write(EncodeProxyHeader(src, dst))
 		}
-		if err == nil {
-			t.Fatal("a connection without the gateway certificate was accepted")
+		cfg := &tls.Config{ServerName: ListenerServerName, RootCAs: roots, MinVersion: tls.VersionTLS12}
+		if cert != nil {
+			cfg.Certificates = []tls.Certificate{*cert}
 		}
-	})
-	t.Run("forged proxy, wrong client certificate", func(t *testing.T) {
-		other, _ := NewSelfSigned("krill-link-gateway", time.Now())
-		cert, _ := tlsCert(other)
-		c, err := net.Dial("tcp", addr)
-		if err != nil {
-			t.Fatal(err)
+		tc := tls.Client(c, cfg)
+		_ = tc.SetDeadline(time.Now().Add(8 * time.Second))
+		if err := tc.Handshake(); err != nil {
+			return err, time.Since(start)
 		}
-		defer c.Close()
-		_, _ = c.Write(EncodeProxyHeader(src, dst))
-		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}) //nolint:gosec
-		_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
-		err = tc.Handshake()
-		if err == nil {
-			_, err = tc.Read(make([]byte, 1))
+		// TLS 1.3 reports a refused client certificate on the first read;
+		// an accepted connection waits for the inner stream, so this read
+		// times out.
+		_ = tc.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, err = tc.Read(make([]byte, 1))
+		return err, time.Since(start)
+	}
+	refusedFast := func(name string, err error, took time.Duration) {
+		t.Helper()
+		var ne net.Error
+		if err == nil || (errors.As(err, &ne) && ne.Timeout()) || took > time.Second {
+			t.Fatalf("%s: err %v after %v, want a prompt refusal", name, err, took)
 		}
-		if err == nil {
-			t.Fatal("a connection with a foreign certificate was accepted")
-		}
-	})
-	t.Run("no proxy header", func(t *testing.T) {
-		c, err := net.Dial("tcp", addr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer c.Close()
-		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}) //nolint:gosec
-		_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
-		if err := tc.Handshake(); err == nil {
-			t.Fatal("TLS without a PROXY header was accepted")
-		}
-	})
+	}
+	err, took := try(true, nil)
+	refusedFast("forged proxy, no client certificate", err, took)
+	err, took = try(true, &foreignCert)
+	refusedFast("forged proxy, another certificate", err, took)
+	err, took = try(false, &gwCert)
+	refusedFast("gateway certificate without a PROXY header", err, took)
+	// Control: the gateway's certificate after a PROXY header is accepted
+	// and the listener waits for the inner stream.
+	err, _ = try(true, &gwCert)
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("a correct gateway connection: %v, want accepted (waiting for the inner stream)", err)
+	}
 }

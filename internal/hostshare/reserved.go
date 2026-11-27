@@ -117,14 +117,23 @@ func (s *Store) ReserveLinkHost(ctx context.Context, host string, write func(q *
 		if n > 0 {
 			return &ConflictError{Key: KeyHostTaken}
 		}
+		// An ingress host kept by a rollback from stage 2 stays reserved.
+		in, err := q.CountLinkIngressHostsByHost(ctx, host)
+		if err != nil {
+			return err
+		}
+		if in > 0 {
+			return &ConflictError{Key: KeyReservedLink}
+		}
 		return write(q)
 	})
 }
 
-// HostHolder is a record that holds a host the link wants: the panel domain or
-// an application's domain row.
+// HostHolder is a record that holds a host the link wants: the panel domain,
+// an application's domain row or a relay ingress host.
 type HostHolder struct {
 	Panel     bool
+	Ingress   bool
 	OrgID     int64
 	ProjectID int64
 	EnvID     int64
@@ -134,11 +143,16 @@ type HostHolder struct {
 	Env       string
 }
 
-// LinkHostHolders re-checks, under host's lock, whether the panel domain or a
-// domain row holds the link host. A release without the link never knew the
-// host was taken, so after a rollback a domain can sit on it; the link's route
-// must then not be published until the operator removes one of them.
-func (s *Store) LinkHostHolders(ctx context.Context, host string) ([]HostHolder, error) {
+// LinkHostHolders re-checks, under host's lock, whether the panel domain, a
+// domain row or an ingress host holds the link host. A release without the
+// link never knew the host was taken, so after a rollback a domain can sit on
+// it; the link's route must then not be published until the operator removes
+// one of them.
+//
+// within, when set, runs under the same lock after the holders are known, so
+// a caller can re-read its own settings and build what it publishes from a
+// state no domain write or link host change can slip between.
+func (s *Store) LinkHostHolders(ctx context.Context, host string, within func(q *db.Queries, holders []HostHolder) error) ([]HostHolder, error) {
 	var out []HostHolder
 	err := s.inHostTx(ctx, host, func(q *db.Queries) error {
 		panel, err := q.GetPanelGateway(ctx)
@@ -158,6 +172,16 @@ func (s *Store) LinkHostHolders(ctx context.Context, host string) ([]HostHolder,
 				OrgID: r.OrgID, ProjectID: r.ProjectID, EnvID: r.EnvironmentID, AppID: r.AppID,
 				AppName: r.AppName, Project: r.ProjectName, Env: r.EnvName,
 			})
+		}
+		in, err := q.CountLinkIngressHostsByHost(ctx, host)
+		if err != nil {
+			return fmt.Errorf("read link ingress hosts: %w", err)
+		}
+		if in > 0 {
+			out = append(out, HostHolder{Ingress: true})
+		}
+		if within != nil {
+			return within(q, out)
 		}
 		return nil
 	})

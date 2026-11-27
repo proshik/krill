@@ -1799,4 +1799,7 @@ var en = map[string]string{
 	"link.ok.forgotten":                "relay forgotten",
 	"flash.err.host_reserved_panel":    "that host is the Krill panel's own domain",
 	"flash.err.host_reserved_link":     "that host is reserved by the Krill link",
+	"link.req.port_taken":              "KRILL_LINK_LISTEN_ADDR uses a port the firewall keeps open to everyone (22, 80, 443 or the UI port): pick another one, such as the default 8445.",
+	"link.conflict_ingress":            "a relay ingress host kept from a later release",
+	"link.peer_incompatible":           "refused: it speaks link protocol %s, which this relay does not (at %s); update Krill on one side",
 }

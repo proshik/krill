@@ -16,6 +16,7 @@ type LinkView struct {
 	ListenAddr       string // KRILL_LINK_LISTEN_ADDR
 	ListenFailed     bool   // the gateway listener could not bind
 	RelayReqKey      string // why the relay role is unavailable, "" when it is
+	ClientReqKey     string // why the client role is unavailable, "" when it is
 	RelayCertsBroken bool   // the relay's certificates cannot be read
 	FirewallStale    bool   // a lockdown is applied without the link's port
 	FirewallURL      string
@@ -36,7 +37,8 @@ type LinkView struct {
 
 // LinkConflict is a record holding the relay's link host besides the link.
 type LinkConflict struct {
-	Panel bool
+	Panel   bool
+	Ingress bool
 	App   string // project/environment/app
 	URL   string // the app's domains tab
 }
@@ -52,8 +54,11 @@ type LinkPeerRow struct {
 	Latency       time.Duration
 	CertNotAfter  time.Time
 	LastSeen      time.Time
-	DuplicateFrom string
-	DuplicateAt   time.Time
+	// The latest refused session: duplicate or incompatible.
+	RefusalCategory string
+	RefusalProto    int
+	RefusalFrom     string
+	RefusalAt       time.Time
 }
 
 // LinkCodeRow is a pairing code waiting to be redeemed.
@@ -131,8 +136,12 @@ templ linkOff(org db.Organization, v LinkView) {
 		<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) } aria-labelledby="lc-h">
 			<h3 id="lc-h">{ i18n.T(ctx, "link.become_client") }</h3>
 			<p class="hint">{ i18n.T(ctx, "link.client_req") }</p>
-			<input type="hidden" name="role" value="client"/>
-			<div><button type="submit" class="pill">{ i18n.T(ctx, "link.become_client") }</button></div>
+			if v.ClientReqKey != "" {
+				<div class="callout callout--warn"><p>{ i18n.T(ctx, v.ClientReqKey) }</p></div>
+			} else {
+				<input type="hidden" name="role" value="client"/>
+				<div><button type="submit" class="pill">{ i18n.T(ctx, "link.become_client") }</button></div>
+			}
 		</form>
 		<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) } aria-labelledby="lv-h">
 			<h3 id="lv-h">{ i18n.T(ctx, "link.become_relay") }</h3>
@@ -180,6 +189,8 @@ templ linkRelay(org db.Organization, v LinkView) {
 							<li>
 								if c.Panel {
 									{ i18n.T(ctx, "link.conflict_panel") }
+								} else if c.Ingress {
+									{ i18n.T(ctx, "link.conflict_ingress") }
 								} else {
 									{ i18n.T(ctx, "link.conflict_app") + " " }
 									<a href={ templ.SafeURL(c.URL) }>{ c.App }</a>
@@ -233,9 +244,13 @@ templ linkRelay(org db.Organization, v LinkView) {
 							}
 							<br/>
 							{ i18n.Tf(ctx, "link.cert_until", linkDate(p.CertNotAfter)) }
-							if p.DuplicateFrom != "" {
-								<br/>
-								{ i18n.Tf(ctx, "link.peer_duplicate", p.DuplicateFrom, linkClock(p.DuplicateAt)) }
+							switch p.RefusalCategory {
+								case "duplicate":
+									<br/>
+									{ i18n.Tf(ctx, "link.peer_duplicate", p.RefusalFrom, linkClock(p.RefusalAt)) }
+								case "incompatible":
+									<br/>
+									{ i18n.Tf(ctx, "link.peer_incompatible", strconv.Itoa(p.RefusalProto), linkClock(p.RefusalAt)) }
 							}
 						</span>
 						if p.Connected {

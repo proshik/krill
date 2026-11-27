@@ -198,3 +198,35 @@ func TestRenewKeepsPreviousUntilConnect(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Two codes for one name: once the first created the peer, the second is
+// refused and stays unredeemed — the transaction leaves no half-redeemed row.
+func TestRedeemSecondCodeForTheSameNameRollsBack(t *testing.T) {
+	st, ca := relayStore(t)
+	ctx := context.Background()
+	first, err := st.CreateCode(ctx, "msk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.CreateCode(ctx, "msk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, req := csr(t)
+	if _, _, err := st.Redeem(ctx, first, req, ca); err != nil {
+		t.Fatal(err)
+	}
+	_, req2 := csr(t)
+	if _, _, err := st.Redeem(ctx, second, req2, ca); !errors.Is(err, ErrPeerExists) {
+		t.Fatalf("second code for the same name: %v, want ErrPeerExists", err)
+	}
+	var used bool
+	var key, cert *string
+	if err := st.pool.QueryRow(ctx, "SELECT used_at IS NOT NULL, key_sha256, issued_cert FROM link_pairing_codes WHERE secret_sha256 = $1", SecretSHA256(second)).
+		Scan(&used, &key, &cert); err != nil {
+		t.Fatal(err)
+	}
+	if used || key != nil || cert != nil {
+		t.Fatalf("refused code was left redeemed: used=%v key=%v cert=%v", used, key != nil, cert != nil)
+	}
+}

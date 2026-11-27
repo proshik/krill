@@ -31,11 +31,13 @@ const (
 	CatDuplicate    = "duplicate"
 )
 
+// MaxStreamsPerPeer bounds the concurrent streams one peer may hold, the
+// control stream and streams closed on one side included. A variable for tests.
+var MaxStreamsPerPeer = 1024
+
 // Limits of a session.
 const (
-	// MaxStreamsPerPeer bounds the concurrent streams one peer may hold.
-	MaxStreamsPerPeer = 1024
-	keepAlive         = 15 * time.Second
+	keepAlive = 15 * time.Second
 	// deadAfter is when a session with no answer to its pings is closed: one
 	// keepalive interval plus yamux's wait for the answer.
 	deadAfter      = 45 * time.Second
@@ -53,6 +55,9 @@ func muxConfig() *yamux.Config {
 	// closes the session: 15 s + 30 s = dead after 45 s.
 	c.ConnectionWriteTimeout = deadAfter - keepAlive
 	c.StreamOpenTimeout = replyTimeout
+	// A closed stream whose other side never closes is reset after this, so
+	// refused streams do not hold the session's per-peer budget for long.
+	c.StreamCloseTimeout = 30 * time.Second
 	c.LogOutput = muxLog{}
 	return c
 }
@@ -140,7 +145,10 @@ func pinnedTLS(sni, caSHA string, id *tls.Certificate) *tls.Config {
 		// Verification is done by VerifyConnection against the pinned CA.
 		InsecureSkipVerify: true, //nolint:gosec
 		VerifyConnection: func(cs tls.ConnectionState) error {
-			return verifyPinned(cs.PeerCertificates, sni, caSHA)
+			if err := verifyPinned(cs.PeerCertificates, sni, caSHA); err != nil {
+				return &pinError{err: err}
+			}
+			return nil
 		},
 	}
 	if id != nil {
@@ -168,6 +176,13 @@ func verifyPinned(chain []*x509.Certificate, sni, caSHA string) error {
 	return err
 }
 
+// pinError is a relay certificate that fails the pinned verification: a TLS
+// failure, whatever the cause below.
+type pinError struct{ err error }
+
+func (e *pinError) Error() string { return "relay certificate: " + e.err.Error() }
+func (e *pinError) Unwrap() error { return e.err }
+
 // tlsCert builds a tls.Certificate from a pair, with extra chain certificates.
 func tlsCert(p KeyPair, chain ...string) (tls.Certificate, error) {
 	pemBlock := p.CertPEM
@@ -183,7 +198,10 @@ func category(err error) string {
 	var alert tls.AlertError
 	var verify *tls.CertificateVerificationError
 	var rec tls.RecordHeaderError
+	var pin *pinError
 	switch {
+	case errors.As(err, &pin):
+		return CatTLS
 	case errors.As(err, &dns):
 		return CatDNS
 	case errors.As(err, &alert), errors.As(err, &verify), errors.As(err, &rec):

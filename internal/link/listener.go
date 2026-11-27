@@ -12,7 +12,8 @@ import (
 	"time"
 )
 
-// maxPending bounds connections still proving they come from the gateway.
+// maxPending bounds connections not yet admitted: those still proving they
+// come from the gateway and those whose client is not yet admitted or paired.
 const maxPending = 256
 
 // GatewayListener is the authenticated gateway receiver on
@@ -30,14 +31,17 @@ const maxPending = 256
 type GatewayListener struct {
 	ln      net.Listener
 	cfg     *tls.Config
-	handle  func(net.Conn, netip.AddrPort)
+	handle  func(net.Conn, netip.AddrPort, func())
 	pending chan struct{}
 	wg      sync.WaitGroup
 }
 
 // ListenGateway listens on addr and authenticates connections with local's
 // certificates; handle gets each authenticated inner stream and its source.
-func ListenGateway(addr string, local LocalMaterial, handle func(net.Conn, netip.AddrPort)) (*GatewayListener, error) {
+// handle must call the func it gets once the connection no longer counts as
+// pending (admitted, paired or refused); it is called again when handle
+// returns, which is harmless.
+func ListenGateway(addr string, local LocalMaterial, handle func(net.Conn, netip.AddrPort, func())) (*GatewayListener, error) {
 	cfg, err := gatewayServerTLS(local)
 	if err != nil {
 		return nil, err
@@ -124,12 +128,17 @@ func (l *GatewayListener) authenticate(conn net.Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeLimit)
 	err = tc.HandshakeContext(ctx)
 	cancel()
-	release()
 	if err != nil {
+		release()
 		slog.Warn("link listener: connection without the gateway certificate closed", "remote", conn.RemoteAddr())
 		_ = conn.Close()
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
-	l.handle(tc, hdr.Src)
+	// The slot stays taken until the handler admits or refuses the
+	// connection: the inner TLS, yamux and the first header still cost.
+	var once sync.Once
+	free := func() { once.Do(release) }
+	defer free()
+	l.handle(tc, hdr.Src, free)
 }

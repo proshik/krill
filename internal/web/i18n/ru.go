@@ -1799,4 +1799,7 @@ var ru = map[string]string{
 	"link.ok.forgotten":                "relay забыт",
 	"flash.err.host_reserved_panel":    "этот хост — собственный домен панели Krill",
 	"flash.err.host_reserved_link":     "этот хост зарезервирован связкой Krill",
+	"link.req.port_taken":              "KRILL_LINK_LISTEN_ADDR использует порт, который файрвол держит открытым для всех (22, 80, 443 или порт UI): выберите другой, например 8445 по умолчанию.",
+	"link.conflict_ingress":            "ingress-хост relay, оставшийся от более нового релиза",
+	"link.peer_incompatible":           "отклонён: он говорит на протоколе связки %s, который этот relay не знает (в %s); обновите Krill на одной из сторон",
 }

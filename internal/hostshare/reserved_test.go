@@ -157,6 +157,9 @@ func TestReserveLinkHost(t *testing.T) {
 
 	wantConflict(t, f.store.ReserveLinkHost(ctx, "app.example.com", write), KeyHostTaken)
 	wantConflict(t, f.store.ReserveLinkHost(ctx, "panel.example.com", write), KeyReservedPanel)
+	// An ingress host a rollback from stage 2 kept is still reserved.
+	f.ingressHost(t, "hook.example.com")
+	wantConflict(t, f.store.ReserveLinkHost(ctx, "hook.example.com", write), KeyReservedLink)
 	if wrote != 0 {
 		t.Fatalf("write ran %d times on a refused host", wrote)
 	}
@@ -201,7 +204,7 @@ func TestLinkHostHolders(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	web := f.app(t, f.envID, "web")
-	got, err := f.store.LinkHostHolders(ctx, "link.example.com")
+	got, err := f.store.LinkHostHolders(ctx, "link.example.com", nil)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("free host: %v, %v", got, err)
 	}
@@ -209,11 +212,25 @@ func TestLinkHostHolders(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.panelOn(t, "link.example.com")
-	got, err = f.store.LinkHostHolders(ctx, "link.example.com")
+	got, err = f.store.LinkHostHolders(ctx, "link.example.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || !got[0].Panel || got[1].AppID != web || got[1].AppName != "web" || got[1].Env != "production" || got[1].Project != "Proj" {
 		t.Fatalf("holders = %+v", got)
+	}
+}
+
+func TestLinkHostHoldersSeesIngressHosts(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.ingressHost(t, "link.example.com")
+	var seen []HostHolder
+	got, err := f.store.LinkHostHolders(ctx, "link.example.com", func(q *db.Queries, h []HostHolder) error {
+		seen = h
+		return nil
+	})
+	if err != nil || len(got) != 1 || !got[0].Ingress || len(seen) != 1 {
+		t.Fatalf("holders %+v (within saw %+v), %v", got, seen, err)
 	}
 }

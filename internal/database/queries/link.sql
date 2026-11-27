@@ -44,6 +44,7 @@ WHERE id;
 SELECT COALESCE(link_host, '')::text FROM link_settings WHERE id AND role = 'relay';
 
 -- name: CountLinkIngressHostsByHost :one
+-- A relay ingress host (stage 2), kept by a rollback.
 SELECT count(*) FROM link_ingress_hosts WHERE host = $1;
 
 -- name: ListLinkIngressHosts :many
@@ -92,7 +93,9 @@ VALUES ($1, $2, now() + make_interval(secs => sqlc.arg(lifetime_seconds)::float8
 RETURNING *;
 
 -- name: LockLinkPairingCode :one
-SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > now())::boolean AS live
+-- clock_timestamp(), not now(): the row lock may be granted after the code
+-- expired, and now() is the start of the transaction.
+SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > clock_timestamp())::boolean AS live
 FROM link_pairing_codes WHERE secret_sha256 = $1 FOR UPDATE;
 
 -- name: RedeemLinkPairingCode :execrows
@@ -100,7 +103,7 @@ FROM link_pairing_codes WHERE secret_sha256 = $1 FOR UPDATE;
 -- is updated.
 UPDATE link_pairing_codes
 SET used_at = now(), key_sha256 = $2, issued_cert = $3
-WHERE secret_sha256 = $1 AND used_at IS NULL AND expires_at > now();
+WHERE secret_sha256 = $1 AND used_at IS NULL AND expires_at > clock_timestamp();
 
 -- name: ListOpenLinkPairingCodes :many
 SELECT id, peer_name, expires_at FROM link_pairing_codes
