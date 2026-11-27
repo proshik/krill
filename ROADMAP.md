@@ -1,8 +1,15 @@
 # Krill roadmap
 
-What is done, what is waiting for live verification, and what is open.
+What is done, and an index of the work that is still open.
 [README.md](README.md) gives an overview of the features, and [docs/](docs/)
 describes them in detail.
+
+Open work — features, fixes, decisions and live acceptance — is tracked as tasks in
+[`tasks/`](tasks/), one file per task in the [taskmoor](docs/development.md#tasks) format,
+each with its goal, acceptance, checks and limits. `taskmoor ready` lists the tasks that can
+be taken now, `taskmoor list` all of them with their status. This file keeps the summary of
+what is done and points to the task for each open topic; the task is the source for the
+details, including what already passed live.
 
 ## Done
 
@@ -82,168 +89,80 @@ describes them in detail.
   before every UI update, encrypted with your age public key and uploaded to S3 storage, with a
   restore runbook. Configured from **Settings → Krill backups**. See
   [Krill backups](docs/guides/krill-backups.md).
+- **Landing page:** a public site for Krill (Hugo + Hextra in `site/`, deployed to GitHub
+  Pages by `pages.yml`) with what it is, a walkthrough, a quick start and links to the docs.
 
 ## Live-acceptance queue
 
-Verified in code and tests, but not yet exercised on a real environment:
+Verified in code and tests, but not yet exercised on a real environment. Each open entry is a
+task that needs a person (`needs_person: true`); entries 9 and 10 are closed and say why. The
+numbers are those of earlier versions of this file, which other documents cite.
 
-1. MinIO and DragonFly instances on a VPS, including S3 app-linking.
-2. Node-down reconciliation — a live drain/remove on a cluster. This queue item now also
-   covers the single-writer fix (stop-first updates + a portable directory lock, not
-   `flock --no-fork` — busybox/alpine images don't support that flag — on Postgres/Redis/
-   DragonFly instances — see [Nodes](architecture.md#nodes)), found live on 2026-09-18 when a
-   worker's return produced two Postgres postmasters on the same volume (overlapping ~0.3s,
-   then the new one serving for ~60s on a directory the old one had already shut down, until
-   Postgres's once-a-minute lock-file recheck stopped it). Live
-   acceptance on two nodes should specifically check: return a worker holding a database
-   instance mid-reconciliation and confirm the second container's postmaster stays blocked
-   (doesn't start) until the first is actually gone, and that its log then has NO "was not
-   properly shut down" line once it does start — i.e. no crash recovery, meaning the two never
-   actually overlapped. Also confirm an instance that was only Started/Stopped (never
-   redeployed) since the fix shipped is still NOT protected — Start/Stop reuse the old spec —
-   so it needs an explicit Deploy first.
-3. Cluster-wide monitoring on two nodes (most likely already passed; to confirm).
-4. Moving a database instance's volume between nodes on a real cluster, including
-   a node failing mid-transfer.
-5. The agent API with a real MCP client and a real CI job. The MCP half passed on 2026-09-23 on a
-   real two-node cluster (v0.3.2): all twelve tools, against a live app. The per-request identity and
-   session-to-token binding of v0.3.2 is covered by `TestMCPSessionSeesDemotion` and
-   `TestMCPSessionRejectsAnotherToken` only; that install has a single member and no client that can
-   swap the token inside a session. Still open: a real CI job calling the REST deploy hook, and the
-   2026-11-26 diagnostics against a live install — `krill_app_status` tasks/health/usage on a
-   worker node, `krill_app_logs` windows and `wait_for`, `krill_deployment_status` `wait` through a
-   real settle, `krill_domain_status` against real DNS and ACME, `krill_backup_now`.
-6. `krill-cli` end to end against a real Krill and a real registry. Everything except `deploy` with a
-   local image build (and `context rm`) passed on 2026-09-23 against a real install; that install's
-   app is built by CI, so there was nothing for the CLI to build.
-7. A full `install.sh` run from a published release on a fresh VM. `v0.1.0` exists, and
-   downloading its binary the way the installer does was verified against `checksums.txt`,
-   but the whole install from it has not been run.
-8. The per-organization network migration on a real Swarm cluster — an upgrade
-   of an install with existing apps and database instances, moving them all
-   onto their organization's network without an outage.
-9. The installer's control-plane Postgres move (`krill-state` network) on a
-   real VPS upgrade, including the container-recreation path.
-10. The panel domain on a real VPS: Traefik's HTTP provider reaching Krill at the
-    advertise address, Let's Encrypt issuance, confirmation through the domain, and closing
-    direct access under lockdown (the `docker_gwbridge` rule) with the dead-man switch.
-    The first attempt (2026-09-22, two-node cluster, v0.3.1) found that a repeated close
-    overwrote the dead-man snapshot and that the snapshot added its rules to the table instead
-    of replacing it; both were fixed in v0.3.2. A single close + confirmation then passed on the same
-    cluster, and on v0.3.2 the page shows the closed state correctly with no drift warning. Accepted.
-    Why the first attempt's swarm check reported dropped nodes that stayed Ready is still
-    unexplained; since v0.3.2 the check logs its reason, so a recurrence will say.
-11. Self-update on a real VPS from a real `proshik/krill` release. Everything else in the flow was accepted on
-    2026-09-15 on a disposable Lima VM (Ubuntu 24.04, real systemd, `install.sh`) against throwaway releases
-    (`make acceptance-selfupdate`): update, manual rollback, crash-loop automatic rollback, a deploy started
-    during the download aborting the update, `install.sh` over a UI update, SIGTERM during a migration, and
-    the documented recovery from a failed migration. The update itself passed on a real two-node cluster on
-    2026-09-22: v0.3.0 → v0.3.1 from Settings → Updates, confirmed within seconds of the restart, `krill.prev`
-    kept, schema 48 → 49 applied cleanly; again on 2026-09-23, v0.3.1 → v0.3.2 (no migrations).
-    Still open: **Roll back** on a real server, the starting page
-    through the panel domain (Traefik 502/504 while Krill restarts) and a reboot inside the 10-minute
-    rollback window.
-12. The observability agent on a real two-node cluster. Per the 2026-09-23 acceptance report everything
-    below passed except the agent appearing on a node added later (no new node is planned on that
-    cluster): the agent appears on a node added
-    later, host metrics and container logs with `krill_*` labels reach a real Prometheus/Mimir
-    and Loki, memory of the agent under load, Check against Mimir with authentication, a worker
-    down or drained during a settings change (global update with parallelism 1), an authenticated
-    receiver (the 0400 root-owned secret is readable by Alloy), and memory over a long window (it
-    was still rising at 14 minutes).
-13. Hiding an application's metrics path on its public domain, on a real install with an app
-    whose metrics are served on the same port as its domain. The production rollout of 2026-09-22
-    returned 404 for `/metrics`, `/METRICS` and `/metrics;x`, but that app serves metrics on a
-    separate port, so the 404 would have come without the rule. The case-insensitive and
-    `;`-parameter matching is covered by `TestHiddenMetricsPathsOnRealTraefik` against the pinned
-    Traefik only.
+1. MinIO (now Silo) and DragonFly instances on a VPS, including S3 app-linking — [KRL-009](tasks/KRL-009-live-s3-buckets-redis-engines.md).
+2. Node-down reconciliation and the database single-writer guard on two nodes — [KRL-011](tasks/KRL-011-live-node-down-single-writer.md).
+3. Cluster-wide monitoring on two nodes — [KRL-013](tasks/KRL-013-live-cluster-monitoring-agent-new-node.md).
+4. Moving a database instance's volume between nodes, including a failure mid-transfer — [KRL-012](tasks/KRL-012-live-db-volume-move.md).
+5. The agent API with a real CI job, the 2026-11-26 diagnostics and the provisioning
+   operations (the MCP half passed on 2026-09-23) — [KRL-014](tasks/KRL-014-live-agent-api-ci-diagnostics.md).
+6. `krill-cli` deploying a locally built image through a real registry — [KRL-015](tasks/KRL-015-live-krill-cli-local-build.md).
+7. A full `install.sh` run from a published release on a fresh VM — [KRL-016](tasks/KRL-016-live-install-from-release.md).
+8. The per-organization network migration on a real cluster with services to move —
+   [KRL-044](tasks/KRL-044-live-org-network-migration.md).
+9. The installer's move of the control-plane Postgres onto `krill-state` on a real upgrade —
+   dropped: every installer from v0.1.0, the first release, creates `krill-postgres` on
+   `krill-state`, so only a pre-release install takes the move.
+10. The panel domain on a real VPS — accepted on v0.3.2 (2026-09-22/23) after the two fixes the
+    first attempt found; a recurrence of the unexplained swarm-check report is now logged with
+    its reason.
+11. Self-update: **Roll back** on a real server, the starting page through the panel domain and
+    a reboot inside the rollback window — [KRL-017](tasks/KRL-017-live-self-update-rollback.md).
+12. The observability agent on a node added later — [KRL-013](tasks/KRL-013-live-cluster-monitoring-agent-new-node.md).
+13. Hiding an application's metrics path on a public domain that serves the metrics port —
+    [KRL-018](tasks/KRL-018-live-hidden-metrics-path.md).
+14. A shared host: a frontend catch-all and an API at `/api` on one real domain — [KRL-019](tasks/KRL-019-live-shared-host-tls.md).
+15. The v0.7.0 platform work on a real cluster: buckets, Valkey and systems — [KRL-009](tasks/KRL-009-live-s3-buckets-redis-engines.md); the
+    persisted firewall with WireGuard, the drift view and the overlay MTU — [KRL-010](tasks/KRL-010-live-firewall-wireguard-mtu.md).
+16. Domain redirect to the primary domain: certificate renewal and the redirect after
+    **Make primary** — [KRL-020](tasks/KRL-020-live-redirect-renewal-make-primary.md).
+17. Notifications beyond failures, the daily digest and `KRILL_TELEGRAM_PROXY` — [KRL-021](tasks/KRL-021-live-notifications.md).
+18. Krill state backups with an external `verify-full` database and the pre-update snapshot on
+    a VPS — [KRL-022](tasks/KRL-022-live-state-backup-vps.md).
 
-14. Shared host: a frontend catch-all and API at `/api` on one real domain, including
-    Let's Encrypt issuance and toggling HTTPS for all apps sharing the host.
-15. The v0.7.0 platform work on a real cluster, planned with the Penpot adoption
-    ([follow-up plan](docs/tasks/penpot-platform-follow-up.md#phased-implementation-and-safe-penpot-adoption)):
-    importing an existing bucket and key and switching an app to bucket links, a bucket
-    snapshot and its restore, managed Valkey replacing a Valkey app, systems, the
-    persisted firewall surviving a reboot with WireGuard and the drift view, and the
-    overlay MTU on a newly created network. Covered so far by integration tests against
-    the real Silo, Valkey and Traefik images and by the firewall confirmation protocol
-    checked on real systemd 252 and 257.
-16. Domain redirect to the primary domain on a real install: a TLS redirecting domain
-    obtaining and renewing its Let's Encrypt certificate (HTTP-01 through the redirect
-    host) and the redirect from the old host after **Make primary**. Checked so far
-    against the pinned Traefik locally with plain HTTP and a self-signed certificate.
-    On 2026-11-16 a real three-node cluster self-updated from v0.7.0 to v0.8.0, and two TLS
-    redirecting domains on it got Let's Encrypt certificates on the first try. Both answer
-    `301` to `GET` and `308` to `POST` with the path and query kept, and plain HTTP goes to
-    the target in one hop. Still open: certificate renewal (due in about two months) and the
-    redirect after **Make primary** on a live install, since those primaries were set at app
-    creation.
-17. Notifications beyond failures on a real install: a successful-deploy message, the daily
-    digest arriving at its scheduled time in the channel's zone (and once only across a
-    restart), disk snapshots on the control plane and over SSH on a worker (`df` on the real
-    hosts), a disk alert, its daily repeat and its recovery, and the memory-overcommit warning
-    after a deploy, and messages through `KRILL_TELEGRAM_PROXY` (an SSH SOCKS tunnel) from an
-    install that cannot reach Telegram directly. Covered so far by unit tests with fake senders,
-    test SOCKS5/HTTP proxies and store tests against a real Postgres. See
-    [Notifications](docs/guides/notifications.md).
-18. Krill state backups on a real install: an external database with `verify-full`, and the
-    pre-update snapshot on a real VPS (including a blocked update and the pause escape hatch).
-    Accepted on 2026-11-21 on a disposable Lima VM with throwaway releases
-    (`make acceptance-statebackup`): the bundled database backed up to S3 (MinIO) and restored
-    into a throwaway container, runbook A on one VM after a full wipe (a newer release
-    reinstalled, the dump restored and brought forward by its migration, the old password and
-    operator kept, old sessions refused, a database server, its logical database and backup,
-    and an app recovered, Back up now working on the restored system), and runbook B from the
-    pre-update snapshot of an update whose migration failed, with its revert timer still armed.
-    The run also fixed six places in those runbooks (`docs/install.md`).
+The Krill link has its own live acceptance, [KRL-007](tasks/KRL-007-link-live-acceptance.md).
 
 ## Open
 
-- **Resilience on top of Swarm:** a resilient ingress (Traefik is a single replica
-  pinned to the manager) and a decision on high availability vs. a documented
-  fast-recovery runbook for the control plane.
-- **Re-provision logical databases on DB-instance deploy**, so restoring onto a new host
-  needs no manual `CREATE USER`/`CREATE DATABASE` (today a step of the
-  [restore runbook](docs/install.md#restore-krills-state-from-a-backup)).
-- **Direct image upload** in `krill-cli` (`delivery: upload`) for users without a
-  registry — designed, not implemented; the CLI refuses the mode for now.
-- **Email and Slack** notification channels (Telegram ships today, with successful-deploy
-  messages, disk and memory alerts and a daily digest).
-- A Homebrew tap for `krill-cli`.
-- **Existing MinIO instances.** New S3 servers run Silo, a maintained MinIO fork, since
-  v0.7.0; instances created earlier keep the pinned `quay.io/minio/minio` release, which
-  receives no updates. Moving one onto Silo in place has not been documented or verified.
-- **Existing overlay networks keep their MTU.** `KRILL_OVERLAY_MTU` applies only to networks
-  created after it is set; recreating existing ones is a manual procedure
-  ([Overlay MTU](docs/architecture.md#overlay-mtu)), not automated.
-- A per-owner cap on organizations: each new organization changes the gateway's networks and
-  restarts the Traefik task (at most once a minute).
-- **Observability, stage 3 (traces):** traces over OTLP, building on the same node agent.
-- **Move the Docker client off `github.com/docker/docker` v28** onto the split
-  `github.com/moby/moby/client` + `github.com/moby/moby/api` modules (the client negotiates
-  down to API 1.40). All five advisories govulncheck reports against v28.5.2 are in daemon
-  code, which the client and api modules do not contain, so none of them apply there; on
-  the old path they have no fix — two of them,
-  [GO-2026-4887](https://pkg.go.dev/vuln/GO-2026-4887) and
-  [GO-2026-4883](https://pkg.go.dev/vuln/GO-2026-4883), have no symbol list, so the client
-  import counts as calling them. Real exposure is the host's Docker Engine (fixed in 29.3.1
-  and 29.5.1). Scope: 25 files (9 non-test), mostly `internal/docker` (Swarm, exec, logs,
-  stats, one-off containers, SSH remote clients), plus `cmd/krill` and integration tests.
+- **Krill link** — a paired relay install abroad for egress, ingress and notifications:
+  [KRL-001](tasks/KRL-001-link-core.md) (core), [KRL-002](tasks/KRL-002-link-egress.md) (egress), [KRL-003](tasks/KRL-003-link-notifications.md) (notifications), [KRL-004](tasks/KRL-004-link-api-operator-token.md) (agent API), [KRL-005](tasks/KRL-005-link-ingress.md)
+  (ingress), [KRL-006](tasks/KRL-006-link-topology.md) (topology).
+- **Resilience on top of Swarm** — a resilient ingress and a decision on high availability vs.
+  a fast-recovery runbook for the control plane: [KRL-023](tasks/KRL-023-resilience-decision.md).
+- **Re-provision logical databases on a DB-instance deploy**, so a restore onto a new host
+  needs no manual SQL: [KRL-024](tasks/KRL-024-reprovision-logical-dbs-on-deploy.md).
+- **Direct image upload** in `krill-cli` (`delivery: upload`): [KRL-025](tasks/KRL-025-cli-direct-image-upload.md).
+- **Email and Slack** notification channels: [KRL-045](tasks/KRL-045-notify-skip-unknown-channel-types.md)
+  (readers that skip unknown channel types, released first), [KRL-026](tasks/KRL-026-notify-email-channel.md), [KRL-027](tasks/KRL-027-notify-slack-channel.md).
+- A **Homebrew tap** for `krill-cli`: [KRL-028](tasks/KRL-028-homebrew-tap-krill-cli.md).
+- **Existing MinIO instances** onto Silo in place: [KRL-029](tasks/KRL-029-minio-to-silo-in-place.md).
+- **Existing overlay networks keep their MTU** — automate their recreation or keep the
+  [documented procedure](docs/architecture.md#overlay-mtu): [KRL-030](tasks/KRL-030-existing-overlay-mtu-decision.md).
+- A **cap on organizations per user**: [KRL-031](tasks/KRL-031-org-cap-per-owner.md).
+- **Observability, stage 3 (traces)** over OTLP through the node agent: [KRL-032](tasks/KRL-032-observability-traces.md).
+- **Move the Docker client off `github.com/docker/docker` v28** onto the moby client and api
+  modules: [KRL-033](tasks/KRL-033-moby-client-modules.md).
 
 ## Later
 
-- Federation across data centers with GeoDNS, as disaster recovery — strictly after
-  the resilience work.
-- OpenSearch as a managed engine and env-scoped indices; a domain for the S3 console;
-  backups for Valkey and DragonFly.
-- Encrypted node-to-node traffic (WireGuard); database replication.
-- GitHub OAuth / GitHub App instead of webhook + token; SSH deploy keys.
-- **Landing page:** a public site for Krill (what it is, screenshots, quick start, links
-  to the docs).
-- **Signed releases:** sign `checksums.txt` (ed25519) and verify it in the installer and
-  the self-updater.
-- **Installer-required marker:** a machine-readable release asset so the Updates page can
-  refuse a release that needs `install.sh`.
+- Federation across data centers with GeoDNS, as disaster recovery, strictly after the
+  resilience work: [KRL-034](tasks/KRL-034-federation-geodns-design.md).
+- Backups for Valkey and DragonFly: [KRL-035](tasks/KRL-035-backups-valkey-dragonfly.md); a domain for the S3 console: [KRL-036](tasks/KRL-036-s3-console-domain.md);
+  OpenSearch as a managed engine with env-scoped indices: [KRL-037](tasks/KRL-037-opensearch-engine-design.md).
+- Encrypted node-to-node traffic: [KRL-038](tasks/KRL-038-node-traffic-encryption-design.md); database replication: [KRL-039](tasks/KRL-039-database-replication-design.md).
+- A GitHub App or OAuth instead of webhook + token: [KRL-040](tasks/KRL-040-github-app-design.md); SSH deploy keys: [KRL-041](tasks/KRL-041-ssh-deploy-keys.md).
+- **Signed releases:** a signed `checksums.txt`, verified by the installer and the
+  self-updater: [KRL-042](tasks/KRL-042-signed-releases.md).
+- **Installer-required marker:** a release asset that lets the Updates page refuse a release
+  that needs `install.sh`: [KRL-043](tasks/KRL-043-installer-required-marker.md).
 
 ## Not planned for now
 
@@ -254,4 +173,4 @@ RBAC, 2FA and SSO.
 
 Implemented in code: per-app endpoints and encrypted bearer tokens, deployment-time injection, protection of metrics paths on public domains, an organization-network Alloy collector, and live scrape status on the Metrics tab. See [Application metrics](docs/guides/metrics.md).
 
-Disposable two-node live acceptance passed with four application replicas, per-node labels, token rotation and recovery, public metrics-path protection, network cooldown, and firewall isolation. Rolled out to a production install on 2026-09-22: one application collected (`up`), the token enforced (401 without it), the collector's own memory measured by `anon`. Hiding the metrics path on a domain that serves the metrics port is still open (live-acceptance queue, item 13).
+Disposable two-node live acceptance passed with four application replicas, per-node labels, token rotation and recovery, public metrics-path protection, network cooldown, and firewall isolation. Rolled out to a production install on 2026-09-22: one application collected (`up`), the token enforced (401 without it), the collector's own memory measured by `anon`. Hiding the metrics path on a domain that serves the metrics port is still open (live-acceptance queue, item 13: [KRL-018](tasks/KRL-018-live-hidden-metrics-path.md)).

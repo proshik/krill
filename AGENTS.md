@@ -26,8 +26,9 @@ MCP + REST agent API.
 **Status:** the core platform, deploy parity with Dokploy for a real app, managed databases,
 backups, multi-server, auto-deploy, notifications, monitoring, self-update and Krill state
 backup are done. Several features are done in code but still wait for live acceptance on a real
-VPS or cluster. [`ROADMAP.md`](ROADMAP.md) is the source for what is done, what is open, and the
-live-acceptance queue; the historical status trail is in
+VPS or cluster. [`ROADMAP.md`](ROADMAP.md) is the summary of what is done and an index of open
+work; open work itself — features, decisions and the live-acceptance queue — is the taskmoor
+tasks in [`tasks/`](tasks/) (see [Dev workflow](#dev-workflow)). The historical status trail is in
 [`docs/internals/README.md`](docs/internals/README.md#feature-status-trail).
 
 ## Build, run, test
@@ -382,8 +383,23 @@ the migrations themselves in `internal/database/migrations`.
 
 ## Dev workflow
 
+- **Open work is a task in `tasks/`** (taskmoor format, `tasks/tasks.toml`: prefix `KRL`, main
+  branch `master`). One task = one worktree, one branch `task/KRL-<n>-<slug>`, one merge. Start
+  from `taskmoor ready`, claim with `taskmoor claim KRL-<n> --branch … --worktree …` (`--person` for a
+  `needs_person` task, which only a person or their explicit permission starts), work to the
+  task's Acceptance / Checks / Limits and keep inside its `touches` and `reviews` budget; tick
+  the Acceptance boxes in the task file on the branch, and write a disagreement into the file
+  instead of coding around it. `taskmoor validate` must report no errors. Rules for writing and
+  merging tasks: [docs/development.md](docs/development.md#tasks).
+- **A new task is written from the current code** (paths and lines; say what is unverified),
+  self-contained — `docs/superpowers/` may be cited, never relied on — with the next free id;
+  ids are never reused, a dropped task gets `status: cancelled`. A live check on a real server
+  is a `research` task with `needs_person: true`.
+- **A task is merged** into `master` by a merge commit whose message ends with the trailer
+  `Task: KRL-<n>` (first-parent history; one such commit per task).
 - Brainstorm → spec (`docs/superpowers/specs/`, date-prefixed) → plan (`docs/superpowers/plans/`)
-  → subagent-driven execution. Both directories are local-only (see the note at the top).
+  → subagent-driven execution for the task at hand. Both directories are local-only (see the
+  note at the top).
 - Subagents run STRICTLY SEQUENTIALLY and do not commit on master; only the controller commits.
 - Always verify with `make test` before committing.
 - **Docs layout:** `README.md` is a short landing page (badges, screenshots from `docs/images/`,
@@ -417,7 +433,8 @@ Full notes: [operations.md](docs/internals/operations.md#release-image-and-insta
 
 ## Where to look next
 
-- [`ROADMAP.md`](ROADMAP.md) — what is done, what is open, the live-acceptance queue.
+- [`ROADMAP.md`](ROADMAP.md) — what is done, and an index of open work.
+- [`tasks/`](tasks/) — the open work as taskmoor tasks (`taskmoor ready`, `taskmoor list`).
 - [`docs/internals/`](docs/internals/README.md) — per-feature implementation notes.
 - [`scripts/e2e.sh`](scripts/e2e.sh) — the authoritative end-to-end scenario.
 - [`skills/krill-deploy/SKILL.md`](skills/krill-deploy/SKILL.md) — agent-side runbooks for the

@@ -7,6 +7,10 @@ focused change with a clear description gets merged fastest.
 
 - **Bugs and ideas:** open an [issue](https://github.com/proshik/krill/issues/new/choose). For
   anything bigger than a small fix, agree on the approach in an issue before writing code.
+- **Planned work** is tracked as tasks in [`tasks/`](tasks/), one file each, with what is
+  expected and how it is checked; [ROADMAP.md](ROADMAP.md) indexes them. To take one, say so in
+  an issue first. How tasks are written and merged (the `Task: KRL-<n>` trailer) is in
+  [docs/development.md](docs/development.md#tasks).
 - **Security problems:** don't open a public issue — follow [SECURITY.md](SECURITY.md).
 
 ## Set up

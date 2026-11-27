@@ -7,6 +7,7 @@
 - [Make targets](#make-targets)
 - [Landing site](#landing-site)
 - [CI and releases](#ci-and-releases)
+- [Tasks](#tasks)
 
 Contribution rules — conventions, what a pull request needs — are in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
@@ -290,3 +291,44 @@ git tag v0.2.0 && git push origin v0.2.0
 
 To check the image locally: `docker build -t krill:local .` The build uses the committed
 generated files and does not run `make generate`.
+
+## Tasks
+
+Open work is tracked as tasks in [`tasks/`](../tasks/), in the
+[taskmoor task format](https://github.com/proshik/taskmoor/blob/main/spec/README.md)
+(`format = 1`). [ROADMAP.md](../ROADMAP.md) keeps the summary of what is done and an index of
+the open topics; the task files hold the details.
+
+- **One task, one merge.** A task is one file, `tasks/KRL-<n>-<slug>.md`: a YAML front matter
+  (`id`, `title`, `kind`, `status`, `priority`, `component`, `depends_on`, `touches`,
+  `harness`, `reviews`, `created`, and optionally `needs_person`, `after_release`) and a body
+  with **Goal**, **Acceptance** (a checklist of WHEN/THEN items), **Checks**,
+  **Limits / non-goals** and **Context**. It is finished in one worktree, on one branch, by one
+  merge. A task too big for that is split before it starts.
+- **Written from the code.** A task states facts with a path and a line where it can, and says
+  what its author has not verified. It is self-contained: the maintainer's local-only notes
+  under `docs/superpowers/` may be cited as context, never relied on.
+- **Configuration.** [`tasks/tasks.toml`](../tasks/tasks.toml) sets the prefix `KRL`, the main
+  branch `master` and the components (`krill`, `site`, `docs`, `tooling`) with their release
+  rule: a `krill` task is `done` once a `v*.*.*` tag contains its merge, the others as soon as
+  they are merged. Ids are never reused; a dropped task gets `status: cancelled`, it is not
+  deleted.
+- **Live acceptance** of something that needs a real server or cluster is a `research` task
+  with `needs_person: true`; it records what was run and seen, with neutral host names.
+- **Taking a task.** `taskmoor ready` lists the tasks whose dependencies are merged and whose
+  `touches` do not overlap a task in progress or in review. Work on a branch
+  `task/KRL-<n>-<slug>` in its own worktree, recorded with
+  `taskmoor claim KRL-<n> --branch <branch> --worktree <path>`; a `needs_person: true` task
+  is claimed only by a person, or with a person's explicit permission for that run, and
+  needs `--person`. Tick the Acceptance boxes in
+  the task file on the branch as they pass; a disagreement with the task is written into the
+  file, not coded around. `taskmoor validate` must report no errors.
+- **Merging.** The branch is merged into `master` with a merge commit whose message ends with
+  the trailer
+
+  ```
+  Task: KRL-<n>
+  ```
+
+  — that commit on `master`'s first-parent history is what makes the task `merged`. One such
+  commit per task; a commit on the branch that mentions the id does not count.
