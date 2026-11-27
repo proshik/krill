@@ -33,6 +33,7 @@ Durations use Go syntax (`30s`, `15m`, `48h`); sizes use human units (`256m`, `1
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `KRILL_LINK_LISTEN_ADDR` | `:8445` | Bind address of the [Krill link](guides/link.md)'s gateway listener, open while the link role is not `off`. Only this installation's gateway connects to it: every connection must start with a PROXY v2 header and then TLS with the gateway's client certificate, or it is closed. A relay's gateway reaches it at `KRILL_ADVERTISE_ADDR` and this port, so it must not bind to loopback. Under a firewall lockdown the port is open to the gateway only (re-apply the lockdown after turning the link on). |
 | `KRILL_GATEWAY_ACCESS_LOG` | `off` | The gateway's (Traefik's) access log: `off`, `filtered` (error statuses, retried requests and requests that took 10 s or more) or `all`. See [Timeouts and the access log](guides/domains.md#timeouts-long-responses-and-the-access-log). Changing it restarts the gateway, which blips ingress for a few seconds. |
 
 ## TLS
