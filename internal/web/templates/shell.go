@@ -174,6 +174,7 @@ func settingsGroups(ctx context.Context, orgID int64, role string) []SettingsGro
 	if auth.IsInstanceAdmin(ctx) {
 		groups = append(groups, SettingsGroup{i18n.T(ctx, "settings.group_krill"), []OrgTab{
 			{"panel", i18n.T(ctx, "panel.link"), base + "/panel-domain"},
+			{"link", i18n.T(ctx, "link.link"), base + "/link"},
 			{"firewall", i18n.T(ctx, "firewall.link"), base + "/firewall"},
 			{"observability", i18n.T(ctx, "obs.link"), base + "/observability"},
 			{"krill", i18n.T(ctx, "sbk.link"), base + "/krill-backups"},

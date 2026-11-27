@@ -155,7 +155,11 @@ type controlPlanePorts struct {
 // confirmed the panel domain and chosen to stop serving the UI in plain HTTP
 // to the world. The gateway itself still needs the port — it proxies the panel
 // and polls the panel's routes there — so the port is narrowed, not dropped.
-func controlPlaneServicePorts(listenAddr string, closeDirect bool) (controlPlanePorts, error) {
+//
+// linkPort is the Krill link's listener (KRILL_LINK_LISTEN_ADDR) while the link
+// role is not off, 0 otherwise. Only the gateway ever connects to it, so it is
+// gateway-only and never public.
+func controlPlaneServicePorts(listenAddr string, closeDirect bool, linkPort int) (controlPlanePorts, error) {
 	_, portStr, err := net.SplitHostPort(listenAddr)
 	if err != nil {
 		return controlPlanePorts{}, fmt.Errorf("parse listen address %q: %w", listenAddr, err)
@@ -164,10 +168,23 @@ func controlPlaneServicePorts(listenAddr string, closeDirect bool) (controlPlane
 	if err != nil || port < 1 || port > 65535 {
 		return controlPlanePorts{}, fmt.Errorf("listen address %q: invalid port %q", listenAddr, portStr)
 	}
+	out := controlPlanePorts{Public: []int{80, 443, port}}
 	if closeDirect {
-		return controlPlanePorts{Public: []int{80, 443}, Gateway: []int{port}}, nil
+		out = controlPlanePorts{Public: []int{80, 443}, Gateway: []int{port}}
 	}
-	return controlPlanePorts{Public: []int{80, 443, port}}, nil
+	if linkPort > 0 {
+		out.Gateway = append(out.Gateway, linkPort)
+	}
+	return out, nil
+}
+
+// linkPort is the link listener's port for the firewall, 0 while the link is
+// off or unwired.
+func (s *Server) linkPort(ctx context.Context) (int, error) {
+	if s.link == nil {
+		return 0, nil
+	}
+	return s.link.ActivePort(ctx)
 }
 
 // controlPlaneRuleset builds the control plane's lockdown ruleset, returning an
@@ -185,7 +202,12 @@ func (s *Server) controlPlaneRuleset(r *http.Request, closeDirect bool) (string,
 			return "", "flash.err.internal"
 		}
 	}
-	ports, err := controlPlaneServicePorts(s.cfg.ListenAddr, closeDirect)
+	lp, err := s.linkPort(r.Context())
+	if err != nil {
+		logFrom(r).Error("control-plane ruleset: read link role failed", "err", err)
+		return "", "flash.err.internal"
+	}
+	ports, err := controlPlaneServicePorts(s.cfg.ListenAddr, closeDirect, lp)
 	if err != nil {
 		logFrom(r).Error("control-plane ruleset: listen address unusable", "err", err)
 		return "", "flash.err.internal"

@@ -34,6 +34,7 @@ import (
 	"github.com/proshik/krill/internal/envclone"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/link"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
 	"github.com/proshik/krill/internal/observability"
@@ -326,7 +327,6 @@ func run() error {
 	dbSvc.SetMigrateTimeout(cfg.MigrateTimeout)
 	dbSvc.SetNotifier(notifySvc)
 
-
 	// Monitoring: sample container stats into Postgres for the Monitoring page.
 	// The control-plane node is labelled "control-plane" (a friendly, stable name
 	// matching the rest of the UI, e.g. the managed-DB node picker) rather than its
@@ -515,7 +515,21 @@ func run() error {
 
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
-	app.SetHostShare(hostshare.NewStore(pool))
+	hostStore := hostshare.NewStore(pool)
+	app.SetHostShare(hostStore)
+
+	// The Krill link: the stored role comes up with Krill. A failure leaves
+	// the link off for this run (and the Link page says why) rather than
+	// stopping Krill: a self-update would otherwise roll back over it.
+	linkSvc := link.NewService(pool, hostStore, link.Config{
+		AdvertiseAddr: cfg.AdvertiseAddr, ListenAddr: cfg.ListenAddr,
+		LinkListenAddr: cfg.LinkListenAddr, Version: buildinfo.Version,
+	})
+	if err := linkSvc.Start(ctx); err != nil {
+		slog.Error("krill link failed to start", "err", err)
+	}
+	defer linkSvc.Close()
+	app.SetLink(linkSvc)
 	cloner := envclone.New(pool, dbSvc, engine, cfg.BaseDomain)
 	app.SetEnvironmentCloner(cloner)
 	defer func() {

@@ -1,0 +1,350 @@
+package templates
+
+import (
+	"strconv"
+	"time"
+
+	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/web/i18n"
+	"github.com/proshik/krill/internal/web/templates/ui"
+)
+
+// LinkView is the state of the Krill link, as Settings → Link shows it.
+type LinkView struct {
+	Available        bool   // the link is wired in this build
+	Role             string // off | client | relay
+	ListenAddr       string // KRILL_LINK_LISTEN_ADDR
+	ListenFailed     bool   // the gateway listener could not bind
+	RelayReqKey      string // why the relay role is unavailable, "" when it is
+	RelayCertsBroken bool   // the relay's certificates cannot be read
+	FirewallStale    bool   // a lockdown is applied without the link's port
+	FirewallURL      string
+	// relay
+	LinkHost    string
+	DefaultAddr string // the address a pairing code carries by default
+	NewCode     string // a pairing code just created, shown once
+	Conflicts   []LinkConflict
+	Peers       []LinkPeerRow
+	OpenCodes   []LinkCodeRow
+	// client
+	Client    LinkClientState
+	Paired    bool
+	RelaySNI  string
+	RelayAddr string
+	PairedAt  time.Time
+}
+
+// LinkConflict is a record holding the relay's link host besides the link.
+type LinkConflict struct {
+	Panel bool
+	App   string // project/environment/app
+	URL   string // the app's domains tab
+}
+
+// LinkPeerRow is one peer of a relay.
+type LinkPeerRow struct {
+	ID            int64
+	Name          string
+	Connected     bool
+	From          string
+	Since         time.Time
+	Version       string
+	Latency       time.Duration
+	CertNotAfter  time.Time
+	LastSeen      time.Time
+	DuplicateFrom string
+	DuplicateAt   time.Time
+}
+
+// LinkCodeRow is a pairing code waiting to be redeemed.
+type LinkCodeRow struct {
+	Peer      string
+	ExpiresAt time.Time
+}
+
+// LinkClientState is a client's session state.
+type LinkClientState struct {
+	State        string // off | unpaired | connecting | connected
+	Category     string // dns | tcp | tls | unauthorized | incompatible | duplicate
+	Message      string
+	FailedAt     time.Time
+	Since        time.Time
+	Latency      time.Duration
+	RelayVersion string
+	CertNotAfter time.Time
+}
+
+func linkURL(orgID int64, rest string) string { return orgURL(orgID) + "/link" + rest }
+
+func linkDate(t time.Time) string { return t.Local().Format("2006-01-02") }
+
+func linkClock(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }
+
+func linkMS(d time.Duration) string {
+	if d <= 0 {
+		return "—"
+	}
+	return strconv.FormatInt(d.Milliseconds(), 10) + " ms"
+}
+
+// Link renders Settings → Link: the role and its requirements; on a relay its
+// link host, pairing codes and peers; on a client its relay and session.
+templ Link(org db.Organization, role string, v LinkView) {
+	@SettingsPage(org, role, "link", i18n.T(ctx, "link.title")) {
+		<p class="hint">{ i18n.T(ctx, "link.desc") }</p>
+		if !v.Available {
+			<div class="callout callout--warn"><p>{ i18n.T(ctx, "link.unwired") }</p></div>
+		} else {
+			if v.ListenFailed {
+				<div class="callout callout--err"><p>{ i18n.Tf(ctx, "link.listen_failed", v.ListenAddr) }</p></div>
+			}
+			if v.FirewallStale {
+				<div class="callout callout--warn">
+					<div class="callout-body">
+						<p>{ i18n.Tf(ctx, "link.firewall_stale", v.ListenAddr) }</p>
+						<p><a href={ templ.SafeURL(v.FirewallURL) }>{ i18n.T(ctx, "link.firewall_open") }</a></p>
+					</div>
+				</div>
+			}
+			switch v.Role {
+				case "relay":
+					@linkRelay(org, v)
+				case "client":
+					@linkClient(org, v)
+				default:
+					@linkOff(org, v)
+			}
+		}
+	}
+}
+
+templ linkOff(org db.Organization, v LinkView) {
+	<section class="sec" aria-labelledby="lr-h">
+		<div class="sec-head">
+			<h3 id="lr-h">{ i18n.T(ctx, "link.role") }</h3>
+			@ui.State("idle", i18n.T(ctx, "link.role.off"))
+		</div>
+		<p class="hint">{ i18n.T(ctx, "link.role_off_desc") }</p>
+		<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) } aria-labelledby="lc-h">
+			<h3 id="lc-h">{ i18n.T(ctx, "link.become_client") }</h3>
+			<p class="hint">{ i18n.T(ctx, "link.client_req") }</p>
+			<input type="hidden" name="role" value="client"/>
+			<div><button type="submit" class="pill">{ i18n.T(ctx, "link.become_client") }</button></div>
+		</form>
+		<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) } aria-labelledby="lv-h">
+			<h3 id="lv-h">{ i18n.T(ctx, "link.become_relay") }</h3>
+			<p class="hint">{ i18n.Tf(ctx, "link.relay_req", v.ListenAddr) }</p>
+			if v.RelayReqKey != "" {
+				<div class="callout callout--warn"><p>{ i18n.T(ctx, v.RelayReqKey) }</p></div>
+			} else {
+				<input type="hidden" name="role" value="relay"/>
+				<div class="add-row">
+					<div class="field">
+						<label for="lhost">{ i18n.T(ctx, "link.host") }</label>
+						<input class="input input--mono" id="lhost" name="link_host" value={ v.LinkHost } placeholder="link.relay.example.com" required autocomplete="off" spellcheck="false" aria-describedby="lhost-hint"/>
+					</div>
+					<button type="submit" class="pill">{ i18n.T(ctx, "link.become_relay") }</button>
+					<p class="field-hint" id="lhost-hint">{ i18n.T(ctx, "link.host_hint") }</p>
+				</div>
+			}
+		</form>
+	</section>
+}
+
+// linkTurnOff is the destructive "turn the link off" form.
+templ linkTurnOff(org db.Organization, more string) {
+	<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) } data-confirm={ i18n.T(ctx, "link.confirm.off") } data-more={ more } data-ok={ i18n.T(ctx, "link.turn_off") } onsubmit="return krillConfirm(this)">
+		<input type="hidden" name="role" value="off"/>
+		<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "link.turn_off") }</button>
+	</form>
+}
+
+templ linkRelay(org db.Organization, v LinkView) {
+	<section class="sec" aria-labelledby="lr-h" data-unsaved-scope>
+		<div class="sec-head">
+			<h3 id="lr-h">{ i18n.T(ctx, "link.role") }</h3>
+			@ui.State("ok", i18n.T(ctx, "link.role.relay"))
+		</div>
+		if v.RelayCertsBroken {
+			<div class="callout callout--err"><p>{ i18n.T(ctx, "link.relay_certs_broken") }</p></div>
+		}
+		if len(v.Conflicts) > 0 {
+			<div class="callout callout--err">
+				<div class="callout-body">
+					<p>{ i18n.Tf(ctx, "link.conflict", v.LinkHost) }</p>
+					<ul>
+						for _, c := range v.Conflicts {
+							<li>
+								if c.Panel {
+									{ i18n.T(ctx, "link.conflict_panel") }
+								} else {
+									{ i18n.T(ctx, "link.conflict_app") + " " }
+									<a href={ templ.SafeURL(c.URL) }>{ c.App }</a>
+								}
+							</li>
+						}
+					</ul>
+					<p>{ i18n.T(ctx, "link.conflict_resolve") }</p>
+				</div>
+			</div>
+		}
+		<form class="add-row" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/role")) }>
+			<input type="hidden" name="role" value="relay"/>
+			<div class="field">
+				<label for="lhost">{ i18n.T(ctx, "link.host") }</label>
+				<input class="input input--mono" id="lhost" name="link_host" value={ v.LinkHost } required autocomplete="off" spellcheck="false" aria-describedby="lhost-hint"/>
+			</div>
+			<button type="submit" class="pill">{ i18n.T(ctx, "common.save") }</button>
+			<p class="field-hint" id="lhost-hint">{ i18n.T(ctx, "link.host_hint") }</p>
+		</form>
+		@linkTurnOff(org, i18n.T(ctx, "link.off_more_relay"))
+	</section>
+	if v.NewCode != "" {
+		<div class="callout callout--ok" role="status">
+			<div class="callout-body">
+				@ui.State("ok", i18n.T(ctx, "link.code_created"))
+				<p class="hint">{ i18n.T(ctx, "link.code_once") }</p>
+				<div class="input-group">
+					<input class="input input--mono" value={ v.NewCode } readonly aria-label={ i18n.T(ctx, "link.code") }/>
+					@ui.CopyButton(v.NewCode, i18n.T(ctx, "common.copy"))
+				</div>
+			</div>
+		</div>
+	}
+	<section class="sec" aria-labelledby="lp-h">
+		<div class="sec-head"><h3 id="lp-h">{ i18n.T(ctx, "link.peers") }</h3></div>
+		if len(v.Peers) == 0 {
+			<p class="empty">{ i18n.T(ctx, "link.peers_empty") }</p>
+		} else {
+			<ul class="links">
+				for _, p := range v.Peers {
+					<li class="row-item">
+						<span class="link-var">{ p.Name }</span>
+						<span class="link-src">
+							if p.Connected {
+								{ i18n.Tf(ctx, "link.peer_session", p.From, linkClock(p.Since), linkMS(p.Latency), p.Version) }
+							} else if !p.LastSeen.IsZero() {
+								{ i18n.Tf(ctx, "link.peer_last_seen", linkClock(p.LastSeen)) }
+							} else {
+								{ i18n.T(ctx, "link.peer_never") }
+							}
+							<br/>
+							{ i18n.Tf(ctx, "link.cert_until", linkDate(p.CertNotAfter)) }
+							if p.DuplicateFrom != "" {
+								<br/>
+								{ i18n.Tf(ctx, "link.peer_duplicate", p.DuplicateFrom, linkClock(p.DuplicateAt)) }
+							}
+						</span>
+						if p.Connected {
+							@ui.State("ok", i18n.T(ctx, "link.state.connected"))
+						} else {
+							@ui.State("idle", i18n.T(ctx, "link.state.disconnected"))
+						}
+						<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/peers/"+itoa(p.ID)+"/remove")) } data-confirm={ i18n.Tf(ctx, "link.confirm.remove_peer", p.Name) } data-more={ i18n.T(ctx, "link.remove_peer_more") } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
+							<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "link.remove_peer_named", p.Name) } title={ i18n.T(ctx, "link.remove_peer") }>
+								@ui.Icon("i-trash")
+							</button>
+						</form>
+					</li>
+				}
+			</ul>
+		}
+		if len(v.OpenCodes) > 0 {
+			<p class="hint">
+				for i, c := range v.OpenCodes {
+					if i > 0 {
+						{ " · " }
+					}
+					{ i18n.Tf(ctx, "link.code_open", c.Peer, c.ExpiresAt.Local().Format("15:04")) }
+				}
+			</p>
+		}
+	</section>
+	<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/codes")) } aria-labelledby="lk-h">
+		<h3 id="lk-h">{ i18n.T(ctx, "link.new_code") }</h3>
+		<p class="hint">{ i18n.T(ctx, "link.new_code_desc") }</p>
+		<div class="row row--even">
+			<div class="field">
+				<label for="lpeer">{ i18n.T(ctx, "link.peer_name") }</label>
+				<input class="input input--mono" id="lpeer" name="peer" required placeholder="msk" autocomplete="off" spellcheck="false" maxlength="32"/>
+			</div>
+			<div class="field">
+				<label for="laddr">{ i18n.T(ctx, "link.dial_addr") }</label>
+				<input class="input input--mono" id="laddr" name="addr" placeholder={ v.DefaultAddr } autocomplete="off" spellcheck="false" aria-describedby="laddr-hint"/>
+				<p class="field-hint" id="laddr-hint">{ i18n.T(ctx, "link.dial_addr_hint") }</p>
+			</div>
+		</div>
+		<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "link.create_code") }</button></div>
+	</form>
+}
+
+templ linkClient(org db.Organization, v LinkView) {
+	<section class="sec" aria-labelledby="lr-h">
+		<div class="sec-head">
+			<h3 id="lr-h">{ i18n.T(ctx, "link.role") }</h3>
+			@ui.State("ok", i18n.T(ctx, "link.role.client"))
+		</div>
+		@linkTurnOff(org, i18n.T(ctx, "link.off_more_client"))
+	</section>
+	if v.Paired {
+		<section class="sec" aria-labelledby="ls-h">
+			<div class="sec-head">
+				<h3 id="ls-h">{ v.RelaySNI }</h3>
+				switch v.Client.State {
+					case "connected":
+						@ui.State("ok", i18n.T(ctx, "link.state.connected"))
+					default:
+						@ui.State("warn", i18n.T(ctx, "link.state.connecting"))
+				}
+			</div>
+			<ul class="links">
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "link.relay_addr") }</span>
+					<span class="link-src">{ v.RelayAddr }</span>
+				</li>
+				if v.Client.State == "connected" {
+					<li class="row-item">
+						<span class="link-var">{ i18n.T(ctx, "link.session") }</span>
+						<span class="link-src">{ i18n.Tf(ctx, "link.client_session", linkClock(v.Client.Since), linkMS(v.Client.Latency), v.Client.RelayVersion) }</span>
+					</li>
+				}
+				<li class="row-item">
+					<span class="link-var">{ i18n.T(ctx, "link.last_error") }</span>
+					<span class="link-src">
+						if v.Client.Category == "" {
+							{ "—" }
+						} else {
+							{ i18n.T(ctx, "link.cat."+v.Client.Category) + " · " + linkClock(v.Client.FailedAt) }
+							<br/>
+							<code>{ v.Client.Message }</code>
+						}
+					</span>
+				</li>
+				if !v.Client.CertNotAfter.IsZero() {
+					<li class="row-item">
+						<span class="link-var">{ i18n.T(ctx, "link.cert") }</span>
+						<span class="link-src">{ i18n.Tf(ctx, "link.cert_until", linkDate(v.Client.CertNotAfter)) }</span>
+					</li>
+				}
+			</ul>
+			<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/forget")) } data-confirm={ i18n.T(ctx, "link.confirm.forget") } data-more={ i18n.T(ctx, "link.forget_more") } data-ok={ i18n.T(ctx, "link.forget") } onsubmit="return krillConfirm(this)">
+				<button type="submit" class="pill pill--danger">{ i18n.T(ctx, "link.forget") }</button>
+			</form>
+		</section>
+	}
+	<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/pair")) } aria-labelledby="lq-h">
+		<h3 id="lq-h">
+			if v.Paired {
+				{ i18n.T(ctx, "link.repair") }
+			} else {
+				{ i18n.T(ctx, "link.pair") }
+			}
+		</h3>
+		<p class="hint">{ i18n.T(ctx, "link.pair_desc") }</p>
+		<div class="field">
+			<label for="lcode">{ i18n.T(ctx, "link.code") }</label>
+			<textarea class="input input--mono textarea" id="lcode" name="code" rows="3" required spellcheck="false" autocomplete="off" placeholder="krl1_…"></textarea>
+		</div>
+		<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "link.pair") }</button></div>
+	</form>
+}

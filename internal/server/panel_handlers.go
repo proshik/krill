@@ -14,6 +14,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/link"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -217,6 +218,18 @@ func (s *Server) gatewayConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := panel.DynamicConfig(panel.SettingsFromRow(row), s.panel.upstream, s.panel.tokens.Forwarded)
+	if s.link != nil {
+		// The relay's link host: a TCP passthrough router beside the panel's
+		// HTTP routers, published only while no domain or the panel holds the
+		// host (re-checked under the host lock on every poll).
+		tcp, err := s.link.GatewayTCP(r.Context())
+		if err != nil {
+			logFrom(r).Error("gatewayConfig: build link routes failed", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		cfg = link.Merge(cfg, tcp)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := json.NewEncoder(w).Encode(cfg); err != nil {
@@ -311,7 +324,8 @@ func (s *Server) directPortDrift(r *http.Request, locked, stored bool) (hostClos
 	if locked {
 		ctx, cancel := context.WithTimeout(r.Context(), firewallStatusTimeout)
 		defer cancel()
-		closed, err := firewall.GatewayOnly(ctx, s.cpFirewall)
+		port, _ := strconv.Atoi(listenPort(s.cfg.ListenAddr))
+		closed, err := portGatewayOnly(ctx, s.cpFirewall, port)
 		if err != nil {
 			logFrom(r).Warn("panelDomainPage: read control-plane ruleset failed", "err", err)
 			return false, false

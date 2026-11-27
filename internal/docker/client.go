@@ -347,6 +347,13 @@ func (e *dockerEngine) ServiceDeploy(ctx context.Context, spec ServiceSpec) erro
 	if err != nil {
 		return err
 	}
+	if found && spec.KeepNetworkPrefix != "" {
+		names, err := e.attachmentNames(ctx, cur.Spec.TaskTemplate.Networks)
+		if err != nil {
+			return fmt.Errorf("read network attachments of %s: %w", spec.Name, err)
+		}
+		sw.TaskTemplate.Networks = keepAttachments(cur.Spec.TaskTemplate.Networks, names, sw.TaskTemplate.Networks, spec.KeepNetworkPrefix)
+	}
 	createOpts := swarm.ServiceCreateOptions{}
 	updateOpts := swarm.ServiceUpdateOptions{}
 	if spec.RegistryAuth != "" {
