@@ -15,6 +15,7 @@ touches:
   - internal/traefik/**
   - internal/hostshare/**
   - internal/deploy/**
+  - internal/docker/**
   - internal/server/**
   - internal/web/**
   - internal/config/**
