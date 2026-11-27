@@ -29,7 +29,10 @@ items 3 and 12.
 
 - [ ] WHEN the Monitoring page is opened on a two-node cluster THEN both nodes have
       CPU and memory series, the node selector switches between them, and a stopped
-      worker is shown as unreachable rather than as zero.
+      worker gets the "no data" badge after the freshness window, with gaps in chart
+      buckets that have no samples. (The page still renders 0% CPU and zero used memory
+      beside the stored capacity for such a node; a distinct "unreachable" state is
+      not built — record it, a separate task if wanted.)
 - [ ] WHEN a third node joins with the observability agent already on THEN an agent
       task starts on it without a settings change, its host metrics and container
       logs reach the receivers with `krill_*` labels (`krill_node` included), and the

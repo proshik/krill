@@ -16,6 +16,7 @@ touches:
   - internal/database/queries/**
   - internal/database/gen/**
   - cmd/krill/**
+  - docs/install.md
   - docs/guides/backups.md
   - docs/internals/databases.md
 harness: any
@@ -46,8 +47,16 @@ and alerts.
       UI says so before confirming).
 - [ ] WHEN a backup fails THEN the alert resolves its owner through this backup kind's
       own table (separate id sequences — see `notify.Service.BucketBackupFailed`).
-- [ ] WHEN the migration runs THEN it is additive (a new table or a nullable target
-      column), and the previous release ignores the new rows.
+- [ ] WHEN the migration runs THEN it adds a separate table for instance backups: the
+      shared `backups` table cannot hold them (`logical_database_id` is NOT NULL,
+      migration 000030) and relaxing it would make the previous release's
+      `ListEnabledBackups` scan a NULL into an `int64` and abort the scheduler reload,
+      leaving every Postgres backup unscheduled after a rollback. A rollback test with
+      both kinds configured shows the Postgres backups still scheduled.
+- [ ] WHEN Krill's state is restored by runbook A THEN the new schedules are paused and
+      resumed with the others (`docs/install.md`, today `backups`, `volume_backups`,
+      `bucket_backups`), so an empty redeployed instance is never snapshotted before its
+      data is restored and retention never prunes the last populated snapshot.
 - [ ] WHEN the docs are updated THEN `docs/guides/backups.md` and
       `docs/internals/databases.md` describe it.
 

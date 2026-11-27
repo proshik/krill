@@ -12,6 +12,7 @@ touches:
   - internal/api/**
   - internal/server/**
   - internal/docker/**
+  - internal/deploy/**
   - internal/config/**
   - docs/guides/krill-cli.md
   - docs/configuration.md
@@ -36,17 +37,30 @@ streaming it to Krill (`delivery: upload` in `krill.yaml`, `krill-cli deploy
       `docker save <image-id>` archive THEN Krill spools it to a directory on real
       disk (not `/tmp`, which may be tmpfs; Krill has no data-directory setting today,
       so the spec chooses one and documents it), and accepts it only if it holds
-      exactly one image and **no** `RepoTags`; anything else is refused before
-      `docker load` — a tagged archive could otherwise replace an image such as
-      `traefik:v3.6.1` that Krill later runs as root with the Docker socket.
+      exactly one image and **no** name anywhere: no `RepoTags` in `manifest.json` and no
+      reference annotations (`org.opencontainers.image.ref.name`,
+      `io.containerd.image.name`) in an OCI `index.json` — the containerd-backed loader
+      prefers the OCI index and can update named images from it. An archive whose
+      metadata cannot be validated is refused before `docker load`; a tagged archive
+      could otherwise replace an image such as `traefik:v3.6.1` that Krill later runs as
+      root with the Docker socket. A test checks that a refused import leaves existing
+      references unchanged, on both the classic and the containerd image store.
 - [ ] WHEN the archive is accepted THEN the image is tagged
       `krill.invalid/<app-scoped name>:<tag>` (the reserved `.invalid` name, so
       swarmkit's pull on every task Prepare never leaks to Docker Hub) and deployed
-      through the normal queue with that tag in the job (`Deployer.EnqueueImage`).
+      through the normal queue with that tag in the job (`Deployer.EnqueueImage`). The
+      job carries the local image id as the immutable identity: today an image app with
+      a pre-deploy command resolves its digest from the registry (`ResolveDigest`,
+      `internal/deploy/deployer.go:336-351,638-647`, `internal/docker/client.go:1263`)
+      and fails the deploy when that fails, so the upload path resolves locally instead,
+      and an uploaded image with a pre-deploy command is tested.
 - [ ] WHEN the compressed or the unpacked size exceeds its own limit THEN the upload
       is refused (gzip bomb), the spool is removed, and nothing is loaded.
-- [ ] WHEN the app is placed on a worker or is `global` THEN the upload is refused: an
-      uploaded image exists only on the control plane.
+- [ ] WHEN an app runs an uploaded image THEN its service is constrained to the control
+      plane when the spec is built (also for placement "any node", which has no
+      constraint today), the upload is refused for `pin` to a worker and for `global`,
+      and a placement change between the upload and the job start is caught by the
+      deployer when the job runs — an uploaded image exists only on the control plane.
 - [ ] WHEN old uploaded images pile up THEN they are pruned without `Force` (an image a
       service still uses stays).
 - [ ] WHEN the CLI runs `deploy` with `delivery: upload` THEN it builds, saves by image

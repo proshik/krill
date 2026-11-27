@@ -37,6 +37,12 @@ installer.
       install.sh command instead of the install button, and the install endpoint
       refuses it too (not only the page).
 - [ ] WHEN the asset is missing (every release so far) THEN behavior is unchanged.
+- [ ] WHEN a host runs a release older than the marker-aware one THEN its updater
+      ignores the marker (`internal/selfupdate/checker.go:243-284`, `updater.go:314-330`
+      accept any newer latest tag), so the first release that needs the installer
+      comes at least one release after the marker-aware one, the release notes still say
+      "requires re-running install.sh", and the docs say what an older host sees. Both an
+      older and a marker-aware binary are checked against the first marked release.
 - [ ] WHEN several releases are skipped THEN a marker on any release between the
       running one and the target blocks the update (the checker reads the markers of
       the releases in between, or the marker is cumulative — the spec decides).

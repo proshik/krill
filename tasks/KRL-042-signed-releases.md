@@ -41,8 +41,19 @@ tampered release fail closed.
 - [ ] WHEN the self-updater installs a release THEN `internal/selfupdate` verifies the
       same signature with the key compiled into the running binary (Go's
       `crypto/ed25519`), and refuses an unsigned release once signing has shipped.
+- [ ] WHEN signing is introduced THEN the order keeps the public one-liner working
+      throughout: `master/install.sh` installs the latest release
+      (`install.sh:321-325`), and release assets come from a separate tag workflow, so
+      signed assets exist on the latest release before an enforcing installer reaches
+      `master`; a `KRILL_VERSION` that selects a release from before signing is handled
+      as documented (refused, or allowed with the override). The move from the last
+      unsigned release is checked.
 - [ ] WHEN the key must be rotated THEN the procedure (a release signed by the old key
-      that carries the new public key) is written in `docs/internals/operations.md`.
+      that carries the new public key) is written in `docs/internals/operations.md`,
+      including a host that skipped that bridge release: the updater accepts only the
+      cached latest tag (`checkStart`, `internal/selfupdate/updater.go:314-322`), so such
+      a host is either offered the bridge release or told to re-run the installer, and
+      the docs say how the operator trusts the new key.
 - [ ] WHEN releases made before signing are offered THEN the transition is defined: the
       first signed release still accepts unsigned older ones for rollback, or not —
       the spec decides and the docs say.

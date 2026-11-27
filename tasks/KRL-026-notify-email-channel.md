@@ -5,7 +5,7 @@ kind: feature
 status: backlog
 priority: 3
 component: krill
-depends_on: []
+depends_on: [KRL-045]
 touches:
   - internal/notify/**
   - internal/server/**
@@ -29,11 +29,12 @@ introduces the channel-type seam the Slack channel (KRL-027) reuses.
 
 ## Acceptance
 
-- [ ] WHEN the previous release reads a channel of a type it does not know THEN it
-      skips it without sending: the release that ships email first ships the reader
-      change (send only `type = 'telegram'` through the Telegram sender), and the
-      migration that widens `notification_channels.type`'s CHECK lands no earlier
-      than that (expand/contract: widen reads a release before writes).
+- [ ] WHEN a release can write an email channel THEN the release it rolls back to
+      already skips unknown channel types (KRL-045): once KRL-045 is merged, add
+      `after_release: "<KRL-045's merge commit>"` to this task, and the migration that
+      widens `notification_channels.type`'s CHECK ships here, not earlier. A rollback test
+      with an email row present shows Telegram delivery continuing for events, infra
+      alerts and the digest.
 - [ ] WHEN an org admin adds an email channel with SMTP settings (host, port, TLS
       mode, user, password, from, to) THEN the password is stored with `secret.Enc`
       and never shown, logged or put in an error; the host is dialed through

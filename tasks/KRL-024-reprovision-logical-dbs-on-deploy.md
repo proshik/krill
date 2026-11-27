@@ -8,7 +8,10 @@ component: krill
 depends_on: []
 touches:
   - internal/dbservice/**
+  - internal/server/db_handlers.go
+  - internal/server/api_provision.go
   - internal/web/i18n/**
+  - test/acceptance/**
   - docs/install.md
   - docs/internals/databases.md
 harness: any
@@ -39,11 +42,27 @@ runbook A in `docs/install.md`). Objects that already exist are never touched.
 - [ ] WHEN a stored password cannot be decrypted (`secret.ErrUndecryptable`) THEN that
       database is skipped with a logged error and the others still proceed; the
       deploy itself is not failed by a re-provision error.
-- [ ] WHEN the re-provision runs THEN it holds the instance lock the deploy already
-      holds, and runs on a context detached from the HTTP request.
-- [ ] WHEN the docs are updated THEN runbook A in `docs/install.md` drops the manual
-      SQL step (or keeps it only for releases before this one), and
-      `docs/internals/databases.md` describes the behavior.
+- [ ] WHEN a logical database is being created through the UI or the API while the
+      instance deploys THEN creation and re-provision are serialized on one per-database
+      (or per-instance) lock that both entrypoints take from the catalog insert through
+      provisioning — today both insert the row first and provision outside any instance
+      lock (`internal/server/db_handlers.go:85-99`, `internal/server/api_provision.go:156-216`)
+      — so neither side gets `ErrObjectsExist` for the other's objects, no row is deleted
+      for objects that now exist, and no compensation drops objects the failing attempt
+      did not create. Both completion orders are tested.
+- [ ] WHEN the re-provision runs THEN it runs on a context detached from the HTTP
+      request.
+- [ ] WHEN the docs are updated THEN runbook A in `docs/install.md` replaces the
+      unconditional manual SQL with: redeploy, then check each logical database and its
+      role (login with the stored user) before restoring its dump, and run the manual
+      statements only for a pair the deploy log reported as skipped or partial (kept for
+      releases before this one); `docs/internals/databases.md` describes the behavior.
+- [ ] WHEN the runbook changes THEN the state-backup acceptance follows it:
+      `TestCheckRepoInstallDoc` (`test/acceptance/accept/runbook_test.go`, against the
+      three-statement block `runbook.go` expects) and `recoverWorkloads` (`test/acceptance/statebackup_test.go:1038`,
+      which runs the SQL with `ON_ERROR_STOP` and would fail on a role the deploy already
+      recreated) check that the deploy recreated the database and role before the
+      restore.
 
 ## Checks
 
@@ -53,7 +72,8 @@ runbook A in `docs/install.md`). Objects that already exist are never touched.
   instance with two logical databases, its volume replaced by an empty one,
   redeployed → both databases accept their users' logins; a database created by hand
   under another owner is left untouched.
-- `make test`.
+- `make test`; `make acceptance-statebackup` when the runbook changes (a disposable Lima
+  VM, see `docs/development.md#state-backup-acceptance`).
 
 ## Limits / non-goals
 

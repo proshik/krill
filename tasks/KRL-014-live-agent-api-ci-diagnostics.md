@@ -29,12 +29,16 @@ current code, where they exist and have no live record.
 
 - [ ] WHEN a CI job with a write token calls `POST /api/v1/apps/{ref}/deploy` with a
       new tag and polls `GET /api/v1/deployments/{id}` THEN the deploy ships that tag
-      and the job sees the final status; a refusal comes back as 409 or 503 with
-      `Retry-After`, never as a silent success.
+      and the job sees the final status. A deploy while one is in flight is refused with
+      409 (no `Retry-After`) and the job can poll the active deployment; a full queue,
+      the per-organization cap or a shutdown answer 503 with `Retry-After`; never a
+      silent success.
 - [ ] WHEN `krill_app_status` is asked about an app with a task on a worker node THEN
       it reports that task's state, health and usage.
-- [ ] WHEN `krill_app_logs` is called with a time window and with `wait_for` THEN it
-      returns that window, and the wait ends on the expected line (or its timeout).
+- [ ] WHEN `krill_app_logs` is called with a time window (`since`/`until`) THEN it
+      returns that window; WHEN it is called separately with `wait_for` (which does not
+      combine with `since`, `until`, `contains` or `level`) THEN the wait ends on a new
+      matching line, or at its timeout.
 - [ ] WHEN `krill_deployment_status` is called with `wait` on a deploy that goes into
       the background settle THEN it returns the settled outcome.
 - [ ] WHEN `krill_domain_status` is asked about a domain with real DNS and a Let's

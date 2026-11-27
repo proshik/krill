@@ -31,8 +31,10 @@ in one hop. This was ROADMAP's live-acceptance item 16.
       two months after the 2026-11-16 issuance) THEN it is renewed without a manual
       step and the redirect keeps answering over HTTPS.
 - [ ] WHEN **Make primary** moves the primary to another domain of a live app THEN the
-      former primary, if set to redirect, sends 301/308 to the new primary with path
-      and query kept, and the new primary serves the app.
+      new primary serves the app; and WHEN the redirect is then turned on for the
+      former primary (Make primary only switches `is_primary`,
+      `internal/database/queries/domains.sql:72-80`, a primary cannot redirect) THEN it
+      answers GET with 301 and POST with 308 to the new primary, path and query kept.
 - [ ] WHEN the redirect is switched off on a domain THEN it serves the app again.
 
 ## Checks

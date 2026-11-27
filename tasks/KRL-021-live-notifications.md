@@ -28,10 +28,14 @@ cannot reach Telegram directly. This was ROADMAP's live-acceptance item 17.
       message arrives with the app and a working link.
 - [ ] WHEN the digest time comes in the channel's time zone THEN one digest arrives,
       and a restart of Krill around that time does not send a second one.
-- [ ] WHEN the digest is built THEN its disk figures match `df` on the control plane
-      and, over SSH, on a worker.
+- [ ] WHEN an instance operator has turned on infrastructure notifications for the
+      channel (`NotifyInfra`; without it the digest carries no disk data,
+      `internal/notify/digest.go:354-360`) THEN the digest's disk figures match `df` on
+      the control plane and, over SSH, on a worker.
 - [ ] WHEN a node's disk crosses the threshold THEN an alert arrives, it repeats once a
-      day while it stays over, and a recovery message arrives when it falls back.
+      day while it stays over, and a recovery message arrives once usage falls more than
+      three percentage points below the threshold (hysteresis,
+      `internal/notify/resources.go:17-46`).
 - [ ] WHEN a deploy leaves the node's memory limits overcommitted (opt-in by the
       operator) THEN the warning arrives once.
 - [ ] WHEN `KRILL_TELEGRAM_PROXY` points at an SSH SOCKS tunnel on an install without

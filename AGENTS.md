@@ -385,7 +385,8 @@ the migrations themselves in `internal/database/migrations`.
 
 - **Open work is a task in `tasks/`** (taskmoor format, `tasks/tasks.toml`: prefix `KRL`, main
   branch `master`). One task = one worktree, one branch `task/KRL-<n>-<slug>`, one merge. Start
-  from `taskmoor ready`, claim with `taskmoor claim KRL-<n> --branch … --worktree …`, work to the
+  from `taskmoor ready`, claim with `taskmoor claim KRL-<n> --branch … --worktree …` (`--person` for a
+  `needs_person` task, which only a person or their explicit permission starts), work to the
   task's Acceptance / Checks / Limits and keep inside its `touches` and `reviews` budget; tick
   the Acceptance boxes in the task file on the branch, and write a disagreement into the file
   instead of coding around it. `taskmoor validate` must report no errors. Rules for writing and

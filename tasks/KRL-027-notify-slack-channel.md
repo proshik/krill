@@ -34,7 +34,7 @@ seam KRL-026 introduces.
       (Slack mrkdwn, links to the app), in the channel's language and zone; a 429 is
       retried after `Retry-After` at most once, other failures are logged.
 - [ ] WHEN the previous release reads a `slack` channel THEN it skips it (the reader
-      tolerance shipped with KRL-026 covers any unknown type).
+      tolerance of KRL-045 covers any unknown type, and KRL-026 has shipped).
 - [ ] WHEN **Send test message** is pressed THEN the result is shown synchronously.
 - [ ] WHEN the docs are updated THEN `docs/guides/notifications.md` explains creating
       the webhook in Slack.

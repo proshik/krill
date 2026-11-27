@@ -27,8 +27,12 @@ live-acceptance item 4; the path is code-complete and unit-tested only.
       to a worker (and back) THEN it comes up on the target with the same data, its
       apps reconnect, and the transfer time for the volume size is recorded.
 - [ ] WHEN the target node is cut off (network down or Docker stopped) in the middle
-      of the stream THEN the move fails, the instance is redeployed on the source with
-      its data, the error says why, and a retry after the node returns succeeds.
+      of the stream THEN the move fails, the existing source service is scaled back up
+      on its original volume (`recover`, before the node metadata changes), the
+      recorded node and the data are unchanged, the error says why, and a retry after
+      the node returns succeeds.
+- [ ] WHEN a failure is forced after the node metadata switched (the target cannot
+      start the instance) THEN the instance is redeployed on the source with its data.
 - [ ] WHEN a second move or a Deploy is started while one runs THEN it is refused
       (`ErrInstanceBusy` / `ErrDeployInProgress`) with a flash that says so, not a
       false "migration failed" alert.
@@ -50,5 +54,5 @@ live-acceptance item 4; the path is code-complete and unit-tested only.
 
 - `internal/dbservice/migrate.go:40` (`MigrateInstanceNode`: stop → stream →
   redeploy on the target, rollback to the source on any error; takes the instance
-  lock before returning).
+  lock before returning); the two recovery paths at lines ~200-261.
 - `docs/internals/databases.md` (DB instances).

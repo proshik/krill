@@ -29,13 +29,17 @@ cap on organizations per user bounds how often one account can cause that.
 
 ## Acceptance
 
-- [ ] WHEN a user who already owns `KRILL_MAX_ORGS_PER_USER` organizations creates
-      another THEN it is refused with a flash that says so, before the row or the
+- [ ] WHEN a user who already created `KRILL_MAX_ORGS_PER_USER` organizations (counted
+      by `organizations.owner_id`, the recorded creator, not by current `owner`
+      memberships — an owner can promote someone else and demote themselves, which
+      would free a slot while the organization and its network stay) creates another
+      THEN it is refused with a flash that says so, before the row or the
       network is created; the instance operator (`users.is_admin`) is not capped.
 - [ ] WHEN the variable is unset THEN the default does not refuse anything an existing
       install already has (a user over the cap keeps their organizations and only
       cannot create more); `0` means unlimited. The default value is the spec's choice,
       recorded in `docs/configuration.md` with the reason.
+- [ ] WHEN roles in an organization change THEN the creator's count is unchanged.
 - [ ] WHEN two creations race THEN the cap is enforced in one transaction (or under a
       per-user lock), not by a check-then-insert that both pass.
 - [ ] WHEN the refusal happens THEN it is logged at INFO with `user_id` via `logFrom(r)`.
@@ -48,8 +52,9 @@ cap on organizations per user bounds how often one account can cause that.
 
 ## Limits / non-goals
 
-- Counts organizations where the user is `owner`; memberships granted by others do
-  not count.
+- Counts organizations by their recorded creator (`owner_id`); role changes and
+  memberships granted by others do not change the count. A test changes roles and
+  checks the quota is unchanged.
 - No billing, no per-organization quotas on apps.
 
 ## Context

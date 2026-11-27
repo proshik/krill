@@ -32,8 +32,12 @@ user adds its public half to the repository.
 ## Acceptance
 
 - [ ] WHEN an org admin turns on a deploy key for a Git app THEN Krill generates an
-      ed25519 key pair, stores the private key with `secret.Enc`, and shows only the
-      public key (to paste as a read-only deploy key).
+      ed25519 key pair, stores the private key encrypted, and shows only the public key
+      (to paste as a read-only deploy key). The key is sealed with `secret.Seal` (bound
+      to the row's identity, read back with `secret.Open`; `internal/secret/strict.go`),
+      not `secret.Enc`, which returns its input unchanged when `KRILL_SECRET_KEY` is
+      unset or a nonce cannot be read; without a key the feature is refused, and a test
+      shows no private key in the database in either case.
 - [ ] WHEN the app builds from an SSH URL THEN the clone uses that key through a
       temporary file (0600, removed after the clone) and `GIT_SSH_COMMAND` with
       `IdentitiesOnly=yes`, never argv or the process environment of anything

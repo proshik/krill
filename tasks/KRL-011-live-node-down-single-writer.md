@@ -45,6 +45,11 @@ ROADMAP's live-acceptance item 2.
 
 - A dated record in `docs/internals/databases.md` (single-writer protection) with the
   container timelines from `docker service ps` and the Postgres log lines.
+- Positive evidence of contention: the replacement container is running on the same
+  volume while the first database process is still alive (process list on both
+  containers, or the `flock` holder), and its database process has not started. A
+  drain where the old container is gone before the new one starts proves nothing about
+  the guard and is recorded as inconclusive.
 
 ## Limits / non-goals
 

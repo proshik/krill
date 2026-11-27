@@ -33,9 +33,13 @@ reason why it cannot be done in place.
 - [ ] WHEN the move works THEN `docs/guides/buckets.md` has the steps (back up the
       buckets first, the image to set, what to check) and the rollback (the old image
       back on the same volume), and `docs/internals/databases.md` records the check.
-- [ ] WHEN the move does not work in place THEN the guide describes the alternative
-      (a new Silo server, then bucket snapshot → restore and relink) and the task
-      records why.
+- [ ] WHEN the move does not work in place THEN the guide describes and the check
+      verifies a cross-server path — Krill's **Restore into a new bucket** creates the
+      bucket on the snapshot's own server, so it cannot move data to a new Silo server
+      by itself: e.g. a new Silo server, the bucket and its key created or imported there,
+      the objects copied with `mc mirror` between the two servers (explicit source and
+      destination, no root credential in an app), then each app relinked and checked —
+      and the task records why the in-place move failed.
 
 ## Checks
 

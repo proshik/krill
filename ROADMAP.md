@@ -95,7 +95,7 @@ details, including what already passed live.
 ## Live-acceptance queue
 
 Verified in code and tests, but not yet exercised on a real environment. Each open entry is a
-task that needs a person (`needs_person: true`); entries 8–10 are closed and say why. The
+task that needs a person (`needs_person: true`); entries 9 and 10 are closed and say why. The
 numbers are those of earlier versions of this file, which other documents cite.
 
 1. MinIO (now Silo) and DragonFly instances on a VPS, including S3 app-linking — [KRL-009](tasks/KRL-009-live-s3-buckets-redis-engines.md).
@@ -106,11 +106,10 @@ numbers are those of earlier versions of this file, which other documents cite.
    operations (the MCP half passed on 2026-09-23) — [KRL-014](tasks/KRL-014-live-agent-api-ci-diagnostics.md).
 6. `krill-cli` deploying a locally built image through a real registry — [KRL-015](tasks/KRL-015-live-krill-cli-local-build.md).
 7. A full `install.sh` run from a published release on a fresh VM — [KRL-016](tasks/KRL-016-live-install-from-release.md).
-8. The per-organization network migration on a real upgrade — dropped: it moves only services
-   created before per-organization networks existed, and v0.1.0, the first release, already
-   creates every organization with its own network; it is covered by `internal/orgnet` tests.
+8. The per-organization network migration on a real cluster with services to move —
+   [KRL-044](tasks/KRL-044-live-org-network-migration.md).
 9. The installer's move of the control-plane Postgres onto `krill-state` on a real upgrade —
-   dropped for the same reason: every installer from v0.1.0 on creates `krill-postgres` on
+   dropped: every installer from v0.1.0, the first release, creates `krill-postgres` on
    `krill-state`, so only a pre-release install takes the move.
 10. The panel domain on a real VPS — accepted on v0.3.2 (2026-09-22/23) after the two fixes the
     first attempt found; a recurrence of the unexplained swarm-check report is now logged with
@@ -141,7 +140,8 @@ The Krill link has its own live acceptance, [KRL-007](tasks/KRL-007-link-live-ac
 - **Re-provision logical databases on a DB-instance deploy**, so a restore onto a new host
   needs no manual SQL: [KRL-024](tasks/KRL-024-reprovision-logical-dbs-on-deploy.md).
 - **Direct image upload** in `krill-cli` (`delivery: upload`): [KRL-025](tasks/KRL-025-cli-direct-image-upload.md).
-- **Email and Slack** notification channels: [KRL-026](tasks/KRL-026-notify-email-channel.md), [KRL-027](tasks/KRL-027-notify-slack-channel.md).
+- **Email and Slack** notification channels: [KRL-045](tasks/KRL-045-notify-skip-unknown-channel-types.md)
+  (readers that skip unknown channel types, released first), [KRL-026](tasks/KRL-026-notify-email-channel.md), [KRL-027](tasks/KRL-027-notify-slack-channel.md).
 - A **Homebrew tap** for `krill-cli`: [KRL-028](tasks/KRL-028-homebrew-tap-krill-cli.md).
 - **Existing MinIO instances** onto Silo in place: [KRL-029](tasks/KRL-029-minio-to-silo-in-place.md).
 - **Existing overlay networks keep their MTU** — automate their recreation or keep the

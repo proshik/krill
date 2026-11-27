@@ -35,7 +35,12 @@ a real two-node cluster on 2026-09-22 (v0.3.0 → v0.3.1, schema 48 → 49) and
 - [ ] WHEN the server is rebooted inside the 10-minute rollback window THEN the
       outcome is the one `docs/install.md` describes (the `/run` markers and
       transient timers are gone after the reboot), and the install is left in a
-      working state.
+      working state. Immediately before the reboot, the record shows the new binary in
+      place, startup not yet confirmed (`/run/krill-update-pending` present) and the
+      `krill-update-revert` timer armed — otherwise `ConfirmStartup` already ran and the
+      reboot tests nothing (an unconfirmed state can be held by a new binary that does
+      not reach serving, e.g. its database made unreachable). After the boot: the
+      running version, `krill.prev` kept, no timer left.
 
 ## Checks
 

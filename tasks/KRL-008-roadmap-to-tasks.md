@@ -55,8 +55,7 @@ maintainer's local plans. A contributor or an agent finds takeable work with
 ## Change record (2026-11-27)
 
 Every open item of `ROADMAP.md` at `f9944da`, checked against the code at that commit.
-Items 8 and 9 are dropped and item 10 and the landing page are done; everything else is
-a task. What already passed live is kept in each task's Goal or Context.
+Item 9 is dropped, item 10 and the landing page are done; everything else is a task. What already passed live is kept in each task's Goal or Context.
 
 **Live-acceptance queue**
 
@@ -69,8 +68,8 @@ a task. What already passed live is kept in each task's Goal or Context.
 | 5 | Agent API: real CI job, the 2026-11-26 diagnostics | KRL-014 (adds the 2026-11-21 provisioning operations, which exist in `internal/server/api_provision.go` and have no live record) |
 | 6 | `krill-cli` local build + `context rm` | KRL-015 |
 | 7 | Full `install.sh` from a published release on a fresh VM | KRL-016 |
-| 8 | Per-organization network migration on a real upgrade | **Dropped.** `internal/orgnet/migrate.go` was added in `42d504b`, contained in v0.1.0 (2026-09-12), the first release; from then on every organization is created with its network (`internal/server/org_handlers.go:58`), so only an install that predates v0.1.0 has services to move. Covered by `internal/orgnet/migrate_test.go`. |
-| 9 | Installer's Postgres move onto `krill-state` on a real upgrade | **Dropped**, same reason: `krill-state` entered `install.sh` in `18170a1`, contained in v0.1.0, so only a pre-release install takes the move. |
+| 8 | Per-organization network migration on a real upgrade | KRL-044. (First dropped as "pre-v0.1.0 only"; the review showed the path is reachable on releases: `SeedAdmin` creates `Default` without a network, and at v0.1.0 a failed `SetOrganizationNetwork` left an organization without its name.) |
+| 9 | Installer's Postgres move onto `krill-state` on a real upgrade | **Dropped.** `krill-state` entered `install.sh` in `18170a1`, contained in v0.1.0 (2026-09-12), the first release; every installer since creates `krill-postgres` on `krill-state`, so only a pre-release install takes the move. |
 | 10 | Panel domain on a real VPS | **Done:** ROADMAP itself records it accepted on v0.3.2 (2026-09-22/23); the unexplained swarm-check report is logged with its reason since v0.3.2. |
 | 11 | Self-update: Roll back, starting page via panel domain, reboot in the window | KRL-017 |
 | 12 | Observability agent on a node added later | KRL-013 |
@@ -88,13 +87,13 @@ a task. What already passed live is kept in each task's Goal or Context.
 | Resilience on top of Swarm (resilient ingress; HA vs. fast-recovery runbook) | KRL-023 (design; still one Traefik replica on the manager, `internal/traefik/bootstrap.go:184-196`) |
 | Re-provision logical databases on DB-instance deploy | KRL-024 (`deployCore` provisions nothing, `internal/dbservice/instance.go:160`; manual SQL in runbook A of `docs/install.md`) |
 | Direct image upload in `krill-cli` | KRL-025 (the CLI still refuses `delivery: upload`, `internal/krillcli/cli/root.go`) |
-| Email and Slack channels | KRL-026, KRL-027 (`notification_channels.type` CHECK allows only `telegram`, migration 000015) |
+| Email and Slack channels | KRL-045 (readers skip unknown types, released first), KRL-026, KRL-027 (`notification_channels.type` CHECK allows only `telegram`, migration 000015) |
 | Homebrew tap for `krill-cli` | KRL-028 (no tap in `.github/workflows/release.yml`) |
 | Existing MinIO instances onto Silo | KRL-029 |
 | Existing overlay networks keep their MTU | KRL-030 (design: the owner's choice between automation and the documented procedure is pending) |
 | Per-owner cap on organizations | KRL-031 (`createOrg` has no cap) |
 | Observability stage 3 (traces) | KRL-032 (no OTLP in `internal/observability`) |
-| Docker client off `github.com/docker/docker` v28 | KRL-033 (still `v28.5.2+incompatible` in `go.mod`; now 29 files, 9 non-test, not 25/9 as ROADMAP said) |
+| Docker client off `github.com/docker/docker` v28 | KRL-033 (still `v28.5.2+incompatible` in `go.mod`; now 29 files, 10 non-test, not 25/9 as ROADMAP said) |
 
 **Later**
 
@@ -122,3 +121,22 @@ acceptance "remains in ROADMAP" (the queue numbers they cite are kept), the comm
 `internal/krillcli/client/client.go:37` ("Direct image upload" is still a heading-level item
 in ROADMAP's Open list), `site/layouts/_partials/custom/footer.html` and
 `.github/ISSUE_TEMPLATE/feature_request.yml`. All their links still resolve.
+
+**Review.** One revust round (`codex-only` profile unchanged: four finders, synthesis and
+verify on codex `gpt-6.2-sol`, effort high; complete, 4/4 sources) on commit `85710cf`
+returned 28 confirmed or refined findings, all checked against the code and applied in the
+follow-up commit: item 8 restored as KRL-044 (see above); KRL-026 split, its reader
+compatibility now KRL-045 with KRL-026 depending on it; acceptance made checkable or
+corrected against the code in KRL-010 (drift is detected by marker only), KRL-011 (evidence
+of lock contention), KRL-012 (mid-copy recovery scales the source back up), KRL-013 ("no
+data", no unreachable state), KRL-014 (409 has no `Retry-After`; `wait_for` does not combine
+with a window), KRL-017 (the pending state checked before the reboot), KRL-020 (the former
+primary's redirect turned on explicitly), KRL-021 (`NotifyInfra`, the recovery hysteresis);
+design gaps written into KRL-024 (creation and re-provision serialized, runbook and
+acceptance tests in scope, a conditional manual path kept), KRL-025 (OCI index names, local
+image identity for pre-deploy, control-plane constraint for "any node"), KRL-029 (a
+cross-server copy for the fallback), KRL-031 (count by `organizations.owner_id`), KRL-035 (a
+separate table, the restore runbook's pause list), KRL-041 (`secret.Seal`, never plaintext),
+KRL-042 (publication order, hosts that skip the key bridge), KRL-043 (older updaters ignore
+the marker); the KRL-033 count corrected to 10 production files; `--person` for
+`needs_person` tasks added to `docs/development.md` and AGENTS.md.

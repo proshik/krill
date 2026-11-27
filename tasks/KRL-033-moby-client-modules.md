@@ -50,7 +50,7 @@ in 29.3.1 and 29.5.1), which this task does not change.
 - `make test` and `make test-integration` (Colima env from AGENTS.md), `govulncheck
   ./...`, a Docker image build (`docker run --rm krill:local` fails fast on the missing
   `KRILL_DATABASE_URL`).
-- Measured on 2026-11-27: 29 files import the old path, 9 of them not tests:
+- Measured on 2026-11-27: 29 files import the old path, 10 of them not tests:
   `cmd/krill/main.go` and `internal/docker/{client,logreader,objects,oneoff,predeploy,registry,release,servicelogs,spec}.go`.
 
 ## Limits / non-goals

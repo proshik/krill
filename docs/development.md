@@ -318,7 +318,9 @@ the open topics; the task files hold the details.
 - **Taking a task.** `taskmoor ready` lists the tasks whose dependencies are merged and whose
   `touches` do not overlap a task in progress or in review. Work on a branch
   `task/KRL-<n>-<slug>` in its own worktree, recorded with
-  `taskmoor claim KRL-<n> --branch <branch> --worktree <path>`. Tick the Acceptance boxes in
+  `taskmoor claim KRL-<n> --branch <branch> --worktree <path>`; a `needs_person: true` task
+  is claimed only by a person, or with a person's explicit permission for that run, and
+  needs `--person`. Tick the Acceptance boxes in
   the task file on the branch as they pass; a disagreement with the task is written into the
   file, not coded around. `taskmoor validate` must report no errors.
 - **Merging.** The branch is merged into `master` with a merge commit whose message ends with
