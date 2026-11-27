@@ -101,6 +101,7 @@ Before changing a feature, read the internals file in the right column.
 | Panel domain | the UI behind Traefik through its HTTP provider (`/_krill/gateway/config`), two HMAC tokens, anti-lockout confirm, optional direct-port close, HSTS | [networking.md](docs/internals/networking.md#panel-domain) |
 | Domains, TLS, exposure, protection | `domains` drives Traefik labels; new apps are internal by default; per-domain paths, basic-auth, IP allowlist | [networking.md](docs/internals/networking.md#domainstls) |
 | Shared hosts, redirects, raw ports | apps of one env share a host by path under a per-host advisory lock; redirect to the primary domain; host-mode TCP/UDP ports | [networking.md](docs/internals/networking.md#shared-hosts-by-path) |
+| Krill link | one role per install (`off`/`client`/`relay`); a client pairs with a one-time code and holds one TLS 1.3 + mTLS connection to the relay, streams over yamux; the relay's listener sits behind Traefik (`HostSNI` passthrough) | [networking.md](docs/internals/networking.md#krill-link) |
 | Deploy pipeline | queue + one worker, baseline-relative convergence, background settle, Stop cancels unapplied deploys, typed refusals | [deploy.md](docs/internals/deploy.md) |
 | App settings, registries, git, auto-deploy, volumes | advanced container settings, resource defaults and build caps, private pull, credential host binding, build secrets, GitHub webhook and deploy hook, volume backup | [deploy.md](docs/internals/deploy.md) |
 | Managed databases | org-level `db_instances` + env-scoped `logical_databases`; a `Driver` per engine (postgres/redis/dragonfly/valkey/minio); stop-first + flock single-writer guard | [databases.md](docs/internals/databases.md) |
@@ -182,6 +183,8 @@ Before changing a feature, read the internals file in the right column.
   inspect` and the daemon's debug log show them (see the state-dump sidecar in
   [operations.md](docs/internals/operations.md#state-dump-sidecars-krillrolestate-dump-get-the-dsn-password-on-stdin-never-in-env-argv-or-labels)).
   `Engine.Exec`'s error text embeds the whole argv, so never wrap it when argv carries a secret.
+- **Krill link private keys are stored only through `secret.Enc`**; a pairing code's secret is
+  stored only as its SHA-256 and shown once (the HttpOnly `krill_flash_link_code` cookie).
 - A new table holding a live bearer credential in plain form (like `sessions`) must be added to
   `statebackup.DumpArgs()`'s `--exclude-table-data` list, or every state backup carries working
   credentials.
@@ -272,6 +275,16 @@ Short form; each links to the full note.
   [networking](docs/internals/networking.md#shared-hosts-need-explicit-priorities)
 - **`KRILL_OVERLAY_MTU` is the container MTU**; the network option is the underlay MTU (+50), set at
   creation only. [networking](docs/internals/networking.md#an-overlay-networks-comdockernetworkdrivermtu-is-the-underlay-mtu-not-the-containers)
+- **The link port (`KRILL_LINK_LISTEN_ADDR`) takes only PROXY v2 + the gateway's mTLS
+  certificate:** any container on the host can reach it and forge a PROXY header, so the header is
+  believed only together with that handshake, never on its own.
+  [networking](docs/internals/networking.md#the-link-listener-accepts-only-proxy-v2--mtls-with-the-gateways-certificate)
+- **The link host and ingress hosts are reserved under the host lock, in both directions**: the
+  link's TCP `HostSNI` router is tried before every HTTP router, so a domain on that host would lose
+  its HTTPS. [networking](docs/internals/networking.md#the-link-host-and-ingress-hosts-are-reserved-under-the-host-lock-in-both-directions)
+- **The deployer keeps every `krill-egress-*` attachment** on a redeploy, so egress (KRL-002) ships
+  strictly in a later release than the link core: a rollback must land on a deployer that keeps them.
+  [networking](docs/internals/networking.md#a-redeploy-keeps-every-krill-egress--attachment)
 - **Firewall dead-man switch: one snapshot per node.** A second Apply before Confirm is refused;
   firewall handlers hold `Server.fwMu`; Confirm and the revert share an `flock` protocol.
   [networking](docs/internals/networking.md#the-firewall-dead-man-switch-has-one-snapshot-per-node)
