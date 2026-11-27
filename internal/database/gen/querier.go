@@ -46,6 +46,8 @@ type Querier interface {
 	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
+	CountLinkIngressHostsByHost(ctx context.Context, host string) (int64, error)
+	CountLinkPeersByName(ctx context.Context, name string) (int64, error)
 	CountLogicalDatabasesByInstance(ctx context.Context, instanceID int64) (int64, error)
 	CountMetricsEndpointsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountMetricsEndpointsByPort(ctx context.Context, arg CountMetricsEndpointsByPortParams) (int64, error)
@@ -97,6 +99,9 @@ type Querier interface {
 	// the insert succeeded, leaving the invitee on a password the inviter still
 	// knows, with nothing to ever retry it.
 	CreateInvitedUser(ctx context.Context, arg CreateInvitedUserParams) (User, error)
+	// The database clock decides expiry, here and on redemption.
+	CreateLinkPairingCode(ctx context.Context, arg CreateLinkPairingCodeParams) (LinkPairingCode, error)
+	CreateLinkPeer(ctx context.Context, arg CreateLinkPeerParams) (LinkPeer, error)
 	CreateLogicalDatabase(ctx context.Context, arg CreateLogicalDatabaseParams) (LogicalDatabase, error)
 	CreateMember(ctx context.Context, arg CreateMemberParams) (Member, error)
 	CreateMetricsEndpoint(ctx context.Context, arg CreateMetricsEndpointParams) (AppMetricsEndpoint, error)
@@ -123,6 +128,7 @@ type Querier interface {
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitCredential(ctx context.Context, id int64) error
+	DeleteLinkPeer(ctx context.Context, id int64) (int64, error)
 	DeleteLogicalDatabase(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
 	DeleteMetricsEndpoint(ctx context.Context, arg DeleteMetricsEndpointParams) error
@@ -138,6 +144,7 @@ type Querier interface {
 	// Changing a password logs out every other device; the current session is kept
 	// so the user is not bounced back to the login form mid-flow.
 	DeleteSessionsByUserExcept(ctx context.Context, arg DeleteSessionsByUserExceptParams) error
+	DeleteStaleLinkPairingCodes(ctx context.Context) error
 	DeleteSystem(ctx context.Context, id int64) error
 	DeleteVolume(ctx context.Context, id int64) error
 	DeleteVolumeBackup(ctx context.Context, id int64) error
@@ -159,6 +166,7 @@ type Querier interface {
 	// FinishDeployment for a deploy that ended done, with what it applied: one
 	// update, so no row reads done without it or failed with it.
 	FinishDeploymentApplied(ctx context.Context, arg FinishDeploymentAppliedParams) error
+	ForgetLinkRelay(ctx context.Context) error
 	GetAPIToken(ctx context.Context, id int64) (ApiToken, error)
 	GetAlertState(ctx context.Context, arg GetAlertStateParams) (NotifyAlertState, error)
 	GetAppPort(ctx context.Context, id int64) (AppPort, error)
@@ -187,6 +195,11 @@ type Querier interface {
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
 	GetEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
 	GetGitCredential(ctx context.Context, id int64) (GitCredential, error)
+	GetLinkPeer(ctx context.Context, id int64) (LinkPeer, error)
+	GetLinkPeerByFingerprint(ctx context.Context, certSha256 string) (LinkPeer, error)
+	// The link host a relay routes, "" when the installation is not a relay.
+	GetLinkRelayHost(ctx context.Context) (string, error)
+	GetLinkSettings(ctx context.Context) (LinkSetting, error)
 	GetLogicalDatabase(ctx context.Context, id int64) (LogicalDatabase, error)
 	GetMemberByID(ctx context.Context, id int64) (Member, error)
 	GetMembership(ctx context.Context, arg GetMembershipParams) (Member, error)
@@ -221,6 +234,7 @@ type Querier interface {
 	// Enabled channels of EVERY organization that an instance operator opted into
 	// node-level alerts. Used only by the internal resource monitor.
 	InfraChannels(ctx context.Context) ([]NotificationChannel, error)
+	InitLinkSettings(ctx context.Context) error
 	InitPanelGateway(ctx context.Context, secret string) error
 	InsertBackupRun(ctx context.Context, arg InsertBackupRunParams) error
 	InsertEnvironmentClone(ctx context.Context, arg InsertEnvironmentCloneParams) error
@@ -299,6 +313,11 @@ type Querier interface {
 	// The latest successful run of each backup configuration of an organization
 	// that has one on record (rows are kept 30 days).
 	ListLatestOkBackupRuns(ctx context.Context, orgID int64) ([]ListLatestOkBackupRunsRow, error)
+	// Every application domain sitting on a host the link wants, with where to
+	// find it.
+	ListLinkHostDomainHolders(ctx context.Context, host string) ([]ListLinkHostDomainHoldersRow, error)
+	ListLinkIngressHosts(ctx context.Context) ([]string, error)
+	ListLinkPeers(ctx context.Context) ([]LinkPeer, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
 	ListMembers(ctx context.Context, organizationID int64) ([]ListMembersRow, error)
@@ -309,6 +328,7 @@ type Querier interface {
 	ListNodeCapacity(ctx context.Context) ([]NodeCapacity, error)
 	ListNodeDisks(ctx context.Context) ([]NodeDisk, error)
 	ListNodeLabels(ctx context.Context) ([]NodeLabel, error)
+	ListOpenLinkPairingCodes(ctx context.Context) ([]ListOpenLinkPairingCodesRow, error)
 	ListOrgApps(ctx context.Context, organizationID int64) ([]ListOrgAppsRow, error)
 	// The kind and id of every backup configuration of an organization.
 	ListOrgBackupIDs(ctx context.Context, organizationID int64) ([]ListOrgBackupIDsRow, error)
@@ -363,7 +383,12 @@ type Querier interface {
 	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
+	LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error)
+	LockLinkSettings(ctx context.Context) (LinkSetting, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
+	// A connect with the current certificate retires the previous one.
+	MarkLinkPeerConnected(ctx context.Context, arg MarkLinkPeerConnectedParams) error
+	MarkLinkPeerDisconnected(ctx context.Context, id int64) error
 	MarkOrganizationNetworkMigrated(ctx context.Context, id int64) error
 	MetricSamplesSince(ctx context.Context, ts time.Time) ([]MetricSamplesSinceRow, error)
 	MetricSamplesSinceForComponents(ctx context.Context, arg MetricSamplesSinceForComponentsParams) ([]MetricSamplesSinceForComponentsRow, error)
@@ -383,12 +408,19 @@ type Querier interface {
 	PublishEnvironmentClone(ctx context.Context, arg PublishEnvironmentCloneParams) (int64, error)
 	RecordEnvironmentCloneIntent(ctx context.Context, arg RecordEnvironmentCloneIntentParams) (int64, error)
 	RecordFirewallCheck(ctx context.Context, node string) error
+	// Two redemptions of one code cannot both win: only an unused, unexpired row
+	// is updated.
+	RedeemLinkPairingCode(ctx context.Context, arg RedeemLinkPairingCodeParams) (int64, error)
 	// Undoes a claim whose send failed, so the next pass retries it. Only while
 	// the claim is still ours.
 	ReleaseDigest(ctx context.Context, arg ReleaseDigestParams) error
 	ReleaseEnvironmentCloneSlug(ctx context.Context, requestKey string) error
 	RemoveAppFromSystem(ctx context.Context, applicationID int64) error
 	RenameSystem(ctx context.Context, arg RenameSystemParams) error
+	// The certificate the session holds stays valid as prev_cert_sha256 until the
+	// first connect with the new one. A session still on the previous certificate
+	// may renew again (its first answer was lost): it keeps its own as previous.
+	RenewLinkPeerCert(ctx context.Context, arg RenewLinkPeerCertParams) (int64, error)
 	ReserveEnvironmentCloneSlug(ctx context.Context, arg ReserveEnvironmentCloneSlugParams) (int64, error)
 	// Boot sweep: a control-plane restart kills the in-process migration job,
 	// leaving rows stuck at 'migrating' (the oplock is in-memory). 'error' is
@@ -443,6 +475,12 @@ type Querier interface {
 	// TLS is a property of the host: every row sharing it switches together.
 	SetDomainTLSByHost(ctx context.Context, arg SetDomainTLSByHostParams) error
 	SetEnvironmentCloneCleanup(ctx context.Context, requestKey string) (int64, error)
+	SetLinkClientCert(ctx context.Context, arg SetLinkClientCertParams) (int64, error)
+	SetLinkClientPaired(ctx context.Context, arg SetLinkClientPairedParams) error
+	SetLinkGatewayMaterial(ctx context.Context, arg SetLinkGatewayMaterialParams) error
+	SetLinkRelay(ctx context.Context, arg SetLinkRelayParams) error
+	SetLinkRoleClient(ctx context.Context) error
+	SetLinkRoleOff(ctx context.Context) error
 	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error

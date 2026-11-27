@@ -141,14 +141,11 @@ func (s *Server) NotifyLinkBase(ctx context.Context) string {
 	return ""
 }
 
-// hostReservedByPanel reports whether host is the panel's domain, which no app
-// may claim: its router would compete with the panel's for the admin's login.
-func (s *Server) hostReservedByPanel(ctx context.Context, host string) (bool, error) {
-	row, err := s.panelRow(ctx)
-	if err != nil {
-		return false, err
-	}
-	return row.State != panel.StateOff && strings.EqualFold(row.Host, host), nil
+// hostReserved reports which of Krill's own records holds host — the panel
+// domain, the relay's link host or a relay ingress host — so that a handler can
+// say why no app may claim it. Every write checks again under the host lock.
+func (s *Server) hostReserved(ctx context.Context, host string) (hostshare.Reservation, error) {
+	return hostshare.Reserved(ctx, s.q, host)
 }
 
 // panelHSTS adds Strict-Transport-Security to responses on the active panel
@@ -447,6 +444,10 @@ func (s *Server) setPanelDomain(w http.ResponseWriter, r *http.Request) {
 	if err := s.hosts.SetPanelDomain(r.Context(), host); err != nil {
 		var conflict *hostshare.ConflictError
 		if errors.As(err, &conflict) {
+			if conflict.Key == hostshare.KeyReservedLink {
+				s.flashErrT(w, r, conflict.Key)
+				return
+			}
 			s.flashErrT(w, r, "flash.err.panel_host_in_use")
 			return
 		}

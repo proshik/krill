@@ -281,6 +281,56 @@ type GitCredential struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type LinkIngressHost struct {
+	Host       string    `json:"host"`
+	PeerID     int64     `json:"peer_id"`
+	AllowedIps string    `json:"allowed_ips"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+type LinkPairingCode struct {
+	ID           int64              `json:"id"`
+	PeerName     string             `json:"peer_name"`
+	SecretSha256 string             `json:"secret_sha256"`
+	ExpiresAt    time.Time          `json:"expires_at"`
+	UsedAt       pgtype.Timestamptz `json:"used_at"`
+	KeySha256    *string            `json:"key_sha256"`
+	IssuedCert   *string            `json:"issued_cert"`
+	CreatedAt    time.Time          `json:"created_at"`
+}
+
+type LinkPeer struct {
+	ID                 int64              `json:"id"`
+	Name               string             `json:"name"`
+	CertSha256         string             `json:"cert_sha256"`
+	PrevCertSha256     *string            `json:"prev_cert_sha256"`
+	CertNotAfter       time.Time          `json:"cert_not_after"`
+	CreatedAt          time.Time          `json:"created_at"`
+	LastConnectedAt    pgtype.Timestamptz `json:"last_connected_at"`
+	LastDisconnectedAt pgtype.Timestamptz `json:"last_disconnected_at"`
+}
+
+type LinkSetting struct {
+	ID            bool               `json:"id"`
+	Role          string             `json:"role"`
+	GatewayKey    *string            `json:"gateway_key"`
+	GatewayCert   *string            `json:"gateway_cert"`
+	ListenerKey   *string            `json:"listener_key"`
+	ListenerCert  *string            `json:"listener_cert"`
+	RelayAddr     *string            `json:"relay_addr"`
+	RelaySni      *string            `json:"relay_sni"`
+	RelayCaSha256 *string            `json:"relay_ca_sha256"`
+	ClientKey     *string            `json:"client_key"`
+	ClientCert    *string            `json:"client_cert"`
+	PairedAt      pgtype.Timestamptz `json:"paired_at"`
+	LinkHost      *string            `json:"link_host"`
+	CaKey         *string            `json:"ca_key"`
+	CaCert        *string            `json:"ca_cert"`
+	ServerKey     *string            `json:"server_key"`
+	ServerCert    *string            `json:"server_cert"`
+	UpdatedAt     time.Time          `json:"updated_at"`
+}
+
 type LogicalDatabase struct {
 	ID            int64     `json:"id"`
 	InstanceID    int64     `json:"instance_id"`

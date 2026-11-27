@@ -227,10 +227,10 @@ func (p apiProvisioner) domainSpec(ctx context.Context, in api.DomainInput) (hos
 	if !validHost(host) {
 		return "", nil, api.Invalid(fmt.Sprintf("invalid host %q", in.Host))
 	}
-	if reserved, rerr := p.s.hostReservedByPanel(ctx, host); rerr != nil {
-		return "", nil, fmt.Errorf("check panel host: %w", rerr)
-	} else if reserved {
-		return "", nil, api.Conflict(fmt.Sprintf("host %q is the Krill panel's own domain", host))
+	if reserved, rerr := p.s.hostReserved(ctx, host); rerr != nil {
+		return "", nil, fmt.Errorf("check reserved host: %w", rerr)
+	} else if reserved != hostshare.NotReserved {
+		return "", nil, api.Conflict(fmt.Sprintf("host %q: %s", host, english(ctx, reserved.Key())))
 	}
 	paths, perr := validPaths(strings.Join(in.Paths, "\n"))
 	if perr != nil {

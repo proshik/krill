@@ -174,3 +174,36 @@ a rollback from the egress release fail closed instead of sending apps direct.
   `internal/hostshare/store.go`, `internal/deploy/deployer.go:1204`.
 - The maintainer's design note `docs/superpowers/specs/2026-11-27-krill-link-design.md`
   (local-only; this task is authoritative without it).
+
+## Implementation notes
+
+Recorded by the implementing session (2026-11-27). Decisions marked *(impl)* are the
+implementer's and reversible.
+
+- **Touches widened, with the owner's consent (2026-11-27):** `internal/docker/**` —
+  `ServiceSpec` cannot carry network aliases and the engine cannot read a service's
+  attachments, so the deployer could not keep a `krill-egress-*` attachment with its alias
+  (without the alias a rollback would fail open). The §18 lines for `AGENTS.md` (outside
+  touches) are handed to the integrating session in the report; the detail lives in
+  `docs/internals/networking.md`.
+- *(impl)* yamux v0.1.2 has no public stream reset: an unknown stream type is closed
+  without reading further (`Stream.Close`), which is what "reset" means here.
+- *(impl)* Keepalive: `KeepAliveInterval=15s`, `ConnectionWriteTimeout=30s`, so an
+  unanswered ping closes the session 45 s after the last answered one.
+- *(impl)* Admission happens after the first stream: the relay reads `control hello`,
+  looks the fingerprint up, admits under the peer lock and answers `hello` or
+  `error{category}` — so the client learns `unauthorized`/`duplicate`/`incompatible`
+  instead of a bare TLS alert. A duplicate attempt first pings the live session (5 s);
+  a session that does not answer is closed and replaced.
+- *(impl)* The gateway listener runs while the role is not `off`; on a `client` it has
+  nothing to dispatch yet (egress is KRL-002) and closes authenticated connections.
+- *(impl)* The gateway client cert and the listener cert are self-signed and pinned by
+  SHA-256 on the other side (Traefik gets the listener cert as its root CA).
+- *(impl)* The pairing form takes the address the client dials, default `<link host>:443`.
+
+Plan: migration and queries → reserved-host check in `hostshare` → `internal/link`
+primitives (PKI, pairing code, PROXY v2, stream header) → session registry → relay,
+client, gateway listener, service → dynamic config and pre-publication check →
+`docker` keep-prefix + deployer → handlers, page, i18n, firewall ports → wiring and
+config → docs → integration tests. Lasting rules: `networking.md#krill-link`, plus the
+AGENTS.md lines in the report.

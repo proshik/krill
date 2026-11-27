@@ -16,6 +16,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/go-chi/chi/v5 v5.4.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/klauspost/compress v1.20.5
 	github.com/moby/moby/api v1.54.1
