@@ -11,6 +11,7 @@ touches:
   - internal/docker/**
   - internal/deploy/**
   - internal/traefik/**
+  - internal/selfupdate/**
   - internal/database/migrations/**
   - internal/database/queries/link*.sql
   - internal/database/gen/**
@@ -22,6 +23,7 @@ touches:
 harness: any
 reviews: {spec: 0, code: 2}
 created: "2026-11-27"
+after_release: "435dc5371ac3925b11f03f11a6ea591fc8c8f7b5"
 ---
 
 ## Goal
@@ -36,10 +38,12 @@ Owner decisions: destinations are a general allowlist, not Telegram only; the
 relay's list is the hard boundary; the client operator grants the link to an
 organization, and an org admin of a granted organization enables it per app.
 
-**Release ordering:** ship this in a later release than KRL-001 — once KRL-001 is
-merged, add `after_release: "<KRL-001's merge commit>"` to this task's front matter. A
-rollback from this release then lands on KRL-001's deployer, which keeps the
-`krill-egress-*` attachments, and its listener refuses egress streams: fail closed.
+**Release ordering:** ship this in a later release than KRL-001 — `after_release` is
+KRL-001's merge commit (`435dc53`), so this task starts only once a release contains
+the link core. A rollback by one release from this release then lands on KRL-001's
+deployer, which keeps the `krill-egress-*` attachments, and its listener refuses egress
+streams: fail closed. An update that skips the core release leaves an older binary as
+the rollback target; the gate below keeps egress off until it is gone.
 
 ## Acceptance
 
@@ -104,6 +108,22 @@ rollback from this release then lands on KRL-001's deployer, which keeps the
       Link pages show a per-service table: destinations with state, bytes up/down
       since process start. The relay shows the client's services under its peer card;
       they never appear in the relay's topology.
+- [ ] WHEN the client operator grants an organization, or an org admin saves an app's
+      destinations, while the rollback binary is older than the link core release THEN
+      it is refused and nothing is written. The rollback binary is `<bin>.prev`, the one
+      both **Roll back** and the automatic revert put back. A new `selfupdate.Updater`
+      method reports it as one of: **absent** (no `krill.prev`, nothing to roll back to),
+      **a release** (`krill.prev --version` through `execVersion` + `parseVersion`,
+      cached per file like `prevCache`), or **unknown** (binary path unresolved, updater
+      not wired, `--version` fails or times out, or prints no `krill vX.Y.Z`). It must
+      not reuse `Previous`, which answers false alike for no file, an unreadable one and
+      one not older than the running binary. Egress may be enabled only when the binary
+      is absent or `semver.Compare(prev, link.CoreRelease) >= 0`; unknown refuses (fail
+      closed). `link.CoreRelease` is the first `vX.Y.Z` tag containing `435dc53`, known
+      when this task starts. The Link page's grant control and the app's link card are
+      disabled with the reason — the `krill.prev` version (or "cannot be read"), the core
+      release, a link to Settings → Updates — through new keys in the `en` and `ru`
+      catalogs; each POST checks again and answers with a flash of the same reason.
 - [ ] WHEN the docs are updated THEN `docs/internals/networking.md` gets the
       "Krill link" egress part and `docs/guides/link.md` explains setup with
       Telegram and an LLM API as examples and the limits (TLS only, exact names,
@@ -111,6 +131,10 @@ rollback from this release then lands on KRL-001's deployer, which keeps the
 
 ## Checks
 
+- Unit: rollback gate table with `execVersion` stubbed — no `krill.prev`, older than
+  the core, equal, newer, `--version` error, timeout, output without `krill vX.Y.Z`,
+  unresolved binary path; the grant and selection POSTs refused with the flash and no
+  row written while the gate is closed; the reason rendered in `en` and `ru`.
 - Unit: decision table (session × grant × app selection × relay list); relay checks
   (list, SNI equals host, netguard); app identification by destination and source
   address; aliases = saved ∪ applied; SNI parser (fuzz); sidecar args and dynamic
@@ -137,6 +161,10 @@ rollback from this release then lands on KRL-001's deployer, which keeps the
 - No API (KRL-004), no Krill notifications (KRL-003), no ingress (KRL-005).
 - A change of aliases recreates the sidecar task (StartFirst); its gap is measured in
   KRL-007, not engineered away here.
+- The rollback gate is checked when egress is enabled; it does not revoke an existing
+  grant. Through Krill `krill.prev` can only become the binary that ran here, which is
+  at least the core release once egress is on. A binary put in place by hand, or a rollback
+  of the container image to an older tag, is outside it (the `docs/install.md` warning).
 
 ## Context
 
@@ -149,6 +177,13 @@ rollback from this release then lands on KRL-001's deployer, which keeps the
 - Traefik v3.6.1 `pkg/provider/docker/shared_labels.go`: both `traefik.docker.*` and
   `traefik.swarm.*` are read; both present → "both Docker and Swarm labels are
   defined", the service is skipped.
+- Rollback target: `docs/install.md` [Rollback](../docs/install.md#rollback) — the
+  paragraph on rolling back below the Krill link core release and on an update that
+  skips it. `internal/selfupdate/install.go:178` keeps the running binary as `.prev`
+  before the swap; `internal/selfupdate/revert.go:19` (the automatic revert) and
+  `Updater.Rollback` (`checkRollback`, `internal/selfupdate/updater.go:359`) put
+  `<bin>.prev` back; `Updater.Previous` (`updater.go:410`) filters by `olderThanCurrent`;
+  `install.sh` removes `krill.prev`.
 - `internal/deploy/deployer.go:1204` (`Network: net`), `internal/docker/spec.go`
   (attachments, no aliases), `internal/traefik/labels.go:146`,
   `internal/netguard/netguard.go`, `internal/orgnet`.
