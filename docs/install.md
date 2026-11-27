@@ -213,8 +213,9 @@ which is why the egress release ships after the core release. What decides it is
 rollback goes back to: the one in `krill.prev` (`krill.prev --version`) for **Roll back** and
 for the automatic revert. An update that skips the core release — straight from a release
 without the link to the egress release or later — leaves a `krill.prev` without the
-guarantee, so do not route apps through the link until that update is confirmed, or update
-through the core release first. If you must go further back on a link client, first remove the
+guarantee. Confirming the update only ends the automatic revert; **Roll back** to that
+`krill.prev` stays possible, and a redeploy after it sends link apps direct. So update through the
+core release first, or do not route apps through the link while `krill.prev` predates it. If you must go further back on a link client, first remove the
 app's link destinations and redeploy it on the newer release, or do not redeploy apps with link
 destinations until you upgrade again. A relay loses nothing but
 its link route: clients reconnect once it is back on a release with the link.

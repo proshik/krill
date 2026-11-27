@@ -111,7 +111,10 @@ JSON; `MaxHeader` 4 KB, `HeaderTimeout` 5 s); an unknown or not-yet-supported ty
 without reading further (yamux v0.1.2 has no public RST) and logged at WARN; at most
 `MaxStreamsPerPeer` (1024) per peer, counted with yamux's own `NumStreams` — a stream closed on
 one side stays in the session until the other side closes it or `StreamCloseTimeout` (30 s)
-resets it. yamux keepalive 15 s with `ConnectionWriteTimeout` 30 s,
+resets it, so a peer over the limit loses its whole session (both sides). **Before admission a
+connection may send at most 64 KiB** (`budgetConn`): the relay's TLS accepts pairing without a
+certificate, and yamux buffers up to 256 KiB per stream that is not read yet, so without the
+budget an unauthenticated peer could make the relay buffer that much per stream. yamux keepalive 15 s with `ConnectionWriteTimeout` 30 s,
 so an unanswered ping closes the session 45 s after the last answered one. The client
 reconnects with backoff 1–60 s, jittered over [d/2, d) (`nextDelay`, `jitter`); every `Wake`
 (pairing, Forget) bumps a generation, and an attempt that read the settings before it is
@@ -119,11 +122,15 @@ dropped instead of becoming the session. Certificates are renewed over the live 
 thirds of their lifetime, counted from issue (`needsRenewal`; `NotBefore` is backdated an hour
 for clock skew): `renew{csr}` → `cert`; the certificate the session holds stays valid as
 `prev_cert_sha256` until the first connect with the new one (`MarkLinkPeerConnected` clears
-it). **A session renews once**: a second renewal while it still runs on the first certificate
-would retire the stored one in favour of one whose answer might be lost. A session whose answer
-was lost may ask again (the relay keeps the session's certificate as previous). The relay's
-server certificate is reissued under the same CA 90 days before it expires
-(`renewServerIfDueReport`, at start and daily); clients pin the CA, not the leaf.
+it). **A session renews once and then reconnects with the new certificate**: a second renewal
+while it still ran on the first would retire the stored one in favour of one whose answer might
+be lost, and a session left running could outlive both. A session whose answer was lost may ask
+again (the relay keeps the session's certificate as previous). The relay records the connect
+(`MarkLinkPeerConnected`) before it answers `hello`, and refuses the session when it cannot. The
+relay's server certificate is reissued under the same CA 90 days before it expires
+(`renewServerIfDueReport`, at start and daily, and whenever the relay is turned on): under the
+host lock it re-reads the settings and only replaces the certificate (`SetLinkServerCert`) while
+they still name this relay and host, so it never undoes a role change.
 
 **Admission and revocation are serialized per peer ID** (`registry`): a session is registered
 under the peer's lock after re-reading the peer by ID (and its fingerprint) and checking that
@@ -132,9 +139,13 @@ deletes the row and closes the live session under the same lock; `unload` (role 
 stops serving first and then closes every registered session, so nothing admitted in between
 survives; every new stream checks its session is still the registered one. The relay keeps the
 latest refused session per peer (`Refusal`: duplicate or incompatible, with the address) for the
-page. Operator changes — role, pairing, Forget — are serialized (`Service.opMu`), so a pairing
-that answers late cannot undo a role change or a Forget, and a stored role change is applied on a
-context detached from the request (`applyAfterWrite`). One live session per peer: a second attempt pings the first (5 s) and
+page. A pairing checks the running relay and commits under `Relay.gate`, which `unload` takes
+before it stops serving, so no code is redeemed after the relay was turned off. `revoke` closes
+the peer's session whatever the delete reports (an answer lost after the commit). Operator
+changes — role, pairing, Forget — are serialized (`Service.opMu`), so a pairing that answers
+late cannot undo a role change or a Forget; a stored role change is applied on a context
+detached from the request (`applyAfterWrite`), and `SetOff` stops everything without reading the
+settings back. At start a stored role whose listener port turned public is not listened on. One live session per peer: a second attempt pings the first (5 s) and
 is refused as `duplicate` while the first answers (shown on the page with its source address —
 usually a clone restored from a state backup); a first session that does not answer is closed
 and replaced, so a client whose old TCP connection died silently does not wait 45 s.
@@ -148,10 +159,14 @@ now()`) records the CSR key's SHA-256 and the issued certificate (CN = peer name
 the peer is created. A retry with the **same key** before expiry gets the same certificate (the
 answer can be lost after the commit; `Client.Pair` retries once on a transport failure and keeps
 the key of an attempt that was never stored, by the code's hash, for a later submit of the same
-code), any other key is refused. Expiry is compared with `clock_timestamp()`, not `now()`: the
-row lock can be granted after the code expired, and `now()` is the start of the transaction.
-The relay's refusal category is matched against the known ones before the client shows or logs
-it. Pairing attempts are limited to 10/min per source address — the address
+code; dropped only on a final refusal, not on a rate limit or a relay error — the key lives in
+memory, so a restart in between still means removing the peer and pairing again), any other key
+is refused. Expiry is checked by a separate query after the row lock is held
+(`LinkPairingCodeLive`, `clock_timestamp()`): the lock can be granted after the code expired,
+`now()` is the start of the transaction, and an expression in the locking query is evaluated
+before the wait.
+Categories and types the other side sends (pairing and session refusals, renewal answers,
+unknown control messages) are matched against the known ones before they are shown or logged. Pairing attempts are limited to 10/min per source address — the address
 from the PROXY header, which is trustworthy only because of the next paragraph.
 
 ### The link listener accepts only PROXY v2 + mTLS with the gateway's certificate
@@ -189,7 +204,8 @@ provider and pairs a client through it.
 
 `hostshare.Reserved` (no lock, for handler pre-checks with a reason: `flash.err.host_reserved_panel`
 / `_link`) and `reservedErr` (under `krill.domain-host:<host>`, called by `Add`,
-`ReservePrimaryHost`, `CreateApplication*`, `MakePrimary`, and so by environment cloning) check
+`ReservePrimaryHost`, `CreateApplication*`, `MakePrimary`, and so by environment cloning; the
+host lock key is lower-cased, and the link's own comparisons ignore case as DNS does) check
 the panel domain, `link_settings.link_host` while the role is relay, and `link_ingress_hosts`; it
 replaced `panelAvailable`. `SetPanelDomain` checks the link hosts; the link host is written by
 `Store.ReserveLinkHost` under the same lock, refused while a domain row or the panel holds it. A

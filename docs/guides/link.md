@@ -32,7 +32,7 @@ Krill ── one TCP connection, TLS 1.3 ─────────▶ Traefik 
   second installation with the same identity (a copy restored from a [state
   backup](krill-backups.md)) is refused and shown as a duplicate.
 - A client's certificate lasts a year and is renewed over the live connection when two thirds
-  of that has passed; the next connect uses the new one. The relay reissues its own server
+  of that has passed; the client then reconnects at once with the new one (a second's break). The relay reissues its own server
   certificate under the same CA 90 days before it expires, with nothing to do on the clients.
   The link CA lasts ten years.
 
