@@ -1,0 +1,33 @@
+# The project's task configuration (taskmoor task format, format = 1).
+# Unknown keys are an error; `taskmoor validate` checks this file and every task.
+
+format = 1
+
+[project]
+# A task's id is "<id_prefix>-<number>", three digits at least: KRL-001.
+id_prefix = "KRL"
+# The branch whose first-parent history decides `merged`.
+main_branch = "master"
+
+# A component is a deliverable with its own release rule. A task names one.
+#
+# rule = "tag"   — `done` when a tag matching `pattern` contains the task's merge commit.
+# rule = "merge" — the component ships nothing separately; `done` once `merged`.
+
+# The krill binary, its installer and image: released by a `vX.Y.Z` tag (release.yml).
+[components.krill]
+paths = ["cmd/**", "internal/**", "test/**", "install.sh", "Dockerfile", "go.mod", "go.sum", "Makefile", "sqlc.yaml"]
+release = { rule = "tag", pattern = "v*.*.*" }
+
+# The landing page: pages.yml deploys it on every push to master that touches it.
+[components.site]
+paths = ["site/**"]
+release = { rule = "merge" }
+
+[components.docs]
+paths = ["docs/**", "tasks/**", "skills/**", "README.md", "ROADMAP.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md"]
+release = { rule = "merge" }
+
+[components.tooling]
+paths = [".github/**", "scripts/**", "tools/**", "docker-compose.dev.yml"]
+release = { rule = "merge" }
