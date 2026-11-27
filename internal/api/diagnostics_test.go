@@ -84,13 +84,15 @@ func TestWhoamiReportsInstance(t *testing.T) {
 func TestAppStatusReportsTasksHealthAndUsage(t *testing.T) {
 	f := newAPIFixture(t)
 	depID := f.seedDeployment(t)
-	dep, err := f.q.GetDeployment(t.Context(), depID)
-	if err != nil {
+	// Every time here is the host's: AppStatus reads the sample window off
+	// time.Now(), so the deploy's start and the sample are stamped with the
+	// host's clock rather than the database's now() (the window is 1.5s wide).
+	start := time.Now().Truncate(time.Microsecond)
+	if _, err := f.pool.Exec(t.Context(), "UPDATE deployments SET started_at = $2 WHERE id = $1", depID, start); err != nil {
 		t.Fatal(err)
 	}
 	// Task times are offsets from the deploy's start, in milliseconds so the
 	// sample inserted below is newer than every one of them.
-	start := dep.StartedAt
 	at := func(d time.Duration) time.Time { return start.Add(d / time.Minute * time.Millisecond) }
 	eng := &diagEngine{
 		tasks: []docker.TaskRecord{
@@ -115,11 +117,9 @@ func TestAppStatusReportsTasksHealthAndUsage(t *testing.T) {
 	time.Sleep(1200 * time.Millisecond)
 	// A sample of krill-<app> on the control plane taken after the running
 	// task started (and after its predecessor on that node stopped).
-	if err := f.q.InsertMetricSample(t.Context(), db.InsertMetricSampleParams{
+	f.insertSampleAt(t, db.InsertMetricSampleParams{
 		Node: "control-plane", Component: docker.ServiceName(f.appID), CpuPct: 12.5, MemBytes: 1, MemLimitBytes: 2,
-	}); err != nil {
-		t.Fatalf("sample: %v", err)
-	}
+	}, time.Now())
 
 	st, err := svc.AppStatus(t.Context(), f.readIdent, f.appIDString)
 	if err != nil {
@@ -162,11 +162,13 @@ func TestAppStatusCPUNotAttributedToASharedNode(t *testing.T) {
 			"c2": {Running: true, MemOK: true, MemBytes: 2},
 		},
 	}
-	if err := f.q.InsertMetricSample(t.Context(), db.InsertMetricSampleParams{
+	// Stamped with the host's clock, like the tasks' times: the sample must be
+	// inside the status's window for the refusals below to mean anything, and
+	// the task created after it must stay after it whatever the database's
+	// clock says.
+	f.insertSampleAt(t, db.InsertMetricSampleParams{
 		Node: "control-plane", Component: docker.ServiceName(f.appID), CpuPct: 50,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}, now)
 	st, err := api.NewService(f.q, eng, nil).AppStatus(t.Context(), f.readIdent, f.appIDString)
 	if err != nil {
 		t.Fatal(err)
@@ -794,9 +796,9 @@ func TestAppStatusNodeAndCPUAttributionEdges(t *testing.T) {
 			"c-new": {Running: true, MemOK: true, MemBytes: 1},
 		},
 	}
-	if err := f.q.InsertMetricSample(t.Context(), db.InsertMetricSampleParams{Node: "control-plane", Component: docker.ServiceName(f.appID), CpuPct: 9}); err != nil {
-		t.Fatal(err)
-	}
+	// The host's clock, so the sample is inside the status's window and the
+	// refusals below are the attribution's, not the window's.
+	f.insertSampleAt(t, db.InsertMetricSampleParams{Node: "control-plane", Component: docker.ServiceName(f.appID), CpuPct: 9}, now)
 	st, err := api.NewService(f.q, eng, nil).AppStatus(t.Context(), f.readIdent, f.appIDString)
 	if err != nil {
 		t.Fatal(err)

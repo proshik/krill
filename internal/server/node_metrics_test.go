@@ -49,7 +49,7 @@ func TestNodeLanesFindMetricsByNodeID(t *testing.T) {
 		}
 	}
 	seedCapacity(t, q, "alpha", 4, 8<<30)
-	seedMetric(t, q, "alpha", "krill-1", 10, 6<<30)
+	seedMetric(t, pool, "alpha", "krill-1", 10, 6<<30)
 
 	u := mkUser(t, q, "nm-op@k.local")
 	if err := q.SetUserAdmin(ctx, db.SetUserAdminParams{ID: u, IsAdmin: true}); err != nil {

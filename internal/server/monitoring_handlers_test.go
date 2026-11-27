@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/backup"
@@ -74,8 +75,9 @@ func monitoringFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (string
 }
 
 // newMonServer returns an http.Handler backed by a real DB, with the metrics
-// store wired in so /monitoring/data can query samples + capacity.
-func newMonServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
+// store wired in so /monitoring/data can query samples + capacity. The pool is
+// for seedMetric.
+func newMonServer(t *testing.T) (http.Handler, db.DBTX, *db.Queries, *org.Service) {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -86,14 +88,19 @@ func newMonServer(t *testing.T) (http.Handler, *db.Queries, *org.Service) {
 	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbSvc)
 	srv.SetBackups(backup.New(nil, backup.NewDBStore(q), true), func() {})
 	srv.SetMetrics(metrics.NewDBStore(q))
-	return srv.Router(), q, orgSvc
+	return srv.Router(), pool, q, orgSvc
 }
 
-// seedMetric inserts one metric sample for the given node and component.
-func seedMetric(t *testing.T, q *db.Queries, node, component string, cpu float64, mem int64) {
+// seedMetric inserts one metric sample for the given node and component,
+// stamped with the host's clock. The handlers keep only samples newer than
+// time.Now() minus a couple of minutes, while the store's Insert stamps a row
+// with the database's now(): a database container whose clock lags the
+// host's by more than that would drop the sample from the page.
+func seedMetric(t *testing.T, conn db.DBTX, node, component string, cpu float64, mem int64) {
 	t.Helper()
-	st := metrics.NewDBStore(q)
-	if err := st.Insert(context.Background(), node, component, cpu, mem, 0); err != nil {
+	if _, err := conn.Exec(context.Background(),
+		"INSERT INTO metric_samples (ts, node, component, cpu_pct, mem_bytes) VALUES ($1, $2, $3, $4, $5)",
+		time.Now(), node, component, cpu, mem); err != nil {
 		t.Fatalf("seedMetric node=%s comp=%s: %v", node, component, err)
 	}
 }
@@ -118,13 +125,13 @@ func getWithCookie(t *testing.T, h http.Handler, target string, cookie *http.Coo
 }
 
 func TestMonitoringDataPerNode(t *testing.T) {
-	h, q, orgSvc := newMonServer(t)
+	h, pool, q, orgSvc := newMonServer(t)
 	// minimal org + login (owner = admin role)
 	base, cookie := monitoringFixture(t, q, orgSvc)
 
-	// seed two nodes' latest samples + capacity via the metrics store
-	seedMetric(t, q, "cp", "krill", 10, 100<<20)
-	seedMetric(t, q, "w1", "app-svc", 30, 300<<20)
+	// seed two nodes' latest samples + capacity
+	seedMetric(t, pool, "cp", "krill", 10, 100<<20)
+	seedMetric(t, pool, "w1", "app-svc", 30, 300<<20)
 	seedCapacity(t, q, "cp", 2, 1<<30)
 	seedCapacity(t, q, "w1", 4, 2<<30)
 

@@ -3,6 +3,7 @@ package api_test
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/proshik/krill/internal/api"
 	"github.com/proshik/krill/internal/auth"
@@ -13,6 +14,7 @@ import (
 )
 
 type apiFixture struct {
+	pool        db.DBTX
 	q           *db.Queries
 	svc         *api.Service
 	ident       api.Identity // write-level, owner of the org that holds the app
@@ -86,6 +88,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	// the level gate, none of which touch docker.
 	svc := api.NewService(q, nil, nil)
 	return &apiFixture{
+		pool:        pool,
 		q:           q,
 		svc:         svc,
 		ident:       api.Identity{UserID: u.ID, OrgID: acme.ID, TokenID: 1, Level: api.LevelWrite, Role: auth.RoleOwner},
@@ -108,4 +111,18 @@ func (f *apiFixture) seedDeployment(t *testing.T) int64 {
 		t.Fatalf("seed deployment: %v", err)
 	}
 	return dep.ID
+}
+
+// insertSampleAt inserts a monitoring sample stamped with ts instead of the
+// database's now(). AppStatus keeps only the samples newer than time.Now()
+// minus a few sampler intervals: a sample a test means to be current gets the
+// host's clock, or a database container whose clock lags the host's would
+// drop it from the window.
+func (f *apiFixture) insertSampleAt(t *testing.T, p db.InsertMetricSampleParams, ts time.Time) {
+	t.Helper()
+	if _, err := f.pool.Exec(t.Context(),
+		"INSERT INTO metric_samples (ts, node, component, cpu_pct, mem_bytes, mem_limit_bytes) VALUES ($1, $2, $3, $4, $5, $6)",
+		ts, p.Node, p.Component, p.CpuPct, p.MemBytes, p.MemLimitBytes); err != nil {
+		t.Fatalf("sample: %v", err)
+	}
 }

@@ -51,7 +51,9 @@ func TestMigratingInstanceBlocksCloneCleanupAndPrune(t *testing.T) {
 					t.Error("migrating source published")
 				}
 			} else {
-				reserved, err := s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: r.Key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: r.Name, DestinationSlug: r.Name, Deadline: time.Now().Add(-time.Minute)})
+				// Passed on the database's clock, which recovery reads, so the
+				// prune stage does reach the migrating instance.
+				reserved, err := s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: r.Key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: r.Name, DestinationSlug: r.Name, Deadline: dbDeadline(t, pool, -time.Minute)})
 				if err != nil {
 					t.Fatal(err)
 				}

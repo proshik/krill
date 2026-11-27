@@ -55,7 +55,14 @@ func TestStoreNodeDimension(t *testing.T) {
 	if err := st.Insert(ctx, "node-b", "krill-1", 20, 200, 0); err != nil {
 		t.Fatal(err)
 	}
-	latest, err := st.Latest(ctx, time.Now().Add(-time.Minute))
+	// The rows get their ts from the database's now(), so the window starts a
+	// minute back on the database's clock too: the host's clock (time.Now)
+	// may run ahead of the database container's by more than that under load.
+	var since time.Time
+	if err := pool.QueryRow(ctx, "SELECT now() - interval '1 minute'").Scan(&since); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := st.Latest(ctx, since)
 	if err != nil {
 		t.Fatal(err)
 	}

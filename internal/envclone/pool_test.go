@@ -39,6 +39,20 @@ func cloneFixture(t *testing.T, pool *pgxpool.Pool, name string) Request {
 	return Request{Key: key, Name: "staging", UserID: u.ID, OrgID: o.ID, ProjectID: p.ID, SourceID: e.ID}
 }
 
+// dbDeadline is a clone deadline offset from the database's clock. Recovery
+// tells a passed deadline by the database's now() (deadline <= now()), so a
+// deadline taken from the host's time.Now() turns from pending to passed, or
+// back, when the database container's clock drifts from the host's by more
+// than the offset.
+func dbDeadline(t *testing.T, pool *pgxpool.Pool, offset time.Duration) time.Time {
+	t.Helper()
+	var at time.Time
+	if err := pool.QueryRow(t.Context(), "SELECT now() + make_interval(secs => $1)", offset.Seconds()).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	return at
+}
+
 func TestCloneProgressWithSinglePoolConnection(t *testing.T) {
 	base := testutil.NewTestDB(t)
 	cfg := base.Config().Copy()

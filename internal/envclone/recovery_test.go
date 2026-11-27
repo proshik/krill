@@ -127,8 +127,11 @@ func TestRecoveryCancellationDoesNotStarveNextOperation(t *testing.T) {
 	engine := &cancellingCleanupEngine{}
 	s := New(pool, dbservice.New(engine, dbservice.NewDBStore(q), nil, "fixture"), engine, "fixture.test")
 	defer s.Shutdown(context.Background())
+	// Passed on the database's clock, which recovery reads: otherwise the
+	// published operation may not be due for pruning and nothing is cancelled.
+	passed := dbDeadline(t, pool, -time.Minute)
 	reserve := func(key, name string) {
-		_, err := s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: name, DestinationSlug: name, Deadline: time.Now().Add(-time.Minute)})
+		_, err := s.journal.Reserve(ctx, db.InsertEnvironmentCloneParams{RequestKey: key, UserID: r.UserID, OrganizationID: r.OrgID, ProjectID: r.ProjectID, SourceID: r.SourceID, DestinationName: name, DestinationSlug: name, Deadline: passed})
 		if err != nil {
 			t.Fatal(err)
 		}
