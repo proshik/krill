@@ -201,6 +201,24 @@ implementer's and reversible.
   SHA-256 on the other side (Traefik gets the listener cert as its root CA).
 - *(impl)* The pairing form takes the address the client dials, default `<link host>:443`.
 
+- *(impl, after review)* A client reconnects right after storing a renewed certificate (a
+  second's break once a year) instead of renewing again in the same session: a session left
+  on the old certificate could outlive both. Differs from spec §5.5 item 4 only in when the new
+  certificate takes over.
+- *(impl, after review)* A peer over the 1024-stream limit loses its whole session, not one
+  stream: yamux v0.1.2 keeps a closed stream until the other side closes it, so refusing a
+  single stream does not bound the peer.
+- *(impl, after review)* Before admission a connection may send at most 64 KiB (the pairing
+  side is reachable without a certificate and yamux buffers up to 256 KiB per unread stream).
+- *(impl, after review)* `KRILL_LINK_LISTEN_ADDR` on a port the lockdown keeps public (22, 80,
+  443, the UI port) refuses either role, and a stored role does not listen there at start.
+- *(impl)* The relay's server certificate is reissued under the same CA 90 days before expiry
+  (the spec gives it no renewal); the link CA lasts ten years.
+- *(impl)* `firewall.GatewayOnly` ("some port is gateway-only") no longer means "the UI port is
+  closed" once the link port is gateway-only too; the panel's drift check now asks for the UI
+  port itself (`server.portGatewayOnly`). `firewall.GatewayOnly` is left without a production
+  caller (`internal/firewall` is outside touches).
+
 Plan: migration and queries → reserved-host check in `hostshare` → `internal/link`
 primitives (PKI, pairing code, PROXY v2, stream header) → session registry → relay,
 client, gateway listener, service → dynamic config and pre-publication check →
