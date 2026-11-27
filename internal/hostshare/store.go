@@ -2,7 +2,6 @@ package hostshare
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,8 +33,14 @@ type AddParams struct {
 	Paths   []string
 }
 
+// hostLockKey is the advisory lock of a host. DNS names are case-insensitive,
+// so two spellings of one name take the same lock.
+func hostLockKey(host string) string {
+	return "krill.domain-host:" + strings.ToLower(host)
+}
+
 func (s *Store) inHostTx(ctx context.Context, host string, fn func(q *db.Queries) error) error {
-	return s.inLockedTx(ctx, []string{"krill.domain-host:" + host}, fn)
+	return s.inLockedTx(ctx, []string{hostLockKey(host)}, fn)
 }
 
 // inLockedTx takes the transaction-scoped advisory locks in the given order,
@@ -75,7 +80,7 @@ func (s *Store) Add(ctx context.Context, p AddParams) (db.Domain, error) {
 	paths := traefik.NormalizePaths(p.Paths)
 	var out db.Domain
 	err := s.inHostTx(ctx, p.Host, func(q *db.Queries) error {
-		if err := panelAvailable(ctx, q, p.Host); err != nil {
+		if err := reservedErr(ctx, q, p.Host); err != nil {
 			return err
 		}
 		app, err := q.GetApplication(ctx, p.AppID)
@@ -233,14 +238,14 @@ func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 	if err != nil {
 		return fmt.Errorf("load domain: %w", err)
 	}
-	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), "krill.domain-host:" + d.Host}
+	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), hostLockKey(d.Host)}
 	return s.inLockedTx(ctx, keys, func(q *db.Queries) error {
 		// Application row before domains rows, in the order an application
 		// delete (and its cascade) takes them. A deleted app is ErrNoRows.
 		if _, err := q.LockApplicationRow(ctx, d.ApplicationID); err != nil {
 			return err
 		}
-		if err := panelAvailable(ctx, q, d.Host); err != nil {
+		if err := reservedErr(ctx, q, d.Host); err != nil {
 			return err
 		}
 		rows, err := q.ListDomainClaimsByHost(ctx, d.Host)
@@ -275,21 +280,6 @@ func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 		}
 		return nil
 	})
-}
-
-// panelAvailable is checked under the host lock shared with SetPanelDomain.
-func panelAvailable(ctx context.Context, q *db.Queries, host string) error {
-	row, err := q.GetPanelGateway(ctx)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read panel settings: %w", err)
-	}
-	if row.State != "off" && strings.EqualFold(row.Host, host) {
-		return &ConflictError{Key: KeyHostTaken}
-	}
-	return nil
 }
 
 // CreateApplication reserves an exclusive primary host and creates its app and
@@ -365,13 +355,14 @@ func (s *Store) CreateApplicationConfigured(ctx context.Context, p db.CreateAppl
 
 // ReservePrimaryHost must run in the same transaction as the app/domain writes.
 // Environment cloning uses it with a preallocated app ID and captured fields.
-// The namespace and panel reservation are shared with every domain mutation.
+// The namespace and the reserved hosts (reservedErr) are shared with every
+// domain mutation.
 func ReservePrimaryHost(ctx context.Context, tx pgx.Tx, host string) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "krill.domain-host:"+host); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", hostLockKey(host)); err != nil {
 		return fmt.Errorf("lock host: %w", err)
 	}
 	q := db.New(tx)
-	if err := panelAvailable(ctx, q, host); err != nil {
+	if err := reservedErr(ctx, q, host); err != nil {
 		return err
 	}
 	n, err := q.CountDomainsByHost(ctx, host)
@@ -401,9 +392,15 @@ func CreateApplicationTx(ctx context.Context, tx pgx.Tx, p db.CreateApplicationP
 	return out, err
 }
 
-// SetPanelDomain reserves the panel host exclusively against every app claim.
+// SetPanelDomain reserves the panel host exclusively against every app claim
+// and the link's hosts.
 func (s *Store) SetPanelDomain(ctx context.Context, host string) error {
 	return s.inHostTx(ctx, host, func(q *db.Queries) error {
+		if r, err := linkReservation(ctx, q, host); err != nil {
+			return err
+		} else if r != NotReserved {
+			return &ConflictError{Key: r.Key()}
+		}
 		n, err := q.CountDomainsByHost(ctx, host)
 		if err != nil {
 			return err

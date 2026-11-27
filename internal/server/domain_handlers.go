@@ -131,9 +131,13 @@ func (s *Server) addDomain(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_host")
 		return
 	}
-	if reserved, err := s.hostReservedByPanel(r.Context(), host); err != nil || reserved {
-		logFrom(r).Info("addDomain: host reserved by the panel", "app_id", c.App.ID, "host", host, "err", err)
-		s.flashErrT(w, r, "flash.err.host_in_use")
+	if reserved, err := s.hostReserved(r.Context(), host); err != nil {
+		logFrom(r).Error("addDomain: reserved-host check failed", "app_id", c.App.ID, "host", host, "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	} else if reserved != hostshare.NotReserved {
+		logFrom(r).Info("addDomain: host reserved by krill", "app_id", c.App.ID, "host", host, "by", string(reserved))
+		s.flashErrT(w, r, reserved.Key())
 		return
 	}
 	expose := r.FormValue("exposed") == "on"

@@ -15,6 +15,7 @@ touches:
   - internal/traefik/**
   - internal/hostshare/**
   - internal/deploy/**
+  - internal/docker/**
   - internal/server/**
   - internal/web/**
   - internal/config/**
@@ -174,3 +175,54 @@ a rollback from the egress release fail closed instead of sending apps direct.
   `internal/hostshare/store.go`, `internal/deploy/deployer.go:1204`.
 - The maintainer's design note `docs/superpowers/specs/2026-11-27-krill-link-design.md`
   (local-only; this task is authoritative without it).
+
+## Implementation notes
+
+Recorded by the implementing session (2026-11-27). Decisions marked *(impl)* are the
+implementer's and reversible.
+
+- **Touches widened, with the owner's consent (2026-11-27):** `internal/docker/**` —
+  `ServiceSpec` cannot carry network aliases and the engine cannot read a service's
+  attachments, so the deployer could not keep a `krill-egress-*` attachment with its alias
+  (without the alias a rollback would fail open). The §18 lines for `AGENTS.md` (outside
+  touches) are handed to the integrating session in the report; the detail lives in
+  `docs/internals/networking.md`.
+- *(impl)* yamux v0.1.2 has no public stream reset: an unknown stream type is closed
+  without reading further (`Stream.Close`), which is what "reset" means here.
+- *(impl)* Keepalive: `KeepAliveInterval=15s`, `ConnectionWriteTimeout=30s`, so an
+  unanswered ping closes the session 45 s after the last answered one.
+- *(impl)* Admission happens after the first stream: the relay reads `control hello`,
+  looks the fingerprint up, admits under the peer lock and answers `hello` or
+  `error{category}` — so the client learns `unauthorized`/`duplicate`/`incompatible`
+  instead of a bare TLS alert. A duplicate attempt first pings the live session (5 s);
+  a session that does not answer is closed and replaced.
+- *(impl)* The gateway listener runs while the role is not `off`; on a `client` it has
+  nothing to dispatch yet (egress is KRL-002) and closes authenticated connections.
+- *(impl)* The gateway client cert and the listener cert are self-signed and pinned by
+  SHA-256 on the other side (Traefik gets the listener cert as its root CA).
+- *(impl)* The pairing form takes the address the client dials, default `<link host>:443`.
+
+- *(impl, after review)* A client reconnects right after storing a renewed certificate (a
+  second's break once a year) instead of renewing again in the same session: a session left
+  on the old certificate could outlive both. Differs from spec §5.5 item 4 only in when the new
+  certificate takes over.
+- *(impl, after review)* A peer over the 1024-stream limit loses its whole session, not one
+  stream: yamux v0.1.2 keeps a closed stream until the other side closes it, so refusing a
+  single stream does not bound the peer.
+- *(impl, after review)* Before admission a connection may send at most 64 KiB (the pairing
+  side is reachable without a certificate and yamux buffers up to 256 KiB per unread stream).
+- *(impl, after review)* `KRILL_LINK_LISTEN_ADDR` on a port the lockdown keeps public (22, 80,
+  443, the UI port) refuses either role, and a stored role does not listen there at start.
+- *(impl)* The relay's server certificate is reissued under the same CA 90 days before expiry
+  (the spec gives it no renewal); the link CA lasts ten years.
+- *(impl)* `firewall.GatewayOnly` ("some port is gateway-only") no longer means "the UI port is
+  closed" once the link port is gateway-only too; the panel's drift check now asks for the UI
+  port itself (`server.portGatewayOnly`). `firewall.GatewayOnly` is left without a production
+  caller (`internal/firewall` is outside touches).
+
+Plan: migration and queries → reserved-host check in `hostshare` → `internal/link`
+primitives (PKI, pairing code, PROXY v2, stream header) → session registry → relay,
+client, gateway listener, service → dynamic config and pre-publication check →
+`docker` keep-prefix + deployer → handlers, page, i18n, firewall ports → wiring and
+config → docs → integration tests. Lasting rules: `networking.md#krill-link`, plus the
+AGENTS.md lines in the report.

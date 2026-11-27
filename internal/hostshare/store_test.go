@@ -210,7 +210,8 @@ func TestStoreConcurrentExclusiveReservations(t *testing.T) {
 				if failed == nil {
 					failed = b
 				}
-				if key := conflictKey(t, failed); key != KeyHostTaken {
+				// The loser sees the domain (host taken) or the panel (reserved).
+				if key := conflictKey(t, failed); key != KeyHostTaken && key != KeyReservedPanel {
 					t.Fatalf("unexpected conflict: %v", failed)
 				}
 			}

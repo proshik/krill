@@ -22,18 +22,22 @@ type Config struct {
 	// AdvertiseAddr is the manager IP/host a worker dials to join the swarm
 	// (":2377" is appended). Required to add worker nodes; empty disables it.
 	AdvertiseAddr string `env:"KRILL_ADVERTISE_ADDR"`
-	BaseDomain    string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
-	Network       string `env:"KRILL_NETWORK" envDefault:"krill-net"`
+	// LinkListenAddr is the Krill link's authenticated gateway listener: only
+	// this installation's gateway connects to it (PROXY v2, then TLS with the
+	// gateway's client certificate). Listened on while the link role is not off.
+	LinkListenAddr string `env:"KRILL_LINK_LISTEN_ADDR" envDefault:":8445"`
+	BaseDomain     string `env:"KRILL_BASE_DOMAIN" envDefault:"127-0-0-1.sslip.io"`
+	Network        string `env:"KRILL_NETWORK" envDefault:"krill-net"`
 	// OverlayMTU is the MTU of the overlay networks Krill creates (the base
 	// network and every organization's). 0 leaves Docker's default (1450, which
 	// assumes a 1500-byte underlay). A swarm running over a tunnel such as
 	// WireGuard (MTU 1420) needs the tunnel's MTU minus 50 bytes of VXLAN
 	// overhead, or large packets are dropped. It applies only when a network is
 	// created; an existing network keeps the MTU it was created with.
-	OverlayMTU int `env:"KRILL_OVERLAY_MTU" envDefault:"0"`
-	Host          string `env:"KRILL_HOST" envDefault:"localhost"`
-	PublicURL     string `env:"KRILL_PUBLIC_URL"`
-	CookieSecure  bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
+	OverlayMTU   int    `env:"KRILL_OVERLAY_MTU" envDefault:"0"`
+	Host         string `env:"KRILL_HOST" envDefault:"localhost"`
+	PublicURL    string `env:"KRILL_PUBLIC_URL"`
+	CookieSecure bool   `env:"KRILL_COOKIE_SECURE" envDefault:"false"`
 	// TrustProxy: honour X-Forwarded-For when deriving the client IP (login
 	// rate limiting). Enable ONLY when a reverse proxy fronts Krill and
 	// overwrites/appends the header — otherwise any client can forge it and

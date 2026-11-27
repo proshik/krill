@@ -75,9 +75,13 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		s.flashErrT(w, r, "flash.err.invalid_domain")
 		return
 	}
-	if reserved, err := s.hostReservedByPanel(r.Context(), domain); err != nil || reserved {
-		logFrom(r).Info("createApp: domain reserved by the panel", "environment_id", e.ID, "domain", domain, "err", err)
-		s.flashErrT(w, r, "flash.err.domain_in_use")
+	if reserved, err := s.hostReserved(r.Context(), domain); err != nil {
+		logFrom(r).Error("createApp: reserved-host check failed", "environment_id", e.ID, "domain", domain, "err", err)
+		s.flashErrT(w, r, "flash.err.internal")
+		return
+	} else if reserved != hostshare.NotReserved {
+		logFrom(r).Info("createApp: domain reserved by krill", "environment_id", e.ID, "domain", domain, "by", string(reserved))
+		s.flashErrT(w, r, reserved.Key())
 		return
 	}
 	if sourceType == "image" && image == "" {
@@ -118,6 +122,10 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var conflict *hostshare.ConflictError
 		if errors.As(err, &conflict) {
+			if conflict.Key == hostshare.KeyReservedPanel || conflict.Key == hostshare.KeyReservedLink {
+				s.flashErrT(w, r, conflict.Key)
+				return
+			}
 			s.flashErrT(w, r, "flash.err.domain_in_use")
 			return
 		}

@@ -203,6 +203,23 @@ the agent running with nothing managing it; remove it with `docker service rm kr
 and its configs and secrets labelled `krill.observability=node-agent` (see
 [Turning it off](guides/observability.md#7-turning-it-off--troubleshooting)).
 
+Rolling back below the release that brought the [Krill link](guides/link.md) core (whose
+deployer keeps every app's attachments to `krill-egress-*` networks on a redeploy) removes that
+guarantee. An older deployer builds an app's spec with its organization's network only, so the
+first redeploy there drops the app's egress network and its destination aliases: the app's
+traffic to those destinations then leaves the host **directly**, from this host's own address,
+instead of failing closed. A rollback by one release from the link's egress release is safe,
+which is why the egress release ships after the core release. What decides it is the version a
+rollback goes back to: the one in `krill.prev` (`krill.prev --version`) for **Roll back** and
+for the automatic revert. An update that skips the core release — straight from a release
+without the link to the egress release or later — leaves a `krill.prev` without the
+guarantee. Confirming the update only ends the automatic revert; **Roll back** to that
+`krill.prev` stays possible, and a redeploy after it sends link apps direct. So update through the
+core release first, or do not route apps through the link while `krill.prev` predates it. If you must go further back on a link client, first remove the
+app's link destinations and redeploy it on the newer release, or do not redeploy apps with link
+destinations until you upgrade again. A relay loses nothing but
+its link route: clients reconnect once it is back on a release with the link.
+
 **A failed migration is not rolled back.** Migrations run when the new binary starts. If one
 fails, or Krill is killed in the middle of one, the database is left marked "dirty" and no
 binary starts against it — the previous one the timer puts back included. `journalctl -u krill`

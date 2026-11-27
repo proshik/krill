@@ -86,6 +86,14 @@ type ServiceSpec struct {
 	// omitempty keeps a spec without one serialized as before: callers hash
 	// the whole spec to decide whether to redeploy.
 	LogDriver *LogDriverSpec `json:",omitempty"`
+	// KeepNetworkPrefix makes ServiceDeploy carry over every network
+	// attachment the running service already has to a network whose name
+	// starts with it, aliases included, besides the ones the spec lists. The
+	// deployer sets it to the link's egress prefix: a release that does not
+	// manage those attachments must not drop them, because without the
+	// attachment and its aliases an app's DNS falls back to the real address
+	// and its traffic leaves directly (fail open). omitempty as LogDriver.
+	KeepNetworkPrefix string `json:",omitempty"`
 }
 
 // LogDriverSpec is a container logging driver and its options.

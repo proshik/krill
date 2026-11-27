@@ -24,6 +24,7 @@ import (
 	"github.com/proshik/krill/internal/envclone"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/link"
 	"github.com/proshik/krill/internal/mcpsrv"
 	"github.com/proshik/krill/internal/metrics"
 	"github.com/proshik/krill/internal/notify"
@@ -47,6 +48,7 @@ type Server struct {
 
 	cloner        *envclone.Service
 	hosts         *hostshare.Store
+	link          *link.Service
 	backupSvc     *backup.Service
 	reloadBackups func()
 
@@ -457,7 +459,8 @@ func (s *Server) Router() http.Handler {
 			r.Get("/db-servers/{instID}/deploy-logs", s.dbInstanceDeployLogs)
 
 			// Global infrastructure: cluster nodes, the host-wide monitoring
-			// view, the firewall, the panel domain and Krill's own updates span
+			// view, the firewall, the panel domain, the Krill link and Krill's
+			// own updates span
 			// every tenant, so they are gated on the instance-operator flag, NOT
 			// org-scoped RoleAdmin (which any user can self-grant by creating an
 			// org via POST /orgs).
@@ -484,6 +487,12 @@ func (s *Server) Router() http.Handler {
 				r.Post("/panel-domain/direct-port/confirm", s.confirmPanelDirectPort)
 				r.Post("/panel-domain/direct-port/open", s.openPanelDirectPort)
 				r.Post("/panel-domain/direct-port/record", s.recordPanelDirectPortOpen)
+				r.Get("/link", s.linkPage)
+				r.Post("/link/role", s.setLinkRole)
+				r.Post("/link/codes", s.createLinkCode)
+				r.Post("/link/peers/{peerID}/remove", s.removeLinkPeer)
+				r.Post("/link/pair", s.pairLink)
+				r.Post("/link/forget", s.forgetLinkRelay)
 				r.Get("/updates", s.updatesPage)
 				r.Post("/updates/check", s.checkUpdates)
 				r.Post("/updates/install", s.installUpdate)

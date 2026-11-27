@@ -1176,6 +1176,11 @@ func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTa
 	}
 }
 
+// EgressNetworkPrefix names the Krill link's per-app egress networks
+// (krill-egress-<app>). The deployer keeps a running service's attachments to
+// them on every redeploy.
+const EgressNetworkPrefix = "krill-egress-"
+
 func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	app = d.withResourceDefaults(app)
 	name := docker.ServiceName(app.ID)
@@ -1210,6 +1215,11 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		Healthcheck:        app.Healthcheck,
 		Mounts:             app.Mounts,
 		Ports:              app.Ports,
+		// Attachments to the link's egress networks are carried over from the
+		// running service whatever this release knows of them: dropping one
+		// would take its destination aliases with it, and the app's traffic
+		// would leave directly instead of failing closed.
+		KeepNetworkPrefix: EgressNetworkPrefix,
 	}
 	// Placement: restrict to the chosen node set via the per-app krill.place label
 	// (set on those nodes by the server). pin spreads replicas across them; global

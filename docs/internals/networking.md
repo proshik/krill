@@ -75,6 +75,176 @@ tasks (`allowEmptyServices=false`), so a stopped app's redirect 404s — documen
 
 `app_ports` table (migration 000025: `host_port`/`container_port`/`protocol`, `UNIQUE(host_port, protocol)`) → `deploy.App.Ports` → `spec.Ports` (host publish mode; the `internal/docker` layer already supported TCP/UDP via `PortSpec.UDP`). Admin-gated `addAppPort`/`deleteAppPort` validate range 1..65535 + protocol ∈ {tcp,udp} and conflict-check the host port against both `app_ports` AND managed-DB `external_port` (for TCP); tenant chain-check + IDOR. UI: "Published ports" on the Advanced tab. Applied on the next deploy. Deferred: ingress (swarm LB) mode, port ranges, auto-pick, firewall/UFW.
 
+## Krill link
+
+*(2026-11-27, KRL-001: the core; egress KRL-002, ingress KRL-005)*
+
+Two installations linked: a **client** holds one outbound TLS 1.3 connection with mutual
+authentication to a **relay**, and both sides multiplex streams over it with
+`github.com/hashicorp/yamux`. One role per install (`link_settings.role`: `off` | `client` |
+`relay`), set only by the instance operator (`RequireInstanceAdmin`, Settings → Link,
+`/orgs/{id}/link`). Package `internal/link`; the operator page in
+`internal/server/link_handlers.go` + `templates/link.templ`; user guide `docs/guides/link.md`.
+
+**Data (migration 000066, additive).** `link_settings` (singleton; gateway/listener certs for
+both roles; relay: `link_host`, CA, server cert; client: relay address, SNI, CA fingerprint,
+client key and cert), `link_peers` (relay; `name` and `cert_sha256` UNIQUE,
+`prev_cert_sha256` for renewal), `link_pairing_codes` (`secret_sha256` UNIQUE, `expires_at`,
+`used_at`, `key_sha256`, `issued_cert`) and `link_ingress_hosts` (empty until KRL-005, created
+now so the host reservation survives a rollback from stage 2). Every private key goes through
+`secret.Enc` in `link.Store`; a pairing secret is stored only as its SHA-256; nothing in these
+tables is a live bearer credential, so `statebackup.DumpArgs()` is unchanged (a state restore on
+another host clones the client's identity: the relay then refuses the second session as a
+duplicate). Code expiry uses the database clock (`now()` in `CreateLinkPairingCode` and
+`LockLinkPairingCode`), never the host's.
+
+**Transport.** The client pins the relay by the SHA-256 of the link CA from the pairing code
+(`pinnedTLS`/`verifyPinned`: the server sends `[server, CA]`, the leaf must chain to that CA for
+the SNI); system roots play no part. The relay asks for a client certificate
+(`VerifyClientCertIfGiven` against its CA) and, after the handshake, looks the certificate's
+fingerprint up in `link_peers` on every connection — so removing a peer revokes it at once. The
+first stream decides: without a certificate only one `pair` stream is accepted; with one, a
+`control` stream whose header is `hello {proto, krill_version}`. The relay answers a JSON line
+`hello` or `error{category}`, so the client shows `unauthorized`/`duplicate`/`incompatible`
+rather than a bare TLS alert. Every stream starts with a header (1-byte type, 2-byte length,
+JSON; `MaxHeader` 4 KB, `HeaderTimeout` 5 s); an unknown or not-yet-supported type is closed
+without reading further (yamux v0.1.2 has no public RST) and logged at WARN; at most
+`MaxStreamsPerPeer` (1024) per peer, counted with yamux's own `NumStreams` — a stream closed on
+one side stays in the session until the other side closes it or `StreamCloseTimeout` (30 s)
+resets it, so a peer over the limit loses its whole session (both sides). **Before admission a
+connection may send at most 64 KiB** (`budgetConn`): the relay's TLS accepts pairing without a
+certificate, and yamux buffers up to 256 KiB per stream that is not read yet, so without the
+budget an unauthenticated peer could make the relay buffer that much per stream. yamux keepalive 15 s with `ConnectionWriteTimeout` 30 s,
+so an unanswered ping closes the session 45 s after the last answered one. The client
+reconnects with backoff 1–60 s, jittered over [d/2, d) (`nextDelay`, `jitter`); every `Wake`
+(pairing, Forget) bumps a generation, and an attempt that read the settings before it is
+dropped instead of becoming the session. Certificates are renewed over the live session at two
+thirds of their lifetime, counted from issue (`needsRenewal`; `NotBefore` is backdated an hour
+for clock skew): `renew{csr}` → `cert`; the certificate the session holds stays valid as
+`prev_cert_sha256` until the first connect with the new one (`MarkLinkPeerConnected` clears
+it). **A session renews once and then reconnects with the new certificate**: a second renewal
+while it still ran on the first would retire the stored one in favour of one whose answer might
+be lost, and a session left running could outlive both. A session whose answer was lost may ask
+again (the relay keeps the session's certificate as previous). The relay records the connect
+(`MarkLinkPeerConnected`) before it answers `hello`, and refuses the session when it cannot. The
+relay's server certificate is reissued under the same CA 90 days before it expires
+(`renewServerIfDueReport`, at start and daily, and whenever the relay is turned on): under the
+host lock it re-reads the settings and only replaces the certificate (`SetLinkServerCert`) while
+they still name this relay and host, so it never undoes a role change.
+
+**Admission and revocation are serialized per peer ID** (`registry`): a session is registered
+under the peer's lock after re-reading the peer by ID (and its fingerprint) and checking that
+the relay configuration that accepted the connection is still the running one; `RemovePeer`
+deletes the row and closes the live session under the same lock; `unload` (role off, shutdown)
+stops serving first and then closes every registered session, so nothing admitted in between
+survives; every new stream checks its session is still the registered one. The relay keeps the
+latest refused session per peer (`Refusal`: duplicate or incompatible, with the address) for the
+page. A pairing checks the running relay and commits under `Relay.gate`, which `unload` takes
+before it stops serving, so no code is redeemed after the relay was turned off. `revoke` closes
+the peer's session whatever the delete reports (an answer lost after the commit). Operator
+changes — role, pairing, Forget — are serialized (`Service.opMu`), so a pairing that answers
+late cannot undo a role change or a Forget; a stored role change is applied on a context
+detached from the request (`applyAfterWrite`), and `SetOff` stops everything without reading the
+settings back. At start a stored role whose listener port turned public is not listened on. One live session per peer: a second attempt pings the first (5 s) and
+is refused as `duplicate` while the first answers (shown on the page with its source address —
+usually a clone restored from a state backup); a first session that does not answer is closed
+and replaced, so a client whose old TCP connection died silently does not wait 45 s.
+
+**Pairing.** `krl1_<base64url(JSON{addr, sni, ca_sha256, secret})>`, created by the relay
+operator for a peer name, shown once through the HttpOnly `krill_flash_link_code` cookie, valid
+10 minutes and single-use. The client generates its key, dials pinned to the CA without a
+certificate and sends `{secret, csr}` on a `pair` stream. `Store.Redeem` is one transaction: the
+code row is locked (`FOR UPDATE`), then a conditional UPDATE (`used_at IS NULL AND expires_at >
+now()`) records the CSR key's SHA-256 and the issued certificate (CN = peer name, one year) and
+the peer is created. A retry with the **same key** before expiry gets the same certificate (the
+answer can be lost after the commit; `Client.Pair` retries once on a transport failure and keeps
+the key of an attempt that was never stored, by the code's hash, for a later submit of the same
+code; dropped only on a final refusal, not on a rate limit or a relay error — the key lives in
+memory, so a restart in between still means removing the peer and pairing again), any other key
+is refused. Expiry is checked by a separate query after the row lock is held
+(`LinkPairingCodeLive`, `clock_timestamp()`): the lock can be granted after the code expired,
+`now()` is the start of the transaction, and an expression in the locking query is evaluated
+before the wait.
+Categories and types the other side sends (pairing and session refusals, renewal answers,
+unknown control messages) are matched against the known ones before they are shown or logged. Pairing attempts are limited to 10/min per source address — the address
+from the PROXY header, which is trustworthy only because of the next paragraph.
+
+### The link listener accepts only PROXY v2 + mTLS with the gateway's certificate
+
+`KRILL_LINK_LISTEN_ADDR` (default `:8445`) is listened on while the role is not `off`
+(`link.GatewayListener`); a port the lockdown keeps public (22, 80, 443, the UI port) is refused
+for either role (`ListenRequirement`). At most `maxPending` (256) connections are not yet
+admitted: a slot is held from accept through the inner TLS until the relay admits, pairs or
+refuses the client. Any container on the host can reach it and forge a PROXY header, so
+each connection must send a PROXY v2 header (`ReadProxyHeader`: PROXY command, TCP over IPv4/6,
+body ≤ 512 bytes; fuzzed) and then complete TLS presenting exactly the gateway's client
+certificate (`RequireAnyClientCert` + fingerprint pin); it is closed before its inner stream is
+read otherwise, and the header is believed only together with that handshake. The gateway's
+client certificate and the listener's certificate are self-signed, created with the role
+(`EnsureLocalMaterial`, replaced when they cannot be decrypted) and pinned on the other side:
+Traefik gets the listener's certificate as its `rootCAs` for `serverName`
+`krill-link-listener`. On a client the listener has nothing to dispatch until egress and closes
+authenticated connections.
+
+### The relay's endpoint is a TCP route merged into `/_krill/gateway/config`
+
+`gatewayConfig` merges `panel.DynamicConfig` (`{}` while the panel domain is off) with
+`link.Service.GatewayTCP`: router `krill-link` `HostSNI(<link host>)` on `websecure` with
+`tls.passthrough`, service → `KRILL_ADVERTISE_ADDR:<link port>` with `tls: true` through
+serversTransport `krill-link-gateway` (`proxyProtocol.version=2`, `tls.serverName`,
+`rootCAs`, inline `certificates` of the gateway — the provider's answer is behind its token).
+No middlewares: TLS is end to end between the client and Krill. The panel's HTTP routers keep
+working beside it (TCP routers are tried first on an entrypoint). The relay role needs what
+the panel domain needs (`link.Upstream` → `panel.Upstream`: an advertise address, a non-loopback
+UI listener) and a non-loopback link listener, not the panel domain itself.
+`TestRelayGatewayOnRealTraefik` (`-tags=integration`) runs the pinned Traefik with the HTTP
+provider and pairs a client through it.
+
+### The link host and ingress hosts are reserved under the host lock, in both directions
+
+`hostshare.Reserved` (no lock, for handler pre-checks with a reason: `flash.err.host_reserved_panel`
+/ `_link`) and `reservedErr` (under `krill.domain-host:<host>`, called by `Add`,
+`ReservePrimaryHost`, `CreateApplication*`, `MakePrimary`, and so by environment cloning; the
+host lock key is lower-cased, and the link's own comparisons ignore case as DNS does) check
+the panel domain, `link_settings.link_host` while the role is relay, and `link_ingress_hosts`; it
+replaced `panelAvailable`. `SetPanelDomain` checks the link hosts; the link host is written by
+`Store.ReserveLinkHost` under the same lock, refused while a domain row or the panel holds it. A
+release without the link does not know the reservation, so after a rollback a domain can sit on
+the link host: **before every publication** `GatewayTCP` re-checks under the host lock
+(`LinkHostHolders`: the panel, domain rows and `link_ingress_hosts`) and publishes nothing while
+anything else holds it, building the route from the settings re-read under that lock; the Link
+page lists the holders (panel, ingress host, or `project/env/app` with a link to its domains tab)
+until the operator removes one. `gatewayConfig` also drops the route when the panel row it read
+before that check names the same host, so one answer never routes a host both ways. The link
+host's key material is chosen inside the same transaction under the settings row lock
+(`writeRelay`), so two first enablements cannot each create a CA.
+
+### The link port is gateway-only under lockdown, and Krill never re-applies the firewall
+
+`controlPlaneServicePorts(listen, closeDirect, linkPort)` adds the link port to the `Gateway`
+set (`iifname "docker_gwbridge"`) while the role is not `off`, never to the public one. Krill does
+not apply the firewall on a role change (the dead-man switch needs the operator's confirmation):
+the Link page compares the live ruleset's marker with the one it needs now
+(`linkFirewallStale`) and asks to re-apply with a link to the Firewall page, whose drift check
+shows the same. Since the gateway-only rule can now carry the link port alone, the panel
+domain's direct-port drift asks whether **the UI port itself** is gateway-only
+(`portGatewayOnly`), not whether any port is (`firewall.GatewayOnly`, now without a production
+caller).
+
+### A redeploy keeps every `krill-egress-*` attachment
+
+`Deployer.buildSpec` sets `docker.ServiceSpec.KeepNetworkPrefix = deploy.EgressNetworkPrefix`
+(`json:",omitempty"`); `ServiceDeploy` resolves the running service's attachments to names
+(`attachmentNames`, network IDs as Swarm stores them) and carries over those with the prefix,
+aliases included (`keepAttachments`), unless the spec attaches that network itself. No such
+network exists before KRL-002; afterwards this is what keeps a rollback from the egress release
+fail closed — without the attachment and its aliases, the app's DNS returns the real address and
+its traffic leaves directly. Hence KRL-002 ships in a later release than this core, and
+`docs/install.md` Rollback says what going further back does.
+
+**Logs** carry the peer name, the category and sizes, never keys, certificates, pairing codes or
+stream bytes (TLS failures are logged as a category, not the peer's error text).
+
 ## Pitfalls
 
 ### Traefik is pinned to `v3.6.1`

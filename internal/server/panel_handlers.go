@@ -14,6 +14,7 @@ import (
 	db "github.com/proshik/krill/internal/database/gen"
 	"github.com/proshik/krill/internal/firewall"
 	"github.com/proshik/krill/internal/hostshare"
+	"github.com/proshik/krill/internal/link"
 	"github.com/proshik/krill/internal/panel"
 	"github.com/proshik/krill/internal/web/templates"
 )
@@ -141,14 +142,11 @@ func (s *Server) NotifyLinkBase(ctx context.Context) string {
 	return ""
 }
 
-// hostReservedByPanel reports whether host is the panel's domain, which no app
-// may claim: its router would compete with the panel's for the admin's login.
-func (s *Server) hostReservedByPanel(ctx context.Context, host string) (bool, error) {
-	row, err := s.panelRow(ctx)
-	if err != nil {
-		return false, err
-	}
-	return row.State != panel.StateOff && strings.EqualFold(row.Host, host), nil
+// hostReserved reports which of Krill's own records holds host — the panel
+// domain, the relay's link host or a relay ingress host — so that a handler can
+// say why no app may claim it. Every write checks again under the host lock.
+func (s *Server) hostReserved(ctx context.Context, host string) (hostshare.Reservation, error) {
+	return hostshare.Reserved(ctx, s.q, host)
 }
 
 // panelHSTS adds Strict-Transport-Security to responses on the active panel
@@ -219,7 +217,26 @@ func (s *Server) gatewayConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	cfg := panel.DynamicConfig(panel.SettingsFromRow(row), s.panel.upstream, s.panel.tokens.Forwarded)
+	settings := panel.SettingsFromRow(row)
+	cfg := panel.DynamicConfig(settings, s.panel.upstream, s.panel.tokens.Forwarded)
+	if s.link != nil {
+		// The relay's link host: a TCP passthrough router beside the panel's
+		// HTTP routers, published only while no domain or the panel holds the
+		// host (re-checked under the host lock on every poll).
+		tcp, host, err := s.link.GatewayTCP(r.Context())
+		if err != nil {
+			logFrom(r).Error("gatewayConfig: build link routes failed", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// The panel row above was read before that check: should the panel
+		// have held the link host then, one answer would route the host both
+		// ways. Publish neither the link's route until the next poll agrees.
+		if settings.State != panel.StateOff && strings.EqualFold(settings.Host, host) {
+			tcp = nil
+		}
+		cfg = link.Merge(cfg, tcp)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := json.NewEncoder(w).Encode(cfg); err != nil {
@@ -314,7 +331,8 @@ func (s *Server) directPortDrift(r *http.Request, locked, stored bool) (hostClos
 	if locked {
 		ctx, cancel := context.WithTimeout(r.Context(), firewallStatusTimeout)
 		defer cancel()
-		closed, err := firewall.GatewayOnly(ctx, s.cpFirewall)
+		port, _ := strconv.Atoi(listenPort(s.cfg.ListenAddr))
+		closed, err := portGatewayOnly(ctx, s.cpFirewall, port)
 		if err != nil {
 			logFrom(r).Warn("panelDomainPage: read control-plane ruleset failed", "err", err)
 			return false, false
@@ -447,6 +465,10 @@ func (s *Server) setPanelDomain(w http.ResponseWriter, r *http.Request) {
 	if err := s.hosts.SetPanelDomain(r.Context(), host); err != nil {
 		var conflict *hostshare.ConflictError
 		if errors.As(err, &conflict) {
+			if conflict.Key == hostshare.KeyReservedLink {
+				s.flashErrT(w, r, conflict.Key)
+				return
+			}
 			s.flashErrT(w, r, "flash.err.panel_host_in_use")
 			return
 		}

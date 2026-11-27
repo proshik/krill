@@ -184,8 +184,12 @@ func (s *Server) firewallNodes(r *http.Request, rows []db.ClusterNode) []templat
 	}
 	var jobs []job
 	cp := job{key: controlPlaneCheckKey, name: "control-plane", runner: s.cpFirewall, addr: cpAddr}
-	if ipErr == nil && panelErr == nil {
-		if ports, err := controlPlaneServicePorts(s.cfg.ListenAddr, panelRow.DirectPortClosed); err == nil {
+	lp, linkErr := s.linkPort(ctx)
+	if linkErr != nil {
+		slog.Warn("firewall page: read link role failed", "err", linkErr)
+	}
+	if ipErr == nil && panelErr == nil && linkErr == nil {
+		if ports, err := controlPlaneServicePorts(s.cfg.ListenAddr, panelRow.DirectPortClosed, lp); err == nil {
 			cp.base = firewall.Rules{ClusterIPs: ips, PublicTCP: ports.Public, GatewayTCP: ports.Gateway}
 			cp.baseOK = true
 		}
