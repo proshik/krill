@@ -89,11 +89,18 @@ type ServiceSpec struct {
 	// KeepNetworkPrefix makes ServiceDeploy carry over every network
 	// attachment the running service already has to a network whose name
 	// starts with it, aliases included, besides the ones the spec lists. The
-	// deployer sets it to the link's egress prefix: a release that does not
-	// manage those attachments must not drop them, because without the
-	// attachment and its aliases an app's DNS falls back to the real address
-	// and its traffic leaves directly (fail open). omitempty as LogDriver.
+	// link core release's deployer (v0.17.0) sets it to the link's egress
+	// prefix: a release that does not manage those attachments must not drop
+	// them, because without the attachment an app's DNS falls back to the
+	// real address and its traffic leaves directly (fail open). The egress
+	// release's deployer manages the attachment itself and leaves it unset.
+	// omitempty as LogDriver.
 	KeepNetworkPrefix string `json:",omitempty"`
+	// NetworkAliases are extra DNS names the service answers to on one of
+	// its networks, by network name: the Krill link's egress sidecar answers
+	// for an app's destination hosts on that app's egress network only.
+	// omitempty as LogDriver.
+	NetworkAliases map[string][]string `json:",omitempty"`
 }
 
 // LogDriverSpec is a container logging driver and its options.

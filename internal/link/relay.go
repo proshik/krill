@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/yamux"
 
 	db "github.com/proshik/krill/internal/database/gen"
+	"github.com/proshik/krill/internal/netguard"
 )
 
 // relayTLS is what the relay serves with; replaced as a whole on reload.
@@ -40,6 +41,12 @@ type Relay struct {
 
 	mu       sync.Mutex
 	refusals map[int64]Refusal // the latest refused session per known peer
+
+	// dial connects to an egress destination. It resolves the name itself
+	// and refuses private, loopback and link-local addresses
+	// (netguard.DialContext(false)); tests replace it.
+	dial    func(ctx context.Context, network, addr string) (net.Conn, error)
+	traffic *traffic
 }
 
 // Refusal is a refused session of a known peer: a second session while the
@@ -57,6 +64,7 @@ func newRelay(ctx context.Context, store *Store, version string) *Relay {
 	return &Relay{
 		store: store, version: version, reg: newRegistry(), ctx: ctx,
 		limit: newRateLimiter(10, time.Minute), refusals: map[int64]Refusal{},
+		dial: netguard.DialContext(false), traffic: newTraffic(),
 	}
 }
 
@@ -117,6 +125,20 @@ type relaySession struct {
 	version string
 	latency atomic.Int64 // nanoseconds, 0 until the first ping
 	streams atomic.Int32
+
+	// egress: the client speaks egress (its hello said so), so it is sent
+	// lists. ctl is the control stream; ctlMu orders writes to it.
+	egress   bool
+	ctlMu    sync.Mutex
+	ctl      *yamux.Stream
+	services atomic.Pointer[[]ManifestService]
+}
+
+// send writes one control message to the session.
+func (s *relaySession) send(m message) error {
+	s.ctlMu.Lock()
+	defer s.ctlMu.Unlock()
+	return writeMessage(s.ctl, m)
 }
 
 func (s *relaySession) Close() error { return s.mux.Close() }
@@ -128,6 +150,8 @@ type PeerSession struct {
 	Version string
 	Latency time.Duration
 	Streams int
+	// Services is the client's latest manifest.
+	Services []ManifestService
 }
 
 // Session returns the peer's live session, if any.
@@ -136,9 +160,17 @@ func (r *Relay) Session(id int64) (PeerSession, bool) {
 	if !ok || s == nil {
 		return PeerSession{}, false
 	}
-	return PeerSession{From: s.src.Addr(), Since: s.since, Version: s.version,
-		Latency: time.Duration(s.latency.Load()), Streams: int(s.streams.Load())}, true
+	ps := PeerSession{From: s.src.Addr(), Since: s.since, Version: s.version,
+		Latency: time.Duration(s.latency.Load()), Streams: int(s.streams.Load())}
+	if m := s.services.Load(); m != nil {
+		ps.Services = *m
+	}
+	return ps, true
 }
+
+// PeerTraffic is a peer's egress counters since this process started, by
+// service and destination.
+func (r *Relay) PeerTraffic(id int64) []Traffic { return r.traffic.of(id) }
 
 // LastRefusal returns the latest refused session of a peer.
 func (r *Relay) LastRefusal(id int64) (Refusal, bool) {
@@ -285,7 +317,8 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		refuse(CatIncompatible, "link protocol "+strconv.Itoa(hello.Proto)+" is not supported by the relay (it speaks "+strconv.Itoa(ProtoVersion)+"); update Krill on one side")
 		return
 	}
-	s := &relaySession{mux: mux, peerID: peer.ID, peer: peer.Name, fp: fp, src: src, since: time.Now(), version: hello.KrillVersion}
+	s := &relaySession{mux: mux, peerID: peer.ID, peer: peer.Name, fp: fp, src: src, since: time.Now(),
+		version: hello.KrillVersion, egress: hello.Egress, ctl: ctl}
 	err = r.reg.admit(peer.ID, s, func() error {
 		// The relay that accepted this connection is still the running one:
 		// unload (role off, Krill stopping) closes every registered session
@@ -332,7 +365,13 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		return
 	}
 	admitted()
-	if err := writeMessage(ctl, message{Type: "hello", Proto: ProtoVersion, KrillVersion: r.version}); err != nil {
+	dests, err := r.store.Destinations(r.ctx)
+	if err != nil {
+		// The client then refuses every egress connection until the next
+		// lists; the session itself is fine.
+		slog.Error("link: read the destination list failed", "peer", peer.Name, "err", err)
+	}
+	if err := s.send(message{Type: "hello", Proto: ProtoVersion, KrillVersion: r.version, Egress: true, Destinations: dests}); err != nil {
 		return
 	}
 	slog.Info("link: session connected", "peer", peer.Name, "from", src.Addr(), "version", hello.KrillVersion)
@@ -370,12 +409,16 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		go func() {
 			defer s.streams.Add(-1)
 			defer st.Close()
-			typ, _, err := readHeaderWithin(st, HeaderTimeout)
+			typ, body, err := readHeaderWithin(st, HeaderTimeout)
 			if err != nil {
 				slog.Warn("link: stream refused, no header", "peer", peer.Name)
 				return
 			}
-			// Egress and ingress streams arrive with later releases.
+			if typ == StreamEgress {
+				r.serveEgress(st, body, s)
+				return
+			}
+			// Ingress streams arrive with a later release.
 			slog.Warn("link: stream refused, unsupported type", "peer", peer.Name, "stream", typ.String())
 		}()
 	}
@@ -396,15 +439,18 @@ func (r *Relay) control(s *relaySession, ctl *yamux.Stream, peer db.LinkPeer, ca
 			cert, err := r.store.Renew(r.ctx, peer, s.fp, m.CSR, ca)
 			if err != nil {
 				slog.Warn("link: certificate renewal refused", "peer", peer.Name, "err", err)
-				if writeMessage(ctl, message{Type: "error", Category: CatUnauthorized, Message: "renewal refused"}) != nil {
+				if s.send(message{Type: "error", Category: CatUnauthorized, Message: "renewal refused"}) != nil {
 					return
 				}
 				continue
 			}
 			slog.Info("link: certificate renewed", "peer", peer.Name)
-			if writeMessage(ctl, message{Type: "cert", Cert: cert}) != nil {
+			if s.send(message{Type: "cert", Cert: cert}) != nil {
 				return
 			}
+		case "manifest":
+			svcs := boundManifest(m.Services)
+			s.services.Store(&svcs)
 		default:
 			slog.Warn("link: unknown control message", "peer", peer.Name, "type_len", len(m.Type))
 			return

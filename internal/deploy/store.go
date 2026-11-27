@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,6 +145,13 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		return App{}, err
 	}
 	out.Network = netName
+	egress, err := s.q.ListAppLinkEgress(ctx, a.ID)
+	if err != nil {
+		return App{}, fmt.Errorf("read the app's link egress: %w", err)
+	}
+	for _, e := range egress {
+		out.LinkEgress = append(out.LinkEgress, net.JoinHostPort(e.Host, strconv.Itoa(int(e.Port))))
+	}
 	ident, err := s.q.GetApplicationIdentity(ctx, a.ID)
 	if err != nil {
 		return App{}, err

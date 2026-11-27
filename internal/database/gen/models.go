@@ -43,6 +43,12 @@ type AppDbLink struct {
 	Field             string    `json:"field"`
 }
 
+type AppLinkDestination struct {
+	ApplicationID int64  `json:"application_id"`
+	Host          string `json:"host"`
+	Port          int32  `json:"port"`
+}
+
 type AppMetricsEndpoint struct {
 	ID            int64     `json:"id"`
 	ApplicationID int64     `json:"application_id"`
@@ -281,11 +287,22 @@ type GitCredential struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type LinkDestination struct {
+	Host      string    `json:"host"`
+	Port      int32     `json:"port"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type LinkIngressHost struct {
 	Host       string    `json:"host"`
 	PeerID     int64     `json:"peer_id"`
 	AllowedIps string    `json:"allowed_ips"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type LinkOrgGrant struct {
+	OrgID     int64     `json:"org_id"`
+	GrantedAt time.Time `json:"granted_at"`
 }
 
 type LinkPairingCode struct {

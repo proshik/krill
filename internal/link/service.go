@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +64,7 @@ type Service struct {
 	clientStop  context.CancelFunc
 	clientDone  chan struct{}
 	conflictLog atomic.Bool // the last poll found a conflict (log changes only)
+	egress      *Egress     // a client's egress, nil until NewEgress wires it
 }
 
 // NewService creates the link service; Start runs it.
@@ -220,6 +220,7 @@ func (s *Service) apply(ctx context.Context) error {
 		return fmt.Errorf("read link settings: %w", err)
 	}
 	role := row.Role
+	s.kickEgressLocked()
 	if role == RoleOff {
 		s.stopAllLocked()
 		return nil
@@ -284,14 +285,27 @@ func (s *Service) stopListenerLocked() {
 	s.listenErr = nil
 }
 
-// dispatch hands an authenticated connection to the running role.
-func (s *Service) dispatch(conn net.Conn, src netip.AddrPort, release func()) {
-	if s.Role() == RoleRelay {
-		s.relay.ServeConn(conn, src, release)
+// dispatch hands an authenticated connection to the running role: on a
+// relay a link session from its gateway, on a client an app's egress
+// connection from the sidecar.
+func (s *Service) dispatch(conn net.Conn, hdr ProxyHeader, release func()) {
+	switch s.Role() {
+	case RoleRelay:
+		s.relay.ServeConn(conn, hdr.Src, release)
 		return
+	case RoleClient:
+		if e := s.egressOf(); e != nil {
+			e.serveConn(conn, hdr, release)
+			return
+		}
 	}
-	// A client's listener has nothing to serve until egress (KRL-002).
 	_ = conn.Close()
+}
+
+func (s *Service) egressOf() *Egress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.egress
 }
 
 func (s *Service) startClientLocked() {
@@ -399,7 +413,16 @@ func (s *Service) SetOff(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stopAllLocked()
+	s.kickEgressLocked()
 	return nil
+}
+
+// kickEgressLocked asks egress to reconcile: the sidecar's routes and the
+// manifest follow the role.
+func (s *Service) kickEgressLocked() {
+	if s.egress != nil {
+		s.egress.Kick()
+	}
 }
 
 // SetClient makes the installation a client.

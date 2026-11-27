@@ -1,0 +1,121 @@
+package link
+
+import (
+	"bytes"
+	"crypto/tls"
+	"errors"
+	"io"
+	"net"
+	"testing"
+	"time"
+)
+
+// clientHello captures the first flight a Go TLS client sends for sni.
+func clientHello(t testing.TB, sni string) []byte {
+	t.Helper()
+	c, s := net.Pipe()
+	go func() {
+		tc := tls.Client(c, &tls.Config{ServerName: sni, InsecureSkipVerify: true}) //nolint:gosec // never completes
+		_ = tc.Handshake()
+	}()
+	_ = s.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var buf bytes.Buffer
+	hdr := make([]byte, 5)
+	if _, err := io.ReadFull(s, hdr); err != nil {
+		t.Fatal(err)
+	}
+	body := make([]byte, int(hdr[3])<<8|int(hdr[4]))
+	if _, err := io.ReadFull(s, body); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(hdr)
+	buf.Write(body)
+	_ = s.Close()
+	_ = c.Close()
+	return buf.Bytes()
+}
+
+// splitRecords re-frames one handshake record as two.
+func splitRecords(rec []byte, at int) []byte {
+	body := rec[5:]
+	out := []byte{0x16, rec[1], rec[2], byte(at >> 8), byte(at)}
+	out = append(out, body[:at]...)
+	rest := len(body) - at
+	out = append(out, 0x16, rec[1], rec[2], byte(rest>>8), byte(rest))
+	return append(out, body[at:]...)
+}
+
+func TestReadClientHello(t *testing.T) {
+	hello := clientHello(t, "API.Example.com")
+	after := []byte("application data that must stay unread")
+
+	raw, sni, err := ReadClientHello(bytes.NewReader(append(append([]byte{}, hello...), after...)))
+	if err != nil || sni != "api.example.com" || !bytes.Equal(raw, hello) {
+		t.Fatalf("ReadClientHello = (%d bytes, %q, %v), want the record and api.example.com", len(raw), sni, err)
+	}
+
+	split := splitRecords(hello, 10)
+	r := bytes.NewReader(append(append([]byte{}, split...), after...))
+	raw, sni, err = ReadClientHello(r)
+	if err != nil || sni != "api.example.com" || !bytes.Equal(raw, split) {
+		t.Fatalf("two records: (%d bytes, %q, %v)", len(raw), sni, err)
+	}
+	if rest, _ := io.ReadAll(r); !bytes.Equal(rest, after) {
+		t.Fatalf("read past the ClientHello: %q left", rest)
+	}
+}
+
+func TestReadClientHello_Refusals(t *testing.T) {
+	hello := clientHello(t, "api.example.com")
+	noSNI := clientHello(t, "")
+	tooLong := append([]byte{0x16, 3, 1, 0x40, 0x01}, make([]byte, 1<<14+1)...)
+	cases := []struct {
+		name string
+		in   []byte
+		want error
+	}{
+		{"no server name", noSNI, ErrNoSNI},
+		{"plain HTTP", []byte("GET / HTTP/1.1\r\nHost: api.example.com\r\n\r\n"), ErrNotClientHello},
+		{"truncated record", hello[:len(hello)-1], ErrNotClientHello},
+		{"truncated header", hello[:3], ErrNotClientHello},
+		{"empty", nil, ErrNotClientHello},
+		{"oversized record", tooLong, ErrNotClientHello},
+		{"not a client_hello", append([]byte{0x16, 3, 1, 0, 4}, 2, 0, 0, 0), ErrNotClientHello},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, sni, err := ReadClientHello(bytes.NewReader(tc.in))
+			if !errors.Is(err, tc.want) || sni != "" {
+				t.Fatalf("ReadClientHello = (%q, %v), want %v", sni, err, tc.want)
+			}
+		})
+	}
+}
+
+// A ClientHello whose declared length is far beyond the limit is refused
+// before the rest of it is read.
+func TestReadClientHello_DeclaredTooLong(t *testing.T) {
+	in := []byte{0x16, 3, 1, 0, 4, 1, 0x10, 0, 0}
+	if _, _, err := ReadClientHello(bytes.NewReader(in)); !errors.Is(err, ErrNotClientHello) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func FuzzReadClientHello(f *testing.F) {
+	f.Add(clientHello(f, "api.example.com"))
+	f.Add(clientHello(f, ""))
+	f.Add(splitRecords(clientHello(f, "a.example.org"), 7))
+	f.Add([]byte{0x16, 3, 1, 0, 4, 1, 0, 0, 0})
+	f.Fuzz(func(t *testing.T, in []byte) {
+		raw, sni, err := ReadClientHello(bytes.NewReader(in))
+		if err != nil {
+			if raw != nil || sni != "" {
+				t.Fatalf("error with output: %d bytes, %q", len(raw), sni)
+			}
+			return
+		}
+		if !bytes.HasPrefix(in, raw) || sni == "" || !validSNI([]byte(sni)) {
+			t.Fatalf("raw not a prefix of the input or bad sni %q", sni)
+		}
+	})
+}

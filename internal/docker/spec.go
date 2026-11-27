@@ -2,6 +2,7 @@ package docker
 
 import (
 	"os"
+	"slices"
 	"sort"
 
 	container "github.com/docker/docker/api/types/container"
@@ -82,7 +83,11 @@ func buildSwarmSpec(s ServiceSpec) swarm.ServiceSpec {
 	}
 	attachments := make([]swarm.NetworkAttachmentConfig, 0, len(nets))
 	for _, n := range nets {
-		attachments = append(attachments, swarm.NetworkAttachmentConfig{Target: n})
+		a := swarm.NetworkAttachmentConfig{Target: n}
+		if al := s.NetworkAliases[n]; len(al) > 0 {
+			a.Aliases = slices.Sorted(slices.Values(al))
+		}
+		attachments = append(attachments, a)
 	}
 
 	task := swarm.TaskSpec{

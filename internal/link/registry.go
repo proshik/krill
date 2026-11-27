@@ -126,3 +126,22 @@ func (r *registry) closeAll() {
 		s.mu.Unlock()
 	}
 }
+
+// all returns every live session.
+func (r *registry) all() []sessionCloser {
+	r.mu.Lock()
+	slots := make([]*peerSlot, 0, len(r.slots))
+	for _, s := range r.slots {
+		slots = append(slots, s)
+	}
+	r.mu.Unlock()
+	var out []sessionCloser
+	for _, s := range slots {
+		s.mu.Lock()
+		if s.live != nil {
+			out = append(out, s.live)
+		}
+		s.mu.Unlock()
+	}
+	return out
+}

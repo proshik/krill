@@ -75,6 +75,26 @@ func (muxLog) Write(p []byte) (int, error) {
 type helloHeader struct {
 	Proto        int    `json:"proto"`
 	KrillVersion string `json:"krill_version"`
+	// Egress says the client speaks egress (KRL-002): the relay may send it
+	// lists. A release without egress leaves it out.
+	Egress bool `json:"egress,omitempty"`
+}
+
+// egressHeader opens an egress stream: the destination the client wants and
+// the service (app id; 0 for Krill itself) it is for — a label for the pages
+// and counters only, never a permission.
+type egressHeader struct {
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	Service int64  `json:"service"`
+}
+
+// ManifestService is one of the client's services as the relay shows it: the
+// app's id, its project/environment/app path and its destinations.
+type ManifestService struct {
+	ID           int64    `json:"id"`
+	Path         string   `json:"path"`
+	Destinations []string `json:"destinations"`
 }
 
 // pairHeader opens the pair stream.
@@ -85,13 +105,20 @@ type pairHeader struct {
 
 // message is one JSON line on the control and pair streams.
 type message struct {
-	Type         string `json:"type"` // hello | error | renew | cert
+	Type         string `json:"type"` // hello | error | renew | cert | lists | manifest
 	Proto        int    `json:"proto,omitempty"`
 	KrillVersion string `json:"krill_version,omitempty"`
 	Category     string `json:"category,omitempty"`
 	Message      string `json:"message,omitempty"`
 	CSR          string `json:"csr,omitempty"`
 	Cert         string `json:"cert,omitempty"`
+	// Egress, in the relay's hello, says the relay speaks egress: the client
+	// may send it manifests and egress streams.
+	Egress bool `json:"egress,omitempty"`
+	// Destinations is the relay's list, in its hello and in lists.
+	Destinations []Destination `json:"destinations,omitempty"`
+	// Services is the client's manifest.
+	Services []ManifestService `json:"services,omitempty"`
 }
 
 // Pairing refusals, in the pair stream's error category.
@@ -217,4 +244,10 @@ func acceptWithin(mux *yamux.Session, d time.Duration) (*yamux.Stream, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	return mux.AcceptStreamWithContext(ctx)
+}
+
+// jsonLen is the length of v's JSON.
+func jsonLen(v any) (int, error) {
+	b, err := json.Marshal(v)
+	return len(b), err
 }

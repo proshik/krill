@@ -187,3 +187,46 @@ the rollback target; the gate below keeps egress off until it is gone.
 - `internal/deploy/deployer.go:1204` (`Network: net`), `internal/docker/spec.go`
   (attachments, no aliases), `internal/traefik/labels.go:146`,
   `internal/netguard/netguard.go`, `internal/orgnet`.
+
+## Implementation notes
+
+Recorded by the implementing session (2026-11-28). Decisions marked *(impl)* are the
+implementer's and reversible.
+
+- `link.CoreRelease = "v0.17.0"`: `git tag --contains 435dc53` lists `v0.17.0` first.
+- Owner decision (2026-11-28): no `krill.prev` at all → egress may be enabled; a version that
+  cannot be read (unknown) → refused.
+- *(impl)* The sidecar presents the installation's gateway client certificate
+  (`link_settings.gateway_cert`, the one the relay's gateway uses): spec §5.4 has the sidecar
+  play the gateway on a client, and a client's main gateway never receives that certificate
+  (`GatewayTCP` publishes nothing outside the relay role). The listener hands the whole PROXY
+  header (source and destination) to the role: a relay serves link sessions, a client egress.
+- *(impl)* The applied selection is stored in plain form beside the digests in
+  `deployments.applied_config` (`egress`: `host:port` list, not a secret); its digest is the new
+  section `link`. A fingerprint recorded before has no `link` section: unknown, never "changed".
+- *(impl)* The selection a deploy applies is the saved one while the role is `client` and the
+  organization is granted, otherwise empty: revoking a grant or turning the role off marks the
+  apps "settings not applied", and their next deploy leaves the egress network. Aliases are the
+  saved selection (whatever the grant) ∪ the applied one, so DNS stays on the sidecar until a
+  deploy without the host has converged.
+- *(impl)* The deployer now manages the app's own `krill-egress-<appID>` attachment itself: it
+  lists the network when the applied selection is not empty and drops it otherwise, so it no
+  longer sets `KeepNetworkPrefix` (that rule protects a rollback onto the KRL-001 deployer, which
+  still keeps every attachment). Without dropping, an app whose link was turned off would stay
+  refused for good.
+- *(impl)* Before an app deploys onto its egress network the deployer asks the link to create
+  the network and to have the sidecar serve it with the app's aliases, and waits until the
+  sidecar's new task runs (as `traefik.Reconcile` does); a failure fails the deploy rather than
+  start the app on a network whose names would resolve to the real addresses.
+- *(impl)* The pre-deploy command (a one-off container on the organization network) does not
+  use the link: Krill could not identify it as a task of the app. Documented as a limit.
+- *(impl)* Capabilities on both sides: the client's `hello` and the relay's `hello` carry
+  `egress: true`; only then does the client send `manifest` and the relay send `lists`, so a
+  KRL-002 installation and a KRL-001 one keep their session (a KRL-001 relay closes the session
+  on an unknown control message).
+
+Plan: migration and queries → rollback gate (`selfupdate`) → SNI parser, egress stream
+protocol, relay checks → docker aliases and egress-network inspection → deploy section,
+networks and egress hook → sidecar spec, dynamic config, reconciler, app identification and
+the client's egress path → handlers, pages, i18n → wiring → docs → integration tests. Lasting
+rules: `networking.md#krill-link`, plus the AGENTS.md lines in the report.

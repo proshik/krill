@@ -35,10 +35,12 @@ const (
 	SectionVolumes   = "volumes"
 	SectionPorts     = "ports"
 	SectionPlacement = "placement"
+	// SectionLink is the app's Krill link egress selection (its link card).
+	SectionLink = "link"
 )
 
 // Sections lists every section in display order.
-var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionPredeploy, SectionVolumes, SectionPorts, SectionPlacement}
+var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionPredeploy, SectionVolumes, SectionPorts, SectionPlacement, SectionLink}
 
 // fingerprintVersion changes when what a section covers changes; a stored
 // fingerprint of another version is unknown, not changed.
@@ -54,6 +56,12 @@ type AppliedConfig struct {
 	Version  int               `json:"v"`
 	Key      string            `json:"key"`
 	Sections map[string]string `json:"sections"`
+	// Egress is the Krill link selection the deployment applied, in plain
+	// form ("host:port", not a secret): the link keeps a host's alias on the
+	// app's egress network until a deployment without it has converged
+	// (link.appliedEgress reads this key). A fingerprint recorded before has
+	// none and no link section: unknown, never "changed".
+	Egress []string `json:"egress,omitempty"`
 }
 
 // comparable reports whether c was made the way fingerprints are made now.
@@ -156,7 +164,19 @@ func configSections(a App) map[string]any {
 			Mode  string
 			Nodes []string
 		}{a.PlacementMode, nodes},
+		SectionLink: linkSelection(a.LinkEgress),
 	}
+}
+
+// linkSelection is the selection as a section digests it: sorted, never nil.
+func linkSelection(ds []string) []string {
+	out := slices.Clone(ds)
+	slices.Sort(out)
+	out = slices.Compact(out)
+	if out == nil {
+		out = []string{}
+	}
+	return out
 }
 
 func nonNil(m map[string]string) map[string]string {
@@ -173,6 +193,9 @@ func nonNil(m map[string]string) map[string]string {
 func (d *Deployer) configFingerprint(a App) AppliedConfig {
 	a = d.withResourceDefaults(a)
 	out := AppliedConfig{Version: fingerprintVersion, Key: secret.FingerprintKeyID(), Sections: map[string]string{}}
+	if sel := linkSelection(a.LinkEgress); len(sel) > 0 {
+		out.Egress = sel
+	}
 	purpose := fingerprintPurpose + "/app:" + strconv.FormatInt(a.ID, 10) + "/"
 	for name, v := range configSections(a) {
 		b, err := json.Marshal(v)

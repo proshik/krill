@@ -62,6 +62,16 @@ type Client struct {
 	gen     uint64
 	pending map[string]pendingKey // pairing keys by the code's secret hash
 	lat     atomic.Int64
+
+	// The relay's destination list as its last hello or lists said, and
+	// whether that relay speaks egress at all. Kept across sessions for the
+	// pages; egress decisions also require the session to be up.
+	dests       []Destination
+	relayEgress bool
+	// ctl is the live session's control stream, ctlMu orders writes to it.
+	ctl      net.Conn
+	ctlMu    sync.Mutex
+	manifest []ManifestService
 }
 
 // pendingKey is the key of a pairing attempt that has not been stored yet. A
@@ -190,7 +200,7 @@ func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 		c.fail(category(err), err.Error())
 		return false
 	}
-	if err := WriteHeader(ctl, StreamControl, helloHeader{Proto: ProtoVersion, KrillVersion: c.version}); err != nil {
+	if err := WriteHeader(ctl, StreamControl, helloHeader{Proto: ProtoVersion, KrillVersion: c.version, Egress: true}); err != nil {
 		c.fail(category(err), err.Error())
 		return false
 	}
@@ -222,6 +232,9 @@ func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 	}
 	c.cur = mux
 	c.status = ClientStatus{State: StateConnected, Since: time.Now(), RelayVersion: reply.KrillVersion, CertNotAfter: c.status.CertNotAfter}
+	c.relayEgress = reply.Egress
+	c.dests = SortDestinations(reply.Destinations)
+	c.ctl = ctl
 	c.mu.Unlock()
 	c.lat.Store(0)
 	slog.Info("link: connected to the relay", "relay", m.SNI, "relay_version", reply.KrillVersion)
@@ -229,9 +242,11 @@ func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 		c.mu.Lock()
 		if c.cur == mux {
 			c.cur = nil
+			c.ctl = nil
 		}
 		c.mu.Unlock()
 	}()
+	c.sendManifest()
 
 	go measureLatency(mux, &c.lat)
 	go c.refuseStreams(mux)
@@ -347,7 +362,10 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 			slog.Error("link: create renewal key failed", "err", err)
 			return
 		}
-		if err := writeMessage(ctl, message{Type: "renew", CSR: csr}); err != nil {
+		c.ctlMu.Lock()
+		err = writeMessage(ctl, message{Type: "renew", CSR: csr})
+		c.ctlMu.Unlock()
+		if err != nil {
 			return
 		}
 		pendingKey = key
@@ -364,6 +382,10 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 		case msg, ok := <-replies:
 			if !ok {
 				return false
+			}
+			if msg.Type == "lists" {
+				c.setDests(msg.Destinations)
+				continue
 			}
 			if msg.Type != "cert" || pendingKey == "" {
 				slog.Warn("link: renewal refused by the relay", "category", sessionCategory(msg.Category))
