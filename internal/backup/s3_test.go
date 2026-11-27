@@ -17,7 +17,7 @@ import (
 func TestS3Roundtrip(t *testing.T) {
 	ctx := context.Background()
 	m := testutil.NewMinio(t)
-	d := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	d := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "test"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	// The MinIO test container binds to a loopback endpoint (http://localhost:<port>
 	// or http://127.0.0.1:<port>), so the roundtrip itself must run with
 	// allowPrivate=true — exactly the loopback traffic the SSRF guard blocks by
@@ -60,7 +60,7 @@ func TestS3Roundtrip(t *testing.T) {
 func TestS3CheckAccessBlocksLoopbackByDefault(t *testing.T) {
 	ctx := context.Background()
 	m := testutil.NewMinio(t)
-	d := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	d := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "test"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	err := backup.CheckAccess(ctx, d, false)
 	if err == nil {
 		t.Fatal("CheckAccess(allowPrivate=false) against a loopback endpoint: expected error, got nil")
@@ -75,7 +75,7 @@ func TestS3CheckAccessBlocksLoopbackByDefault(t *testing.T) {
 func TestHead(t *testing.T) {
 	ctx := context.Background()
 	m := testutil.NewMinio(t)
-	d := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	d := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "test"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	if err := backup.CreateBucket(ctx, d, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}

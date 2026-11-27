@@ -33,9 +33,10 @@ func TestCreateDestinationSucceeds(t *testing.T) {
 	cookie := loginAs(t, q, "owner@k.local")
 
 	minio := testutil.NewMinio(t)
+	bucket := minio.Bucket(t, "test")
 	dst := backup.Destination{
 		Endpoint:  minio.Endpoint,
-		Bucket:    "test",
+		Bucket:    bucket,
 		Region:    minio.Region,
 		AccessKey: minio.AccessKey,
 		SecretKey: minio.SecretKey,
@@ -47,7 +48,7 @@ func TestCreateDestinationSucceeds(t *testing.T) {
 	form := url.Values{
 		"name":       {"primary"},
 		"endpoint":   {minio.Endpoint},
-		"bucket":     {"test"},
+		"bucket":     {bucket},
 		"region":     {minio.Region},
 		"access_key": {minio.AccessKey},
 		"secret_key": {minio.SecretKey},
@@ -61,7 +62,7 @@ func TestCreateDestinationSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list destinations: %v", err)
 	}
-	if len(dests) != 1 || dests[0].Name != "primary" || dests[0].Bucket != "test" {
+	if len(dests) != 1 || dests[0].Name != "primary" || dests[0].Bucket != bucket {
 		t.Fatalf("expected 1 destination 'primary', got %+v", dests)
 	}
 }
@@ -74,9 +75,10 @@ func TestCreateDestinationDuplicateNameFlash(t *testing.T) {
 	cookie := loginAs(t, q, "owner@k.local")
 
 	minio := testutil.NewMinio(t)
+	bucket := minio.Bucket(t, "test")
 	dst := backup.Destination{
 		Endpoint:  minio.Endpoint,
-		Bucket:    "test",
+		Bucket:    bucket,
 		Region:    minio.Region,
 		AccessKey: minio.AccessKey,
 		SecretKey: minio.SecretKey,
@@ -88,7 +90,7 @@ func TestCreateDestinationDuplicateNameFlash(t *testing.T) {
 	form := url.Values{
 		"name":       {"primary"},
 		"endpoint":   {minio.Endpoint},
-		"bucket":     {"test"},
+		"bucket":     {bucket},
 		"region":     {minio.Region},
 		"access_key": {minio.AccessKey},
 		"secret_key": {minio.SecretKey},

@@ -41,12 +41,13 @@ func backupFixture(t *testing.T, q *db.Queries, orgSvc *org.Service) (org0 db.Or
 	}
 
 	minio := testutil.NewMinio(t)
-	dst := backup.Destination{Endpoint: minio.Endpoint, Bucket: "test", Region: minio.Region, AccessKey: minio.AccessKey, SecretKey: minio.SecretKey}
+	bucket := minio.Bucket(t, "test")
+	dst := backup.Destination{Endpoint: minio.Endpoint, Bucket: bucket, Region: minio.Region, AccessKey: minio.AccessKey, SecretKey: minio.SecretKey}
 	if err := backup.CreateBucket(ctx, dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}
 	d, err := q.CreateDestination(ctx, db.CreateDestinationParams{
-		OrganizationID: o.ID, Name: "primary", Endpoint: minio.Endpoint, Bucket: "test",
+		OrganizationID: o.ID, Name: "primary", Endpoint: minio.Endpoint, Bucket: bucket,
 		Region: minio.Region, AccessKey: minio.AccessKey, SecretKey: minio.SecretKey,
 	})
 	if err != nil {

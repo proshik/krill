@@ -349,7 +349,11 @@ func (s *Service) appLogs(ctx context.Context, app db.Application, in LogsInput)
 var errWaitShutdown = errors.New("krill is shutting down")
 
 // waitContext bounds a wait by d, Krill's shutdown and ctx. stoppedBy names
-// the reason it ended once it has.
+// the reason it ended once it has: "shutdown" whenever Krill is stopping,
+// "cancelled" when the caller went away while Krill runs, "timeout"
+// otherwise. Callers wrap ctx in withStopping, whose shutdown callback can
+// cancel the parent before this one sets errWaitShutdown (AfterFunc callbacks
+// run in no fixed order), so the stopping context itself is checked first.
 func (s *Service) waitContext(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc, func() string) {
 	parent := ctx
 	ctx, cancelCause := context.WithCancelCause(ctx)
@@ -367,7 +371,8 @@ func (s *Service) waitContext(ctx context.Context, d time.Duration) (context.Con
 	}
 	stoppedBy := func() string {
 		switch {
-		case errors.Is(context.Cause(ctx), errWaitShutdown):
+		case errors.Is(context.Cause(ctx), errWaitShutdown),
+			s.stopping != nil && s.stopping.Err() != nil:
 			return "shutdown"
 		case parent.Err() != nil:
 			return "cancelled"

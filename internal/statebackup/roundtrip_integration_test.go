@@ -121,7 +121,7 @@ func newRTFixture(t *testing.T, dsnPassword string) *rtFixture {
 
 	mi := testutil.NewMinio(t)
 	dst := backup.Destination{
-		Endpoint: mi.Endpoint, Bucket: "krill-state-rt", Region: mi.Region,
+		Endpoint: mi.Endpoint, Bucket: mi.Bucket(t, "krill-state-rt"), Region: mi.Region,
 		AccessKey: mi.AccessKey, SecretKey: mi.SecretKey,
 	}
 	if err := backup.CreateBucket(ctx, dst, true); err != nil {
@@ -483,7 +483,7 @@ func TestStateBackupVerifyFullCABundle(t *testing.T) {
 	storePool := testutil.NewTestDB(t)
 	mi := testutil.NewMinio(t)
 	dst := backup.Destination{
-		Endpoint: mi.Endpoint, Bucket: "krill-state-tls", Region: mi.Region,
+		Endpoint: mi.Endpoint, Bucket: mi.Bucket(t, "krill-state-tls"), Region: mi.Region,
 		AccessKey: mi.AccessKey, SecretKey: mi.SecretKey,
 	}
 	if err := backup.CreateBucket(ctx, dst, true); err != nil {

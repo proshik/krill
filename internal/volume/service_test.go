@@ -144,12 +144,12 @@ func (s *mockVolStore) ListEnabledBackups(_ context.Context) ([]backup.SchedBack
 	return out, nil
 }
 
-// newMinioStore spins a MinIO container, creates a bucket and returns a store
+// newMinioStore creates a bucket on the shared S3 server and returns a store
 // wired to a single backup id with the given prefix/retention.
 func newMinioStore(t *testing.T, prefix string, retention int) (*mockVolStore, backup.Destination) {
 	t.Helper()
 	m := testutil.NewMinio(t)
-	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	dst := backup.Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "test"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	if err := backup.CreateBucket(context.Background(), dst, true); err != nil {
 		t.Fatalf("create bucket: %v", err)
 	}

@@ -87,7 +87,7 @@ func (dumpExecer) Exec(_ context.Context, _ string, _ []string, _ []string, _ io
 // compressed dump — for the digest's backup journal.
 func TestBackupSuccessReportsStoredSize(t *testing.T) {
 	m := testutil.NewMinio(t)
-	dst := Destination{Endpoint: m.Endpoint, Bucket: "test", Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
+	dst := Destination{Endpoint: m.Endpoint, Bucket: m.Bucket(t, "test"), Region: m.Region, AccessKey: m.AccessKey, SecretKey: m.SecretKey}
 	ctx := context.Background()
 	if err := CreateBucket(ctx, dst, true); err != nil {
 		t.Fatal(err)
