@@ -209,9 +209,14 @@ guarantee. An older deployer builds an app's spec with its organization's networ
 first redeploy there drops the app's egress network and its destination aliases: the app's
 traffic to those destinations then leaves the host **directly**, from this host's own address,
 instead of failing closed. A rollback by one release from the link's egress release is safe,
-which is why the egress release ships after the core release. If you must go further back on a
-link client, first remove the app's link destinations and redeploy it on the newer release, or
-do not redeploy apps with link destinations until you upgrade again. A relay loses nothing but
+which is why the egress release ships after the core release. What decides it is the version a
+rollback goes back to: the one in `krill.prev` (`krill.prev --version`) for **Roll back** and
+for the automatic revert. An update that skips the core release — straight from a release
+without the link to the egress release or later — leaves a `krill.prev` without the
+guarantee, so do not route apps through the link until that update is confirmed, or update
+through the core release first. If you must go further back on a link client, first remove the
+app's link destinations and redeploy it on the newer release, or do not redeploy apps with link
+destinations until you upgrade again. A relay loses nothing but
 its link route: clients reconnect once it is back on a release with the link.
 
 **A failed migration is not rolled back.** Migrations run when the new binary starts. If one

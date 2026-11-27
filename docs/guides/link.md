@@ -31,8 +31,10 @@ Krill ── one TCP connection, TLS 1.3 ─────────▶ Traefik 
   connection, so removing a client cuts it off at once. A client has one session at a time: a
   second installation with the same identity (a copy restored from a [state
   backup](krill-backups.md)) is refused and shown as a duplicate.
-- Certificates last a year and are renewed over the live connection when two thirds of that has
-  passed.
+- A client's certificate lasts a year and is renewed over the live connection when two thirds
+  of that has passed; the next connect uses the new one. The relay reissues its own server
+  certificate under the same CA 90 days before it expires, with nothing to do on the clients.
+  The link CA lasts ten years.
 
 ## Requirements
 
@@ -46,6 +48,10 @@ A **client** needs nothing open.
 
 Both sides must run a Krill release with the link. They update independently; a relay refuses a
 client whose link protocol version it does not speak, with a clear message on both pages.
+
+`KRILL_LINK_LISTEN_ADDR` must not use a port the firewall lockdown keeps open to everyone (22,
+80, 443 or the UI port): the role is refused with that reason, because the listener would then
+be reachable from the world rather than from the gateway only.
 
 ## Set up the relay
 
@@ -93,6 +99,10 @@ The client's page shows its state and the last error by category:
 If the relay's link host is also held by a domain — possible after a rollback to a release
 without the link — the relay does not publish the link route and its page lists both records.
 Remove the domain or pick another link host.
+
+On the relay, each client's row shows its session or when it was last seen, its certificate's
+expiry and the latest refused session: a second one from another address (a clone restored
+from a backup) or a protocol version the relay does not speak.
 
 ## Remove a client, forget the relay
 

@@ -109,19 +109,32 @@ first stream decides: without a certificate only one `pair` stream is accepted; 
 rather than a bare TLS alert. Every stream starts with a header (1-byte type, 2-byte length,
 JSON; `MaxHeader` 4 KB, `HeaderTimeout` 5 s); an unknown or not-yet-supported type is closed
 without reading further (yamux v0.1.2 has no public RST) and logged at WARN; at most
-`MaxStreamsPerPeer` (1024) per peer. yamux keepalive 15 s with `ConnectionWriteTimeout` 30 s,
+`MaxStreamsPerPeer` (1024) per peer, counted with yamux's own `NumStreams` — a stream closed on
+one side stays in the session until the other side closes it or `StreamCloseTimeout` (30 s)
+resets it. yamux keepalive 15 s with `ConnectionWriteTimeout` 30 s,
 so an unanswered ping closes the session 45 s after the last answered one. The client
-reconnects with backoff 1–60 s, jittered over [d/2, d) (`nextDelay`, `jitter`). Certificates are
-renewed over the live session at two thirds of their lifetime, counted from issue
-(`needsRenewal`; `NotBefore` is backdated an hour for clock skew): `renew{csr}` → `cert`; the
-certificate the session holds stays valid as `prev_cert_sha256` until the first connect with the
-new one (`MarkLinkPeerConnected` clears it), and a session still on it may renew again if the
-answer was lost.
+reconnects with backoff 1–60 s, jittered over [d/2, d) (`nextDelay`, `jitter`); every `Wake`
+(pairing, Forget) bumps a generation, and an attempt that read the settings before it is
+dropped instead of becoming the session. Certificates are renewed over the live session at two
+thirds of their lifetime, counted from issue (`needsRenewal`; `NotBefore` is backdated an hour
+for clock skew): `renew{csr}` → `cert`; the certificate the session holds stays valid as
+`prev_cert_sha256` until the first connect with the new one (`MarkLinkPeerConnected` clears
+it). **A session renews once**: a second renewal while it still runs on the first certificate
+would retire the stored one in favour of one whose answer might be lost. A session whose answer
+was lost may ask again (the relay keeps the session's certificate as previous). The relay's
+server certificate is reissued under the same CA 90 days before it expires
+(`renewServerIfDueReport`, at start and daily); clients pin the CA, not the leaf.
 
 **Admission and revocation are serialized per peer ID** (`registry`): a session is registered
-under the peer's lock after re-reading the peer by ID (and its fingerprint); `RemovePeer` deletes
-the row and closes the live session under the same lock; every new stream checks its session is
-still the registered one. One live session per peer: a second attempt pings the first (5 s) and
+under the peer's lock after re-reading the peer by ID (and its fingerprint) and checking that
+the relay configuration that accepted the connection is still the running one; `RemovePeer`
+deletes the row and closes the live session under the same lock; `unload` (role off, shutdown)
+stops serving first and then closes every registered session, so nothing admitted in between
+survives; every new stream checks its session is still the registered one. The relay keeps the
+latest refused session per peer (`Refusal`: duplicate or incompatible, with the address) for the
+page. Operator changes — role, pairing, Forget — are serialized (`Service.opMu`), so a pairing
+that answers late cannot undo a role change or a Forget, and a stored role change is applied on a
+context detached from the request (`applyAfterWrite`). One live session per peer: a second attempt pings the first (5 s) and
 is refused as `duplicate` while the first answers (shown on the page with its source address —
 usually a clone restored from a state backup); a first session that does not answer is closed
 and replaced, so a client whose old TCP connection died silently does not wait 45 s.
@@ -133,14 +146,21 @@ certificate and sends `{secret, csr}` on a `pair` stream. `Store.Redeem` is one 
 code row is locked (`FOR UPDATE`), then a conditional UPDATE (`used_at IS NULL AND expires_at >
 now()`) records the CSR key's SHA-256 and the issued certificate (CN = peer name, one year) and
 the peer is created. A retry with the **same key** before expiry gets the same certificate (the
-answer can be lost after the commit; `Client.Pair` retries once on a transport failure), any
-other key is refused. Pairing attempts are limited to 10/min per source address — the address
+answer can be lost after the commit; `Client.Pair` retries once on a transport failure and keeps
+the key of an attempt that was never stored, by the code's hash, for a later submit of the same
+code), any other key is refused. Expiry is compared with `clock_timestamp()`, not `now()`: the
+row lock can be granted after the code expired, and `now()` is the start of the transaction.
+The relay's refusal category is matched against the known ones before the client shows or logs
+it. Pairing attempts are limited to 10/min per source address — the address
 from the PROXY header, which is trustworthy only because of the next paragraph.
 
 ### The link listener accepts only PROXY v2 + mTLS with the gateway's certificate
 
 `KRILL_LINK_LISTEN_ADDR` (default `:8445`) is listened on while the role is not `off`
-(`link.GatewayListener`). Any container on the host can reach it and forge a PROXY header, so
+(`link.GatewayListener`); a port the lockdown keeps public (22, 80, 443, the UI port) is refused
+for either role (`ListenRequirement`). At most `maxPending` (256) connections are not yet
+admitted: a slot is held from accept through the inner TLS until the relay admits, pairs or
+refuses the client. Any container on the host can reach it and forge a PROXY header, so
 each connection must send a PROXY v2 header (`ReadProxyHeader`: PROXY command, TCP over IPv4/6,
 body ≤ 512 bytes; fuzzed) and then complete TLS presenting exactly the gateway's client
 certificate (`RequireAnyClientCert` + fingerprint pin); it is closed before its inner stream is
@@ -175,8 +195,13 @@ replaced `panelAvailable`. `SetPanelDomain` checks the link hosts; the link host
 `Store.ReserveLinkHost` under the same lock, refused while a domain row or the panel holds it. A
 release without the link does not know the reservation, so after a rollback a domain can sit on
 the link host: **before every publication** `GatewayTCP` re-checks under the host lock
-(`LinkHostHolders`) and publishes nothing while anything else holds it; the Link page lists the
-holders (panel or `project/env/app` with a link to its domains tab) until the operator removes one.
+(`LinkHostHolders`: the panel, domain rows and `link_ingress_hosts`) and publishes nothing while
+anything else holds it, building the route from the settings re-read under that lock; the Link
+page lists the holders (panel, ingress host, or `project/env/app` with a link to its domains tab)
+until the operator removes one. `gatewayConfig` also drops the route when the panel row it read
+before that check names the same host, so one answer never routes a host both ways. The link
+host's key material is chosen inside the same transaction under the settings row lock
+(`writeRelay`), so two first enablements cannot each create a CA.
 
 ### The link port is gateway-only under lockdown, and Krill never re-applies the firewall
 
