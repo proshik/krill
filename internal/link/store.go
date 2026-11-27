@@ -167,6 +167,16 @@ func relayWrite(ctx context.Context, q *db.Queries, host string, ca, srv KeyPair
 	})
 }
 
+// serverCertWrite stores a reissued relay server certificate while the
+// settings still name this relay and host, and reports whether it did; it
+// runs inside hostshare.ReserveLinkHost.
+func serverCertWrite(ctx context.Context, q *db.Queries, host string, srv KeyPair) (bool, error) {
+	n, err := q.SetLinkServerCert(ctx, db.SetLinkServerCertParams{
+		ServerKey: ptr(secret.Enc(srv.KeyPEM)), ServerCert: ptr(srv.CertPEM), Host: host,
+	})
+	return n == 1, err
+}
+
 // ClientMaterial is a paired client's relay and identity.
 type ClientMaterial struct {
 	Addr     string

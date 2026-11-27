@@ -162,6 +162,11 @@ func (s *Server) linkPage(w http.ResponseWriter, r *http.Request) {
 			v.PairedAt = row.PairedAt.Time
 		}
 	}
+	if err := s.fillLinkEgress(r, o.ID, row.Role, &v); err != nil {
+		logFrom(r).Error("linkPage: read egress failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	render(w, r, http.StatusOK, templates.Link(o, role, v))
 }

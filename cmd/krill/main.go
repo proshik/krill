@@ -442,6 +442,29 @@ func run() error {
 		}
 		cancel()
 	}
+	// The Krill link: the stored role comes up with Krill. A failure leaves
+	// the link off for this run (and the Link page says why) rather than
+	// stopping Krill: a self-update would otherwise roll back over it. It
+	// starts before the deployer, which asks it to prepare an app's egress.
+	hostStore := hostshare.NewStore(pool)
+	linkSvc := link.NewService(pool, hostStore, link.Config{
+		AdvertiseAddr: cfg.AdvertiseAddr, ListenAddr: cfg.ListenAddr,
+		LinkListenAddr: cfg.LinkListenAddr, Version: buildinfo.Version,
+	})
+	if err := linkSvc.Start(ctx); err != nil {
+		slog.Error("krill link failed to start", "err", err)
+	}
+	defer linkSvc.Close()
+	// Egress: the sidecar is reconciled at start in any role — it stays
+	// while an app is on an egress network, or the app's names would resolve
+	// to the real addresses.
+	if egress, err := link.NewEgress(linkSvc, engine, gatewaySecret); err != nil {
+		slog.Warn("krill link egress unavailable", "err", err)
+	} else {
+		dep.SetEgress(egress)
+		go egress.Run()
+	}
+
 	dep.Start(ctx)
 	defer dep.Stop()
 
@@ -515,20 +538,7 @@ func run() error {
 
 	// HTTP server.
 	app := server.New(cfg, authSvc, orgSvc, q, dep, engine, hub, dbSvc)
-	hostStore := hostshare.NewStore(pool)
 	app.SetHostShare(hostStore)
-
-	// The Krill link: the stored role comes up with Krill. A failure leaves
-	// the link off for this run (and the Link page says why) rather than
-	// stopping Krill: a self-update would otherwise roll back over it.
-	linkSvc := link.NewService(pool, hostStore, link.Config{
-		AdvertiseAddr: cfg.AdvertiseAddr, ListenAddr: cfg.ListenAddr,
-		LinkListenAddr: cfg.LinkListenAddr, Version: buildinfo.Version,
-	})
-	if err := linkSvc.Start(ctx); err != nil {
-		slog.Error("krill link failed to start", "err", err)
-	}
-	defer linkSvc.Close()
 	app.SetLink(linkSvc)
 	cloner := envclone.New(pool, dbSvc, engine, cfg.BaseDomain)
 	app.SetEnvironmentCloner(cloner)

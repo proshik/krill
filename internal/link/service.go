@@ -162,10 +162,7 @@ func (s *Service) renewServerIfDueReport(ctx context.Context) (bool, error) {
 		if err != nil {
 			return err
 		}
-		n, err := q.SetLinkServerCert(ctx, db.SetLinkServerCertParams{
-			ServerKey: ptr(secret.Enc(srv.KeyPEM)), ServerCert: ptr(srv.CertPEM), Host: host,
-		})
-		renewed = n == 1
+		renewed, err = serverCertWrite(ctx, q, host, srv)
 		return err
 	}); err != nil {
 		return false, err

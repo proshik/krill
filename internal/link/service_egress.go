@@ -205,3 +205,9 @@ func addCounters(dv *DestView, counters []Traffic, service int64) {
 		}
 	}
 }
+
+// ClientRelayDestinations is the relay's list as the client last got it, and
+// whether the relay speaks egress.
+func (s *Service) ClientRelayDestinations() ([]Destination, bool) {
+	return s.client.RelayDestinations()
+}
