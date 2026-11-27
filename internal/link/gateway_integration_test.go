@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -156,13 +157,17 @@ func TestRelayGatewayOnRealTraefik(t *testing.T) {
 		defer c.Close()
 		_, _ = c.Write(EncodeProxyHeader(netip.MustParseAddrPort("203.0.113.9:1234"), netip.MustParseAddrPort("127.0.0.1:443")))
 		tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, ServerName: testLinkHost}) //nolint:gosec
-		_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
+		start := time.Now()
+		_ = tc.SetDeadline(time.Now().Add(8 * time.Second))
 		err = tc.Handshake()
 		if err == nil {
 			_, err = tc.Read(make([]byte, 1))
 		}
-		if err == nil {
-			t.Fatal("a forged PROXY header without the gateway certificate was accepted")
+		// An accepted connection would wait for the inner stream and time
+		// out here: only a prompt refusal counts.
+		var ne net.Error
+		if err == nil || (errors.As(err, &ne) && ne.Timeout()) || time.Since(start) > time.Second {
+			t.Fatalf("a forged PROXY header without the gateway certificate: %v after %v, want a prompt refusal", err, time.Since(start))
 		}
 	})
 }

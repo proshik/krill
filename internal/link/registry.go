@@ -71,14 +71,15 @@ func (r *registry) revoke(id int64, del func() error) error {
 	s := r.slot(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := del(); err != nil {
-		return err
-	}
+	// Close whatever del reports: a delete whose answer was lost may have
+	// committed, and closing a session that was not revoked after all only
+	// makes its client reconnect and be admitted again.
+	err := del()
 	if s.live != nil {
 		_ = s.live.Close()
 		s.live = nil
 	}
-	return nil
+	return err
 }
 
 // registered reports whether sess is still peer id's live session. Every new

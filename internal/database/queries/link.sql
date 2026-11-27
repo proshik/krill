@@ -45,7 +45,7 @@ SELECT COALESCE(link_host, '')::text FROM link_settings WHERE id AND role = 'rel
 
 -- name: CountLinkIngressHostsByHost :one
 -- A relay ingress host (stage 2), kept by a rollback.
-SELECT count(*) FROM link_ingress_hosts WHERE host = $1;
+SELECT count(*) FROM link_ingress_hosts WHERE lower(host) = lower(sqlc.arg(host)::text);
 
 -- name: ListLinkIngressHosts :many
 SELECT host FROM link_ingress_hosts ORDER BY host;
@@ -93,10 +93,15 @@ VALUES ($1, $2, now() + make_interval(secs => sqlc.arg(lifetime_seconds)::float8
 RETURNING *;
 
 -- name: LockLinkPairingCode :one
--- clock_timestamp(), not now(): the row lock may be granted after the code
--- expired, and now() is the start of the transaction.
-SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > clock_timestamp())::boolean AS live
+SELECT id, peer_name, used_at, key_sha256, issued_cert
 FROM link_pairing_codes WHERE secret_sha256 = $1 FOR UPDATE;
+
+-- name: LinkPairingCodeLive :one
+-- Asked after LockLinkPairingCode holds the row: the lock may be granted
+-- after the code expired, and an expression in the locking query itself is
+-- evaluated before the wait. clock_timestamp(), not now(), which is the start
+-- of the transaction.
+SELECT (expires_at > clock_timestamp())::boolean FROM link_pairing_codes WHERE id = $1;
 
 -- name: RedeemLinkPairingCode :execrows
 -- Two redemptions of one code cannot both win: only an unused, unexpired row
@@ -124,5 +129,16 @@ FROM domains d
 JOIN applications a ON a.id = d.application_id
 JOIN environments e ON e.id = a.environment_id
 JOIN projects p ON p.id = e.project_id
-WHERE d.host = $1
+WHERE lower(d.host) = lower(sqlc.arg(host)::text)
 ORDER BY a.id;
+
+-- name: CountLinkHostDomains :one
+-- Domain rows on a host, whatever their letter case: a link host is compared
+-- with app domains as DNS compares names.
+SELECT count(*) FROM domains WHERE lower(host) = lower(sqlc.arg(host)::text);
+
+-- name: SetLinkServerCert :execrows
+-- Reissue the relay's server certificate only while the settings still name
+-- this relay and host.
+UPDATE link_settings SET server_key = $1, server_cert = $2, updated_at = now()
+WHERE id AND role = 'relay' AND link_host = sqlc.arg(host)::text;

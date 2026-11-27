@@ -46,6 +46,9 @@ type Querier interface {
 	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
+	// Domain rows on a host, whatever their letter case: a link host is compared
+	// with app domains as DNS compares names.
+	CountLinkHostDomains(ctx context.Context, host string) (int64, error)
 	// A relay ingress host (stage 2), kept by a rollback.
 	CountLinkIngressHostsByHost(ctx context.Context, host string) (int64, error)
 	CountLinkPeersByName(ctx context.Context, name string) (int64, error)
@@ -243,6 +246,11 @@ type Querier interface {
 	InsertStateBackupRun(ctx context.Context, arg InsertStateBackupRunParams) error
 	LastSuccessfulStateBackupRun(ctx context.Context) (StateBackupRun, error)
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
+	// Asked after LockLinkPairingCode holds the row: the lock may be granted
+	// after the code expired, and an expression in the locking query itself is
+	// evaluated before the wait. clock_timestamp(), not now(), which is the start
+	// of the transaction.
+	LinkPairingCodeLive(ctx context.Context, id int64) (bool, error)
 	ListAPITokensByPrefix(ctx context.Context, prefix string) ([]ApiToken, error)
 	ListAPITokensByUserAndOrg(ctx context.Context, arg ListAPITokensByUserAndOrgParams) ([]ApiToken, error)
 	// What the organization-wide index (palette, used-by lists, nodes,
@@ -384,8 +392,6 @@ type Querier interface {
 	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
-	// clock_timestamp(), not now(): the row lock may be granted after the code
-	// expired, and now() is the start of the transaction.
 	LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error)
 	LockLinkSettings(ctx context.Context) (LinkSetting, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
@@ -484,6 +490,9 @@ type Querier interface {
 	SetLinkRelay(ctx context.Context, arg SetLinkRelayParams) error
 	SetLinkRoleClient(ctx context.Context) error
 	SetLinkRoleOff(ctx context.Context) error
+	// Reissue the relay's server certificate only while the settings still name
+	// this relay and host.
+	SetLinkServerCert(ctx context.Context, arg SetLinkServerCertParams) (int64, error)
 	SetObservabilityEnabled(ctx context.Context, enabled bool) (int64, error)
 	SetOrganizationNetwork(ctx context.Context, arg SetOrganizationNetworkParams) error
 	SetPanelAllowedIPs(ctx context.Context, allowedIps string) error

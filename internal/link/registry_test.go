@@ -128,3 +128,21 @@ func TestDuplicateSession(t *testing.T) {
 		t.Fatal("release of a replaced session unregistered the new one")
 	}
 }
+
+// A delete whose answer was lost may have committed: the session closes
+// whatever the delete reports.
+func TestRevokeClosesOnDeleteError(t *testing.T) {
+	reg := newRegistry()
+	db := &peers{m: map[int64]bool{7: true}}
+	s := &fakeSession{}
+	if err := reg.admit(7, s, db.exists(7), nil); err != nil {
+		t.Fatal(err)
+	}
+	lost := errors.New("connection reset after commit")
+	if err := reg.revoke(7, func() error { return lost }); !errors.Is(err, lost) {
+		t.Fatalf("revoke: %v, want the delete's error", err)
+	}
+	if !s.closed.Load() || reg.registered(7, s) {
+		t.Fatal("the session must close even when the delete's answer is lost")
+	}
+}

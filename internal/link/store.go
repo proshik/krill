@@ -263,7 +263,11 @@ func (s *Store) Redeem(ctx context.Context, secretPlain, csrPEM string, ca KeyPa
 			return err
 		}
 		peer = code.PeerName
-		if !code.Live {
+		live, err := q.LinkPairingCodeLive(ctx, code.ID)
+		if err != nil {
+			return err
+		}
+		if !live {
 			return ErrCodeRefused
 		}
 		if code.UsedAt.Valid {

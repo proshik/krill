@@ -110,7 +110,7 @@ func (s *Store) ReserveLinkHost(ctx context.Context, host string, write func(q *
 		case panel.State != "off" && strings.EqualFold(panel.Host, host):
 			return &ConflictError{Key: KeyReservedPanel}
 		}
-		n, err := q.CountDomainsByHost(ctx, host)
+		n, err := q.CountLinkHostDomains(ctx, host)
 		if err != nil {
 			return err
 		}

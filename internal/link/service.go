@@ -140,17 +140,47 @@ func (s *Service) renewServerIfDueReport(ctx context.Context) (bool, error) {
 	if row.Role != RoleRelay || host == "" || deref(row.ServerCert) == "" {
 		return false, nil
 	}
-	c, err := ParseCert(*row.ServerCert)
-	if err == nil && time.Until(c.NotAfter) > serverRenewBefore {
+	if !serverDue(*row.ServerCert) {
 		return false, nil
 	}
+	renewed := false
 	if err := s.hosts.ReserveLinkHost(ctx, host, func(q *db.Queries) error {
-		return s.writeRelay(ctx, q, host, true)
+		// Re-read under the lock: the operator may have turned the relay off
+		// or moved it while this waited, and that must stand.
+		now, err := q.LockLinkSettings(ctx)
+		if err != nil {
+			return err
+		}
+		if now.Role != RoleRelay || deref(now.LinkHost) != host || !serverDue(deref(now.ServerCert)) {
+			return nil
+		}
+		ca, err := pair(now.CaCert, now.CaKey)
+		if err != nil {
+			return fmt.Errorf("link CA: %w", err)
+		}
+		srv, err := IssueServer(ca, host, time.Now())
+		if err != nil {
+			return err
+		}
+		n, err := q.SetLinkServerCert(ctx, db.SetLinkServerCertParams{
+			ServerKey: ptr(secret.Enc(srv.KeyPEM)), ServerCert: ptr(srv.CertPEM), Host: host,
+		})
+		renewed = n == 1
+		return err
 	}); err != nil {
 		return false, err
 	}
-	slog.Info("link: relay server certificate reissued", "link_host", host)
-	return true, nil
+	if renewed {
+		slog.Info("link: relay server certificate reissued", "link_host", host)
+	}
+	return renewed, nil
+}
+
+// serverDue reports whether a relay server certificate is unreadable or
+// expires within serverRenewBefore.
+func serverDue(certPEM string) bool {
+	c, err := ParseCert(certPEM)
+	return err != nil || time.Until(c.NotAfter) <= serverRenewBefore
 }
 
 // Close stops the listener and every session.
@@ -191,10 +221,7 @@ func (s *Service) apply(ctx context.Context) error {
 	}
 	role := row.Role
 	if role == RoleOff {
-		s.role.Store(RoleOff)
-		s.relay.unload()
-		s.stopClientLocked()
-		s.stopListenerLocked()
+		s.stopAllLocked()
 		return nil
 	}
 	local, err := s.store.EnsureLocalMaterial(ctx)
@@ -213,8 +240,24 @@ func (s *Service) apply(ctx context.Context) error {
 		s.startClientLocked()
 	}
 	s.role.Store(role)
+	// A role stored before KRILL_LINK_LISTEN_ADDR moved onto a public port
+	// does not open it: the listener must be reachable from the gateway only.
+	if err := s.ListenRequirement(); err != nil {
+		s.stopListenerLocked()
+		s.listenErr = err
+		slog.Error("link: not listening", "addr", s.cfg.LinkListenAddr, "err", err)
+		return nil
+	}
 	s.ensureListenerLocked(local)
 	return nil
+}
+
+// stopAllLocked stops the listener, the relay's sessions and the client.
+func (s *Service) stopAllLocked() {
+	s.role.Store(RoleOff)
+	s.relay.unload()
+	s.stopClientLocked()
+	s.stopListenerLocked()
 }
 
 func (s *Service) ensureListenerLocked(local LocalMaterial) {
@@ -351,7 +394,12 @@ func (s *Service) SetOff(ctx context.Context) error {
 		return err
 	}
 	slog.Info("link: role off")
-	return s.applyAfterWrite(ctx)
+	// Stored: stop now, without reading the settings back — a read failing
+	// here would leave the previous role running behind a page that says off.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopAllLocked()
+	return nil
 }
 
 // SetClient makes the installation a client.
@@ -409,7 +457,7 @@ func (s *Service) writeRelay(ctx context.Context, q *db.Queries, host string, re
 		}
 	}
 	srv, err := pair(row.ServerCert, row.ServerKey)
-	if renew || err != nil || deref(row.LinkHost) != host || !issuedBy(srv, ca) {
+	if renew || err != nil || deref(row.LinkHost) != host || !issuedBy(srv, ca) || serverDue(srv.CertPEM) {
 		if srv, err = IssueServer(ca, host, now); err != nil {
 			return err
 		}

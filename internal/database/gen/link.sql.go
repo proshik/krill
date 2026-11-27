@@ -12,8 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countLinkHostDomains = `-- name: CountLinkHostDomains :one
+SELECT count(*) FROM domains WHERE lower(host) = lower($1::text)
+`
+
+// Domain rows on a host, whatever their letter case: a link host is compared
+// with app domains as DNS compares names.
+func (q *Queries) CountLinkHostDomains(ctx context.Context, host string) (int64, error) {
+	row := q.db.QueryRow(ctx, countLinkHostDomains, host)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLinkIngressHostsByHost = `-- name: CountLinkIngressHostsByHost :one
-SELECT count(*) FROM link_ingress_hosts WHERE host = $1
+SELECT count(*) FROM link_ingress_hosts WHERE lower(host) = lower($1::text)
 `
 
 // A relay ingress host (stage 2), kept by a rollback.
@@ -215,6 +228,21 @@ func (q *Queries) InitLinkSettings(ctx context.Context) error {
 	return err
 }
 
+const linkPairingCodeLive = `-- name: LinkPairingCodeLive :one
+SELECT (expires_at > clock_timestamp())::boolean FROM link_pairing_codes WHERE id = $1
+`
+
+// Asked after LockLinkPairingCode holds the row: the lock may be granted
+// after the code expired, and an expression in the locking query itself is
+// evaluated before the wait. clock_timestamp(), not now(), which is the start
+// of the transaction.
+func (q *Queries) LinkPairingCodeLive(ctx context.Context, id int64) (bool, error) {
+	row := q.db.QueryRow(ctx, linkPairingCodeLive, id)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listLinkHostDomainHolders = `-- name: ListLinkHostDomainHolders :many
 SELECT a.id AS app_id, a.name AS app_name, a.environment_id, e.name AS env_name,
        p.id AS project_id, p.name AS project_name, p.organization_id AS org_id
@@ -222,7 +250,7 @@ FROM domains d
 JOIN applications a ON a.id = d.application_id
 JOIN environments e ON e.id = a.environment_id
 JOIN projects p ON p.id = e.project_id
-WHERE d.host = $1
+WHERE lower(d.host) = lower($1::text)
 ORDER BY a.id
 `
 
@@ -355,7 +383,7 @@ func (q *Queries) ListOpenLinkPairingCodes(ctx context.Context) ([]ListOpenLinkP
 }
 
 const lockLinkPairingCode = `-- name: LockLinkPairingCode :one
-SELECT id, peer_name, used_at, key_sha256, issued_cert, (expires_at > clock_timestamp())::boolean AS live
+SELECT id, peer_name, used_at, key_sha256, issued_cert
 FROM link_pairing_codes WHERE secret_sha256 = $1 FOR UPDATE
 `
 
@@ -365,11 +393,8 @@ type LockLinkPairingCodeRow struct {
 	UsedAt     pgtype.Timestamptz `json:"used_at"`
 	KeySha256  *string            `json:"key_sha256"`
 	IssuedCert *string            `json:"issued_cert"`
-	Live       bool               `json:"live"`
 }
 
-// clock_timestamp(), not now(): the row lock may be granted after the code
-// expired, and now() is the start of the transaction.
 func (q *Queries) LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error) {
 	row := q.db.QueryRow(ctx, lockLinkPairingCode, secretSha256)
 	var i LockLinkPairingCodeRow
@@ -379,7 +404,6 @@ func (q *Queries) LockLinkPairingCode(ctx context.Context, secretSha256 string) 
 		&i.UsedAt,
 		&i.KeySha256,
 		&i.IssuedCert,
-		&i.Live,
 	)
 	return i, err
 }
@@ -603,4 +627,25 @@ UPDATE link_settings SET role = 'off', updated_at = now() WHERE id
 func (q *Queries) SetLinkRoleOff(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, setLinkRoleOff)
 	return err
+}
+
+const setLinkServerCert = `-- name: SetLinkServerCert :execrows
+UPDATE link_settings SET server_key = $1, server_cert = $2, updated_at = now()
+WHERE id AND role = 'relay' AND link_host = $3::text
+`
+
+type SetLinkServerCertParams struct {
+	ServerKey  *string `json:"server_key"`
+	ServerCert *string `json:"server_cert"`
+	Host       string  `json:"host"`
+}
+
+// Reissue the relay's server certificate only while the settings still name
+// this relay and host.
+func (q *Queries) SetLinkServerCert(ctx context.Context, arg SetLinkServerCertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setLinkServerCert, arg.ServerKey, arg.ServerCert, arg.Host)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

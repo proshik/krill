@@ -234,3 +234,20 @@ func TestLinkHostHoldersSeesIngressHosts(t *testing.T) {
 		t.Fatalf("holders %+v (within saw %+v), %v", got, seen, err)
 	}
 }
+
+// DNS names are case-insensitive: a domain stored with capitals holds the
+// link host spelled in lower case.
+func TestLinkHostMatchesDomainsIgnoringCase(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	web := f.app(t, f.envID, "web")
+	if _, err := f.q.CreateDomain(ctx, db.CreateDomainParams{ApplicationID: web, Host: "Link.Example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	write := func(q *db.Queries) error { return nil }
+	wantConflict(t, f.store.ReserveLinkHost(ctx, "link.example.com", write), KeyHostTaken)
+	got, err := f.store.LinkHostHolders(ctx, "link.example.com", nil)
+	if err != nil || len(got) != 1 || got[0].AppID != web {
+		t.Fatalf("holders %+v, %v", got, err)
+	}
+}

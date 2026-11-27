@@ -33,8 +33,14 @@ type AddParams struct {
 	Paths   []string
 }
 
+// hostLockKey is the advisory lock of a host. DNS names are case-insensitive,
+// so two spellings of one name take the same lock.
+func hostLockKey(host string) string {
+	return "krill.domain-host:" + strings.ToLower(host)
+}
+
 func (s *Store) inHostTx(ctx context.Context, host string, fn func(q *db.Queries) error) error {
-	return s.inLockedTx(ctx, []string{"krill.domain-host:" + host}, fn)
+	return s.inLockedTx(ctx, []string{hostLockKey(host)}, fn)
 }
 
 // inLockedTx takes the transaction-scoped advisory locks in the given order,
@@ -232,7 +238,7 @@ func (s *Store) MakePrimary(ctx context.Context, domainID int64) error {
 	if err != nil {
 		return fmt.Errorf("load domain: %w", err)
 	}
-	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), "krill.domain-host:" + d.Host}
+	keys := []string{fmt.Sprintf("krill.domain-primary:%d", d.ApplicationID), hostLockKey(d.Host)}
 	return s.inLockedTx(ctx, keys, func(q *db.Queries) error {
 		// Application row before domains rows, in the order an application
 		// delete (and its cascade) takes them. A deleted app is ErrNoRows.
@@ -352,7 +358,7 @@ func (s *Store) CreateApplicationConfigured(ctx context.Context, p db.CreateAppl
 // The namespace and the reserved hosts (reservedErr) are shared with every
 // domain mutation.
 func ReservePrimaryHost(ctx context.Context, tx pgx.Tx, host string) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "krill.domain-host:"+host); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", hostLockKey(host)); err != nil {
 		return fmt.Errorf("lock host: %w", err)
 	}
 	q := db.New(tx)

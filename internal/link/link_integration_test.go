@@ -351,9 +351,8 @@ func startGatewayOn(t *testing.T, relay install, addr string) *fakeGateway {
 	return g
 }
 
-// A certificate renewed over the live session is stored by the client and
-// accepted on the next connect. A session renews once: a second renewal while
-// it still runs on the old certificate would retire the stored one.
+// A certificate renewed over the live session is stored by the client, which
+// then reconnects with it on its own; that connect retires the old one.
 func TestLinkRenewal(t *testing.T) {
 	prevLife, prevCheck := PeerLifetime, renewCheck
 	PeerLifetime, renewCheck = 12*time.Second, 200*time.Millisecond
@@ -364,38 +363,23 @@ func TestLinkRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var renewed ClientMaterial
+	oldFP, _ := CertFingerprint(first.Identity.CertPEM)
+	var renewedFP string
 	eventually(t, "a renewed certificate", 20*time.Second, func() bool {
 		m, err := client.svc.store.Client(ctx)
-		renewed = m
-		return err == nil && m.Identity.CertPEM != first.Identity.CertPEM
-	})
-	// Past two thirds of the renewed certificate's life, the same session
-	// has not renewed again: the stored certificate is still the relay's.
-	nc, _ := ParseCert(renewed.Identity.CertPEM)
-	time.Sleep(time.Until(nc.NotBefore.Add(backdate).Add(PeerLifetime*2/3 + time.Second)))
-	now, err := client.svc.store.Client(ctx)
-	if err != nil || now.Identity.CertPEM != renewed.Identity.CertPEM {
-		t.Fatal("the session renewed a second time")
-	}
-	fp, _ := CertFingerprint(renewed.Identity.CertPEM)
-	peers, _ := relay.svc.Peers(ctx)
-	if peers[0].Peer.CertSha256 != fp {
-		t.Fatal("the relay no longer holds the stored certificate")
-	}
-	// Drop the session; the client reconnects with the new certificate. That
-	// retires the first one; the new session may at once renew the second,
-	// which then stays valid as the previous one.
-	client.svc.client.Wake()
-	oldFP, _ := CertFingerprint(first.Identity.CertPEM)
-	eventually(t, "a connect with the renewed certificate", 15*time.Second, func() bool {
-		peers, _ := relay.svc.Peers(ctx)
-		if len(peers) != 1 || !peers[0].Connected {
+		if err != nil || m.Identity.CertPEM == first.Identity.CertPEM {
 			return false
 		}
-		prev := peers[0].Peer.PrevCertSha256
-		return (prev == nil || *prev == fp) && peers[0].Peer.CertSha256 != oldFP
+		renewedFP, _ = CertFingerprint(m.Identity.CertPEM)
+		return true
 	})
+	eventually(t, "a connect with the renewed certificate, without a manual reconnect", 15*time.Second, func() bool {
+		peers, _ := relay.svc.Peers(ctx)
+		return len(peers) == 1 && peers[0].Connected && peers[0].Peer.CertSha256 == renewedFP && peers[0].Peer.PrevCertSha256 == nil
+	})
+	if _, err := relay.svc.store.PeerByFingerprint(ctx, oldFP); !errors.Is(err, ErrPeerGone) {
+		t.Fatalf("the old certificate still admits: %v", err)
+	}
 }
 
 // clientMux opens a raw session with the paired client's identity, through
@@ -504,11 +488,89 @@ func TestStreamLimitPerPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = over.Write([]byte{byte(StreamEgress)})
-	_ = over.SetReadDeadline(time.Now().Add(3 * time.Second))
-	if _, err := over.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("a stream over the limit: read %v, want EOF at once", err)
-	}
+	// Refusing one stream would not bound what yamux keeps: the session goes.
+	eventually(t, "the session over the limit to close", 3*time.Second, mux.IsClosed)
 	_ = held
+}
+
+// Before its client is admitted or paired, a connection may send only a
+// little: the pairing side is reachable without a certificate.
+func TestRelayCapsDataBeforeAdmission(t *testing.T) {
+	ctx := context.Background()
+	relay := newInstall(t, freePort(t))
+	if err := relay.svc.SetRelay(ctx, testLinkHost); err != nil {
+		t.Fatal(err)
+	}
+	gw := startGateway(t, relay)
+	m, err := relay.svc.store.Relay(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caFP, _ := CertFingerprint(m.CA.CertPEM)
+	c := newClient(relay.svc.store, "test")
+	mux, err := c.connect(ctx, gw.addr(), pinnedTLS(testLinkHost, caFP, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.Close()
+	// The first stream stays silent, so the relay waits for its header (up
+	// to HeaderTimeout); meanwhile other streams, never read, send data that
+	// yamux would buffer.
+	if _, err := mux.OpenStream(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	chunk := make([]byte, 32<<10)
+	for i := 0; i < 8 && !mux.IsClosed(); i++ {
+		st, err := mux.OpenStream()
+		if err != nil {
+			break
+		}
+		_ = st.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		_, _ = st.Write(chunk)
+	}
+	eventually(t, "the relay to drop a connection over its pre-admission budget", HeaderTimeout, mux.IsClosed)
+	if took := time.Since(start); took > HeaderTimeout/2 {
+		t.Fatalf("closed after %v: that is the header timeout, not the budget", took)
+	}
+}
+
+// A pairing request that arrives after the relay was turned off, on a
+// connection that finished TLS before, redeems nothing.
+func TestRelayOffRefusesAPendingPairing(t *testing.T) {
+	ctx := context.Background()
+	relay := newInstall(t, freePort(t))
+	if err := relay.svc.SetRelay(ctx, testLinkHost); err != nil {
+		t.Fatal(err)
+	}
+	gw := startGateway(t, relay)
+	raw, err := relay.svc.CreatePairingCode(ctx, "msk", gw.addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := DecodeCode(raw)
+	c := newClient(relay.svc.store, "test")
+	mux, err := c.connect(ctx, code.Addr, pinnedTLS(code.SNI, code.CASHA256, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mux.Close()
+	if err := relay.svc.SetOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_, csr, _ := NewCSR()
+	st, err := mux.OpenStream()
+	if err == nil {
+		if err := WriteHeader(st, StreamPair, pairHeader{Secret: code.Secret, CSR: csr}); err == nil {
+			_ = st.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if reply, err := readMessage(newMessageReader(st)); err == nil && reply.Type == "cert" {
+				t.Fatal("a code was redeemed after the relay was turned off")
+			}
+		}
+	}
+	if peers, _ := relay.svc.Peers(ctx); len(peers) != 0 {
+		t.Fatalf("a peer was created after the relay was turned off: %+v", peers)
+	}
 }
 
 // The relay reissues its server certificate before it expires, under the
@@ -545,6 +607,28 @@ func TestRelayServerCertificateRenewal(t *testing.T) {
 	}
 	if again, err := relay.svc.renewServerIfDueReport(ctx); err != nil || again {
 		t.Fatalf("a fresh certificate was renewed again: %v %v", again, err)
+	}
+	// A due certificate of a relay turned off meanwhile is left alone: the
+	// renewal must not bring the role back.
+	if _, err := relay.svc.store.pool.Exec(ctx, "UPDATE link_settings SET server_cert = $1, server_key = $2", old.CertPEM, old.KeyPEM); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.svc.store.q.SetLinkRoleOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := relay.svc.renewServerIfDueReport(ctx); err != nil || again {
+		t.Fatalf("renewed a relay that is off: %v %v", again, err)
+	}
+	if row, _ := relay.svc.store.Row(ctx); row.Role != RoleOff {
+		t.Fatalf("renewal changed the role to %q", row.Role)
+	}
+	// Turning it back on with the same host reissues the expiring certificate.
+	if err := relay.svc.SetRelay(ctx, testLinkHost); err != nil {
+		t.Fatal(err)
+	}
+	back, _ := relay.svc.store.Relay(ctx)
+	if serverDue(back.Server.CertPEM) || back.CA.CertPEM != before.CA.CertPEM {
+		t.Fatal("re-enabling the relay kept an expiring server certificate or changed the CA")
 	}
 	if err := relay.svc.apply(ctx); err != nil {
 		t.Fatal(err)

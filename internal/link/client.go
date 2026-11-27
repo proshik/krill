@@ -204,8 +204,9 @@ func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 	}
 	_ = ctl.SetReadDeadline(time.Time{})
 	if reply.Type == "error" {
-		c.fail(reply.Category, reply.Message)
-		slog.Warn("link: relay refused the session", "relay", m.SNI, "category", reply.Category)
+		cat := sessionCategory(reply.Category)
+		c.fail(cat, reply.Message)
+		slog.Warn("link: relay refused the session", "relay", m.SNI, "category", cat)
 		return false
 	}
 	if reply.Type != "hello" || reply.Proto != ProtoVersion {
@@ -234,12 +235,25 @@ func (c *Client) once(ctx context.Context, m ClientMaterial, gen uint64) bool {
 
 	go measureLatency(mux, &c.lat)
 	go c.refuseStreams(mux)
-	c.renewals(ctx, mux, ctl, br, m)
+	if c.renewals(ctx, mux, ctl, br, m) {
+		c.set(func(s *ClientStatus) { s.State = StateConnecting })
+		return true
+	}
 	if ctx.Err() == nil {
 		c.fail(CatTCP, "the session to the relay ended")
 		slog.Info("link: session to the relay ended", "relay", m.SNI)
 	}
 	return true
+}
+
+// sessionCategory keeps a relay's refusal category to the known ones: it is
+// shown, logged and part of a translation key.
+func sessionCategory(cat string) string {
+	switch cat {
+	case CatDNS, CatTCP, CatTLS, CatUnauthorized, CatIncompatible, CatDuplicate:
+		return cat
+	}
+	return CatTCP
 }
 
 // connect dials the relay and opens a yamux session over TLS.
@@ -273,6 +287,11 @@ func (c *Client) refuseStreams(mux *yamux.Session) {
 		if err != nil {
 			return
 		}
+		if mux.NumStreams() > MaxStreamsPerPeer {
+			slog.Warn("link: session closed, stream limit from the relay", "limit", MaxStreamsPerPeer)
+			_ = mux.Close()
+			return
+		}
 		go func() {
 			defer st.Close()
 			typ, _, err := readHeaderWithin(st, HeaderTimeout)
@@ -286,10 +305,13 @@ func (c *Client) refuseStreams(mux *yamux.Session) {
 
 // renewals watches the certificate and renews it over the live session at two
 // thirds of its lifetime. It returns when the session ends.
-func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn, br *bufio.Reader, m ClientMaterial) {
+//
+// It reports true when it ended the session itself to reconnect with a
+// renewed certificate.
+func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn, br *bufio.Reader, m ClientMaterial) bool {
 	cert, err := ParseCert(m.Identity.CertPEM)
 	if err != nil {
-		return
+		return false
 	}
 	replies := make(chan message)
 	go func() {
@@ -334,17 +356,17 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-mux.CloseChan():
-			return
+			return false
 		case <-check.C:
 			ask()
 		case msg, ok := <-replies:
 			if !ok {
-				return
+				return false
 			}
 			if msg.Type != "cert" || pendingKey == "" {
-				slog.Warn("link: renewal refused by the relay", "category", msg.Category)
+				slog.Warn("link: renewal refused by the relay", "category", sessionCategory(msg.Category))
 				pendingKey = ""
 				continue
 			}
@@ -363,8 +385,14 @@ func (c *Client) renewals(ctx context.Context, mux *yamux.Session, ctl net.Conn,
 				renewed = true
 				if nc, _ := ParseCert(next.CertPEM); nc != nil {
 					c.set(func(s *ClientStatus) { s.CertNotAfter = nc.NotAfter })
-					slog.Info("link: certificate renewed", "not_after", nc.NotAfter.Format(time.DateOnly))
+					slog.Info("link: certificate renewed; reconnecting with it", "not_after", nc.NotAfter.Format(time.DateOnly))
 				}
+				// Reconnect with the new certificate: it retires the old
+				// one on the relay, and the next renewal then starts from a
+				// session that holds the stored certificate. A session left
+				// running could outlive both.
+				_ = mux.Close()
+				return true
 			}
 		}
 	}
@@ -399,8 +427,10 @@ func (c *Client) Pair(ctx context.Context, raw string) error {
 		}
 	}
 	var refused *PairRefusedError
-	if errors.As(err, &refused) {
-		c.dropPairingKey(code) // the code is dead for this key
+	if errors.As(err, &refused) && (refused.Category == pairRefused || refused.Category == pairPeerExists) {
+		// Final for this code and key. A rate limit or a relay error is
+		// not: the relay may already hold a certificate for this key.
+		c.dropPairingKey(code)
 	}
 	if err != nil {
 		return err

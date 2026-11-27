@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/proshik/krill/internal/hostshare"
 	"github.com/proshik/krill/internal/testutil"
 )
 
@@ -228,5 +229,27 @@ func TestRedeemSecondCodeForTheSameNameRollsBack(t *testing.T) {
 	}
 	if used || key != nil || cert != nil {
 		t.Fatalf("refused code was left redeemed: used=%v key=%v cert=%v", used, key != nil, cert != nil)
+	}
+}
+
+// A role stored before KRILL_LINK_LISTEN_ADDR moved onto a public port does
+// not open the listener at start.
+func TestStartRefusesAPublicListenPort(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	st := NewStore(pool)
+	ctx := context.Background()
+	if err := st.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.q.SetLinkRoleClient(ctx); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(pool, hostshare.NewStore(pool), Config{ListenAddr: ":8080", LinkListenAddr: ":22"})
+	if err := svc.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	if !errors.Is(svc.ListenError(), ErrLinkPortTaken) {
+		t.Fatalf("listen error %v, want ErrLinkPortTaken", svc.ListenError())
 	}
 }

@@ -33,7 +33,10 @@ type Relay struct {
 	reg     *registry
 	limit   *rateLimiter
 	tls     atomic.Pointer[relayTLS]
-	ctx     context.Context
+	// gate orders a pairing's check of the running relay and its commit
+	// against unload: a code is never redeemed after the relay stopped.
+	gate sync.RWMutex
+	ctx  context.Context
 
 	mu       sync.Mutex
 	refusals map[int64]Refusal // the latest refused session per known peer
@@ -91,7 +94,9 @@ func (r *Relay) load(ctx context.Context) error {
 
 // unload stops serving and closes every session.
 func (r *Relay) unload() {
+	r.gate.Lock()
 	r.tls.Store(nil)
+	r.gate.Unlock()
 	r.reg.closeAll()
 }
 
@@ -170,7 +175,12 @@ func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort, release func()) {
 		slog.Info("link: handshake failed", "from", src.Addr(), "category", CatTLS)
 		return
 	}
-	mux, err := yamux.Server(tc, muxConfig())
+	// Until the client is admitted or paired, it may send only a little:
+	// yamux buffers whatever a stream receives before it is read, and this
+	// side of the connection is reachable without a certificate.
+	bc := &budgetConn{Conn: tc}
+	bc.left.Store(preAdmissionBudget)
+	mux, err := yamux.Server(bc, muxConfig())
 	if err != nil {
 		return
 	}
@@ -191,7 +201,7 @@ func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort, release func()) {
 			_ = first.Close()
 			return
 		}
-		r.pair(first, body, src, t.ca)
+		r.pair(first, body, src, t)
 		return
 	}
 	if typ != StreamControl {
@@ -199,11 +209,11 @@ func (r *Relay) ServeConn(conn net.Conn, src netip.AddrPort, release func()) {
 		_ = first.Close()
 		return
 	}
-	r.session(mux, first, body, Fingerprint(certs[0].Raw), src, t, done)
+	r.session(mux, first, body, Fingerprint(certs[0].Raw), src, t, func() { bc.open(); done() })
 }
 
 // pair handles the one pair stream of a connection without a certificate.
-func (r *Relay) pair(st *yamux.Stream, body []byte, src netip.AddrPort, ca KeyPair) {
+func (r *Relay) pair(st *yamux.Stream, body []byte, src netip.AddrPort, t *relayTLS) {
 	defer st.Close()
 	reply := func(m message) {
 		if err := writeMessage(st, m); err != nil {
@@ -220,7 +230,14 @@ func (r *Relay) pair(st *yamux.Stream, body []byte, src netip.AddrPort, ca KeyPa
 		reply(message{Type: "error", Category: pairRefused, Message: "malformed pairing request"})
 		return
 	}
-	cert, peer, err := r.store.Redeem(r.ctx, h.Secret, h.CSR, ca)
+	r.gate.RLock()
+	if r.tls.Load() != t {
+		r.gate.RUnlock()
+		reply(message{Type: "error", Category: pairRefused, Message: "the relay is not serving"})
+		return
+	}
+	cert, peer, err := r.store.Redeem(r.ctx, h.Secret, h.CSR, t.ca)
+	r.gate.RUnlock()
 	switch {
 	case errors.Is(err, ErrCodeRefused):
 		slog.Warn("link: pairing refused", "from", src.Addr())
@@ -306,12 +323,17 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		return
 	}
 	defer r.reg.release(peer.ID, s)
+	// Record the connect before confirming it: a connect with a renewed
+	// certificate retires the previous one, and the client must not be told
+	// it is in while the previous one still admits.
+	if err := r.store.markConnected(r.ctx, peer.ID, fp); err != nil {
+		slog.Error("link: record connect failed", "peer", peer.Name, "err", err)
+		refuse(CatTCP, "the relay could not record the session")
+		return
+	}
 	admitted()
 	if err := writeMessage(ctl, message{Type: "hello", Proto: ProtoVersion, KrillVersion: r.version}); err != nil {
 		return
-	}
-	if err := r.store.markConnected(r.ctx, peer.ID, fp); err != nil {
-		slog.Error("link: record connect failed", "peer", peer.Name, "err", err)
 	}
 	slog.Info("link: session connected", "peer", peer.Name, "from", src.Addr(), "version", hello.KrillVersion)
 	start := time.Now()
@@ -337,11 +359,12 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 			return
 		}
 		// yamux keeps a closed stream until the other side closes it too,
-		// so the session's own count is what bounds the peer.
+		// so refusing one stream would not bound the peer: a peer over the
+		// limit loses its session.
 		if mux.NumStreams() > MaxStreamsPerPeer {
-			slog.Warn("link: stream refused, per-peer limit", "peer", peer.Name, "limit", MaxStreamsPerPeer)
-			_ = st.Close()
-			continue
+			slog.Warn("link: session closed, per-peer stream limit", "peer", peer.Name, "limit", MaxStreamsPerPeer)
+			_ = mux.Close()
+			return
 		}
 		s.streams.Add(1)
 		go func() {
@@ -383,7 +406,7 @@ func (r *Relay) control(s *relaySession, ctl *yamux.Stream, peer db.LinkPeer, ca
 				return
 			}
 		default:
-			slog.Warn("link: unknown control message", "peer", peer.Name, "type", m.Type)
+			slog.Warn("link: unknown control message", "peer", peer.Name, "type_len", len(m.Type))
 			return
 		}
 	}
@@ -415,4 +438,38 @@ func measureLatency(mux *yamux.Session, into *atomic.Int64) {
 		case <-t.C:
 		}
 	}
+}
+
+// preAdmissionBudget is how many bytes a connection may send before its client
+// is admitted or paired: a hello or a pairing request with its CSR, and yamux
+// framing, fit many times over.
+const preAdmissionBudget = 64 << 10
+
+// errBudget ends a connection that sent more than preAdmissionBudget before
+// admission.
+var errBudget = errors.New("link: too much data before admission")
+
+// budgetConn caps what the peer may send until open is called.
+type budgetConn struct {
+	net.Conn
+	left     atomic.Int64
+	unlocked atomic.Bool
+}
+
+func (c *budgetConn) open() { c.unlocked.Store(true) }
+
+func (c *budgetConn) Read(p []byte) (int, error) {
+	if c.unlocked.Load() {
+		return c.Conn.Read(p)
+	}
+	left := c.left.Load()
+	if left <= 0 {
+		return 0, errBudget
+	}
+	if int64(len(p)) > left {
+		p = p[:left]
+	}
+	n, err := c.Conn.Read(p)
+	c.left.Add(-int64(n))
+	return n, err
 }
