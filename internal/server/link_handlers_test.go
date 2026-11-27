@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/proshik/krill/internal/auth"
 	"github.com/proshik/krill/internal/config"
 	db "github.com/proshik/krill/internal/database/gen"
@@ -28,6 +30,7 @@ import (
 const linkHost = "link.example.com"
 
 type linkEnv struct {
+	pool   *pgxpool.Pool
 	h      http.Handler
 	q      *db.Queries
 	orgSvc *org.Service
@@ -56,7 +59,7 @@ func newLinkServer(t *testing.T, advertise string) *linkEnv {
 	}
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", ListenAddr: ":8080",
 		AdvertiseAddr: advertise, LinkListenAddr: freeLinkPort(t)}
-	env := &linkEnv{q: q, orgSvc: org.NewService(q), tokens: panel.DeriveTokens(sec)}
+	env := &linkEnv{pool: pool, q: q, orgSvc: org.NewService(q), tokens: panel.DeriveTokens(sec)}
 	hub := deploy.NewLogHub()
 	srv := server.New(cfg, auth.NewService(q), env.orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net"))
 	hosts := hostshare.NewStore(pool)
@@ -213,6 +216,60 @@ func TestLinkRelayGatewayConfig(t *testing.T) {
 	}
 }
 
+// An ingress host kept by a rollback from stage 2 on the link host also keeps
+// the link's route unpublished.
+func TestLinkRouteNotPublishedOverAnIngressHost(t *testing.T) {
+	e := newLinkServer(t, "198.51.100.10")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "link-ingress@k.local", "OrgLinkIngress")
+	if rec := postForm(t, e.h, base+"/link/role", cookie, url.Values{"role": {"relay"}, "link_host": {linkHost}}); hasErrFlash(rec) {
+		t.Fatalf("set relay: %q", flashCookieValue(rec))
+	}
+	if _, ok := e.gatewayConfig(t)["tcp"]; !ok {
+		t.Fatal("a free link host must be routed")
+	}
+	peer, err := e.q.CreateLinkPeer(context.Background(), db.CreateLinkPeerParams{Name: "msk", CertSha256: "aa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertIngressHost(context.Background(), e, peer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := e.gatewayConfig(t)["tcp"]; ok {
+		t.Fatal("a link host that is also an ingress host must not be routed")
+	}
+}
+
+// The link listener must not share a port the lockdown keeps public: it
+// would be reachable from the world, not from the gateway only.
+func TestLinkRefusesAPublicPort(t *testing.T) {
+	pool := testutil.NewTestDB(t)
+	q := db.New(pool)
+	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", ListenAddr: ":8080", AdvertiseAddr: "198.51.100.10", LinkListenAddr: ":443"}
+	orgSvc := org.NewService(q)
+	hub := deploy.NewLogHub()
+	srv := server.New(cfg, auth.NewService(q), orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net"))
+	hosts := hostshare.NewStore(pool)
+	srv.SetHostShare(hosts)
+	l := link.NewService(pool, hosts, link.Config{AdvertiseAddr: cfg.AdvertiseAddr, ListenAddr: cfg.ListenAddr, LinkListenAddr: cfg.LinkListenAddr})
+	if err := l.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(l.Close)
+	srv.SetLink(l)
+	h := srv.Router()
+	base, cookie, _ := nodesOrg(t, q, orgSvc, "link-port@k.local", "OrgLinkPort")
+	for _, role := range []string{"client", "relay"} {
+		rec := postForm(t, h, base+"/link/role", cookie, url.Values{"role": {role}, "link_host": {linkHost}})
+		v, _ := url.QueryUnescape(flashCookieValue(rec))
+		if !strings.Contains(v, i18n.T(i18n.WithLocale(context.Background(), "en"), "link.req.port_taken")) {
+			t.Fatalf("%s on :443: %q", role, v)
+		}
+	}
+	if l.Role() != link.RoleOff {
+		t.Fatalf("role %q", l.Role())
+	}
+}
+
 // A pairing code is shown once and only to the operator who made it; a code
 // for an existing peer name is refused; the page never echoes it again.
 func TestLinkPairingCodeShownOnce(t *testing.T) {
@@ -353,4 +410,9 @@ func TestLinkPortUnderLockdown(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "never recorded") {
 		t.Fatal("the link's gateway-only port must not read as a closed UI port")
 	}
+}
+
+func insertIngressHost(ctx context.Context, e *linkEnv, peerID int64) error {
+	_, err := e.pool.Exec(ctx, "INSERT INTO link_ingress_hosts (host, peer_id) VALUES ($1, $2)", linkHost, peerID)
+	return err
 }
