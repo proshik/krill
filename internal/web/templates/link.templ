@@ -84,6 +84,9 @@ func linkMS(d time.Duration) string {
 	if d <= 0 {
 		return "—"
 	}
+	if d < time.Millisecond {
+		return "< 1 ms"
+	}
 	return strconv.FormatInt(d.Milliseconds(), 10) + " ms"
 }
 
