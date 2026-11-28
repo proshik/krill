@@ -26,3 +26,16 @@ CREATE TABLE app_link_destinations (
   port           INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
   PRIMARY KEY (application_id, host, port)
 );
+
+-- client: the names the egress sidecar answers for on each app's network,
+-- with the app's newest deployment when it began. A name leaves the sidecar
+-- only once a later deployment without it has converged, whatever the saved
+-- selection or the service's labels say meanwhile.
+CREATE TABLE link_egress_served (
+  application_id BIGINT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+  host           TEXT NOT NULL,
+  port           INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+  deploy_floor   BIGINT NOT NULL DEFAULT 0,
+  served_since   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (application_id, host, port)
+);

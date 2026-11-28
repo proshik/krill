@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,8 @@ type Egress struct {
 	traffic *traffic
 	streams map[int64]int // open egress streams per app, under mu
 	total   int
+
+	manifestMu sync.Mutex // one manifest publication at a time
 }
 
 // Egress stream bounds on a client: the relay closes the whole session past
@@ -99,6 +102,9 @@ func (e *Egress) dropStream(appID int64) {
 		delete(e.streams, appID)
 	}
 }
+
+// decisionTimeout bounds reading one connection's grant and selection.
+const decisionTimeout = 5 * time.Second
 
 // ErrEgressBusy refuses a connection over the app's or the session's
 // stream bound.
@@ -188,11 +194,26 @@ type prepared struct {
 }
 
 // Changed implements deploy.EgressHook: a deploy of the app finished.
-func (e *Egress) Changed(appID int64) {
+//
+// The prepared names are kept until a reconcile sees the app's service on its
+// network (settled) or they expire: a listing taken just before the deploy
+// attached the app would otherwise call its network unused.
+func (e *Egress) Changed(appID int64) { e.Kick() }
+
+// settlePrepared forgets the prepares whose app service the listing shows
+// attached to its network: its label carries the names from then on.
+func (e *Egress) settlePrepared(nets []docker.PrefixNetwork) {
 	e.mu.Lock()
-	delete(e.preparing, appID)
-	e.mu.Unlock()
-	e.Kick()
+	defer e.mu.Unlock()
+	for _, n := range nets {
+		id, ok := e.names.appOf(n.Name)
+		if !ok {
+			continue
+		}
+		if _, prepared := e.preparing[id]; prepared && slices.Contains(n.Services, e.names.appService(id)) {
+			delete(e.preparing, id)
+		}
+	}
 }
 
 func (e *Egress) preparingSet() map[int64][]Destination {
@@ -245,13 +266,27 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 	if err != nil {
 		return err
 	}
-	plan := planSidecar(e.names, nets, saved, applied, e.preparingSet(), prep)
+	served, err := e.store.served(ctx)
+	if err != nil {
+		return err
+	}
+	preparing := e.preparingSet()
+	plan := planSidecar(e.names, planInput{nets: nets, saved: saved, applied: applied, preparing: preparing, served: served, prep: prep})
 	if len(plan.Keep) == 0 {
 		if err := e.removeSidecar(ctx); err != nil {
 			return err
 		}
 		e.removeNetworks(ctx, plan.Unused)
 		return nil
+	}
+	// Recorded before the sidecar answers for them: a name the sidecar ever
+	// answered for is never dropped by a later reconcile that lost track of
+	// why (a restart, a label rewritten by a domain change).
+	for n, ds := range plan.Keep {
+		id, _ := e.names.appOf(n)
+		if err := e.store.recordServed(ctx, id, ds); err != nil {
+			return fmt.Errorf("record the sidecar's names: %w", err)
+		}
 	}
 	if e.upErr != nil {
 		return fmt.Errorf("the egress sidecar cannot reach Krill: %w", e.upErr)
@@ -273,6 +308,13 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 		}
 		if nets, err := e.eng.PrefixNetworks(ctx, e.names.netPrefix); err == nil {
 			e.setIndex(nets)
+		}
+	}
+	e.settlePrepared(nets)
+	// The sidecar no longer answers for these: forget them.
+	for id, ds := range plan.Retire {
+		if err := e.store.retireServed(ctx, id, ds); err != nil {
+			slog.Warn("link: forget retired sidecar names failed", "app", id, "err", err)
 		}
 	}
 	e.removeNetworks(ctx, plan.Unused)
@@ -370,6 +412,11 @@ func (e *Egress) removeNetworks(ctx context.Context, names []string) {
 			continue
 		}
 		slog.Info("link: egress network removed", "network", n)
+		if id, ok := e.names.appOf(n); ok {
+			if err := e.store.q.DeleteLinkEgressServedApp(ctx, id); err != nil {
+				slog.Warn("link: forget the sidecar's names of a removed network failed", "app", id, "err", err)
+			}
+		}
 	}
 }
 
@@ -439,7 +486,18 @@ func (e *Egress) serveConn(conn net.Conn, hdr ProxyHeader, release func()) {
 	_ = conn.SetReadDeadline(time.Time{})
 	d := Destination{Host: sni, Port: int(hdr.Dst.Port())}
 	cell := e.traffic.cell(trafficKey{Service: appID, Dest: d.String()})
-	granted, selected, err := e.store.egressDecision(e.ctx, appID, d)
+	// The bounds come before the database: an app at its bound must not
+	// keep the shared pool busy with decisions it would be refused anyway.
+	if !e.takeStream(appID) {
+		cell.refused.Add(1)
+		slog.Warn("link: egress refused", "app", appID, "dest", d.String(), "reason", ErrEgressBusy.Error())
+		resetConn(conn)
+		return
+	}
+	defer e.dropStream(appID)
+	dctx, dcancel := context.WithTimeout(e.ctx, decisionTimeout)
+	granted, selected, err := e.store.egressDecision(dctx, appID, d)
+	dcancel()
 	if err != nil {
 		cell.refused.Add(1)
 		slog.Error("link: egress: read the app's grant and selection failed", "app", appID, "err", err)
@@ -457,13 +515,6 @@ func (e *Egress) serveConn(conn net.Conn, hdr ProxyHeader, release func()) {
 		resetConn(conn)
 		return
 	}
-	if !e.takeStream(appID) {
-		cell.refused.Add(1)
-		slog.Warn("link: egress refused", "app", appID, "dest", d.String(), "reason", ErrEgressBusy.Error())
-		resetConn(conn)
-		return
-	}
-	defer e.dropStream(appID)
 	octx, cancel := context.WithTimeout(e.ctx, HeaderTimeout)
 	st, closed, err := client.OpenEgress(octx, d, appID)
 	cancel()
@@ -537,11 +588,14 @@ func (e *Egress) DynamicConfig(ctx context.Context) (map[string]any, error) {
 }
 
 // publishManifest sends the relay the client's services: every app of a
-// granted organization with a saved selection.
+// granted organization with a saved selection. Publications are serialized,
+// so an older reading never replaces a newer one.
 func (e *Egress) publishManifest(ctx context.Context) {
 	if e.svc.Role() != RoleClient {
 		return
 	}
+	e.manifestMu.Lock()
+	defer e.manifestMu.Unlock()
 	apps, err := e.store.egressApps(ctx)
 	if err != nil {
 		slog.Warn("link: build the manifest failed", "err", err)

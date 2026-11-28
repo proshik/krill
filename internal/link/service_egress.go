@@ -99,18 +99,18 @@ func (s *Service) SetAppDestinations(ctx context.Context, orgID, appID int64, ds
 	if !ok {
 		return ErrNotGranted
 	}
-	saved, err := s.store.AppDestinations(ctx, appID)
-	if err != nil {
-		return err
-	}
 	offered, _ := s.client.RelayDestinations()
 	ds = SortDestinations(ds)
-	for _, d := range ds {
-		if !slices.Contains(offered, d) && !slices.Contains(saved, d) {
-			return ErrNotOffered
+	// Checked against the selection as it is under the app's lock: a form
+	// read before another save removed a destination must not bring it back.
+	if err := s.store.setAppDestinations(ctx, appID, ds, func(saved []Destination) error {
+		for _, d := range ds {
+			if !slices.Contains(offered, d) && !slices.Contains(saved, d) {
+				return ErrNotOffered
+			}
 		}
-	}
-	if err := s.store.setAppDestinations(ctx, appID, ds); err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 	slog.Info("link: app destinations saved", "app", appID, "destinations", len(ds))

@@ -148,7 +148,7 @@ func TestLogSnapshotIsStorable(t *testing.T) {
 	nul := "nul\x00byte\n"
 	w.Write([]byte(nul))
 	w.Write([]byte(strings.Repeat("a", logHeadCap-len(nul)-1) + "ж")) // the cap cuts "ж" in half
-	w.Write([]byte(strings.Repeat("я", logTailCap))) // the tail drops a byte of one
+	w.Write([]byte(strings.Repeat("я", logTailCap)))                  // the tail drops a byte of one
 	got := h.Close(1)
 	if !utf8.ValidString(got) || strings.ContainsRune(got, 0) {
 		t.Fatalf("log is not storable: valid=%v nul=%v", utf8.ValidString(got), strings.ContainsRune(got, 0))

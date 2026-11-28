@@ -19,6 +19,10 @@ type PrefixNetwork struct {
 	Services []string
 	// Labels are those services' service-level labels, by service name.
 	Labels map[string]map[string]string
+	// ForceUpdate is each of those services' current ForceUpdate counter:
+	// ServiceDeploy bumps it on every deploy, so a task carrying another
+	// value belongs to an earlier spec.
+	ForceUpdate map[string]uint64
 	// Tasks are the tasks attached to it whose container is (or is about
 	// to be) alive, with their address on it: running, starting and
 	// preparing ones (a task waiting for its healthcheck already makes
@@ -33,6 +37,8 @@ type NetworkTask struct {
 	NodeID  string
 	State   string
 	IP      string // without the prefix length
+	// ForceUpdate is the counter of the spec the task was started from.
+	ForceUpdate uint64
 }
 
 // PrefixNetworks is the optional capability to list the networks whose name
@@ -72,7 +78,7 @@ func prefixNetworks(prefix string, nets []network.Summary, svcs []swarm.Service,
 		if !strings.HasPrefix(n.Name, prefix) || n.Scope != "swarm" {
 			continue
 		}
-		p := &PrefixNetwork{Name: n.Name, Labels: map[string]map[string]string{}}
+		p := &PrefixNetwork{Name: n.Name, Labels: map[string]map[string]string{}, ForceUpdate: map[string]uint64{}}
 		byID[n.ID], byName[n.Name] = p, p
 		order = append(order, p)
 	}
@@ -88,6 +94,7 @@ func prefixNetworks(prefix string, nets []network.Summary, svcs []swarm.Service,
 			if p != nil {
 				p.Services = append(p.Services, s.Spec.Name)
 				p.Labels[s.Spec.Name] = s.Spec.Labels
+				p.ForceUpdate[s.Spec.Name] = s.Spec.TaskTemplate.ForceUpdate
 			}
 		}
 	}
@@ -115,7 +122,7 @@ func prefixNetworks(prefix string, nets []network.Summary, svcs []swarm.Service,
 				if err != nil {
 					continue
 				}
-				p.Tasks = append(p.Tasks, NetworkTask{Service: name, NodeID: t.NodeID, State: string(t.Status.State), IP: ip.String()})
+				p.Tasks = append(p.Tasks, NetworkTask{Service: name, NodeID: t.NodeID, State: string(t.Status.State), IP: ip.String(), ForceUpdate: t.Spec.ForceUpdate})
 			}
 		}
 	}

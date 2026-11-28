@@ -232,7 +232,8 @@ caller).
 
 ### Egress (KRL-002)
 
-**Data (migration 000067, additive).** `link_destinations (host, port)` — the relay's one list,
+**Data (migration 000067, additive).** `link_egress_served (application_id, host, port,
+deploy_floor)` — the names the sidecar answers for (below); `link_destinations (host, port)` — the relay's one list,
 the hard boundary for every peer; `link_org_grants (org_id)` — the client operator's grants;
 `app_link_destinations (application_id, host, port)` — an app's saved selection (no FK to the
 relay's list: it lives on another installation; a destination the relay dropped stays selected and
@@ -263,6 +264,9 @@ virtual host behind an allowed name's shared TLS front end; then the relay resol
 through `netguard.DialContext(false)` (10 s): a name resolving to a private, loopback or
 link-local address is refused (DNS rebinding towards the relay's own services). The buffered
 ClientHello is written on and both directions are spliced (`splice`, half-close per direction).
+The guarantee stops at the TLS name: an HTTPS front end routing by the HTTP `Host` can still be
+asked for another of its sites (the guide says so). A failed read of the list ends a session's
+`hello` (the client reconnects) but never a working session on a later `lists`.
 
 **Client path.** The listener hands the whole PROXY header to the role (`dispatch`): on a client
 the connection is the sidecar's, carrying an app's TLS stream. `Egress.serveConn`: identify the
@@ -304,7 +308,15 @@ is plain `host:port` beside the digests, `deploy.SectionLink` the fingerprint se
 the core release after a rollback records none and does not count as "nothing"); current-spec is
 the app service's `krill.link.egress` label (`deploy.LinkEgressLabel`, set by `buildSpec`), which
 covers a deploy not recorded yet and a restart of Krill in the middle of one; preparing is what a
-`Prepare` in flight asked for. A host leaves DNS only once a deploy without it has converged, and
+`Prepare` in flight asked for (kept until a reconcile sees the app's service on its network, or
+30 minutes); and every name the sidecar already answers for (`link_egress_served`, migration
+000067, with the app's newest deployment id at the time — the floor). A served name is retired
+only when none of the others needs it, every live task of the app runs the service's current
+spec (`converged`: the task's `ForceUpdate` equals the service's) and the app's newest
+link-recording deployment is above the floor; names are recorded before the sidecar answers for
+them. So a restart in the middle of a deploy, a domain change rewriting the service's labels
+(`ServiceUpdateLabels` replaces them) or a save undone before any deploy cannot drop a name an
+old task may still resolve. A host leaves DNS only once a deploy without it has converged, and
 until then its connections are refused, never resolved to the real address. A network counts as
 used while a task of the app is still alive on it, a task Swarm is stopping included
 (`PrefixNetworks` lists desired-state `shutdown` tasks that still run), so draining old tasks keep

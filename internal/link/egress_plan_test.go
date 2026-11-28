@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -30,8 +32,8 @@ func TestPlanSidecarAliasesSavedUnionApplied(t *testing.T) {
 		appNet(2, []string{"krill-2", SidecarService}),
 	}
 	saved := map[int64][]Destination{1: {tg}, 2: {}}
-	applied := map[int64][]Destination{1: {oai}, 2: {alt}}
-	p := planSidecar(defaultNames, nets, saved, applied, nil, nil)
+	applied := map[int64]appliedRec{1: {id: 5, dests: []Destination{oai}}, 2: {id: 6, dests: []Destination{alt}}}
+	p := planSidecar(defaultNames, planInput{nets: nets, saved: saved, applied: applied})
 	want := map[string][]Destination{
 		"krill-egress-1": {oai, tg},
 		"krill-egress-2": {alt},
@@ -59,7 +61,7 @@ func TestPlanSidecarNetworks(t *testing.T) {
 		appNet(4, nil),
 		{Name: "krill-egress-x"}, // not Krill's
 	}
-	p := planSidecar(defaultNames, nets, nil, nil, map[int64][]Destination{3: nil}, &prepareReq{app: 4, dests: []Destination{tg}})
+	p := planSidecar(defaultNames, planInput{nets: nets, preparing: map[int64][]Destination{3: nil}, prep: &prepareReq{app: 4, dests: []Destination{tg}}})
 	if !reflect.DeepEqual(p.Unused, []string{"krill-egress-1"}) {
 		t.Fatalf("unused %v", p.Unused)
 	}
@@ -73,7 +75,7 @@ func TestPlanSidecarNetworks(t *testing.T) {
 		t.Fatalf("prepared network keeps %v", p.Keep["krill-egress-4"])
 	}
 	// A network that did not show in the listing yet still gets the prepare.
-	p = planSidecar(defaultNames, nil, map[int64][]Destination{5: {oai}}, nil, nil, &prepareReq{app: 5, dests: []Destination{tg}})
+	p = planSidecar(defaultNames, planInput{saved: map[int64][]Destination{5: {oai}}, prep: &prepareReq{app: 5, dests: []Destination{tg}}})
 	if !reflect.DeepEqual(p.Keep["krill-egress-5"], []Destination{oai, tg}) {
 		t.Fatalf("keep %v", p.Keep)
 	}
@@ -152,7 +154,7 @@ func TestIdentify(t *testing.T) {
 func TestPlanSidecarLabelAndPrepared(t *testing.T) {
 	n := appNet(1, []string{"krill-1", SidecarService})
 	n.Labels = map[string]map[string]string{"krill-1": {egressLabel: "api.openai.com:443,api.telegram.org:443"}, SidecarService: {egressLabel: "x.example.com:443"}}
-	p := planSidecar(defaultNames, []docker.PrefixNetwork{n, appNet(2, nil)}, nil, nil, map[int64][]Destination{2: {alt}}, nil)
+	p := planSidecar(defaultNames, planInput{nets: []docker.PrefixNetwork{n, appNet(2, nil)}, preparing: map[int64][]Destination{2: {alt}}})
 	if !reflect.DeepEqual(p.Keep["krill-egress-1"], []Destination{oai, tg}) {
 		t.Fatalf("keep 1 = %v", p.Keep["krill-egress-1"])
 	}
@@ -185,5 +187,54 @@ func TestEgressStreamBounds(t *testing.T) {
 	}
 	if e2.total != MaxStreamsPerPeer-streamsReserved {
 		t.Fatalf("session bound %d, want %d", e2.total, MaxStreamsPerPeer-streamsReserved)
+	}
+}
+
+// A name the sidecar answers for leaves it only once it is needed by nothing
+// (saved, applied, the service's label, a prepare), every live task of the
+// app runs the current spec, and a deployment newer than the one current
+// when the name began has recorded its selection.
+func TestPlanSidecarServedNames(t *testing.T) {
+	net := func(tasks ...uint64) docker.PrefixNetwork {
+		n := appNet(1, []string{"krill-1", SidecarService})
+		n.ForceUpdate = map[string]uint64{"krill-1": 3, SidecarService: 1}
+		for i, fu := range tasks {
+			n.Tasks = append(n.Tasks, docker.NetworkTask{Service: "krill-1", IP: "10.0.9." + strconv.Itoa(5+i), ForceUpdate: fu})
+		}
+		return n
+	}
+	served := map[int64][]servedRec{1: {{dest: tg, floor: 10}}}
+	cases := []struct {
+		name    string
+		n       docker.PrefixNetwork
+		saved   []Destination
+		applied appliedRec
+		keep    bool
+	}{
+		{"saved, then removed before any deploy", net(3), nil, appliedRec{id: 10}, true},
+		{"no deployment recorded at all", net(3), nil, appliedRec{}, true},
+		{"a newer deploy without it, still converging", net(3, 2), nil, appliedRec{id: 11}, true},
+		{"a newer deploy without it, converged", net(3), nil, appliedRec{id: 11}, false},
+		{"still saved", net(3), []Destination{tg}, appliedRec{id: 11}, true},
+		{"still applied", net(3), nil, appliedRec{id: 11, dests: []Destination{tg}}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := planSidecar(defaultNames, planInput{nets: []docker.PrefixNetwork{c.n}, saved: map[int64][]Destination{1: c.saved},
+				applied: map[int64]appliedRec{1: c.applied}, served: served})
+			kept := slices.Contains(p.Keep["krill-egress-1"], tg)
+			retired := slices.Contains(p.Retire[1], tg)
+			if kept != c.keep || retired == c.keep {
+				t.Fatalf("kept %v retired %v, want kept %v", kept, retired, c.keep)
+			}
+		})
+	}
+	// The service's label was rewritten (a domain change replaces the
+	// labels): the served record still holds the name.
+	n := net(3)
+	n.Labels = map[string]map[string]string{"krill-1": {"traefik.enable": "true"}}
+	p := planSidecar(defaultNames, planInput{nets: []docker.PrefixNetwork{n}, applied: map[int64]appliedRec{1: {id: 10}}, served: served})
+	if !slices.Contains(p.Keep["krill-egress-1"], tg) {
+		t.Fatal("a served name dropped when the label went")
 	}
 }

@@ -367,6 +367,9 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 	}
 	admitted()
 	if err := s.sendHello(r.ctx, r.store, r.version); err != nil {
+		if errors.Is(err, errListRead) {
+			slog.Error("link: session ended, the destination list cannot be read", "peer", peer.Name, "err", err)
+		}
 		return
 	}
 	slog.Info("link: session connected", "peer", peer.Name, "from", src.Addr(), "version", hello.KrillVersion)

@@ -51,10 +51,12 @@ func labelSelection(labels map[string]string) []Destination {
 
 // sidecarPlan is what the sidecar should serve: per egress network it stays
 // on, the destinations whose hosts it answers for there, and the networks
-// nothing uses any more, which it leaves (and which are then removed).
+// nothing uses any more, which it leaves (and which are then removed). Retire
+// are the served names (by app) a converged deploy without them retired.
 type sidecarPlan struct {
 	Keep   map[string][]Destination
 	Unused []string
+	Retire map[int64][]Destination
 }
 
 // prepareReq is a deploy about to put an app on its egress network.
@@ -63,35 +65,99 @@ type prepareReq struct {
 	dests []Destination
 }
 
+// appliedRec is the newest deployment of an app that recorded its link
+// selection.
+type appliedRec struct {
+	id    int64
+	dests []Destination
+}
+
+// servedRec is a name the sidecar answers for, and the app's newest
+// deployment when it began.
+type servedRec struct {
+	dest  Destination
+	floor int64
+}
+
+// planInput is what the sidecar's plan is made from.
+type planInput struct {
+	nets      []docker.PrefixNetwork
+	saved     map[int64][]Destination
+	applied   map[int64]appliedRec
+	preparing map[int64][]Destination
+	served    map[int64][]servedRec
+	prep      *prepareReq
+}
+
 // planSidecar decides the sidecar's networks and names. A network stays while
 // a service other than the sidecar attaches it or a task of one is on it, or
 // while its app is being prepared for a deploy. On a network it stays on, the
-// sidecar answers for the app's saved selection, the one its last recorded
-// deployment applied, the one its service's current spec carries (a deploy
-// not recorded yet, also across a restart of Krill) and one being prepared:
-// a host leaves DNS only once a deploy without it has converged, so until then
+// sidecar answers for what the app may still need: its saved selection, the
+// one its last recorded deployment applied, the one its service's current
+// spec carries, one being prepared, and every name it already answers for —
+// a served name is retired only when it is in none of those, every live task
+// of the app runs the current spec (converged) and a deployment newer than
+// the one current when the name began has recorded its selection. Until then
 // the app's connections to it are refused, never sent to the real address.
-func planSidecar(names egressNames, nets []docker.PrefixNetwork, saved, applied map[int64][]Destination, preparing map[int64][]Destination, prep *prepareReq) sidecarPlan {
-	p := sidecarPlan{Keep: map[string][]Destination{}}
-	for _, n := range nets {
+func planSidecar(names egressNames, in planInput) sidecarPlan {
+	p := sidecarPlan{Keep: map[string][]Destination{}, Retire: map[int64][]Destination{}}
+	for _, n := range in.nets {
 		appID, ok := names.appOf(n.Name)
 		if !ok {
 			continue // not one of Krill's: leave it alone
 		}
-		isPrep := prep != nil && prep.app == appID
-		pending, isPreparing := preparing[appID]
+		isPrep := in.prep != nil && in.prep.app == appID
+		pending, isPreparing := in.preparing[appID]
 		if !usedByApps(n, names.sidecar) && !isPreparing && !isPrep {
 			p.Unused = append(p.Unused, n.Name)
 			continue
 		}
-		p.Keep[n.Name] = unionDests(saved[appID], applied[appID], labelSelection(n.Labels[names.appService(appID)]), pending)
+		needed := unionDests(in.saved[appID], in.applied[appID].dests, labelSelection(n.Labels[names.appService(appID)]), pending)
+		if isPrep {
+			needed = unionDests(needed, in.prep.dests)
+		}
+		keep := needed
+		done := converged(n, names.appService(appID))
+		for _, s := range in.served[appID] {
+			if slices.Contains(needed, s.dest) {
+				continue
+			}
+			if done && in.applied[appID].id > s.floor {
+				p.Retire[appID] = append(p.Retire[appID], s.dest)
+				continue
+			}
+			keep = unionDests(keep, []Destination{s.dest})
+		}
+		p.Keep[n.Name] = keep
 	}
-	if prep != nil {
-		name := names.network(prep.app)
-		p.Keep[name] = unionDests(p.Keep[name], saved[prep.app], applied[prep.app], prep.dests)
+	if in.prep != nil {
+		name := names.network(in.prep.app)
+		if _, ok := p.Keep[name]; !ok {
+			var served []Destination
+			for _, s := range in.served[in.prep.app] {
+				served = append(served, s.dest)
+			}
+			p.Keep[name] = unionDests(in.saved[in.prep.app], in.applied[in.prep.app].dests, in.prep.dests, served)
+		}
 	}
 	slices.Sort(p.Unused)
 	return p
+}
+
+// converged reports whether every live task of svc on n runs the service's
+// current spec: an old task still draining after a rolling update, or one
+// left by a deploy Krill never recorded, may still need a name.
+func converged(n docker.PrefixNetwork, svc string) bool {
+	cur, attached := n.ForceUpdate[svc]
+	for _, t := range n.Tasks {
+		if t.Service != svc {
+			continue
+		}
+		if !attached || t.ForceUpdate != cur {
+			return false
+		}
+	}
+	return true
 }
 
 // usedByApps reports whether anything but the sidecar uses n.

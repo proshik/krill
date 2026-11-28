@@ -207,20 +207,38 @@ func (d *Deployer) configFingerprint(a App) AppliedConfig {
 	return out
 }
 
-// withLinkDefault fills in the link section of a fingerprint recorded before
-// the section existed: a release without egress never applied a selection,
-// so its deploys applied none, and a first selection saved after the update
-// shows as not applied (and Apply settings can apply it).
-func (d *Deployer) withLinkDefault(c AppliedConfig, a App) AppliedConfig {
+// withLinkDefault fills in the link section of a fingerprint recorded by a
+// release without egress. The selection in force is the one the newest
+// deployment that recorded a link section applied — a deploy by the link
+// core release after a rollback keeps the app's egress attachment but
+// records none — and with no such deployment there was never one, so it is
+// the empty selection: a first selection saved after the update shows as not
+// applied, and so does one emptied after a rollback and an update again.
+func (d *Deployer) withLinkDefault(ctx context.Context, c AppliedConfig, a App) AppliedConfig {
 	if _, ok := c.Sections[SectionLink]; ok {
 		return c
 	}
-	a.LinkEgress = nil
-	empty := d.configFingerprint(a).Sections[SectionLink]
 	out := c
 	out.Sections = maps.Clone(c.Sections)
-	out.Sections[SectionLink] = empty
+	if ls, ok := d.store.(linkSectionStore); ok {
+		if prev, found, err := ls.LatestLinkApplied(ctx, a.ID); err == nil && found && prev.comparable(c) {
+			out.Sections[SectionLink] = prev.Sections[SectionLink]
+			return out
+		} else if err != nil {
+			slog.Warn("pending changes: latest link selection", "app", a.ID, "err", err)
+			return c // unknown, never a false "changed"
+		}
+	}
+	a.LinkEgress = nil
+	out.Sections[SectionLink] = d.configFingerprint(a).Sections[SectionLink]
 	return out
+}
+
+// linkSectionStore is the store capability withLinkDefault reads.
+type linkSectionStore interface {
+	// LatestLinkApplied is the fingerprint of the app's newest successful
+	// deployment that recorded a link section.
+	LatestLinkApplied(ctx context.Context, appID int64) (AppliedConfig, bool, error)
 }
 
 // configStore is the optional store capability behind applied-configuration
@@ -381,7 +399,7 @@ func (d *Deployer) pendingFor(ctx context.Context, appID int64, l LatestApplied)
 	if !l.Config.comparable(now) {
 		return Pending{}, false
 	}
-	stored := d.withLinkDefault(*l.Config, a)
+	stored := d.withLinkDefault(ctx, *l.Config, a)
 	var p Pending
 	for _, s := range Sections {
 		stored, known := stored.Sections[s]
@@ -467,7 +485,7 @@ func (d *Deployer) checkApplyFresh(ctx context.Context, j job, app App) error {
 	if l.Config != nil {
 		now := d.configFingerprint(app)
 		if l.Config.comparable(now) {
-			stored := d.withLinkDefault(*l.Config, app)
+			stored := d.withLinkDefault(ctx, *l.Config, app)
 			for _, s := range Sections {
 				if v, known := stored.Sections[s]; known && v != now.Sections[s] {
 					return nil

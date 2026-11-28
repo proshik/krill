@@ -13,6 +13,9 @@ type Querier interface {
 	ActivatePanelDomain(ctx context.Context, host string) (int64, error)
 	AddAppLinkDestination(ctx context.Context, arg AddAppLinkDestinationParams) error
 	AddLinkDestination(ctx context.Context, arg AddLinkDestinationParams) (int64, error)
+	// The floor is the app's newest deployment now: only a later one can retire
+	// the name.
+	AddLinkEgressServed(ctx context.Context, arg AddLinkEgressServedParams) error
 	AdvanceEnvironmentCloneCleanup(ctx context.Context, arg AdvanceEnvironmentCloneCleanupParams) (string, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
 	// Named by the logical database (several of them share one server).
@@ -137,6 +140,8 @@ type Querier interface {
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitCredential(ctx context.Context, id int64) error
 	DeleteLinkDestination(ctx context.Context, arg DeleteLinkDestinationParams) (int64, error)
+	DeleteLinkEgressServed(ctx context.Context, arg DeleteLinkEgressServedParams) error
+	DeleteLinkEgressServedApp(ctx context.Context, applicationID int64) error
 	DeleteLinkPeer(ctx context.Context, id int64) (int64, error)
 	DeleteLogicalDatabase(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
@@ -355,6 +360,7 @@ type Querier interface {
 	// client: every saved selection with its app's place and grant, for the
 	// sidecar's aliases and routes, the manifest and the Link page.
 	ListLinkEgressApps(ctx context.Context) ([]ListLinkEgressAppsRow, error)
+	ListLinkEgressServed(ctx context.Context) ([]ListLinkEgressServedRow, error)
 	// Every application domain sitting on a host the link wants, with where to
 	// find it.
 	ListLinkHostDomainHolders(ctx context.Context, host string) ([]ListLinkHostDomainHoldersRow, error)

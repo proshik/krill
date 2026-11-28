@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -200,5 +201,46 @@ func TestPendingLinkAfterUpgrade(t *testing.T) {
 	}
 	if sp := d.buildSpec(a, "img"); sp.Labels[LinkEgressLabel] != "api.telegram.org:443" {
 		t.Fatalf("selection label = %q", sp.Labels[LinkEgressLabel])
+	}
+}
+
+// After a rollback the core release's deploy records no link section; after
+// the update again, emptying the selection shows as not applied, because the
+// selection in force is the one the last egress deploy applied.
+func TestPendingLinkAfterRollback(t *testing.T) {
+	q, st, d, _, appID, _ := configFixture(t)
+	ctx := t.Context()
+	ident, err := q.GetApplicationIdentity(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO link_settings (id, role) VALUES (true, 'client') ON CONFLICT (id) DO UPDATE SET role = 'client'`,
+		`INSERT INTO link_org_grants (org_id) VALUES (` + strconv.FormatInt(ident.OrgID, 10) + `)`,
+		`INSERT INTO app_link_destinations (application_id, host, port) VALUES (` + strconv.FormatInt(appID, 10) + `, 'api.telegram.org', 443)`,
+	} {
+		if _, err := st.pool.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.SetEgress(&fakeEgress{})
+	egressDeploy := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, egressDeploy)
+	requireDeployment(t, q, egressDeploy, "done")
+	// The core release's deploy after a rollback: no link section.
+	rollbackDeploy := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, rollbackDeploy)
+	requireDeployment(t, q, rollbackDeploy, "done")
+	if _, err := st.pool.Exec(ctx, `UPDATE deployments SET applied_config = (applied_config #- '{sections,link}') - 'egress' WHERE id = $1`, rollbackDeploy); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.PendingChanges(ctx, []int64{appID})[appID]; got.Has(SectionLink) {
+		t.Fatalf("pending with the selection unchanged = %+v", got)
+	}
+	if _, err := st.pool.Exec(ctx, `DELETE FROM app_link_destinations WHERE application_id = $1`, appID); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.PendingChanges(ctx, []int64{appID})[appID]; !got.Has(SectionLink) {
+		t.Fatalf("emptying the selection after the rollback: pending = %+v, want link", got)
 	}
 }

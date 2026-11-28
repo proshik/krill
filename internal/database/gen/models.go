@@ -293,6 +293,14 @@ type LinkDestination struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type LinkEgressServed struct {
+	ApplicationID int64     `json:"application_id"`
+	Host          string    `json:"host"`
+	Port          int32     `json:"port"`
+	DeployFloor   int64     `json:"deploy_floor"`
+	ServedSince   time.Time `json:"served_since"`
+}
+
 type LinkIngressHost struct {
 	Host       string    `json:"host"`
 	PeerID     int64     `json:"peer_id"`

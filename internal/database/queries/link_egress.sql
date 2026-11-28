@@ -97,7 +97,7 @@ WHERE a.id = $1;
 -- its link selection (a link section in applied_config). A deployment by a
 -- release without egress records none and is skipped: after a rollback onto
 -- it and back, the selection the egress release last applied still counts.
-SELECT DISTINCT ON (d.application_id) d.application_id, d.applied_config
+SELECT DISTINCT ON (d.application_id) d.application_id, d.id, d.applied_config
 FROM deployments d
 WHERE d.application_id = ANY(sqlc.arg(ids)::bigint[]) AND d.status = 'done'
   AND d.applied_config -> 'sections' -> 'link' IS NOT NULL
@@ -109,3 +109,19 @@ SELECT id FROM applications WHERE id = $1 FOR UPDATE;
 
 -- name: CountLinkDestinations :one
 SELECT count(*) FROM link_destinations;
+
+-- name: ListLinkEgressServed :many
+SELECT application_id, host, port, deploy_floor FROM link_egress_served ORDER BY application_id, host, port;
+
+-- name: AddLinkEgressServed :exec
+-- The floor is the app's newest deployment now: only a later one can retire
+-- the name.
+INSERT INTO link_egress_served (application_id, host, port, deploy_floor)
+VALUES ($1, $2, $3, (SELECT COALESCE(max(id), 0) FROM deployments WHERE application_id = $1))
+ON CONFLICT (application_id, host, port) DO NOTHING;
+
+-- name: DeleteLinkEgressServed :exec
+DELETE FROM link_egress_served WHERE application_id = $1 AND host = $2 AND port = $3;
+
+-- name: DeleteLinkEgressServedApp :exec
+DELETE FROM link_egress_served WHERE application_id = $1;

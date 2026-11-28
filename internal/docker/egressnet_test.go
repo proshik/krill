@@ -43,12 +43,14 @@ func TestPrefixNetworks(t *testing.T) {
 	got := prefixNetworks("krill-egress-", nets, svcs, tasks)
 	want := []PrefixNetwork{
 		{Name: "krill-egress-1", Services: []string{"krill-1", "krill-link-egress"},
-			Labels: map[string]map[string]string{"krill-1": {"k": "v"}, "krill-link-egress": nil}, Tasks: []NetworkTask{
-			{Service: "krill-1", NodeID: "node", State: "running", IP: "10.0.9.5"},
-			{Service: "krill-1", NodeID: "node", State: "starting", IP: "10.0.9.6"},
-			{Service: "krill-link-egress", NodeID: "node", State: "running", IP: "10.0.9.2"},
-		}},
-		{Name: "krill-egress-2", Services: []string{"krill-link-egress"}, Labels: map[string]map[string]string{"krill-link-egress": nil}},
+			Labels:      map[string]map[string]string{"krill-1": {"k": "v"}, "krill-link-egress": nil},
+			ForceUpdate: map[string]uint64{"krill-1": 0, "krill-link-egress": 0}, Tasks: []NetworkTask{
+				{Service: "krill-1", NodeID: "node", State: "running", IP: "10.0.9.5"},
+				{Service: "krill-1", NodeID: "node", State: "starting", IP: "10.0.9.6"},
+				{Service: "krill-link-egress", NodeID: "node", State: "running", IP: "10.0.9.2"},
+			}},
+		{Name: "krill-egress-2", Services: []string{"krill-link-egress"}, Labels: map[string]map[string]string{"krill-link-egress": nil},
+			ForceUpdate: map[string]uint64{"krill-link-egress": 0}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)

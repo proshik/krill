@@ -71,7 +71,7 @@ func TestSetAppDestinationsSerialized(t *testing.T) {
 	}
 	a, b := []Destination{tg}, []Destination{oai}
 	for round := 0; round < 20; round++ {
-		if err := st.setAppDestinations(ctx, appID, nil); err != nil {
+		if err := st.setAppDestinations(ctx, appID, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
@@ -79,7 +79,7 @@ func TestSetAppDestinationsSerialized(t *testing.T) {
 			wg.Add(1)
 			go func(set []Destination) {
 				defer wg.Done()
-				if err := st.setAppDestinations(ctx, appID, set); err != nil {
+				if err := st.setAppDestinations(ctx, appID, set, nil); err != nil {
 					t.Error(err)
 				}
 			}(set)

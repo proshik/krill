@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
@@ -143,7 +144,12 @@ func (r *Relay) pushLists(ctx context.Context) {
 		if !ok || !s.egress {
 			continue
 		}
-		if err := s.sendLists(ctx, r.store); err != nil {
+		switch err := s.sendLists(ctx, r.store); {
+		case errors.Is(err, errListRead):
+			// The sessions are fine; the next change or reconnect sends
+			// the list. Not worth ending working streams over.
+			slog.Error("link: read the destination list failed; lists not sent", "peer", s.peer, "err", err)
+		case err != nil:
 			slog.Info("link: lists not delivered; the session ends", "peer", s.peer, "err", err)
 			_ = s.mux.Close()
 		}
@@ -159,10 +165,13 @@ func (s *relaySession) sendLists(ctx context.Context, store *Store) error {
 	}
 	dests, err := store.Destinations(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errListRead, err)
 	}
 	return writeMessage(s.ctl, message{Type: "lists", Destinations: dests})
 }
+
+// errListRead is a destination list the relay could not read.
+var errListRead = errors.New("read the destination list")
 
 // sendHello answers the client's hello: first on the control stream, with
 // the destination list for a client that speaks egress, read under the
@@ -174,9 +183,9 @@ func (s *relaySession) sendHello(ctx context.Context, store *Store, version stri
 	if s.egress {
 		dests, err := store.Destinations(ctx)
 		if err != nil {
-			// The client then refuses every egress connection until the
-			// next lists; the session itself is fine.
-			slog.Error("link: read the destination list failed", "peer", s.peer, "err", err)
+			// An empty list would read as "nothing allowed" until the next
+			// change: end the attempt, the client reconnects.
+			return fmt.Errorf("%w: %v", errListRead, err)
 		}
 		m.Destinations = dests
 	}

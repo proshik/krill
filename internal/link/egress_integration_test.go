@@ -210,8 +210,25 @@ func TestRelayHelloWithoutEgress(t *testing.T) {
 	client.svc.Close()
 	eventually(t, "the session to end", 10*time.Second, func() bool { return connectedPeers(t, relay) == 0 })
 	mux := clientMux(t, client)
-	m, err := hello(t, mux)
+	ctl, err := mux.OpenStream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteHeader(ctl, StreamControl, helloHeader{Proto: ProtoVersion}); err != nil {
+		t.Fatal(err)
+	}
+	br := newMessageReader(ctl)
+	_ = ctl.SetReadDeadline(time.Now().Add(10 * time.Second))
+	m, err := readMessage(br)
 	if err != nil || m.Type != "hello" || len(m.Destinations) != 0 {
 		t.Fatalf("hello %+v %v, want no destinations", m, err)
+	}
+	// A change of the list later sends it nothing either.
+	if err := relay.svc.AddDestination(ctx, Destination{"other.example.com", 443}); err != nil {
+		t.Fatal(err)
+	}
+	_ = ctl.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if m, err := readMessage(br); err == nil {
+		t.Fatalf("a client without egress got %+v", m)
 	}
 }

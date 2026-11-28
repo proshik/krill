@@ -106,6 +106,11 @@ from a backup) or a protocol version the relay does not speak.
 
 ## Send an app's traffic through the link (egress)
 
+Both installations must run a release with egress: a relay on the link core release has no
+destination list, and a client connected to it says on its Link page that the relay needs an
+update (the session shows **connected** either way — that is the link itself; egress is
+announced separately).
+
 Three people decide, in this order:
 
 1. **The relay operator** keeps the relay's **destinations** (Settings → Link → Destinations):
@@ -151,12 +156,17 @@ the bytes carried since Krill started. The relay lists a client's services under
 - **The link is down, a destination was removed from the relay's list or from the app, or the
   organization was revoked:** the app's new connections to those hosts are refused at once. They
   are never sent directly.
-- **The sidecar must keep running.** It runs two tasks, and Krill restores them within a minute
-  if they are fewer (it logs an error). Do not scale `krill-link-egress` down or remove it by
+- **The sidecar must keep running.** It runs two tasks, and Krill checks every minute and
+  redeploys it when fewer run (it logs an error); the new tasks then take up to a few minutes to
+  start. Check it with `docker service ls` (`krill-link-egress` at 2/2) and, from the app's
+  container, that the host resolves to an address of the egress network rather than the public
+  one. Do not scale `krill-link-egress` down or remove it by
   hand: with no sidecar task, Docker's DNS answers the hosts with their real addresses, and the
   apps' connections leave directly until the sidecar is back.
 - **A destination removed from the app's selection** stays intercepted (and refused) until a
-  deploy without it has finished; only then does the app resolve the real address again.
+  deploy without it has finished and all the app's old tasks are gone; only then does the app
+  resolve the real address again. This holds across a restart of Krill and a deploy Krill never
+  recorded: Krill keeps the names its sidecar answers for until a later deploy retires them.
 - **Turning the link off or revoking an organization** marks its apps' settings as not applied;
   their next deploy takes them off the link, and from then on they reach those hosts directly.
 
@@ -165,6 +175,13 @@ the bytes carried since Krill started. The relay lists a client's services under
 - TLS only, exact host names: no wildcard, no IP, no UDP, no Telegram MTProto. A connection
   using Encrypted Client Hello is refused (the name the server acts on would be hidden from the
   checks). The relay's list holds at most 50 destinations.
+- The relay checks the TLS server name, not what runs inside TLS: an HTTPS front end that picks
+  its backend by the HTTP `Host` header can still be asked for another of its sites. Allow a
+  host only if you trust every site behind its front end, or if that front end checks the HTTP
+  name against the TLS one.
+- The relay's service table comes from the client's manifest, which fits one control line: with
+  very many apps or long names the last ones are left out of the relay's view (their traffic is
+  not affected).
 - Interception is per **host**, not per port: an app that picks `api.example.org:8443` also sends
   its connections to `api.example.org:443` to the link, where they are refused, never sent
   directly. The app's card says so.
@@ -202,5 +219,9 @@ The link core's deployer (`v0.17.0`) keeps every app's attachments to `krill-egr
 networks on a redeploy and its listener refuses egress streams, so rolling back one release from
 the egress release fails closed: the apps' connections to their link hosts are refused until
 Krill is updated again. Going further back does not: see [Rollback](../install.md#rollback).
+One case fails open even one release back: on the core release, **Stop** removes an app that runs
+in global placement mode and **Deploy** creates it again, and that release's deployer has no
+attachment to carry over — the recreated app is not on its egress network. Do not stop and start
+global-mode apps with egress while rolled back; update again first.
 That is why egress stays off while `krill.prev` (the binary **Roll back** and the automatic
 revert put back) is older than the core release.

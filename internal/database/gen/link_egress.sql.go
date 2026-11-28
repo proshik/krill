@@ -43,6 +43,25 @@ func (q *Queries) AddLinkDestination(ctx context.Context, arg AddLinkDestination
 	return result.RowsAffected(), nil
 }
 
+const addLinkEgressServed = `-- name: AddLinkEgressServed :exec
+INSERT INTO link_egress_served (application_id, host, port, deploy_floor)
+VALUES ($1, $2, $3, (SELECT COALESCE(max(id), 0) FROM deployments WHERE application_id = $1))
+ON CONFLICT (application_id, host, port) DO NOTHING
+`
+
+type AddLinkEgressServedParams struct {
+	ApplicationID int64  `json:"application_id"`
+	Host          string `json:"host"`
+	Port          int32  `json:"port"`
+}
+
+// The floor is the app's newest deployment now: only a later one can retire
+// the name.
+func (q *Queries) AddLinkEgressServed(ctx context.Context, arg AddLinkEgressServedParams) error {
+	_, err := q.db.Exec(ctx, addLinkEgressServed, arg.ApplicationID, arg.Host, arg.Port)
+	return err
+}
+
 const countLinkDestinations = `-- name: CountLinkDestinations :one
 SELECT count(*) FROM link_destinations
 `
@@ -78,6 +97,30 @@ func (q *Queries) DeleteLinkDestination(ctx context.Context, arg DeleteLinkDesti
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteLinkEgressServed = `-- name: DeleteLinkEgressServed :exec
+DELETE FROM link_egress_served WHERE application_id = $1 AND host = $2 AND port = $3
+`
+
+type DeleteLinkEgressServedParams struct {
+	ApplicationID int64  `json:"application_id"`
+	Host          string `json:"host"`
+	Port          int32  `json:"port"`
+}
+
+func (q *Queries) DeleteLinkEgressServed(ctx context.Context, arg DeleteLinkEgressServedParams) error {
+	_, err := q.db.Exec(ctx, deleteLinkEgressServed, arg.ApplicationID, arg.Host, arg.Port)
+	return err
+}
+
+const deleteLinkEgressServedApp = `-- name: DeleteLinkEgressServedApp :exec
+DELETE FROM link_egress_served WHERE application_id = $1
+`
+
+func (q *Queries) DeleteLinkEgressServedApp(ctx context.Context, applicationID int64) error {
+	_, err := q.db.Exec(ctx, deleteLinkEgressServedApp, applicationID)
+	return err
 }
 
 const getLinkEgressAppPath = `-- name: GetLinkEgressAppPath :one
@@ -252,7 +295,7 @@ func (q *Queries) ListAppLinkEgress(ctx context.Context, applicationID int64) ([
 }
 
 const listLatestLinkApplied = `-- name: ListLatestLinkApplied :many
-SELECT DISTINCT ON (d.application_id) d.application_id, d.applied_config
+SELECT DISTINCT ON (d.application_id) d.application_id, d.id, d.applied_config
 FROM deployments d
 WHERE d.application_id = ANY($1::bigint[]) AND d.status = 'done'
   AND d.applied_config -> 'sections' -> 'link' IS NOT NULL
@@ -261,6 +304,7 @@ ORDER BY d.application_id, d.started_at DESC, d.id DESC
 
 type ListLatestLinkAppliedRow struct {
 	ApplicationID int64  `json:"application_id"`
+	ID            int64  `json:"id"`
 	AppliedConfig []byte `json:"applied_config"`
 }
 
@@ -277,7 +321,7 @@ func (q *Queries) ListLatestLinkApplied(ctx context.Context, ids []int64) ([]Lis
 	var items []ListLatestLinkAppliedRow
 	for rows.Next() {
 		var i ListLatestLinkAppliedRow
-		if err := rows.Scan(&i.ApplicationID, &i.AppliedConfig); err != nil {
+		if err := rows.Scan(&i.ApplicationID, &i.ID, &i.AppliedConfig); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -364,6 +408,42 @@ func (q *Queries) ListLinkEgressApps(ctx context.Context) ([]ListLinkEgressAppsR
 			&i.ProjectName,
 			&i.OrgID,
 			&i.Granted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLinkEgressServed = `-- name: ListLinkEgressServed :many
+SELECT application_id, host, port, deploy_floor FROM link_egress_served ORDER BY application_id, host, port
+`
+
+type ListLinkEgressServedRow struct {
+	ApplicationID int64  `json:"application_id"`
+	Host          string `json:"host"`
+	Port          int32  `json:"port"`
+	DeployFloor   int64  `json:"deploy_floor"`
+}
+
+func (q *Queries) ListLinkEgressServed(ctx context.Context) ([]ListLinkEgressServedRow, error) {
+	rows, err := q.db.Query(ctx, listLinkEgressServed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLinkEgressServedRow
+	for rows.Next() {
+		var i ListLinkEgressServedRow
+		if err := rows.Scan(
+			&i.ApplicationID,
+			&i.Host,
+			&i.Port,
+			&i.DeployFloor,
 		); err != nil {
 			return nil, err
 		}

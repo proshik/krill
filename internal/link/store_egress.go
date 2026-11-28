@@ -109,13 +109,27 @@ func (s *Store) AppDestinations(ctx context.Context, appID int64) ([]Destination
 	return out, nil
 }
 
-// setAppDestinations replaces an app's saved selection.
-func (s *Store) setAppDestinations(ctx context.Context, appID int64, ds []Destination) error {
+// setAppDestinations replaces an app's saved selection; check, when set,
+// sees the selection as it is under the app's row lock and can refuse.
+func (s *Store) setAppDestinations(ctx context.Context, appID int64, ds []Destination, check func(saved []Destination) error) error {
 	return s.inTx(ctx, func(q *db.Queries) error {
 		// Two replacements of one selection must not merge: the row lock
 		// orders them (an empty selection has no rows of its own to lock).
 		if _, err := q.LockLinkEgressApp(ctx, appID); err != nil {
 			return err
+		}
+		if check != nil {
+			rows, err := q.ListAppLinkDestinations(ctx, appID)
+			if err != nil {
+				return err
+			}
+			saved := make([]Destination, 0, len(rows))
+			for _, r := range rows {
+				saved = append(saved, Destination{Host: r.Host, Port: int(r.Port)})
+			}
+			if err := check(saved); err != nil {
+				return err
+			}
 		}
 		if err := q.DeleteAppLinkDestinations(ctx, appID); err != nil {
 			return err
@@ -171,12 +185,12 @@ type appliedEgress struct {
 	Egress []string `json:"egress"`
 }
 
-// appliedSelections returns, for each listed app, the selection its newest
-// successful deployment that recorded one applied — a deployment by a release
-// without egress (a rollback) records none and does not count as "nothing".
-// An app without such a deployment has no entry.
-func (s *Store) appliedSelections(ctx context.Context, appIDs []int64) (map[int64][]Destination, error) {
-	out := map[int64][]Destination{}
+// appliedSelections returns, for each listed app, its newest successful
+// deployment that recorded a link selection and that selection — a
+// deployment by a release without egress (a rollback) records none and does
+// not count as "nothing". An app without such a deployment has no entry.
+func (s *Store) appliedSelections(ctx context.Context, appIDs []int64) (map[int64]appliedRec, error) {
+	out := map[int64]appliedRec{}
 	if len(appIDs) == 0 {
 		return out, nil
 	}
@@ -189,13 +203,49 @@ func (s *Store) appliedSelections(ctx context.Context, appIDs []int64) (map[int6
 		if json.Unmarshal(r.AppliedConfig, &a) != nil {
 			continue
 		}
+		rec := appliedRec{id: r.ID}
 		for _, e := range a.Egress {
 			if d, err := ParseDestinationString(e); err == nil {
-				out[r.ApplicationID] = append(out[r.ApplicationID], d)
+				rec.dests = append(rec.dests, d)
 			}
 		}
+		out[r.ApplicationID] = rec
 	}
 	return out, nil
+}
+
+// served lists the names the sidecar answers for, by app.
+func (s *Store) served(ctx context.Context) (map[int64][]servedRec, error) {
+	rows, err := s.q.ListLinkEgressServed(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64][]servedRec{}
+	for _, r := range rows {
+		out[r.ApplicationID] = append(out[r.ApplicationID], servedRec{dest: Destination{Host: r.Host, Port: int(r.Port)}, floor: r.DeployFloor})
+	}
+	return out, nil
+}
+
+// recordServed records the names the sidecar is about to answer for (a name
+// already recorded keeps its floor).
+func (s *Store) recordServed(ctx context.Context, appID int64, ds []Destination) error {
+	for _, d := range ds {
+		if err := s.q.AddLinkEgressServed(ctx, db.AddLinkEgressServedParams{ApplicationID: appID, Host: d.Host, Port: int32(d.Port)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// retireServed forgets names the sidecar no longer answers for.
+func (s *Store) retireServed(ctx context.Context, appID int64, ds []Destination) error {
+	for _, d := range ds {
+		if err := s.q.DeleteLinkEgressServed(ctx, db.DeleteLinkEgressServedParams{ApplicationID: appID, Host: d.Host, Port: int32(d.Port)}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // appPath is an app's project/environment/app and organization; false when

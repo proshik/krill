@@ -271,6 +271,26 @@ implementer's and reversible.
   show as not applied, the Swarm test's cleanup could remove another test's objects, and the guide
   missed re-applying the firewall on a client. All fixed with tests.
 
+- Review round 2 (the last of the budget) found that a served name could still be dropped while
+  an old task might need it (a deploy interrupted by a restart, a save undone before any deploy, a
+  domain change rewriting the service's labels, a listing taken just before the app attached).
+  Fixed at the root: *(impl)* migration 000067 also creates `link_egress_served` (the names the
+  sidecar answers for, with the app's newest deployment id as a floor) — beyond the three tables
+  this task lists, additive; a served name is retired only when nothing else needs it, every live
+  task of the app runs the current spec (`ForceUpdate`) and a link-recording deployment above the
+  floor exists; prepared names stay until a reconcile sees the app attached. Also fixed: the
+  stream bound and a 5 s deadline come before the per-connection database read; a failed read of
+  the relay's list no longer ends working sessions (it ends a `hello`, so the client reconnects
+  instead of believing an empty list); the offered-or-saved check of a selection runs under the
+  app's row lock; manifests are published in order; a fingerprint without a link section takes
+  the newest recorded selection (rollback and update again); a test that a client without egress
+  gets no `lists`. Documented, not fixed: the relay's check ends at the TLS name (an HTTPS front
+  end routing by `Host` is the destination's business); a manifest too large for one control line
+  drops the last apps from the relay's view only; on the core release a global-mode app stopped
+  and started again is recreated without its egress network (that release's deployer only carries
+  attachments over from a running service) — the guide says not to do that while rolled back.
+  The guide now also says both sides need egress and how to check the sidecar.
+
 Plan: migration and queries → rollback gate (`selfupdate`) → SNI parser, egress stream
 protocol, relay checks → docker aliases and egress-network inspection → deploy section,
 networks and egress hook → sidecar spec, dynamic config, reconciler, app identification and

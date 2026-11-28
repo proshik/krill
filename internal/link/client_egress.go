@@ -48,6 +48,10 @@ func (c *Client) SetManifest(svcs []ManifestService) {
 // sendManifest writes the manifest on the live control stream, bounded to
 // what one control message carries.
 func (c *Client) sendManifest() {
+	// The snapshot is taken under the write lock: of two sends the later
+	// one carries the newer manifest.
+	c.ctlMu.Lock()
+	defer c.ctlMu.Unlock()
 	c.mu.Lock()
 	ctl, ok, svcs := c.ctl, c.relayEgress, c.manifest
 	c.mu.Unlock()
@@ -55,9 +59,7 @@ func (c *Client) sendManifest() {
 		return
 	}
 	m := message{Type: "manifest", Services: fitManifest(svcs)}
-	c.ctlMu.Lock()
 	err := writeMessage(ctl, m)
-	c.ctlMu.Unlock()
 	if err != nil {
 		slog.Info("link: manifest not delivered", "err", err)
 	}
