@@ -174,7 +174,7 @@ func (s *Server) addLinkDestination(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := destinationFromForm(r)
 	if err != nil {
-		s.flashErrT(w, r, "link.err.invalid_dest")
+		http.Error(w, i18n.T(r.Context(), "link.err.invalid_dest"), http.StatusBadRequest)
 		return
 	}
 	switch err := s.link.AddDestination(r.Context(), d); {
@@ -203,7 +203,7 @@ func (s *Server) removeLinkDestination(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := destinationFromForm(r)
 	if err != nil {
-		s.flashErrT(w, r, "link.err.invalid_dest")
+		http.Error(w, i18n.T(r.Context(), "link.err.invalid_dest"), http.StatusBadRequest)
 		return
 	}
 	switch err := s.link.RemoveDestination(r.Context(), d); {

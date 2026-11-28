@@ -353,3 +353,37 @@ func TestEgressConfigEndpoint(t *testing.T) {
 		t.Fatalf("routes %s (%v)", rec.Body.String(), err)
 	}
 }
+
+// The relay's list takes exact host names and ports 1..65535: anything else
+// is a 400 and nothing is written.
+func TestLinkDestinationValidation(t *testing.T) {
+	e := newLinkServer(t, "198.51.100.10")
+	base, cookie, _ := nodesOrg(t, e.q, e.orgSvc, "relay-dests@k.local", "OrgRelayDests")
+	if rec := postForm(t, e.h, base+"/link/role", cookie, url.Values{"role": {"relay"}, "link_host": {linkHost}}); hasErrFlash(rec) {
+		t.Fatalf("relay: %q", flashCookieValue(rec))
+	}
+	for _, bad := range []url.Values{
+		{"host": {"203.0.113.7"}, "port": {"443"}},
+		{"host": {"*.example.com"}, "port": {"443"}},
+		{"host": {"api.example.com"}, "port": {"0"}},
+		{"host": {"api.example.com"}, "port": {"65536"}},
+		{"host": {"api.example.com"}, "port": {"https"}},
+	} {
+		if rec := postForm(t, e.h, base+"/link/destinations", cookie, bad); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%v: %d, want 400", bad, rec.Code)
+		}
+	}
+	if rec := postForm(t, e.h, base+"/link/destinations", cookie, url.Values{"host": {"API.Example.com"}, "port": {"443"}}); hasErrFlash(rec) {
+		t.Fatalf("add: %q", flashCookieValue(rec))
+	}
+	ds, err := e.link.Destinations(context.Background())
+	if err != nil || len(ds) != 1 || ds[0].String() != "api.example.com:443" {
+		t.Fatalf("list %v %v", ds, err)
+	}
+	if rec := postForm(t, e.h, base+"/link/destinations/remove", cookie, url.Values{"host": {"api.example.com"}, "port": {"443"}}); hasErrFlash(rec) {
+		t.Fatalf("remove: %q", flashCookieValue(rec))
+	}
+	if ds, _ := e.link.Destinations(context.Background()); len(ds) != 0 {
+		t.Fatalf("after remove %v", ds)
+	}
+}
