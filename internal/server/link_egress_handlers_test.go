@@ -2,8 +2,8 @@ package server_test
 
 import (
 	"context"
-	"html"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,9 +39,13 @@ type egressEngine struct{ docker.Engine }
 func (egressEngine) PrefixNetworks(context.Context, string) ([]docker.PrefixNetwork, error) {
 	return nil, nil
 }
-func (egressEngine) ConfigEnsure(context.Context, string, []byte, map[string]string) error { return nil }
-func (egressEngine) SecretEnsure(context.Context, string, []byte, map[string]string) error { return nil }
-func (egressEngine) PruneObjects(context.Context, string, string, []string) error         { return nil }
+func (egressEngine) ConfigEnsure(context.Context, string, []byte, map[string]string) error {
+	return nil
+}
+func (egressEngine) SecretEnsure(context.Context, string, []byte, map[string]string) error {
+	return nil
+}
+func (egressEngine) PruneObjects(context.Context, string, string, []string) error { return nil }
 
 func withEgress(t *testing.T) func(*server.Server, *linkEnv) {
 	return func(_ *server.Server, e *linkEnv) {
