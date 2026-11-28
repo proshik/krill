@@ -62,6 +62,7 @@ type sidecarInput struct {
 	// there; a network with none is still attached (an app leaving it).
 	Aliases     map[string][]string
 	Ports       []int  // one entrypoint each
+	Name        string // the service; "" for SidecarService
 	ProviderURL string // the dynamic configuration's URL
 	Token       string // the provider token
 }
@@ -81,8 +82,7 @@ func sidecarSpec(in sidecarInput) (docker.ServiceSpec, []byte) {
 	for _, p := range ports {
 		eps[entrypoint(p)] = map[string]any{"address": ":" + strconv.Itoa(p)}
 	}
-	static, _ := json.Marshal(map[string]any{
-		"entryPoints": eps,
+	cfg := map[string]any{
 		"providers": map[string]any{
 			"http": map[string]any{
 				"endpoint":     in.ProviderURL,
@@ -91,9 +91,21 @@ func sidecarSpec(in sidecarInput) (docker.ServiceSpec, []byte) {
 			},
 		},
 		"log": map[string]any{"level": "WARN"},
-	})
+	}
+	// An empty entryPoints object stops Traefik ("entryPoints cannot be a
+	// standalone element"): with no port left (an app leaving its network)
+	// the key is left out, and Traefik's default web entrypoint routes
+	// nothing.
+	if len(eps) > 0 {
+		cfg["entryPoints"] = eps
+	}
+	static, _ := json.Marshal(cfg)
 	sum := sha256.Sum256(static)
-	secretName := SidecarService + "-" + hex.EncodeToString(sum[:])[:16]
+	name := in.Name
+	if name == "" {
+		name = SidecarService
+	}
+	secretName := name + "-" + hex.EncodeToString(sum[:])[:16]
 
 	nets := slices.Sorted(maps.Keys(in.Aliases))
 	aliases := map[string][]string{}
@@ -104,7 +116,7 @@ func sidecarSpec(in sidecarInput) (docker.ServiceSpec, []byte) {
 		}
 	}
 	spec := docker.ServiceSpec{
-		Name:     SidecarService,
+		Name:     name,
 		Image:    "traefik:" + traefik.TraefikVersion,
 		Replicas: 1,
 		Networks: nets,

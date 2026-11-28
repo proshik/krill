@@ -49,6 +49,7 @@ type Egress struct {
 	eng   egressEngine
 	nets  docker.PrefixNetworks // eng; apart so identification can be tested alone
 	ctx   context.Context
+	names egressNames
 
 	providerURL string // the sidecar's dynamic configuration, on Krill's UI listener
 	token       string
@@ -75,7 +76,7 @@ func NewEgress(svc *Service, eng docker.Engine, gatewaySecret string) (*Egress, 
 	if !ok {
 		return nil, ErrEgressUnsupported
 	}
-	e := &Egress{svc: svc, store: svc.store, eng: ee, nets: ee, ctx: svc.ctx, token: EgressToken(gatewaySecret),
+	e := &Egress{svc: svc, store: svc.store, eng: ee, nets: ee, ctx: svc.ctx, names: defaultNames, token: EgressToken(gatewaySecret),
 		kick: make(chan struct{}, 1), preparing: map[int64]time.Time{}, traffic: newTraffic()}
 	ui, err := panel.Upstream(svc.cfg.AdvertiseAddr, svc.cfg.ListenAddr)
 	if err == nil {
@@ -174,11 +175,11 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 	e.recMu.Lock()
 	defer e.recMu.Unlock()
 	if prep != nil {
-		if _, err := e.eng.NetworkEnsure(ctx, EgressNetwork(prep.app)); err != nil {
+		if _, err := e.eng.NetworkEnsure(ctx, e.names.network(prep.app)); err != nil {
 			return fmt.Errorf("create the egress network: %w", err)
 		}
 	}
-	nets, err := e.eng.PrefixNetworks(ctx, EgressNetworkPrefix)
+	nets, err := e.eng.PrefixNetworks(ctx, e.names.netPrefix)
 	if err != nil {
 		return fmt.Errorf("list the egress networks: %w", err)
 	}
@@ -193,7 +194,7 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 	}
 	var ids []int64
 	for _, n := range nets {
-		if id, ok := EgressNetworkApp(n.Name); ok {
+		if id, ok := e.names.appOf(n.Name); ok {
 			ids = append(ids, id)
 		}
 	}
@@ -201,7 +202,7 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 	if err != nil {
 		return err
 	}
-	plan := planSidecar(nets, saved, applied, e.preparingSet(), prep)
+	plan := planSidecar(e.names, nets, saved, applied, e.preparingSet(), prep)
 	if len(plan.Keep) == 0 {
 		if err := e.removeSidecar(ctx); err != nil {
 			return err
@@ -212,8 +213,10 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 	if e.upErr != nil {
 		return fmt.Errorf("the egress sidecar cannot reach Krill: %w", e.upErr)
 	}
-	spec, static := sidecarSpec(plan.input(e.providerURL, e.token))
-	labels := map[string]string{sidecarObjectLabel: sidecarObjectValue}
+	in := plan.input(e.providerURL, e.token)
+	in.Name = e.names.sidecar
+	spec, static := sidecarSpec(in)
+	labels := map[string]string{sidecarObjectLabel: e.names.objects}
 	if err := e.eng.SecretEnsure(ctx, spec.Secrets[0].Name, static, labels); err != nil {
 		return fmt.Errorf("store the sidecar configuration: %w", err)
 	}
@@ -222,10 +225,10 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 		return err
 	}
 	if changed {
-		if err := e.eng.PruneObjects(ctx, sidecarObjectLabel, sidecarObjectValue, []string{spec.Secrets[0].Name}); err != nil {
+		if err := e.eng.PruneObjects(ctx, sidecarObjectLabel, e.names.objects, []string{spec.Secrets[0].Name}); err != nil {
 			slog.Warn("link: prune old sidecar configurations failed", "err", err)
 		}
-		if nets, err := e.eng.PrefixNetworks(ctx, EgressNetworkPrefix); err == nil {
+		if nets, err := e.eng.PrefixNetworks(ctx, e.names.netPrefix); err == nil {
 			e.setIndex(nets)
 		}
 	}
@@ -236,12 +239,12 @@ func (e *Egress) reconcile(ctx context.Context, prep *prepareReq) error {
 // deploySidecar deploys spec unless the running sidecar already has it and
 // is settled, and waits for its new task; it reports whether it deployed.
 func (e *Egress) deploySidecar(ctx context.Context, spec docker.ServiceSpec) (bool, error) {
-	before, err := e.eng.ServiceProgress(ctx, SidecarService, nil)
+	before, err := e.eng.ServiceProgress(ctx, e.names.sidecar, nil)
 	if err != nil {
 		return false, fmt.Errorf("read the sidecar's tasks: %w", err)
 	}
 	if before.Found && docker.UpdateSettled(before.UpdateState) && before.Running > 0 {
-		if cur, found, err := e.eng.ServiceLabels(ctx, SidecarService); err == nil && found {
+		if cur, found, err := e.eng.ServiceLabels(ctx, e.names.sidecar); err == nil && found {
 			if h := spec.Labels[sidecarHashLabel]; h != "" && cur[sidecarHashLabel] == h {
 				return false, nil
 			}
@@ -255,7 +258,7 @@ func (e *Egress) deploySidecar(ctx context.Context, spec docker.ServiceSpec) (bo
 	if err := e.eng.ServiceDeploy(ctx, spec); err != nil {
 		return false, fmt.Errorf("deploy the egress sidecar: %w", err)
 	}
-	if err := waitService(ctx, e.eng, SidecarService, baseline); err != nil {
+	if err := waitService(ctx, e.eng, e.names.sidecar, baseline); err != nil {
 		return true, err
 	}
 	slog.Info("link: egress sidecar deployed", "networks", len(spec.Networks))
@@ -294,17 +297,17 @@ func waitService(ctx context.Context, eng docker.Engine, name string, baseline [
 
 // removeSidecar removes the sidecar service and its configurations.
 func (e *Egress) removeSidecar(ctx context.Context) error {
-	st, err := e.eng.ServiceState(ctx, SidecarService)
+	st, err := e.eng.ServiceState(ctx, e.names.sidecar)
 	if err != nil {
 		return fmt.Errorf("read the sidecar: %w", err)
 	}
 	if st.Found {
 		slog.Info("link: no app uses an egress network any more; removing the egress sidecar")
-		if err := e.eng.ServiceRemove(ctx, SidecarService); err != nil {
+		if err := e.eng.ServiceRemove(ctx, e.names.sidecar); err != nil {
 			return fmt.Errorf("remove the egress sidecar: %w", err)
 		}
 	}
-	if err := e.eng.PruneObjects(ctx, sidecarObjectLabel, sidecarObjectValue, nil); err != nil {
+	if err := e.eng.PruneObjects(ctx, sidecarObjectLabel, e.names.objects, nil); err != nil {
 		slog.Warn("link: prune sidecar configurations failed", "err", err)
 	}
 	return nil
@@ -323,7 +326,7 @@ func (e *Egress) removeNetworks(ctx context.Context, names []string) {
 }
 
 func (e *Egress) setIndex(nets []docker.PrefixNetwork) {
-	x := buildIndex(nets)
+	x := buildIndex(e.names, nets)
 	e.mu.Lock()
 	e.idx, e.idxAt = x, time.Now()
 	e.mu.Unlock()
@@ -347,7 +350,7 @@ func (e *Egress) identify(ctx context.Context, src, dst netip.Addr) (int64, erro
 	e.mu.Unlock()
 	// Someone refreshed while this waited: that is this miss's refresh.
 	if now.Equal(at) && time.Since(now) >= indexRefreshMin {
-		nets, err := e.nets.PrefixNetworks(ctx, EgressNetworkPrefix)
+		nets, err := e.nets.PrefixNetworks(ctx, e.names.netPrefix)
 		if err != nil {
 			return 0, fmt.Errorf("list the egress networks: %w", err)
 		}

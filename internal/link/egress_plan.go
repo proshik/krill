@@ -3,9 +3,36 @@ package link
 import (
 	"net/netip"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/proshik/krill/internal/docker"
 )
+
+// egressNames are the names egress gives Swarm objects. Production uses
+// defaultNames; an integration test on a shared Swarm uses its own.
+type egressNames struct {
+	sidecar    string             // the sidecar service
+	netPrefix  string             // the per-app egress networks
+	appService func(int64) string // an app's service
+	objects    string             // the label value of the sidecar's secrets
+}
+
+var defaultNames = egressNames{sidecar: SidecarService, netPrefix: EgressNetworkPrefix,
+	appService: docker.ServiceName, objects: sidecarObjectValue}
+
+func (n egressNames) network(appID int64) string {
+	return n.netPrefix + strconv.FormatInt(appID, 10)
+}
+
+// appOf is the app of an egress network, false for any other name.
+func (n egressNames) appOf(name string) (int64, bool) {
+	rest, ok := strings.CutPrefix(name, n.netPrefix)
+	if !ok {
+		return 0, false
+	}
+	return EgressNetworkApp(EgressNetworkPrefix + rest)
+}
 
 // sidecarPlan is what the sidecar should serve: per egress network it stays
 // on, the destinations whose hosts it answers for there, and the networks
@@ -28,22 +55,22 @@ type prepareReq struct {
 // deployment applied: a host leaves DNS only once a deploy without it has
 // converged, so until then the app's connections to it are refused, never
 // sent to the real address.
-func planSidecar(nets []docker.PrefixNetwork, saved, applied map[int64][]Destination, preparing map[int64]bool, prep *prepareReq) sidecarPlan {
+func planSidecar(names egressNames, nets []docker.PrefixNetwork, saved, applied map[int64][]Destination, preparing map[int64]bool, prep *prepareReq) sidecarPlan {
 	p := sidecarPlan{Keep: map[string][]Destination{}}
 	for _, n := range nets {
-		appID, ok := EgressNetworkApp(n.Name)
+		appID, ok := names.appOf(n.Name)
 		if !ok {
 			continue // not one of Krill's: leave it alone
 		}
 		isPrep := prep != nil && prep.app == appID
-		if !usedByApps(n) && !preparing[appID] && !isPrep {
+		if !usedByApps(n, names.sidecar) && !preparing[appID] && !isPrep {
 			p.Unused = append(p.Unused, n.Name)
 			continue
 		}
 		p.Keep[n.Name] = unionDests(saved[appID], applied[appID])
 	}
 	if prep != nil {
-		name := EgressNetwork(prep.app)
+		name := names.network(prep.app)
 		p.Keep[name] = unionDests(p.Keep[name], saved[prep.app], applied[prep.app], prep.dests)
 	}
 	slices.Sort(p.Unused)
@@ -51,14 +78,14 @@ func planSidecar(nets []docker.PrefixNetwork, saved, applied map[int64][]Destina
 }
 
 // usedByApps reports whether anything but the sidecar uses n.
-func usedByApps(n docker.PrefixNetwork) bool {
+func usedByApps(n docker.PrefixNetwork, sidecar string) bool {
 	for _, s := range n.Services {
-		if s != SidecarService {
+		if s != sidecar {
 			return true
 		}
 	}
 	for _, t := range n.Tasks {
-		if t.Service != SidecarService {
+		if t.Service != sidecar {
 			return true
 		}
 	}
@@ -105,14 +132,14 @@ type egressIndex struct {
 	tasks   map[int64]map[netip.Addr]bool
 }
 
-func buildIndex(nets []docker.PrefixNetwork) egressIndex {
+func buildIndex(names egressNames, nets []docker.PrefixNetwork) egressIndex {
 	x := egressIndex{sidecar: map[netip.Addr]int64{}, tasks: map[int64]map[netip.Addr]bool{}}
 	for _, n := range nets {
-		appID, ok := EgressNetworkApp(n.Name)
+		appID, ok := names.appOf(n.Name)
 		if !ok {
 			continue
 		}
-		own := docker.ServiceName(appID)
+		own := names.appService(appID)
 		for _, t := range n.Tasks {
 			ip, err := netip.ParseAddr(t.IP)
 			if err != nil {
@@ -120,7 +147,7 @@ func buildIndex(nets []docker.PrefixNetwork) egressIndex {
 			}
 			ip = ip.Unmap()
 			switch t.Service {
-			case SidecarService:
+			case names.sidecar:
 				x.sidecar[ip] = appID
 			case own:
 				if x.tasks[appID] == nil {

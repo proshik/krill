@@ -31,7 +31,7 @@ func TestPlanSidecarAliasesSavedUnionApplied(t *testing.T) {
 	}
 	saved := map[int64][]Destination{1: {tg}, 2: {}}
 	applied := map[int64][]Destination{1: {oai}, 2: {alt}}
-	p := planSidecar(nets, saved, applied, nil, nil)
+	p := planSidecar(defaultNames, nets, saved, applied, nil, nil)
 	want := map[string][]Destination{
 		"krill-egress-1": {oai, tg},
 		"krill-egress-2": {alt},
@@ -59,7 +59,7 @@ func TestPlanSidecarNetworks(t *testing.T) {
 		appNet(4, nil),
 		{Name: "krill-egress-x"}, // not Krill's
 	}
-	p := planSidecar(nets, nil, nil, map[int64]bool{3: true}, &prepareReq{app: 4, dests: []Destination{tg}})
+	p := planSidecar(defaultNames, nets, nil, nil, map[int64]bool{3: true}, &prepareReq{app: 4, dests: []Destination{tg}})
 	if !reflect.DeepEqual(p.Unused, []string{"krill-egress-1"}) {
 		t.Fatalf("unused %v", p.Unused)
 	}
@@ -73,7 +73,7 @@ func TestPlanSidecarNetworks(t *testing.T) {
 		t.Fatalf("prepared network keeps %v", p.Keep["krill-egress-4"])
 	}
 	// A network that did not show in the listing yet still gets the prepare.
-	p = planSidecar(nil, map[int64][]Destination{5: {oai}}, nil, nil, &prepareReq{app: 5, dests: []Destination{tg}})
+	p = planSidecar(defaultNames, nil, map[int64][]Destination{5: {oai}}, nil, nil, &prepareReq{app: 5, dests: []Destination{tg}})
 	if !reflect.DeepEqual(p.Keep["krill-egress-5"], []Destination{oai, tg}) {
 		t.Fatalf("keep %v", p.Keep)
 	}
@@ -94,7 +94,7 @@ func (f *fakeNets) PrefixNetworks(context.Context, string) ([]docker.PrefixNetwo
 
 // egressWithNets is an Egress whose engine answers PrefixNetworks only.
 func egressWithNets(f *fakeNets) *Egress {
-	return &Egress{ctx: context.Background(), nets: f, preparing: map[int64]time.Time{}, traffic: newTraffic()}
+	return &Egress{ctx: context.Background(), nets: f, names: defaultNames, preparing: map[int64]time.Time{}, traffic: newTraffic()}
 }
 
 // The app is the one whose egress network carries the sidecar address the

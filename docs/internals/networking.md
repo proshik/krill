@@ -77,7 +77,7 @@ tasks (`allowEmptyServices=false`), so a stopped app's redirect 404s — documen
 
 ## Krill link
 
-*(2026-11-27, KRL-001: the core; egress KRL-002, ingress KRL-005)*
+*(2026-11-27, KRL-001: the core; 2026-11-28, KRL-002: egress; ingress KRL-005)*
 
 Two installations linked: a **client** holds one outbound TLS 1.3 connection with mutual
 authentication to a **relay**, and both sides multiplex streams over it with
@@ -183,8 +183,7 @@ read otherwise, and the header is believed only together with that handshake. Th
 client certificate and the listener's certificate are self-signed, created with the role
 (`EnsureLocalMaterial`, replaced when they cannot be decrypted) and pinned on the other side:
 Traefik gets the listener's certificate as its `rootCAs` for `serverName`
-`krill-link-listener`. On a client the listener has nothing to dispatch until egress and closes
-authenticated connections.
+`krill-link-listener`. On a client the listener serves the egress sidecar's connections (below).
 
 ### The relay's endpoint is a TCP route merged into `/_krill/gateway/config`
 
@@ -231,10 +230,102 @@ domain's direct-port drift asks whether **the UI port itself** is gateway-only
 (`portGatewayOnly`), not whether any port is (`firewall.GatewayOnly`, now without a production
 caller).
 
+### Egress (KRL-002)
+
+**Data (migration 000067, additive).** `link_destinations (host, port)` — the relay's one list,
+the hard boundary for every peer; `link_org_grants (org_id)` — the client operator's grants;
+`app_link_destinations (application_id, host, port)` — an app's saved selection (no FK to the
+relay's list: it lives on another installation; a destination the relay dropped stays selected and
+is refused). Hosts go through `panel.NormalizeHost` (`link.ParseDestination`), ports
+`strconv.Atoi` 1..65535. Queries in `queries/link_egress.sql`.
+
+**Protocol.** Both `hello`s carry `egress: true`; only then does the client send `manifest`
+(services: app id, `project/env/app`, destinations — for display only) and the relay send
+`lists` (its destinations, also in its `hello`). A KRL-001 relay closes the session on an
+unknown control message, so neither side sends the new ones to a peer that did not announce
+them. An `egress` stream's header is `{host, port, service}`; `service` labels the counters and
+pages, it is never a permission.
+
+**Relay checks** (`Relay.serveEgress`), in order, each refusal a WARN with peer, service and
+`host:port`, before anything is dialed: `{host, port}` is exactly normalized and on
+`link_destinations` (read per stream, so a removal applies to the next stream); the stream's
+ClientHello (`ReadClientHello`, fuzzed: TLS records, multi-record hello, ≤ 64 KiB, nothing read
+past it) names exactly `host` — no SNI is refused — so a compromised client cannot reach another
+virtual host behind an allowed name's shared TLS front end; then the relay resolves and dials
+through `netguard.DialContext(false)` (10 s): a name resolving to a private, loopback or
+link-local address is refused (DNS rebinding towards the relay's own services). The buffered
+ClientHello is written on and both directions are spliced (`splice`, half-close per direction).
+
+**Client path.** The listener hands the whole PROXY header to the role (`dispatch`): on a client
+the connection is the sidecar's, carrying an app's TLS stream. `Egress.serveConn`: identify the
+app (`identify`: the PROXY **destination** is the sidecar's task address on the app's own egress
+network, the **source** must be a task of `krill-<appID>` on that network; addresses come from
+`docker.PrefixNetworks`, cached; a miss refreshes once, at most every 250 ms, then refuses);
+read the ClientHello's SNI itself; then `decideEgress` — session up ∧ organization granted ∧
+`(SNI, PROXY port)` in the app's **saved** selection ∧ on the relay's last list. The grant and
+selection are read from the database for every connection (`LinkEgressDecision`), so revoking a
+grant or a destination closes new connections at once, without a redeploy. A refusal resets the
+connection (linger 0) and logs a WARN with app id, `host:port` and the reason, never app data.
+
+**Per-app networks and the sidecar.** An app whose *applied* selection is not empty gets its own
+overlay `krill-egress-<appID>` (MTU as `orgnet`, through `NetworkEnsure`) as a second network
+(`buildSpec`: `Networks = [org network, egress network]`); Traefik still routes it over the org
+network through `traefik.docker.network` — never add a `traefik.swarm.*` label beside it, Traefik
+v3.6.1 skips a service carrying both kinds (`TestEgressAppAnswersThroughTraefik` proves the label
+wins over a provider default Traefik cannot reach). The applied selection is the saved one while
+the role is `client` and the organization is granted (`ListAppLinkEgress`), otherwise empty: a
+revoke or role off marks the apps "settings not applied" and their next deploy leaves the
+network. The egress release's deployer therefore manages that attachment itself and no longer
+sets `KeepNetworkPrefix` (the core release's deployer still does, which keeps a rollback onto it
+fail closed). Before such a deploy `EgressHook.Prepare` creates the network and has the sidecar
+answer for the app's hosts there, waiting for its new task; a failure fails the deploy.
+`krill-link-egress` is the pinned Traefik on `node.role==manager`, **DNSRR** (an alias resolves to
+the task's own address, so Krill sees the app's task address; a VIP would replace it with the
+network's balancer; at zero replicas the name does not resolve at all), no docker socket, no
+swarm provider. Its aliases on each network (`docker.ServiceSpec.NetworkAliases`, omitempty) are
+the app's **saved ∪ applied** selection — applied from the latest successful deployment's
+`applied_config.egress` (plain `host:port`, beside the digests; `deploy.SectionLink` is the new
+fingerprint section) — so a host leaves DNS only once a deploy without it has converged, and until
+then its connections are refused, never resolved to the real address. One entrypoint per distinct
+port; with none the `entryPoints` key is left out (an empty one stops Traefik). Its static
+configuration — the HTTP provider `http://<advertise>:<ui port>/_krill/link/egress-config` and its
+token, an HMAC of the panel secret under its own label (`EgressToken`) — is a Swarm secret named by
+its content and passed as `--configFile`, never in argv or labels; the spec carries a fingerprint
+label, so unchanged inputs do not recreate the task. The dynamic configuration routes, per port,
+`HostSNI` of the saved destinations of granted organizations (only while the role is `client`)
+with passthrough to `<advertise>:<link port>` through a transport with PROXY v2 and the
+installation's gateway client certificate inline (on a client the main gateway never gets that
+certificate); anything else has no route.
+
+**Lifecycle** (`Egress.reconcile`, at start in any role, on every kick — role, grant, selection,
+a finished deploy — and every minute): a network stays while any service other than the sidecar
+attaches it or has a task on it, or while its app is being prepared; the sidecar leaves an unused
+network and then it is removed; with none left the sidecar service is removed. Removing the
+sidecar earlier would make the names resolve to the real addresses (fail open).
+
+**Pages.** The relay lists its destinations and, under each peer, the services of its manifest
+with bytes up/down; the client lists the relay's list as sent, the organizations with grant
+controls and its services. The app's settings tab has a link card only while the link is open to
+its organization (otherwise no card and the POST is 404), with the line that a host is
+intercepted on every port. Counters are in memory since the process started.
+
+**Rollback gate.** Granting an organization and saving an app's selection are refused, with
+the reason, while `selfupdate.Updater.RollbackBinary` reports `krill.prev` older than
+`link.CoreRelease` (`v0.17.0`, the first tag with the core) or unknown (path unresolved, updater
+not wired, `--version` fails, times out or prints no `krill vX.Y.Z`); absent is allowed. The gate
+does not revoke an existing grant.
+
+**Limits.** TLS only, exact names, no wildcard, UDP or MTProto; interception is per host, not
+per port; the pre-deploy one-off container is not identified as the app and does not use the
+link. Krill's own notifications through the link are KRL-003.
+
 ### A redeploy keeps every `krill-egress-*` attachment
 
-`Deployer.buildSpec` sets `docker.ServiceSpec.KeepNetworkPrefix = deploy.EgressNetworkPrefix`
-(`json:",omitempty"`); `ServiceDeploy` resolves the running service's attachments to names
+*(the link core release, v0.17.0 — the rollback target of the egress release)*
+
+That release's `Deployer.buildSpec` sets `docker.ServiceSpec.KeepNetworkPrefix =
+deploy.EgressNetworkPrefix` (`json:",omitempty"`); the egress release's deployer manages the
+app's egress attachment itself and leaves it unset (see Egress above). `ServiceDeploy` resolves the running service's attachments to names
 (`attachmentNames`, network IDs as Swarm stores them) and carries over those with the prefix,
 aliases included (`keepAttachments`), unless the spec attaches that network itself. No such
 network exists before KRL-002; afterwards this is what keeps a rollback from the egress release

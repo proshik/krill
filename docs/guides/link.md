@@ -5,11 +5,11 @@ reach some foreign APIs directly — keeps one persistent outbound TLS connectio
 abroad, and both sides carry streams over it. Telegram's Bot API and LLM APIs are the usual
 examples: the relay reaches them, the client does not.
 
-This release builds the link itself: roles, pairing, the encrypted transport, reconnection, the
-relay's endpoint behind its gateway and the operator page. **It does not route any app traffic
-yet**: sending apps' outbound connections through the link (egress) and receiving webhooks
-through the relay (ingress) arrive in later releases. Setting the link up now lets you check that
-the connection holds on your real network before anything depends on it.
+Apps on the client reach the hosts the relay allows **through the link, without a change to
+their code or environment**: an app calls `https://api.telegram.org` (long polling included) or
+`https://api.openai.com` by its usual name, and the connection leaves from the relay. TLS stays
+end to end — the relay sees the host, the port and the sizes, never the content or a bot token.
+Receiving webhooks through the relay (ingress) arrives in a later release.
 
 ## How it works
 
@@ -104,6 +104,78 @@ On the relay, each client's row shows its session or when it was last seen, its 
 expiry and the latest refused session: a second one from another address (a clone restored
 from a backup) or a protocol version the relay does not speak.
 
+## Send an app's traffic through the link (egress)
+
+Three people decide, in this order:
+
+1. **The relay operator** keeps the relay's **destinations** (Settings → Link → Destinations):
+   exact host names and ports, the same for every client — for example `api.telegram.org:443`
+   and `api.openai.com:443`. This list is the hard boundary: the relay refuses any other
+   destination whatever a client asks.
+2. **The client operator** grants the link to an organization (Settings → Link →
+   Organizations).
+3. **An admin of that organization** picks, on the app's **Settings** tab, which of the
+   relay's destinations the app sends through the link, saves, and deploys (or **Apply
+   settings**). Until then the app shows its settings as not applied.
+
+From the next deploy on, the app resolves the chosen hosts to Krill's egress sidecar, and its
+connections to them go through the link:
+
+```
+app ─ api.telegram.org:443 ─▶ krill-link-egress (on the app's own network)
+                               │ SNI, unopened, PROXY v2 + mTLS
+                               ▼
+                             Krill (client): which app? granted? chosen? on the relay's list?
+                               │ egress stream over the link
+                               ▼
+                             Krill (relay): on its list? SNI = host? resolve, no private address
+                               │
+                               ▼
+                             api.telegram.org:443
+```
+
+Example: a Telegram bot with long polling and an app calling an LLM API.
+
+1. Relay: add `api.telegram.org` port `443` and `api.openai.com` port `443` to the
+   destinations.
+2. Client: grant the bot's organization.
+3. Bot app → Settings → **Egress through the link**: tick `api.telegram.org:443`, save,
+   deploy. The bot's `getUpdates` and `sendMessage` now leave from the relay; nothing in the
+   bot changes. The LLM app: tick `api.openai.com:443` the same way.
+
+Both Link pages show each service with its destinations, whether the relay allows them, and
+the bytes carried since Krill started. The relay lists a client's services under its card.
+
+### What stays true when something fails
+
+- **The link is down, a destination was removed from the relay's list or from the app, or the
+  organization was revoked:** the app's new connections to those hosts are refused at once. They
+  are never sent directly.
+- **A destination removed from the app's selection** stays intercepted (and refused) until a
+  deploy without it has finished; only then does the app resolve the real address again.
+- **Turning the link off or revoking an organization** marks its apps' settings as not applied;
+  their next deploy takes them off the link, and from then on they reach those hosts directly.
+
+### Limits
+
+- TLS only, exact host names: no wildcard, no IP, no UDP, no Telegram MTProto.
+- Interception is per **host**, not per port: an app that picks `api.example.org:8443` also sends
+  its connections to `api.example.org:443` to the link, where they are refused, never sent
+  directly. The app's card says so.
+- The **pre-deploy command** runs in a one-off container on the organization network and does
+  not use the link.
+- Each app with egress gets its own network (`krill-egress-<app id>`) and the sidecar sits on all
+  of them; an app without egress keeps resolving real addresses. A change of an app's hosts
+  restarts the sidecar's task (StartFirst), which can break open connections for a moment; long
+  polling and SDKs reconnect.
+- Granting an organization and saving an app's destinations are refused while the [rollback
+  binary](#rollback) is older than the link core release (`v0.17.0`) or cannot be read: a
+  rollback onto a release without the link core would send the apps' traffic directly. The
+  pages say why and link to Settings → Updates.
+- A client needs what a relay needs for its listener: `KRILL_ADVERTISE_ADDR` set and Krill
+  listening on a non-loopback address, because the sidecar reaches Krill that way. The Link
+  page says when that is missing.
+
 ## Remove a client, forget the relay
 
 - **Remove client** on the relay ends its session and invalidates its certificate. Pairing it
@@ -118,6 +190,9 @@ from a backup) or a protocol version the relay does not speak.
 A relay rolled back to a release without the link stops routing the link host; clients keep
 retrying and reconnect once the relay is back on a release with it.
 
-The link core's deployer keeps every app's attachments to `krill-egress-*` networks on a
-redeploy, so rolling back one release from the egress release fails closed. Going further back
-does not: see [Rollback](../install.md#rollback).
+The link core's deployer (`v0.17.0`) keeps every app's attachments to `krill-egress-*`
+networks on a redeploy and its listener refuses egress streams, so rolling back one release from
+the egress release fails closed: the apps' connections to their link hosts are refused until
+Krill is updated again. Going further back does not: see [Rollback](../install.md#rollback).
+That is why egress stays off while `krill.prev` (the binary **Roll back** and the automatic
+revert put back) is older than the core release.

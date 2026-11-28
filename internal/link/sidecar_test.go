@@ -176,3 +176,17 @@ func TestEgressTokenDistinct(t *testing.T) {
 		t.Fatalf("tokens %q %q", a, b)
 	}
 }
+
+// With no port left the static configuration has no entryPoints key: an
+// empty one stops Traefik v3.6.1 ("entryPoints cannot be a standalone
+// element"), and the sidecar must keep running while an app leaves.
+func TestSidecarSpecWithoutPorts(t *testing.T) {
+	_, static := sidecarSpec(sidecarInput{Aliases: map[string][]string{"krill-egress-3": nil}, ProviderURL: "http://203.0.113.10:8080", Token: "t"})
+	var cfg map[string]any
+	if err := json.Unmarshal(static, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["entryPoints"]; ok {
+		t.Fatalf("static configuration %s has entryPoints without a port", static)
+	}
+}
