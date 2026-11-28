@@ -47,20 +47,20 @@ the rollback target; the gate below keeps egress off until it is gone.
 
 ## Acceptance
 
-- [ ] WHEN the migration runs THEN it adds `link_destinations (host, port, PK both)`
+- [x] WHEN the migration runs THEN it adds `link_destinations (host, port, PK both)`
       (relay only — the single destination list), `link_org_grants (org_id PK →
       organizations ON DELETE CASCADE)` and `app_link_destinations (application_id →
       applications ON DELETE CASCADE, host, port, PK all three)`, additive only. Hosts
       are normalized like the panel domain (no IP, no wildcard), ports with
       `strconv.Atoi` and 1..65535 (400 otherwise).
-- [ ] WHEN the relay operator edits the relay's destination list THEN the relay sends
+- [x] WHEN the relay operator edits the relay's destination list THEN the relay sends
       it to clients in `control` (`hello`, `lists`) and refuses any `egress` stream
       whose `{host, port}` is not on it; it reads the stream's ClientHello itself and
       refuses unless the SNI equals the declared host (no SNI → refused), so a
       compromised client cannot reach another virtual host behind an allowed name's
       shared TLS front end; it resolves the host itself and dials only through
       `internal/netguard` with private egress disallowed.
-- [ ] WHEN the client operator grants an organization and an org admin there selects
+- [x] WHEN the client operator grants an organization and an org admin there selects
       destinations from the relay's list THEN the client keeps no list of its own (the
       app page offers only what the relay sent), the selection is saved in
       `app_link_destinations`, the app shows "settings not applied" (add the selection
@@ -68,13 +68,13 @@ the rollback target; the gate below keeps egress off until it is gone.
       that a selected host is intercepted on every port (unselected ports are
       refused, never sent direct). Without a grant there are no controls and the POST
       is 404.
-- [ ] WHEN such an app is deployed THEN it gets its own overlay `krill-egress-<appID>`
+- [x] WHEN such an app is deployed THEN it gets its own overlay `krill-egress-<appID>`
       (MTU as `orgnet`) as a second network, Traefik keeps routing it over the org
       network through the existing `traefik.docker.network` label — never add a
       `traefik.swarm.*` label beside it, Traefik v3.6.1 skips a service carrying both
       kinds — and an integration test on real Traefik proves an app on two networks
       still answers on its domain.
-- [ ] WHEN the sidecar is reconciled THEN `krill-link-egress` (image `traefik:` +
+- [x] WHEN the sidecar is reconciled THEN `krill-link-egress` (image `traefik:` +
       `traefik.TraefikVersion`, `node.role==manager`, **endpoint mode DNSRR**, no docker
       socket, no swarm provider) is attached to every `krill-egress-<appID>`; on each
       network its aliases (new `docker.ServiceSpec.NetworkAliases`,
@@ -86,7 +86,7 @@ the rollback target; the gate below keeps egress off until it is gone.
       secret; dynamic config routing `HostSNI(host)` with passthrough to the
       authenticated gateway listener (PROXY v2 + inline sidecar client cert). The spec
       is fingerprinted so unchanged inputs do not recreate the task.
-- [ ] WHEN the sidecar hands a connection to Krill THEN Krill parses the ClientHello
+- [x] WHEN the sidecar hands a connection to Krill THEN Krill parses the ClientHello
       SNI itself, identifies the app by the PROXY v2 destination address (the
       sidecar's address on that app's network), requires the source address to be a
       task of that app on that network (task addresses from a new engine method; on a
@@ -98,17 +98,17 @@ the rollback target; the gate below keeps egress off until it is gone.
 - [ ] WHEN the link is down, the sidecar is scaled to 0, or a destination was removed
       THEN the app's connection is refused; it never resolves the real address and
       never goes direct.
-- [ ] WHEN the role is `client` THEN the sidecar is reconciled at startup; disabling,
+- [x] WHEN the role is `client` THEN the sidecar is reconciled at startup; disabling,
       revoking or switching the role to `off` empties the sidecar config, the sidecar
       service is removed only when no task is attached to any `krill-egress-*` network
       (a removed service drops the alias and DNS falls back to the real address — fail
       open), and an app's network is removed only when none of its tasks use it.
-- [ ] WHEN the client is connected THEN it sends a `manifest` (app id,
+- [x] WHEN the client is connected THEN it sends a `manifest` (app id,
       `project/environment/app`, destinations) on connect and on change, and both
       Link pages show a per-service table: destinations with state, bytes up/down
       since process start. The relay shows the client's services under its peer card;
       they never appear in the relay's topology.
-- [ ] WHEN the client operator grants an organization, or an org admin saves an app's
+- [x] WHEN the client operator grants an organization, or an org admin saves an app's
       destinations, while the rollback binary is older than the link core release THEN
       it is refused and nothing is written. The rollback binary is `<bin>.prev`, the one
       both **Roll back** and the automatic revert put back. A new `selfupdate.Updater`
@@ -124,7 +124,7 @@ the rollback target; the gate below keeps egress off until it is gone.
       disabled with the reason — the `krill.prev` version (or "cannot be read"), the core
       release, a link to Settings → Updates — through new keys in the `en` and `ru`
       catalogs; each POST checks again and answers with a flash of the same reason.
-- [ ] WHEN the docs are updated THEN `docs/internals/networking.md` gets the
+- [x] WHEN the docs are updated THEN `docs/internals/networking.md` gets the
       "Krill link" egress part and `docs/guides/link.md` explains setup with
       Telegram and an LLM API as examples and the limits (TLS only, exact names,
       host-level interception, no MTProto).
@@ -187,3 +187,112 @@ the rollback target; the gate below keeps egress off until it is gone.
 - `internal/deploy/deployer.go:1204` (`Network: net`), `internal/docker/spec.go`
   (attachments, no aliases), `internal/traefik/labels.go:146`,
   `internal/netguard/netguard.go`, `internal/orgnet`.
+
+## Implementation notes
+
+Recorded by the implementing session (2026-11-28). Decisions marked *(impl)* are the
+implementer's and reversible.
+
+- `link.CoreRelease = "v0.17.0"`: `git tag --contains 435dc53` lists `v0.17.0` first.
+- Owner decision (2026-11-28): no `krill.prev` at all → egress may be enabled; a version that
+  cannot be read (unknown) → refused.
+- *(impl)* The sidecar presents the installation's gateway client certificate
+  (`link_settings.gateway_cert`, the one the relay's gateway uses): spec §5.4 has the sidecar
+  play the gateway on a client, and a client's main gateway never receives that certificate
+  (`GatewayTCP` publishes nothing outside the relay role). The listener hands the whole PROXY
+  header (source and destination) to the role: a relay serves link sessions, a client egress.
+- *(impl)* The applied selection is stored in plain form beside the digests in
+  `deployments.applied_config` (`egress`: `host:port` list, not a secret); its digest is the new
+  section `link`. A fingerprint recorded before has no `link` section: unknown, never "changed".
+- *(impl)* The selection a deploy applies is the saved one while the role is `client` and the
+  organization is granted, otherwise empty: revoking a grant or turning the role off marks the
+  apps "settings not applied", and their next deploy leaves the egress network. Aliases are the
+  saved selection (whatever the grant) ∪ the applied one, so DNS stays on the sidecar until a
+  deploy without the host has converged.
+- *(impl)* The deployer now manages the app's own `krill-egress-<appID>` attachment itself: it
+  lists the network when the applied selection is not empty and drops it otherwise, so it no
+  longer sets `KeepNetworkPrefix` (that rule protects a rollback onto the KRL-001 deployer, which
+  still keeps every attachment). Without dropping, an app whose link was turned off would stay
+  refused for good.
+- *(impl)* Before an app deploys onto its egress network the deployer asks the link to create
+  the network and to have the sidecar serve it with the app's aliases, and waits until the
+  sidecar's new task runs (as `traefik.Reconcile` does); a failure fails the deploy rather than
+  start the app on a network whose names would resolve to the real addresses.
+- *(impl)* The pre-deploy command (a one-off container on the organization network) does not
+  use the link: Krill could not identify it as a task of the app. Documented as a limit.
+- *(impl)* Capabilities on both sides: the client's `hello` and the relay's `hello` carry
+  `egress: true`; only then does the client send `manifest` and the relay send `lists`, so a
+  KRL-002 installation and a KRL-001 one keep their session (a KRL-001 relay closes the session
+  on an unknown control message).
+
+- *(impl)* The sidecar's static configuration (entrypoints, the HTTP provider and its token)
+  is a Swarm secret named by its content and passed as `--configFile`: the token must not be in a
+  container's argv or labels. Traefik ignores the CLI once a file is given, so all of it is in the
+  file; with no port left `entryPoints` is left out (an empty object stops Traefik v3.6.1 — found
+  by the Swarm test).
+- *(impl)* Granting an organization and saving an app's selection are both refused under a
+  closed gate (the task's wording); revoking is never gated. A saved destination the relay no
+  longer offers can be kept or dropped; one it never offered is refused.
+- *(impl)* A grant does not need a paired relay: the Link page shows the egress sections for any
+  client.
+- *(impl)* The egress object names (sidecar, network prefix, app service, secret label) are
+  fields of `link.Egress` defaulting to the production ones, so the Swarm integration test runs
+  with `krl002-` names beside other installations on a shared Swarm.
+- *(impl)* Manifests are bounded (256 services, 64 destinations each, one 16 KiB control line):
+  they are for display; the relay's list is the boundary. Counters are in memory, keyed by
+  peer/service/destination, at most 4096 keys a side.
+- Observed on the Swarm test: right after the sidecar is scaled to 0 its stopping task can still
+  take a connection for a moment, which then goes **through the link** (never directly); after
+  that the name stops resolving (DNSRR at zero). The test checks exactly that.
+- Not covered: a task on a **worker** node (the local suite is one node); the same path, the
+  sidecar on a manager reached over the overlay, is unverified there. The "krill (notifications)"
+  row of the spec's page sketch is KRL-003.
+
+- **Disagreement with this task and the design note (2026-11-28), owner's decision: reduce the
+  risk.** With no sidecar task Docker 29.5.2's embedded DNS answers an alias with the **real**
+  address — measured with `api.telegram.org` for DNSRR (within 5 s) and VIP (after ~10–16 s). The
+  note's §3.2/§3.8 checks used `example.com`, which resolves to nothing in that environment, and
+  read as fail closed. So "the sidecar is scaled to 0 → refused" does not hold; the box above
+  stays unticked for that case (the link down and a removed destination do hold, tested). What
+  was done instead: the sidecar runs two tasks, Krill never scales it down, and every reconcile
+  (at most a minute apart) redeploys it when fewer tasks run, logging an ERROR; the guide tells
+  operators not to scale it by hand. A manual scale to zero or both tasks down remains a fail-open
+  window until the next reconcile. Closing it for good (a static hosts entry to a stable VIP,
+  identifying the app by its network) is a separate decision.
+- Review round 1 (revust `codex-only`) found, besides that: the sidecar could drop a name a deploy
+  in flight or interrupted by a restart still needed (now: the app service's `krill.link.egress`
+  label and the prepared names count), a rollback deploy's fingerprint without a link section
+  read as "nothing applied" (now: the newest deployment that recorded one), the relay's list could
+  outgrow a control line (now at most 50, and only egress clients get it), `lists` could precede
+  or outdate `hello` (now written under the session's lock), two saves of one selection could
+  merge (now a row lock), spliced sockets could outlive their session, one app could exhaust the
+  shared session's streams (now 256 per app), Encrypted Client Hello hid the real name (now
+  refused), draining old tasks lost their names, the first selection after the update did not
+  show as not applied, the Swarm test's cleanup could remove another test's objects, and the guide
+  missed re-applying the firewall on a client. All fixed with tests.
+
+- Review round 2 (the last of the budget) found that a served name could still be dropped while
+  an old task might need it (a deploy interrupted by a restart, a save undone before any deploy, a
+  domain change rewriting the service's labels, a listing taken just before the app attached).
+  Fixed at the root: *(impl)* migration 000067 also creates `link_egress_served` (the names the
+  sidecar answers for, with the app's newest deployment id as a floor) — beyond the three tables
+  this task lists, additive; a served name is retired only when nothing else needs it, every live
+  task of the app runs the current spec (`ForceUpdate`) and a link-recording deployment above the
+  floor exists; prepared names stay until a reconcile sees the app attached. Also fixed: the
+  stream bound and a 5 s deadline come before the per-connection database read; a failed read of
+  the relay's list no longer ends working sessions (it ends a `hello`, so the client reconnects
+  instead of believing an empty list); the offered-or-saved check of a selection runs under the
+  app's row lock; manifests are published in order; a fingerprint without a link section takes
+  the newest recorded selection (rollback and update again); a test that a client without egress
+  gets no `lists`. Documented, not fixed: the relay's check ends at the TLS name (an HTTPS front
+  end routing by `Host` is the destination's business); a manifest too large for one control line
+  drops the last apps from the relay's view only; on the core release a global-mode app stopped
+  and started again is recreated without its egress network (that release's deployer only carries
+  attachments over from a running service) — the guide says not to do that while rolled back.
+  The guide now also says both sides need egress and how to check the sidecar.
+
+Plan: migration and queries → rollback gate (`selfupdate`) → SNI parser, egress stream
+protocol, relay checks → docker aliases and egress-network inspection → deploy section,
+networks and egress hook → sidecar spec, dynamic config, reconciler, app identification and
+the client's egress path → handlers, pages, i18n → wiring → docs → integration tests. Lasting
+rules: `networking.md#krill-link`, plus the AGENTS.md lines in the report.

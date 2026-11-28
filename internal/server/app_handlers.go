@@ -631,6 +631,11 @@ func (s *Server) fillAppSettings(w http.ResponseWriter, r *http.Request, c *temp
 		c.Ports = ports
 	}
 	c.Runtime = s.runtimeView(r, c.App)
+	if lv, err := s.appLinkView(ctx, c.Org.ID, c.App.ID); err != nil {
+		logFrom(r).Error("appDetail: read link egress failed", "err", err, "app_id", c.App.ID)
+	} else {
+		c.Link = lv
+	}
 	if !admin {
 		return true
 	}

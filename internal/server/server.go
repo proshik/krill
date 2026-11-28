@@ -367,6 +367,9 @@ func (s *Server) Router() http.Handler {
 	// The gateway's poll for the panel's routes, authenticated by the provider
 	// token rather than a session.
 	r.Get(panel.ProviderPath, s.gatewayConfig)
+	// The egress sidecar's poll for its routes, authenticated by its own
+	// token.
+	r.Get(link.EgressConfigPath, s.egressConfig)
 	r.Get(observability.AppsProviderPath, s.alloyAppsModule)
 
 	// Public, unauthenticated auto-deploy webhooks (verified by a per-app secret).
@@ -493,6 +496,9 @@ func (s *Server) Router() http.Handler {
 				r.Post("/link/peers/{peerID}/remove", s.removeLinkPeer)
 				r.Post("/link/pair", s.pairLink)
 				r.Post("/link/forget", s.forgetLinkRelay)
+				r.Post("/link/destinations", s.addLinkDestination)
+				r.Post("/link/destinations/remove", s.removeLinkDestination)
+				r.Post("/link/grants", s.setLinkGrant)
 				r.Get("/updates", s.updatesPage)
 				r.Post("/updates/check", s.checkUpdates)
 				r.Post("/updates/install", s.installUpdate)
@@ -621,6 +627,7 @@ func (s *Server) Router() http.Handler {
 					r.Get("/volumes/backups/{vbID}/objects", s.volumeBackupObjects)
 					r.Get("/volumes/backups/{vbID}/download", s.downloadVolumeBackup)
 					r.Post("/ports", s.addAppPort)
+					r.Post("/link", s.saveAppLink)
 					r.Post("/metrics/enable", s.enableAppMetrics)
 					r.Post("/metrics/disable", s.disableAppMetrics)
 					r.Post("/metrics/endpoints", s.addAppMetricsEndpoint)

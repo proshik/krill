@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -420,27 +421,77 @@ func (u *Updater) Previous(ctx context.Context) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	u.mu.Lock()
-	cache := u.prevCache
-	u.mu.Unlock()
-	version, ok := cache.version, cache.ok
-	if !cache.matches(fi) {
-		out, err := u.execVersion(ctx, prev)
-		version, ok = parseVersion(out)
-		if err != nil {
-			version, ok = "", false
-		}
-		// A run cut short by the caller says nothing about the file.
-		if ctx.Err() == nil {
-			u.mu.Lock()
-			u.prevCache = prevVersionCache{info: fi, version: version, ok: ok}
-			u.mu.Unlock()
-		}
-	}
+	version, ok := u.prevVersion(ctx, prev, fi)
 	if !ok || !u.olderThanCurrent(version) {
 		return "", false
 	}
 	return version, true
+}
+
+// prevVersion is the release version prev (described by fi) reports through
+// `--version`, false when it reports none or the run fails. It is cached per
+// file, failures included, so page renders do not exec it every time.
+func (u *Updater) prevVersion(ctx context.Context, prev string, fi os.FileInfo) (string, bool) {
+	u.mu.Lock()
+	cache := u.prevCache
+	u.mu.Unlock()
+	if cache.matches(fi) {
+		return cache.version, cache.ok
+	}
+	out, err := u.execVersion(ctx, prev)
+	version, ok := parseVersion(out)
+	if err != nil {
+		version, ok = "", false
+	}
+	// A run cut short by the caller says nothing about the file.
+	if ctx.Err() == nil {
+		u.mu.Lock()
+		u.prevCache = prevVersionCache{info: fi, version: version, ok: ok}
+		u.mu.Unlock()
+	}
+	return version, ok
+}
+
+// What <bin>.prev is, for RollbackBinary.
+const (
+	// RollbackAbsent: there is no <bin>.prev, so nothing to roll back to.
+	RollbackAbsent = "absent"
+	// RollbackRelease: <bin>.prev reports a release version.
+	RollbackRelease = "release"
+	// RollbackUnknown: it cannot be told — the running binary's path is not
+	// known, the file cannot be read, or its --version fails, times out or
+	// prints no "krill vX.Y.Z".
+	RollbackUnknown = "unknown"
+)
+
+// RollbackBinary is the binary both Roll back and the automatic revert put
+// back, as RollbackBinary found it.
+type RollbackBinary struct {
+	Kind    string // RollbackAbsent | RollbackRelease | RollbackUnknown
+	Version string // set for RollbackRelease
+}
+
+// RollbackBinary reports what <bin>.prev is. Unlike Previous it tells a
+// missing file from one that cannot be read and does not compare the version
+// with the running one: a caller that must not let a rollback land on a
+// release older than some version decides from the kind and the version.
+func (u *Updater) RollbackBinary(ctx context.Context) RollbackBinary {
+	if u.binPath == "" {
+		return RollbackBinary{Kind: RollbackUnknown}
+	}
+	prev := u.binPath + prevSuffix
+	fi, err := os.Stat(prev)
+	if errors.Is(err, fs.ErrNotExist) {
+		return RollbackBinary{Kind: RollbackAbsent}
+	}
+	if err != nil {
+		return RollbackBinary{Kind: RollbackUnknown}
+	}
+	version, ok := u.prevVersion(ctx, prev, fi)
+	if !ok {
+		return RollbackBinary{Kind: RollbackUnknown}
+	}
+	return RollbackBinary{Kind: RollbackRelease, Version: version}
 }
 
 // olderThanCurrent reports whether version, a release tag, is strictly older

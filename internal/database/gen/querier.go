@@ -11,6 +11,11 @@ import (
 
 type Querier interface {
 	ActivatePanelDomain(ctx context.Context, host string) (int64, error)
+	AddAppLinkDestination(ctx context.Context, arg AddAppLinkDestinationParams) error
+	AddLinkDestination(ctx context.Context, arg AddLinkDestinationParams) (int64, error)
+	// The floor is the app's newest deployment now: only a later one can retire
+	// the name.
+	AddLinkEgressServed(ctx context.Context, arg AddLinkEgressServedParams) error
 	AdvanceEnvironmentCloneCleanup(ctx context.Context, arg AdvanceEnvironmentCloneCleanupParams) (string, error)
 	AppNotifyTarget(ctx context.Context, id int64) (AppNotifyTargetRow, error)
 	// Named by the logical database (several of them share one server).
@@ -46,6 +51,7 @@ type Querier interface {
 	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
+	CountLinkDestinations(ctx context.Context) (int64, error)
 	// Domain rows on a host, whatever their letter case: a link host is compared
 	// with app domains as DNS compares names.
 	CountLinkHostDomains(ctx context.Context, host string) (int64, error)
@@ -119,6 +125,7 @@ type Querier interface {
 	CreateVolume(ctx context.Context, arg CreateVolumeParams) (AppVolume, error)
 	CreateVolumeBackup(ctx context.Context, arg CreateVolumeBackupParams) (VolumeBackup, error)
 	DeleteAPIToken(ctx context.Context, arg DeleteAPITokenParams) error
+	DeleteAppLinkDestinations(ctx context.Context, applicationID int64) error
 	DeleteAppPort(ctx context.Context, arg DeleteAppPortParams) error
 	DeleteApplication(ctx context.Context, id int64) error
 	DeleteBackup(ctx context.Context, id int64) error
@@ -132,6 +139,9 @@ type Querier interface {
 	DeleteEnvironment(ctx context.Context, id int64) error
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitCredential(ctx context.Context, id int64) error
+	DeleteLinkDestination(ctx context.Context, arg DeleteLinkDestinationParams) (int64, error)
+	DeleteLinkEgressServed(ctx context.Context, arg DeleteLinkEgressServedParams) error
+	DeleteLinkEgressServedApp(ctx context.Context, applicationID int64) error
 	DeleteLinkPeer(ctx context.Context, id int64) (int64, error)
 	DeleteLogicalDatabase(ctx context.Context, id int64) error
 	DeleteMember(ctx context.Context, id int64) error
@@ -199,6 +209,8 @@ type Querier interface {
 	GetEnvironment(ctx context.Context, id int64) (Environment, error)
 	GetEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
 	GetGitCredential(ctx context.Context, id int64) (GitCredential, error)
+	// client: an app's project/environment/name and organization.
+	GetLinkEgressAppPath(ctx context.Context, id int64) (GetLinkEgressAppPathRow, error)
 	GetLinkPeer(ctx context.Context, id int64) (LinkPeer, error)
 	GetLinkPeerByFingerprint(ctx context.Context, certSha256 string) (LinkPeer, error)
 	// The link host a relay routes, "" when the installation is not a relay.
@@ -227,6 +239,7 @@ type Querier interface {
 	GetVolTarget(ctx context.Context, id int64) (GetVolTargetRow, error)
 	GetVolume(ctx context.Context, id int64) (AppVolume, error)
 	GetVolumeBackup(ctx context.Context, id int64) (VolumeBackup, error)
+	GrantLinkOrg(ctx context.Context, orgID int64) error
 	// Rewrites a stuck 'deploying' status, but only while the row is exactly as
 	// listed: every status write sets updated_at, so a deploy that started (or
 	// started and ended) since the listing keeps what it wrote — including one the
@@ -246,6 +259,13 @@ type Querier interface {
 	InsertStateBackupRun(ctx context.Context, arg InsertStateBackupRunParams) error
 	LastSuccessfulStateBackupRun(ctx context.Context) (StateBackupRun, error)
 	LatestMetricSamples(ctx context.Context, ts time.Time) ([]LatestMetricSamplesRow, error)
+	// relay: whether one egress stream's destination is on the list.
+	LinkDestinationAllowed(ctx context.Context, arg LinkDestinationAllowedParams) (bool, error)
+	// client: the data-plane facts one egress connection is decided on — whether
+	// the app's organization is granted and whether (host, port) is in the app's
+	// saved selection — read for every connection, so a revoke applies at once.
+	LinkEgressDecision(ctx context.Context, arg LinkEgressDecisionParams) (LinkEgressDecisionRow, error)
+	LinkOrgGranted(ctx context.Context, orgID int64) (bool, error)
 	// Asked after LockLinkPairingCode holds the row: the lock may be granted
 	// after the code expired, and an expression in the locking query itself is
 	// evaluated before the wait. clock_timestamp(), not now(), which is the start
@@ -256,6 +276,12 @@ type Querier interface {
 	// What the organization-wide index (palette, used-by lists, nodes,
 	// monitoring links) needs of each app; never its env or build values.
 	ListAppIndexByEnvironmentIDs(ctx context.Context, dollar_1 []int64) ([]ListAppIndexByEnvironmentIDsRow, error)
+	// client: an app's saved selection.
+	ListAppLinkDestinations(ctx context.Context, applicationID int64) ([]ListAppLinkDestinationsRow, error)
+	// client: the selection a deploy of the app applies — the saved one while the
+	// installation is a client and the app's organization is granted, nothing
+	// otherwise.
+	ListAppLinkEgress(ctx context.Context, applicationID int64) ([]ListAppLinkEgressRow, error)
 	ListAppPorts(ctx context.Context, applicationID int64) ([]AppPort, error)
 	ListApplicationIDsByOrg(ctx context.Context, organizationID int64) ([]int64, error)
 	ListApplicationsByEnvironment(ctx context.Context, environmentID int64) ([]Application, error)
@@ -319,13 +345,28 @@ type Querier interface {
 	// done row) and the partial running index, so the cost does not grow with the
 	// history the deployments poll keeps asking about.
 	ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error)
+	// client: for each listed app, the newest successful deployment that recorded
+	// its link selection (a link section in applied_config). A deployment by a
+	// release without egress records none and is skipped: after a rollback onto
+	// it and back, the selection the egress release last applied still counts.
+	ListLatestLinkApplied(ctx context.Context, ids []int64) ([]ListLatestLinkAppliedRow, error)
 	// The latest successful run of each backup configuration of an organization
 	// that has one on record (rows are kept 30 days).
 	ListLatestOkBackupRuns(ctx context.Context, orgID int64) ([]ListLatestOkBackupRunsRow, error)
+	// Krill link egress (KRL-002). Hosts are stored normalized (panel.NormalizeHost:
+	// lower case, no trailing dot), so they are compared as stored.
+	// relay: the destination list.
+	ListLinkDestinations(ctx context.Context) ([]ListLinkDestinationsRow, error)
+	// client: every saved selection with its app's place and grant, for the
+	// sidecar's aliases and routes, the manifest and the Link page.
+	ListLinkEgressApps(ctx context.Context) ([]ListLinkEgressAppsRow, error)
+	ListLinkEgressServed(ctx context.Context) ([]ListLinkEgressServedRow, error)
 	// Every application domain sitting on a host the link wants, with where to
 	// find it.
 	ListLinkHostDomainHolders(ctx context.Context, host string) ([]ListLinkHostDomainHoldersRow, error)
 	ListLinkIngressHosts(ctx context.Context) ([]string, error)
+	// client: the organizations the operator opened the link to.
+	ListLinkOrgGrants(ctx context.Context) ([]int64, error)
 	ListLinkPeers(ctx context.Context) ([]LinkPeer, error)
 	ListLogicalDatabasesByEnvironment(ctx context.Context, environmentID int64) ([]ListLogicalDatabasesByEnvironmentRow, error)
 	ListLogicalDatabasesByInstance(ctx context.Context, instanceID int64) ([]ListLogicalDatabasesByInstanceRow, error)
@@ -392,6 +433,8 @@ type Querier interface {
 	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
+	// client: serializes replacing one app's selection.
+	LockLinkEgressApp(ctx context.Context, id int64) (int64, error)
 	LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error)
 	LockLinkSettings(ctx context.Context) (LinkSetting, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)
@@ -436,6 +479,7 @@ type Querier interface {
 	// honest: the job died mid-copy and the service was left scaled to 0.
 	ResetMigratingInstances(ctx context.Context) error
 	RestoreReleaseRuntime(ctx context.Context, arg RestoreReleaseRuntimeParams) (int64, error)
+	RevokeLinkOrg(ctx context.Context, orgID int64) (int64, error)
 	// A rotation always installs a generated principal. It applies only while no
 	// previous key is pending, so of two concurrent rotations one wins.
 	RotateS3BucketKey(ctx context.Context, arg RotateS3BucketKeyParams) (int64, error)

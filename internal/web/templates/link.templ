@@ -33,6 +33,51 @@ type LinkView struct {
 	RelaySNI  string
 	RelayAddr string
 	PairedAt  time.Time
+	// egress (KRL-002)
+	Dests        []LinkDestRow     // relay: its list; client: the relay's, as last sent
+	RelayEgress  bool              // client: the relay speaks egress
+	Grants       []LinkGrantRow    // client: every organization
+	Services     []LinkServiceRow  // client: its services
+	Gate         LinkGate          // client: the rollback gate on granting
+	EgressReqKey string            // client: why the sidecar cannot reach Krill
+}
+
+// LinkDestRow is one destination of the relay's list.
+type LinkDestRow struct {
+	Host string
+	Port int
+}
+
+func (d LinkDestRow) String() string { return d.Host + ":" + strconv.Itoa(d.Port) }
+
+// LinkGrantRow is one organization and whether the link is granted to it.
+type LinkGrantRow struct {
+	OrgID   int64
+	Name    string
+	Granted bool
+}
+
+// LinkServiceRow is one client service: an app with its destinations.
+type LinkServiceRow struct {
+	Path  string
+	Dests []LinkServiceDest
+}
+
+// LinkServiceDest is one destination of a service with its state and the
+// bytes it carried since this Krill started.
+type LinkServiceDest struct {
+	Dest    string
+	Allowed bool
+	Up      int64
+	Down    int64
+}
+
+// LinkGate is the rollback gate on enabling egress: closed while the rollback
+// binary is older than the link core release or cannot be read.
+type LinkGate struct {
+	Closed     bool
+	Text       string // the reason, translated
+	UpdatesURL string // Settings → Updates
 }
 
 // LinkConflict is a record holding the relay's link host besides the link.
@@ -54,6 +99,7 @@ type LinkPeerRow struct {
 	Latency       time.Duration
 	CertNotAfter  time.Time
 	LastSeen      time.Time
+	Services      []LinkServiceRow // from the client's manifest
 	// The latest refused session: duplicate or incompatible.
 	RefusalCategory string
 	RefusalProto    int
@@ -258,6 +304,9 @@ templ linkRelay(org db.Organization, v LinkView) {
 						} else {
 							@ui.State("idle", i18n.T(ctx, "link.state.disconnected"))
 						}
+						if len(p.Services) > 0 {
+							@linkServices(p.Services, "link.dest.off_list")
+						}
 						<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/peers/"+itoa(p.ID)+"/remove")) } data-confirm={ i18n.Tf(ctx, "link.confirm.remove_peer", p.Name) } data-more={ i18n.T(ctx, "link.remove_peer_more") } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
 							<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "link.remove_peer_named", p.Name) } title={ i18n.T(ctx, "link.remove_peer") }>
 								@ui.Icon("i-trash")
@@ -278,6 +327,7 @@ templ linkRelay(org db.Organization, v LinkView) {
 			</p>
 		}
 	</section>
+	@linkRelayDests(org, v)
 	<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/codes")) } aria-labelledby="lk-h">
 		<h3 id="lk-h">{ i18n.T(ctx, "link.new_code") }</h3>
 		<p class="hint">{ i18n.T(ctx, "link.new_code_desc") }</p>
@@ -350,6 +400,7 @@ templ linkClient(org db.Organization, v LinkView) {
 			</form>
 		</section>
 	}
+	@linkClientEgress(org, v)
 	<form class="sec" method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/pair")) } aria-labelledby="lq-h">
 		<h3 id="lq-h">
 			if v.Paired {
@@ -365,4 +416,146 @@ templ linkClient(org db.Organization, v LinkView) {
 		</div>
 		<div><button type="submit" class="btn btn--primary">{ i18n.T(ctx, "link.pair") }</button></div>
 	</form>
+}
+
+// linkRelayDests is the relay's destination list: the hard boundary for
+// every client.
+templ linkRelayDests(org db.Organization, v LinkView) {
+	<section class="sec" aria-labelledby="ld-h" data-unsaved-scope>
+		<div class="sec-head"><h3 id="ld-h">{ i18n.T(ctx, "link.dests") }</h3></div>
+		<p class="hint">{ i18n.T(ctx, "link.dests_desc") }</p>
+		if len(v.Dests) == 0 {
+			<p class="empty">{ i18n.T(ctx, "link.dests_empty") }</p>
+		} else {
+			<ul class="links">
+				for _, d := range v.Dests {
+					<li class="row-item">
+						<code class="link-var">{ d.String() }</code>
+						<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/destinations/remove")) } data-confirm={ i18n.Tf(ctx, "link.confirm.remove_dest", d.String()) } data-more={ i18n.T(ctx, "link.remove_dest_more") } data-ok={ i18n.T(ctx, "common.remove") } onsubmit="return krillConfirm(this)">
+							<input type="hidden" name="host" value={ d.Host }/>
+							<input type="hidden" name="port" value={ strconv.Itoa(d.Port) }/>
+							<button type="submit" class="pill pill--icon pill--danger" aria-label={ i18n.Tf(ctx, "link.remove_dest_named", d.String()) } title={ i18n.T(ctx, "common.remove") }>
+								@ui.Icon("i-trash")
+							</button>
+						</form>
+					</li>
+				}
+			</ul>
+		}
+		<form class="add-row" method="post" action={ templ.SafeURL(linkURL(org.ID, "/destinations")) }>
+			<div class="field">
+				<label for="ldh">{ i18n.T(ctx, "link.dest_host") }</label>
+				<input class="input input--mono" id="ldh" name="host" required placeholder="api.example.com" autocomplete="off" spellcheck="false"/>
+			</div>
+			<div class="field">
+				<label for="ldp">{ i18n.T(ctx, "link.dest_port") }</label>
+				<input class="input input--mono" id="ldp" name="port" type="number" min="1" max="65535" value="443" required/>
+			</div>
+			<button type="submit" class="pill">{ i18n.T(ctx, "link.dest_add") }</button>
+		</form>
+	</section>
+}
+
+// linkClientEgress is a client's egress: the relay's list, the organization
+// grants and the services sending through the link.
+templ linkClientEgress(org db.Organization, v LinkView) {
+	if v.EgressReqKey != "" {
+		<div class="callout callout--warn">
+			<div class="callout-body">
+				<p>{ i18n.T(ctx, "link.egress_req") }</p>
+				<p>{ i18n.T(ctx, v.EgressReqKey) }</p>
+			</div>
+		</div>
+	}
+	<section class="sec" aria-labelledby="lrd-h">
+		<div class="sec-head"><h3 id="lrd-h">{ i18n.T(ctx, "link.relay_dests") }</h3></div>
+		<p class="hint">{ i18n.T(ctx, "link.relay_dests_desc") }</p>
+		if !v.RelayEgress && v.Client.State == "connected" {
+			<div class="callout callout--warn"><p>{ i18n.T(ctx, "link.relay_no_egress") }</p></div>
+		} else if len(v.Dests) == 0 {
+			<p class="empty">{ i18n.T(ctx, "link.relay_dests_empty") }</p>
+		} else {
+			<ul class="links">
+				for _, d := range v.Dests {
+					<li class="row-item"><code class="link-var">{ d.String() }</code></li>
+				}
+			</ul>
+		}
+	</section>
+	<section class="sec" aria-labelledby="lg-h">
+		<div class="sec-head"><h3 id="lg-h">{ i18n.T(ctx, "link.grants") }</h3></div>
+		<p class="hint">{ i18n.T(ctx, "link.grants_desc") }</p>
+		@linkGateNote(v.Gate)
+		<ul class="links">
+			for _, g := range v.Grants {
+				<li class="row-item">
+					<span class="link-var">{ g.Name }</span>
+					if g.Granted {
+						@ui.State("ok", i18n.T(ctx, "link.granted"))
+						<form method="post" hx-boost="false" action={ templ.SafeURL(linkURL(org.ID, "/grants")) } data-confirm={ i18n.Tf(ctx, "link.confirm.revoke", g.Name) } data-more={ i18n.T(ctx, "link.revoke_more") } data-ok={ i18n.T(ctx, "link.revoke") } onsubmit="return krillConfirm(this)">
+							<input type="hidden" name="org_id" value={ itoa(g.OrgID) }/>
+							<input type="hidden" name="enabled" value="0"/>
+							<button type="submit" class="pill pill--danger" aria-label={ i18n.Tf(ctx, "link.revoke_named", g.Name) }>{ i18n.T(ctx, "link.revoke") }</button>
+						</form>
+					} else {
+						@ui.State("idle", i18n.T(ctx, "link.not_granted"))
+						<form method="post" action={ templ.SafeURL(linkURL(org.ID, "/grants")) }>
+							<input type="hidden" name="org_id" value={ itoa(g.OrgID) }/>
+							<input type="hidden" name="enabled" value="1"/>
+							<button type="submit" class="pill" disabled?={ v.Gate.Closed } aria-label={ i18n.Tf(ctx, "link.grant_named", g.Name) }>{ i18n.T(ctx, "link.grant") }</button>
+						</form>
+					}
+				</li>
+			}
+		</ul>
+	</section>
+	<section class="sec" aria-labelledby="lsv-h">
+		<div class="sec-head"><h3 id="lsv-h">{ i18n.T(ctx, "link.services") }</h3></div>
+		if len(v.Services) == 0 {
+			<p class="empty">{ i18n.T(ctx, "link.services_empty") }</p>
+		} else {
+			@linkServices(v.Services, "link.dest.not_allowed")
+		}
+	</section>
+}
+
+// linkServices lists services with their destinations: state and the bytes
+// carried since Krill started. offKey names a destination the relay's list
+// does not hold.
+templ linkServices(svcs []LinkServiceRow, offKey string) {
+	<ul class="links">
+		for _, s := range svcs {
+			<li class="row-item">
+				<span class="link-var">{ s.Path }</span>
+				<span class="link-src">
+					for i, d := range s.Dests {
+						if i > 0 {
+							<br/>
+						}
+						<code>{ d.Dest }</code>
+						{ " · " }
+						if d.Allowed {
+							{ i18n.T(ctx, "link.dest.allowed") }
+						} else {
+							{ i18n.T(ctx, offKey) }
+						}
+						{ " · " + i18n.Tf(ctx, "link.svc_traffic", humanBytes(d.Up), humanBytes(d.Down)) }
+					}
+				</span>
+			</li>
+		}
+	</ul>
+}
+
+// linkGateNote explains why egress cannot be enabled now, with a link to
+// Settings → Updates.
+templ linkGateNote(g LinkGate) {
+	if g.Closed {
+		<div class="callout callout--warn">
+			<div class="callout-body">
+				<p>{ g.Text }</p>
+				<p><a href={ templ.SafeURL(g.UpdatesURL) }>{ i18n.T(ctx, "link.gate.updates") }</a></p>
+			</div>
+		</div>
+	}
 }

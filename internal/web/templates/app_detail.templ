@@ -90,6 +90,24 @@ type AppCtx struct {
 	VolumeBlocks map[int64]BackupBlock
 	// Pending is what the app's saved settings would change if deployed now.
 	Pending PendingView
+	// Link is the app's Krill link egress card, nil when the link is not
+	// open to the app's organization (no card at all then).
+	Link *AppLinkView
+}
+
+// AppLinkView is the app's egress card: the relay's destinations to choose
+// from, plus the saved ones the relay no longer allows.
+type AppLinkView struct {
+	Dests     []AppLinkDest
+	Connected bool // the link session is up
+	Gate      LinkGate
+}
+
+// AppLinkDest is one destination on the card.
+type AppLinkDest struct {
+	Dest    string // host:port
+	Checked bool   // in the saved selection
+	Allowed bool   // on the relay's list
 }
 
 // DBLinkView is a linked DB row for the Environment tab. Collides is true when

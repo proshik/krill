@@ -101,6 +101,7 @@ func TestConfigFingerprintChangesExactlyOneSection(t *testing.T) {
 		{"port protocol", func(a *App) { a.Ports[0].UDP = true }, SectionPorts},
 		{"placement mode", func(a *App) { a.PlacementMode = "any" }, SectionPlacement},
 		{"placement nodes", func(a *App) { a.PlacementNodes = []string{"n1"} }, SectionPlacement},
+		{"link destination added", func(a *App) { a.LinkEgress = []string{"api.telegram.org:443"} }, SectionLink},
 	}
 	base := d.configFingerprint(fingerprintApp())
 	for _, c := range cases {

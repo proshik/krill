@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -143,6 +145,13 @@ func (s *DBStore) getApplication(ctx context.Context, id int64, ref ImageRef) (A
 		return App{}, err
 	}
 	out.Network = netName
+	egress, err := s.q.ListAppLinkEgress(ctx, a.ID)
+	if err != nil {
+		return App{}, fmt.Errorf("read the app's link egress: %w", err)
+	}
+	for _, e := range egress {
+		out.LinkEgress = append(out.LinkEgress, net.JoinHostPort(e.Host, strconv.Itoa(int(e.Port))))
+	}
 	ident, err := s.q.GetApplicationIdentity(ctx, a.ID)
 	if err != nil {
 		return App{}, err
@@ -696,6 +705,16 @@ func (s *DBStore) LatestApplied(ctx context.Context, appIDs []int64) (map[int64]
 		out[r.ApplicationID] = l
 	}
 	return out, nil
+}
+
+// LatestLinkApplied implements linkSectionStore.
+func (s *DBStore) LatestLinkApplied(ctx context.Context, appID int64) (AppliedConfig, bool, error) {
+	rows, err := s.q.ListLatestLinkApplied(ctx, []int64{appID})
+	if err != nil || len(rows) == 0 {
+		return AppliedConfig{}, false, err
+	}
+	c, ok := decodeAppliedConfig(rows[0].AppliedConfig)
+	return c, ok, nil
 }
 
 // decodeAppliedConfig reads a stored fingerprint; NULL or unreadable is none.

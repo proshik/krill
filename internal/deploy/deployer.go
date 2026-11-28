@@ -73,7 +73,29 @@ type App struct {
 
 	PlacementMode  string   // "any" | "pin" | "global"
 	PlacementNodes []string // swarm node IDs the app may run on (for pin/global)
+
+	// LinkEgress is the Krill link selection a deploy applies, sorted
+	// "host:port": the saved one while the installation is a link client and
+	// the app's organization is granted, empty otherwise. Non-empty puts the
+	// app on its own egress network as a second network.
+	LinkEgress []string
 }
+
+// EgressHook is the Krill link's part in a deploy. Prepare runs before an app
+// with a selection deploys onto its egress network: it creates the network
+// and has the egress sidecar answer for the app's hosts there, and returns
+// once the sidecar does — a deploy it fails is failed, since the app would
+// otherwise resolve those hosts to their real addresses. Changed is told,
+// without waiting, that a deploy of the app finished: the sidecar may then
+// drop a host the app no longer applies.
+type EgressHook interface {
+	Prepare(ctx context.Context, appID int64, dests []string) error
+	Changed(appID int64)
+}
+
+// ErrEgressUnavailable fails a deploy that has a link selection to apply
+// while the link is not wired.
+var ErrEgressUnavailable = errors.New("the Krill link is not available to apply this app's egress destinations")
 
 // Store — what the deployer needs from the store.
 type Store interface {
@@ -205,7 +227,13 @@ type Deployer struct {
 	// their service spec yet (see stop.go).
 	trackMu sync.Mutex
 	tracked map[int64]*tracked
+
+	// egress is the Krill link's deploy hook, nil when not wired.
+	egress EgressHook
 }
+
+// SetEgress wires the Krill link's deploy hook. Call it before Start.
+func (d *Deployer) SetEgress(h EgressHook) { d.egress = h }
 
 // SetMaxBuildsPerOrg wires the per-organization in-flight-deploy cap (wired
 // from config at startup). <= 0 means no cap: the per-org check in enqueue is
@@ -809,6 +837,17 @@ func (d *Deployer) run(ctx context.Context, j job) {
 			if j.system && (!prev.Found || (!prev.Global && prev.Desired == 0)) {
 				return errStoppedMeanwhile
 			}
+			// The egress network and the sidecar's names on it come first:
+			// an app on that network whose hosts the sidecar does not
+			// answer for yet would reach them directly.
+			if len(app.LinkEgress) > 0 {
+				if d.egress == nil {
+					return ErrEgressUnavailable
+				}
+				if err := d.egress.Prepare(ctx, app.ID, app.LinkEgress); err != nil {
+					return fmt.Errorf("prepare the app's link egress: %w", err)
+				}
+			}
 			if expected != nil {
 				if err := d.engine.(docker.ReleaseValidator).ValidateRelease(ctx, d.buildSpec(app, imageTag), app.PlacementNodes); err != nil {
 					return err
@@ -1174,12 +1213,23 @@ func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTa
 	if status == StatusRunning && appID != 0 && d.notifier != nil {
 		d.notifier.DeploySucceeded(context.Background(), deployID)
 	}
+	if appID != 0 && d.egress != nil {
+		d.egress.Changed(appID)
+	}
 }
 
 // EgressNetworkPrefix names the Krill link's per-app egress networks
-// (krill-egress-<app>). The deployer keeps a running service's attachments to
-// them on every redeploy.
+// (krill-egress-<app>, link.EgressNetwork).
 const EgressNetworkPrefix = "krill-egress-"
+
+// LinkEgressLabel is the service label holding the link selection an app's
+// current spec was built with (link.egressLabel reads it).
+const LinkEgressLabel = "krill.link.egress"
+
+// EgressNetwork is an app's egress network.
+func EgressNetwork(appID int64) string {
+	return EgressNetworkPrefix + strconv.FormatInt(appID, 10)
+}
 
 func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	app = d.withResourceDefaults(app)
@@ -1215,11 +1265,20 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 		Healthcheck:        app.Healthcheck,
 		Mounts:             app.Mounts,
 		Ports:              app.Ports,
-		// Attachments to the link's egress networks are carried over from the
-		// running service whatever this release knows of them: dropping one
-		// would take its destination aliases with it, and the app's traffic
-		// would leave directly instead of failing closed.
-		KeepNetworkPrefix: EgressNetworkPrefix,
+	}
+	// The app's own egress network is managed here: attached while a link
+	// selection is applied, left otherwise (the link was turned off, the
+	// organization revoked, the selection emptied). The release before
+	// egress keeps every krill-egress-* attachment instead
+	// (KeepNetworkPrefix), which is what makes a rollback onto it fail
+	// closed. Traefik still routes over net: AppLabels names it with
+	// traefik.docker.network, and the gateway is not on the egress network.
+	if len(app.LinkEgress) > 0 {
+		spec.Networks = []string{net, EgressNetwork(app.ID)}
+		// The selection this spec is built with, on the service itself: the
+		// link keeps these names on the sidecar while the service carries
+		// them, also when Krill restarts before the deploy is recorded.
+		spec.Labels[LinkEgressLabel] = strings.Join(app.LinkEgress, ",")
 	}
 	// Placement: restrict to the chosen node set via the per-app krill.place label
 	// (set on those nodes by the server). pin spreads replicas across them; global

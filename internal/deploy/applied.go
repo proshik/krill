@@ -35,10 +35,12 @@ const (
 	SectionVolumes   = "volumes"
 	SectionPorts     = "ports"
 	SectionPlacement = "placement"
+	// SectionLink is the app's Krill link egress selection (its link card).
+	SectionLink = "link"
 )
 
 // Sections lists every section in display order.
-var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionPredeploy, SectionVolumes, SectionPorts, SectionPlacement}
+var Sections = []string{SectionSource, SectionEnv, SectionMetrics, SectionRuntime, SectionPredeploy, SectionVolumes, SectionPorts, SectionPlacement, SectionLink}
 
 // fingerprintVersion changes when what a section covers changes; a stored
 // fingerprint of another version is unknown, not changed.
@@ -54,6 +56,12 @@ type AppliedConfig struct {
 	Version  int               `json:"v"`
 	Key      string            `json:"key"`
 	Sections map[string]string `json:"sections"`
+	// Egress is the Krill link selection the deployment applied, in plain
+	// form ("host:port", not a secret): the link keeps a host's alias on the
+	// app's egress network until a deployment without it has converged
+	// (link.appliedEgress reads this key). A fingerprint recorded before has
+	// none and no link section: unknown, never "changed".
+	Egress []string `json:"egress,omitempty"`
 }
 
 // comparable reports whether c was made the way fingerprints are made now.
@@ -156,7 +164,19 @@ func configSections(a App) map[string]any {
 			Mode  string
 			Nodes []string
 		}{a.PlacementMode, nodes},
+		SectionLink: linkSelection(a.LinkEgress),
 	}
+}
+
+// linkSelection is the selection as a section digests it: sorted, never nil.
+func linkSelection(ds []string) []string {
+	out := slices.Clone(ds)
+	slices.Sort(out)
+	out = slices.Compact(out)
+	if out == nil {
+		out = []string{}
+	}
+	return out
 }
 
 func nonNil(m map[string]string) map[string]string {
@@ -173,6 +193,9 @@ func nonNil(m map[string]string) map[string]string {
 func (d *Deployer) configFingerprint(a App) AppliedConfig {
 	a = d.withResourceDefaults(a)
 	out := AppliedConfig{Version: fingerprintVersion, Key: secret.FingerprintKeyID(), Sections: map[string]string{}}
+	if sel := linkSelection(a.LinkEgress); len(sel) > 0 {
+		out.Egress = sel
+	}
 	purpose := fingerprintPurpose + "/app:" + strconv.FormatInt(a.ID, 10) + "/"
 	for name, v := range configSections(a) {
 		b, err := json.Marshal(v)
@@ -182,6 +205,40 @@ func (d *Deployer) configFingerprint(a App) AppliedConfig {
 		out.Sections[name] = secret.Fingerprint(purpose+name, b)
 	}
 	return out
+}
+
+// withLinkDefault fills in the link section of a fingerprint recorded by a
+// release without egress. The selection in force is the one the newest
+// deployment that recorded a link section applied — a deploy by the link
+// core release after a rollback keeps the app's egress attachment but
+// records none — and with no such deployment there was never one, so it is
+// the empty selection: a first selection saved after the update shows as not
+// applied, and so does one emptied after a rollback and an update again.
+func (d *Deployer) withLinkDefault(ctx context.Context, c AppliedConfig, a App) AppliedConfig {
+	if _, ok := c.Sections[SectionLink]; ok {
+		return c
+	}
+	out := c
+	out.Sections = maps.Clone(c.Sections)
+	if ls, ok := d.store.(linkSectionStore); ok {
+		if prev, found, err := ls.LatestLinkApplied(ctx, a.ID); err == nil && found && prev.comparable(c) {
+			out.Sections[SectionLink] = prev.Sections[SectionLink]
+			return out
+		} else if err != nil {
+			slog.Warn("pending changes: latest link selection", "app", a.ID, "err", err)
+			return c // unknown, never a false "changed"
+		}
+	}
+	a.LinkEgress = nil
+	out.Sections[SectionLink] = d.configFingerprint(a).Sections[SectionLink]
+	return out
+}
+
+// linkSectionStore is the store capability withLinkDefault reads.
+type linkSectionStore interface {
+	// LatestLinkApplied is the fingerprint of the app's newest successful
+	// deployment that recorded a link section.
+	LatestLinkApplied(ctx context.Context, appID int64) (AppliedConfig, bool, error)
 }
 
 // configStore is the optional store capability behind applied-configuration
@@ -342,9 +399,10 @@ func (d *Deployer) pendingFor(ctx context.Context, appID int64, l LatestApplied)
 	if !l.Config.comparable(now) {
 		return Pending{}, false
 	}
+	stored := d.withLinkDefault(ctx, *l.Config, a)
 	var p Pending
 	for _, s := range Sections {
-		stored, known := l.Config.Sections[s]
+		stored, known := stored.Sections[s]
 		if known && stored != now.Sections[s] {
 			p.Changed = append(p.Changed, s)
 		}
@@ -427,8 +485,9 @@ func (d *Deployer) checkApplyFresh(ctx context.Context, j job, app App) error {
 	if l.Config != nil {
 		now := d.configFingerprint(app)
 		if l.Config.comparable(now) {
+			stored := d.withLinkDefault(ctx, *l.Config, app)
 			for _, s := range Sections {
-				if v, known := l.Config.Sections[s]; known && v != now.Sections[s] {
+				if v, known := stored.Sections[s]; known && v != now.Sections[s] {
 					return nil
 				}
 			}

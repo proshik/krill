@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net"
-	"net/netip"
 	"sync"
 	"time"
 )
@@ -31,17 +30,18 @@ const maxPending = 256
 type GatewayListener struct {
 	ln      net.Listener
 	cfg     *tls.Config
-	handle  func(net.Conn, netip.AddrPort, func())
+	handle  func(net.Conn, ProxyHeader, func())
 	pending chan struct{}
 	wg      sync.WaitGroup
 }
 
 // ListenGateway listens on addr and authenticates connections with local's
-// certificates; handle gets each authenticated inner stream and its source.
+// certificates; handle gets each authenticated inner stream and its PROXY
+// header (the original source and the address it was sent to).
 // handle must call the func it gets once the connection no longer counts as
 // pending (admitted, paired or refused); it is called again when handle
 // returns, which is harmless.
-func ListenGateway(addr string, local LocalMaterial, handle func(net.Conn, netip.AddrPort, func())) (*GatewayListener, error) {
+func ListenGateway(addr string, local LocalMaterial, handle func(net.Conn, ProxyHeader, func())) (*GatewayListener, error) {
 	cfg, err := gatewayServerTLS(local)
 	if err != nil {
 		return nil, err
@@ -140,5 +140,5 @@ func (l *GatewayListener) authenticate(conn net.Conn) {
 	var once sync.Once
 	free := func() { once.Do(release) }
 	defer free()
-	l.handle(tc, hdr.Src, free)
+	l.handle(tc, hdr, free)
 }

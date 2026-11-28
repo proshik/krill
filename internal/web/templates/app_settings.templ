@@ -17,6 +17,9 @@ templ settingsTab(c AppCtx) {
 		<a href="#s-res">{ i18n.T(ctx, "app.section_resources") }</a>
 		<a href="#s-place">{ i18n.T(ctx, "placement.title") }</a>
 		<a href="#s-ports">{ i18n.T(ctx, "ports.title") }</a>
+		if c.Link != nil {
+			<a href="#s-link">{ i18n.T(ctx, "applink.title") }</a>
+		}
 		if c.admin() {
 			<a href="#s-vol">{ i18n.T(ctx, "volumes.tab") }</a>
 		}
@@ -116,6 +119,9 @@ templ settingsTab(c AppCtx) {
 		</fieldset>
 	</form>
 	@appPortsSection(c)
+	if c.Link != nil {
+		@appLinkSection(c)
+	}
 	if c.admin() {
 		@volumesSection(c)
 	}
@@ -407,4 +413,47 @@ templ runtimeTasks(c AppCtx) {
 			</ol>
 		}
 	</section>
+}
+
+// appLinkSection is the app's Krill link egress card: which of the relay's
+// destinations the app sends through the link. Shown only when the link is
+// open to the app's organization; the org admin sees the state, never the
+// relay's address.
+templ appLinkSection(c AppCtx) {
+	<form class="sec" id="s-link" method="post" action={ templ.SafeURL(c.base() + "/link") } aria-labelledby="link-h">
+		<fieldset class="bare" disabled?={ !c.admin() || c.Link.Gate.Closed }>
+			<div class="sec-head">
+				<h3 id="link-h">{ i18n.T(ctx, "applink.title") }</h3>
+				if c.Link.Connected {
+					@ui.State("ok", i18n.T(ctx, "applink.state_on"))
+				} else {
+					@ui.State("warn", i18n.T(ctx, "applink.state_down"))
+				}
+			</div>
+			<p class="hint">{ i18n.T(ctx, "applink.desc") }</p>
+			<p class="hint">{ i18n.T(ctx, "applink.host_note") }</p>
+			@linkGateNote(c.Link.Gate)
+			if len(c.Link.Dests) == 0 {
+				<p class="empty">{ i18n.T(ctx, "applink.empty") }</p>
+			} else {
+				<fieldset class="nodepick">
+					<legend class="visually-hidden">{ i18n.T(ctx, "applink.title") }</legend>
+					for _, d := range c.Link.Dests {
+						<label class="nodebox">
+							<input type="checkbox" name="dest" value={ d.Dest } checked?={ d.Checked }/>
+							<span>
+								<code>{ d.Dest }</code>
+								if !d.Allowed {
+									{ " · " + i18n.T(ctx, "applink.not_allowed") }
+								}
+							</span>
+						</label>
+					}
+				</fieldset>
+			}
+			if c.admin() {
+				<div class="sec-add"><button type="submit" class="pill">{ i18n.T(ctx, "applink.save") }</button><span class="hint">{ i18n.T(ctx, "adv.apply_hint") }</span></div>
+			}
+		</fieldset>
+	</form>
 }

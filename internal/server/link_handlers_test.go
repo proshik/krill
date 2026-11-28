@@ -36,6 +36,7 @@ type linkEnv struct {
 	orgSvc *org.Service
 	tokens panel.Tokens
 	link   *link.Service
+	secret string // the gateway's stored secret
 }
 
 func freeLinkPort(t *testing.T) string {
@@ -48,8 +49,9 @@ func freeLinkPort(t *testing.T) string {
 	return ":" + strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 }
 
-// newLinkServer wires the panel gateway and the link the way main does.
-func newLinkServer(t *testing.T, advertise string) *linkEnv {
+// newLinkServer wires the panel gateway and the link the way main does;
+// opts adjust the server before its router is built.
+func newLinkServer(t *testing.T, advertise string, opts ...func(*server.Server, *linkEnv)) *linkEnv {
 	t.Helper()
 	pool := testutil.NewTestDB(t)
 	q := db.New(pool)
@@ -59,7 +61,7 @@ func newLinkServer(t *testing.T, advertise string) *linkEnv {
 	}
 	cfg := config.Config{BaseDomain: "127-0-0-1.sslip.io", Network: "krill-net", ListenAddr: ":8080",
 		AdvertiseAddr: advertise, LinkListenAddr: freeLinkPort(t)}
-	env := &linkEnv{pool: pool, q: q, orgSvc: org.NewService(q), tokens: panel.DeriveTokens(sec)}
+	env := &linkEnv{pool: pool, q: q, orgSvc: org.NewService(q), tokens: panel.DeriveTokens(sec), secret: sec}
 	hub := deploy.NewLogHub()
 	srv := server.New(cfg, auth.NewService(q), env.orgSvc, q, nil, nil, hub, dbservice.New(nil, dbservice.NewDBStore(q), hub, "krill-net"))
 	hosts := hostshare.NewStore(pool)
@@ -72,6 +74,9 @@ func newLinkServer(t *testing.T, advertise string) *linkEnv {
 	}
 	t.Cleanup(env.link.Close)
 	srv.SetLink(env.link)
+	for _, o := range opts {
+		o(srv, env)
+	}
 	env.h = srv.Router()
 	return env
 }
