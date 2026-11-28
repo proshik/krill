@@ -34,6 +34,21 @@ func (n egressNames) appOf(name string) (int64, bool) {
 	return EgressNetworkApp(EgressNetworkPrefix + rest)
 }
 
+// egressLabel is the service label with the selection an app's current
+// spec was built with (deploy.LinkEgressLabel).
+const egressLabel = "krill.link.egress"
+
+// labelSelection reads egressLabel.
+func labelSelection(labels map[string]string) []Destination {
+	var out []Destination
+	for _, s := range strings.Split(labels[egressLabel], ",") {
+		if d, err := ParseDestinationString(s); err == nil {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // sidecarPlan is what the sidecar should serve: per egress network it stays
 // on, the destinations whose hosts it answers for there, and the networks
 // nothing uses any more, which it leaves (and which are then removed).
@@ -51,11 +66,12 @@ type prepareReq struct {
 // planSidecar decides the sidecar's networks and names. A network stays while
 // a service other than the sidecar attaches it or a task of one is on it, or
 // while its app is being prepared for a deploy. On a network it stays on, the
-// sidecar answers for the app's saved selection and the one its running
-// deployment applied: a host leaves DNS only once a deploy without it has
-// converged, so until then the app's connections to it are refused, never
-// sent to the real address.
-func planSidecar(names egressNames, nets []docker.PrefixNetwork, saved, applied map[int64][]Destination, preparing map[int64]bool, prep *prepareReq) sidecarPlan {
+// sidecar answers for the app's saved selection, the one its last recorded
+// deployment applied, the one its service's current spec carries (a deploy
+// not recorded yet, also across a restart of Krill) and one being prepared:
+// a host leaves DNS only once a deploy without it has converged, so until then
+// the app's connections to it are refused, never sent to the real address.
+func planSidecar(names egressNames, nets []docker.PrefixNetwork, saved, applied map[int64][]Destination, preparing map[int64][]Destination, prep *prepareReq) sidecarPlan {
 	p := sidecarPlan{Keep: map[string][]Destination{}}
 	for _, n := range nets {
 		appID, ok := names.appOf(n.Name)
@@ -63,11 +79,12 @@ func planSidecar(names egressNames, nets []docker.PrefixNetwork, saved, applied 
 			continue // not one of Krill's: leave it alone
 		}
 		isPrep := prep != nil && prep.app == appID
-		if !usedByApps(n, names.sidecar) && !preparing[appID] && !isPrep {
+		pending, isPreparing := preparing[appID]
+		if !usedByApps(n, names.sidecar) && !isPreparing && !isPrep {
 			p.Unused = append(p.Unused, n.Name)
 			continue
 		}
-		p.Keep[n.Name] = unionDests(saved[appID], applied[appID])
+		p.Keep[n.Name] = unionDests(saved[appID], applied[appID], labelSelection(n.Labels[names.appService(appID)]), pending)
 	}
 	if prep != nil {
 		name := names.network(prep.app)

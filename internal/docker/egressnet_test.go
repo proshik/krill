@@ -24,7 +24,7 @@ func TestPrefixNetworks(t *testing.T) {
 		return out
 	}
 	svcs := []swarm.Service{
-		{ID: "s-app", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "krill-1"}, TaskTemplate: swarm.TaskSpec{Networks: att("org", "n1")}}},
+		{ID: "s-app", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "krill-1", Labels: map[string]string{"k": "v"}}, TaskTemplate: swarm.TaskSpec{Networks: att("org", "n1")}}},
 		{ID: "s-side", Spec: swarm.ServiceSpec{Annotations: swarm.Annotations{Name: "krill-link-egress"}, TaskTemplate: swarm.TaskSpec{Networks: att("n1", "krill-egress-2")}}},
 	}
 	task := func(svc string, state swarm.TaskState, netID, name, cidr string) swarm.Task {
@@ -35,18 +35,20 @@ func TestPrefixNetworks(t *testing.T) {
 		task("s-app", swarm.TaskStateRunning, "n1", "krill-egress-1", "10.0.9.5/24"),
 		task("s-app", swarm.TaskStateStarting, "n1", "krill-egress-1", "10.0.9.6/24"),
 		task("s-app", swarm.TaskStateFailed, "n1", "krill-egress-1", "10.0.9.7/24"),
+		task("s-app", swarm.TaskStateShutdown, "n1", "krill-egress-1", "10.0.9.8/24"),
 		task("s-app", swarm.TaskStateRunning, "org", "krill-org-1", "10.0.1.5/24"),
 		task("s-side", swarm.TaskStateRunning, "n1", "krill-egress-1", "10.0.9.2/24"),
 		task("s-gone", swarm.TaskStateRunning, "n1", "krill-egress-1", "10.0.9.9/24"),
 	}
 	got := prefixNetworks("krill-egress-", nets, svcs, tasks)
 	want := []PrefixNetwork{
-		{Name: "krill-egress-1", Services: []string{"krill-1", "krill-link-egress"}, Tasks: []NetworkTask{
+		{Name: "krill-egress-1", Services: []string{"krill-1", "krill-link-egress"},
+			Labels: map[string]map[string]string{"krill-1": {"k": "v"}, "krill-link-egress": nil}, Tasks: []NetworkTask{
 			{Service: "krill-1", NodeID: "node", State: "running", IP: "10.0.9.5"},
 			{Service: "krill-1", NodeID: "node", State: "starting", IP: "10.0.9.6"},
 			{Service: "krill-link-egress", NodeID: "node", State: "running", IP: "10.0.9.2"},
 		}},
-		{Name: "krill-egress-2", Services: []string{"krill-link-egress"}},
+		{Name: "krill-egress-2", Services: []string{"krill-link-egress"}, Labels: map[string]map[string]string{"krill-link-egress": nil}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)

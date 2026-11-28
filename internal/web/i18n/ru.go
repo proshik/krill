@@ -1853,4 +1853,5 @@ var ru = map[string]string{
 	"applink.not_allowed":              "relay больше не разрешает",
 	"applink.ok":                       "назначения связки сохранены: задеплойте или примените настройки, чтобы они заработали",
 	"applink.err.not_offered":          "relay не предлагает такое назначение",
+	"link.err.too_many_dests":          "в списке relay не больше %d назначений: сначала удалите одно",
 }

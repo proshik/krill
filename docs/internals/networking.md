@@ -241,7 +241,14 @@ is refused). Hosts go through `panel.NormalizeHost` (`link.ParseDestination`), p
 
 **Protocol.** Both `hello`s carry `egress: true`; only then does the client send `manifest`
 (services: app id, `project/env/app`, destinations — for display only) and the relay send
-`lists` (its destinations, also in its `hello`). A KRL-001 relay closes the session on an
+`lists` (its destinations, also in its `hello`, only to a client that said egress). The relay
+writes its `hello` and every `lists` under the session's write lock, reading the list there:
+nothing precedes the `hello`, and a later push never sends an older list. The list is bounded
+(`MaxDestinations` = 50, checked under the settings row lock) so it always fits one control line
+(16 KiB). On a client one app holds at most 256 egress streams and all apps together the
+session's limit minus 64, so one app cannot make the relay close the shared session. A spliced
+connection is closed when its session ends (a stream of an ended session reads as EOF, and the
+destination may keep its half open). A KRL-001 relay closes the session on an
 unknown control message, so neither side sends the new ones to a peer that did not announce
 them. An `egress` stream's header is `{host, port, service}`; `service` labels the counters and
 pages, it is never a permission.
@@ -250,7 +257,8 @@ pages, it is never a permission.
 `host:port`, before anything is dialed: `{host, port}` is exactly normalized and on
 `link_destinations` (read per stream, so a removal applies to the next stream); the stream's
 ClientHello (`ReadClientHello`, fuzzed: TLS records, multi-record hello, ≤ 64 KiB, nothing read
-past it) names exactly `host` — no SNI is refused — so a compromised client cannot reach another
+past it) names exactly `host` — no SNI is refused, and so is Encrypted Client Hello (`ErrECH`),
+whose visible name is only the front end's — so a compromised client cannot reach another
 virtual host behind an allowed name's shared TLS front end; then the relay resolves and dials
 through `netguard.DialContext(false)` (10 s): a name resolving to a private, loopback or
 link-local address is refused (DNS rebinding towards the relay's own services). The buffered
@@ -281,12 +289,27 @@ fail closed). Before such a deploy `EgressHook.Prepare` creates the network and 
 answer for the app's hosts there, waiting for its new task; a failure fails the deploy.
 `krill-link-egress` is the pinned Traefik on `node.role==manager`, **DNSRR** (an alias resolves to
 the task's own address, so Krill sees the app's task address; a VIP would replace it with the
-network's balancer; at zero replicas the name does not resolve at all), no docker socket, no
-swarm provider. Its aliases on each network (`docker.ServiceSpec.NetworkAliases`, omitempty) are
-the app's **saved ∪ applied** selection — applied from the latest successful deployment's
-`applied_config.egress` (plain `host:port`, beside the digests; `deploy.SectionLink` is the new
-fingerprint section) — so a host leaves DNS only once a deploy without it has converged, and until
-then its connections are refused, never resolved to the real address. One entrypoint per distinct
+network's balancer), no docker socket, no swarm provider, **two replicas**. With no task at all
+Docker's embedded DNS stops answering for the aliases and forwards the name upstream: the app gets
+the real address and its traffic leaves directly — measured on Docker 29.5.2 for DNSRR (at once)
+and VIP (after ~10 s) alike, with a name that really resolves (`api.telegram.org`; the design
+note's check used `example.com`, which resolved to nothing there, and read as fail closed). So
+Krill never scales the sidecar down itself, runs two tasks so one failing leaves the names
+answered, and every reconcile redeploys it when fewer tasks run than it should (ERROR in the
+log). A manual scale to zero or both tasks down is a fail-open window until the next reconcile
+(at most a minute); the user guide says not to. Its aliases on each network (`docker.ServiceSpec.NetworkAliases`, omitempty) are
+the app's **saved ∪ applied ∪ current-spec ∪ preparing** selection: applied is the newest
+successful deployment that recorded a link section (`ListLatestLinkApplied`; `applied_config.egress`
+is plain `host:port` beside the digests, `deploy.SectionLink` the fingerprint section — a deploy by
+the core release after a rollback records none and does not count as "nothing"); current-spec is
+the app service's `krill.link.egress` label (`deploy.LinkEgressLabel`, set by `buildSpec`), which
+covers a deploy not recorded yet and a restart of Krill in the middle of one; preparing is what a
+`Prepare` in flight asked for. A host leaves DNS only once a deploy without it has converged, and
+until then its connections are refused, never resolved to the real address. A network counts as
+used while a task of the app is still alive on it, a task Swarm is stopping included
+(`PrefixNetworks` lists desired-state `shutdown` tasks that still run), so draining old tasks keep
+their names. A fingerprint recorded before the link section counts as having applied no selection
+(`withLinkDefault`), so a first selection after the update shows as not applied. One entrypoint per distinct
 port; with none the `entryPoints` key is left out (an empty one stops Traefik). Its static
 configuration — the HTTP provider `http://<advertise>:<ui port>/_krill/link/egress-config` and its
 token, an HMAC of the panel secret under its own label (`EgressToken`) — is a Swarm secret named by

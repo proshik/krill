@@ -95,7 +95,7 @@ the rollback target; the gate below keeps egress off until it is gone.
       `(SNI, port)` is in the app's saved selection AND on the relay's list; otherwise
       it resets the connection and logs a WARN without app data. Revoking a grant or a
       destination closes new connections at once, without a redeploy.
-- [x] WHEN the link is down, the sidecar is scaled to 0, or a destination was removed
+- [ ] WHEN the link is down, the sidecar is scaled to 0, or a destination was removed
       THEN the app's connection is refused; it never resolves the real address and
       never goes direct.
 - [x] WHEN the role is `client` THEN the sidecar is reconciled at startup; disabling,
@@ -247,6 +247,29 @@ implementer's and reversible.
 - Not covered: a task on a **worker** node (the local suite is one node); the same path, the
   sidecar on a manager reached over the overlay, is unverified there. The "krill (notifications)"
   row of the spec's page sketch is KRL-003.
+
+- **Disagreement with this task and the design note (2026-11-28), owner's decision: reduce the
+  risk.** With no sidecar task Docker 29.5.2's embedded DNS answers an alias with the **real**
+  address — measured with `api.telegram.org` for DNSRR (within 5 s) and VIP (after ~10–16 s). The
+  note's §3.2/§3.8 checks used `example.com`, which resolves to nothing in that environment, and
+  read as fail closed. So "the sidecar is scaled to 0 → refused" does not hold; the box above
+  stays unticked for that case (the link down and a removed destination do hold, tested). What
+  was done instead: the sidecar runs two tasks, Krill never scales it down, and every reconcile
+  (at most a minute apart) redeploys it when fewer tasks run, logging an ERROR; the guide tells
+  operators not to scale it by hand. A manual scale to zero or both tasks down remains a fail-open
+  window until the next reconcile. Closing it for good (a static hosts entry to a stable VIP,
+  identifying the app by its network) is a separate decision.
+- Review round 1 (revust `codex-only`) found, besides that: the sidecar could drop a name a deploy
+  in flight or interrupted by a restart still needed (now: the app service's `krill.link.egress`
+  label and the prepared names count), a rollback deploy's fingerprint without a link section
+  read as "nothing applied" (now: the newest deployment that recorded one), the relay's list could
+  outgrow a control line (now at most 50, and only egress clients get it), `lists` could precede
+  or outdate `hello` (now written under the session's lock), two saves of one selection could
+  merge (now a row lock), spliced sockets could outlive their session, one app could exhaust the
+  shared session's streams (now 256 per app), Encrypted Client Hello hid the real name (now
+  refused), draining old tasks lost their names, the first selection after the update did not
+  show as not applied, the Swarm test's cleanup could remove another test's objects, and the guide
+  missed re-applying the firewall on a client. All fixed with tests.
 
 Plan: migration and queries → rollback gate (`selfupdate`) → SNI parser, egress stream
 protocol, relay checks → docker aliases and egress-network inspection → deploy section,

@@ -1853,4 +1853,5 @@ var en = map[string]string{
 	"applink.not_allowed":              "the relay no longer allows it",
 	"applink.ok":                       "link destinations saved: deploy or apply settings to put them in force",
 	"applink.err.not_offered":          "the relay does not offer that destination",
+	"link.err.too_many_dests":          "the relay's list holds at most %d destinations: remove one first",
 }

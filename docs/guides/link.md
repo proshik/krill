@@ -151,6 +151,10 @@ the bytes carried since Krill started. The relay lists a client's services under
 - **The link is down, a destination was removed from the relay's list or from the app, or the
   organization was revoked:** the app's new connections to those hosts are refused at once. They
   are never sent directly.
+- **The sidecar must keep running.** It runs two tasks, and Krill restores them within a minute
+  if they are fewer (it logs an error). Do not scale `krill-link-egress` down or remove it by
+  hand: with no sidecar task, Docker's DNS answers the hosts with their real addresses, and the
+  apps' connections leave directly until the sidecar is back.
 - **A destination removed from the app's selection** stays intercepted (and refused) until a
   deploy without it has finished; only then does the app resolve the real address again.
 - **Turning the link off or revoking an organization** marks its apps' settings as not applied;
@@ -158,7 +162,9 @@ the bytes carried since Krill started. The relay lists a client's services under
 
 ### Limits
 
-- TLS only, exact host names: no wildcard, no IP, no UDP, no Telegram MTProto.
+- TLS only, exact host names: no wildcard, no IP, no UDP, no Telegram MTProto. A connection
+  using Encrypted Client Hello is refused (the name the server acts on would be hidden from the
+  checks). The relay's list holds at most 50 destinations.
 - Interception is per **host**, not per port: an app that picks `api.example.org:8443` also sends
   its connections to `api.example.org:443` to the link, where they are refused, never sent
   directly. The app's card says so.
@@ -174,7 +180,9 @@ the bytes carried since Krill started. The relay lists a client's services under
   pages say why and link to Settings → Updates.
 - A client needs what a relay needs for its listener: `KRILL_ADVERTISE_ADDR` set and Krill
   listening on a non-loopback address, because the sidecar reaches Krill that way. The Link
-  page says when that is missing.
+  page says when that is missing. If the firewall was locked down before the client role was
+  turned on, **re-apply it** (Settings → Firewall), as on a relay: until then the sidecar cannot
+  reach the link listener and every egress connection is refused. The Link page says so.
 
 ## Remove a client, forget the relay
 

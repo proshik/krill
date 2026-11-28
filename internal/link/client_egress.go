@@ -78,18 +78,19 @@ func fitManifest(svcs []ManifestService) []ManifestService {
 }
 
 // OpenEgress opens an egress stream for d on the live session, labelled with
-// service, and writes its header. ErrEgressNoSession when no session is up or
-// the relay does not speak egress.
-func (c *Client) OpenEgress(ctx context.Context, d Destination, service int64) (net.Conn, error) {
+// service, and writes its header; the channel closes when that session ends.
+// ErrEgressNoSession when no session is up or the relay does not speak
+// egress.
+func (c *Client) OpenEgress(ctx context.Context, d Destination, service int64) (net.Conn, <-chan struct{}, error) {
 	c.mu.Lock()
 	mux, ok := c.cur, c.relayEgress
 	c.mu.Unlock()
 	if mux == nil || !ok {
-		return nil, ErrEgressNoSession
+		return nil, nil, ErrEgressNoSession
 	}
 	st, err := mux.OpenStream()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		_ = st.SetWriteDeadline(dl)
@@ -98,8 +99,8 @@ func (c *Client) OpenEgress(ctx context.Context, d Destination, service int64) (
 	}
 	if err := WriteHeader(st, StreamEgress, egressHeader{Host: d.Host, Port: d.Port, Service: service}); err != nil {
 		_ = st.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	_ = st.SetWriteDeadline(time.Time{})
-	return st, nil
+	return st, mux.CloseChan(), nil
 }

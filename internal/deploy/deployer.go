@@ -1222,6 +1222,10 @@ func (d *Deployer) finishAs(deployID, appID int64, depStatus, appStatus, imageTa
 // (krill-egress-<app>, link.EgressNetwork).
 const EgressNetworkPrefix = "krill-egress-"
 
+// LinkEgressLabel is the service label holding the link selection an app's
+// current spec was built with (link.egressLabel reads it).
+const LinkEgressLabel = "krill.link.egress"
+
 // EgressNetwork is an app's egress network.
 func EgressNetwork(appID int64) string {
 	return EgressNetworkPrefix + strconv.FormatInt(appID, 10)
@@ -1271,6 +1275,10 @@ func (d *Deployer) buildSpec(app App, imageTag string) docker.ServiceSpec {
 	// traefik.docker.network, and the gateway is not on the egress network.
 	if len(app.LinkEgress) > 0 {
 		spec.Networks = []string{net, EgressNetwork(app.ID)}
+		// The selection this spec is built with, on the service itself: the
+		// link keeps these names on the sidecar while the service carries
+		// them, also when Krill restarts before the deploy is recorded.
+		spec.Labels[LinkEgressLabel] = strings.Join(app.LinkEgress, ",")
 	}
 	// Placement: restrict to the chosen node set via the per-app krill.place label
 	// (set on those nodes by the server). pin spreads replicas across them; global

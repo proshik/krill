@@ -33,6 +33,9 @@ const (
 	sidecarObjectValue = "egress-config"
 )
 
+// sidecarReplicas is how many tasks the sidecar runs.
+const sidecarReplicas = 2
+
 // sidecarConfigFile is the static configuration's file name under
 // /run/secrets.
 const sidecarConfigFile = "krill-link-egress.yaml"
@@ -116,9 +119,13 @@ func sidecarSpec(in sidecarInput) (docker.ServiceSpec, []byte) {
 		}
 	}
 	spec := docker.ServiceSpec{
-		Name:     name,
-		Image:    "traefik:" + traefik.TraefikVersion,
-		Replicas: 1,
+		Name:  name,
+		Image: "traefik:" + traefik.TraefikVersion,
+		// Two tasks: with none, Docker's DNS stops answering for the
+		// aliases and falls back to the real addresses (fail open; checked
+		// on Docker 29.5.2 for DNSRR and VIP alike), so one task failing
+		// must not leave the names unanswered while Swarm restarts it.
+		Replicas: sidecarReplicas,
 		Networks: nets,
 		// DNSRR: an alias resolves to the sidecar task's own address, so the
 		// connection reaches it — and Krill — from the app's task address,

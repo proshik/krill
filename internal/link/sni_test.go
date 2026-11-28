@@ -119,3 +119,38 @@ func FuzzReadClientHello(f *testing.F) {
 		}
 	})
 }
+
+// hello builds a ClientHello record with the given extensions (type, body).
+func helloWith(exts ...[]byte) []byte {
+	body := []byte{3, 3}
+	body = append(body, make([]byte, 32)...) // random
+	body = append(body, 0)                   // session id
+	body = append(body, 0, 2, 0x13, 0x01)    // one cipher suite
+	body = append(body, 1, 0)                // null compression
+	var ext []byte
+	for _, e := range exts {
+		ext = append(ext, e...)
+	}
+	body = append(body, byte(len(ext)>>8), byte(len(ext)))
+	body = append(body, ext...)
+	hs := append([]byte{1, 0, byte(len(body) >> 8), byte(len(body))}, body...)
+	return append([]byte{0x16, 3, 1, byte(len(hs) >> 8), byte(len(hs))}, hs...)
+}
+
+func sniExt(host string) []byte {
+	name := append([]byte{0, byte(len(host) >> 8), byte(len(host))}, host...)
+	list := append([]byte{byte(len(name) >> 8), byte(len(name))}, name...)
+	return append([]byte{0, 0, byte(len(list) >> 8), byte(len(list))}, list...)
+}
+
+// A ClientHello with Encrypted Client Hello is refused: the name the server
+// acts on is the encrypted inner one, so the visible one proves nothing.
+func TestReadClientHello_RefusesECH(t *testing.T) {
+	if _, sni, err := ReadClientHello(bytes.NewReader(helloWith(sniExt("api.example.com")))); err != nil || sni != "api.example.com" {
+		t.Fatalf("plain hello: %q %v", sni, err)
+	}
+	ech := []byte{0xfe, 0x0d, 0, 1, 0}
+	if _, _, err := ReadClientHello(bytes.NewReader(helloWith(sniExt("api.example.com"), ech))); !errors.Is(err, ErrECH) {
+		t.Fatalf("ECH hello: %v, want ErrECH", err)
+	}
+}

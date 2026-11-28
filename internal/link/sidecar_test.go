@@ -33,7 +33,7 @@ func TestSidecarSpec(t *testing.T) {
 	if sp.Name != SidecarService || sp.Image != "traefik:"+traefik.TraefikVersion {
 		t.Fatalf("name %q image %q", sp.Name, sp.Image)
 	}
-	if !sp.DNSRR || !reflect.DeepEqual(sp.Constraints, []string{"node.role==manager"}) || sp.Replicas != 1 {
+	if !sp.DNSRR || !reflect.DeepEqual(sp.Constraints, []string{"node.role==manager"}) || sp.Replicas != 2 {
 		t.Fatalf("dnsrr %v constraints %v replicas %d", sp.DNSRR, sp.Constraints, sp.Replicas)
 	}
 	if len(sp.Mounts) != 0 || len(sp.Ports) != 0 {

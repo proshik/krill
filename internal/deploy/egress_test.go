@@ -155,3 +155,50 @@ func TestAppliedConfigCarriesEgress(t *testing.T) {
 	}
 	_ = docker.ServiceName
 }
+
+// A fingerprint recorded before the link section existed applied no
+// selection: the first selection saved after the update shows as not applied,
+// and the app's next spec carries it on the service label.
+func TestPendingLinkAfterUpgrade(t *testing.T) {
+	q, st, d, _, appID, _ := configFixture(t)
+	ctx := t.Context()
+	first := d.Enqueue(appID, TriggerManual)
+	runReleaseJob(t, d, first)
+	requireDeployment(t, q, first, "done")
+	// As the link core release recorded it: no link section.
+	if _, err := st.pool.Exec(ctx, `UPDATE deployments SET applied_config = applied_config #- '{sections,link}' WHERE id = $1`, first); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.PendingChanges(ctx, []int64{appID})[appID]; got.Any() {
+		t.Fatalf("pending without a selection = %+v", got)
+	}
+	ident, err := q.GetApplicationIdentity(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO link_settings (id, role) VALUES (true, 'client') ON CONFLICT (id) DO UPDATE SET role = 'client'`,
+		`INSERT INTO link_org_grants (org_id) VALUES ($1)`,
+	} {
+		args := []any{}
+		if strings.Contains(stmt, "$1") {
+			args = append(args, ident.OrgID)
+		}
+		if _, err := st.pool.Exec(ctx, stmt, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.pool.Exec(ctx, `INSERT INTO app_link_destinations (application_id, host, port) VALUES ($1, 'api.telegram.org', 443)`, appID); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.PendingChanges(ctx, []int64{appID})[appID]; !reflect.DeepEqual(got.Changed, []string{SectionLink}) {
+		t.Fatalf("pending after the first selection = %+v, want [link]", got)
+	}
+	a, err := st.GetApplication(ctx, appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp := d.buildSpec(a, "img"); sp.Labels[LinkEgressLabel] != "api.telegram.org:443" {
+		t.Fatalf("selection label = %q", sp.Labels[LinkEgressLabel])
+	}
+}

@@ -111,9 +111,21 @@ func halfClose(c net.Conn) {
 
 // splice copies a→b and b→a until both directions end, half-closing each
 // destination when its source ends, and counts the bytes: a→b into up, b→a
-// into down. It closes both connections when it returns.
-func splice(a, b net.Conn, up, down *atomic.Int64) {
+// into down. It closes both connections when it returns, and as soon as
+// sessionDone closes: a stream of an ended session reads as a plain EOF,
+// and the other side might never close its half.
+func splice(a, b net.Conn, up, down *atomic.Int64, sessionDone <-chan struct{}) {
 	var wg sync.WaitGroup
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-sessionDone:
+			_ = a.Close()
+			_ = b.Close()
+		case <-finished:
+		}
+	}()
 	wg.Add(2)
 	cp := func(dst, src net.Conn, n *atomic.Int64) {
 		defer wg.Done()

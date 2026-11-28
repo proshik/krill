@@ -21,6 +21,13 @@ var ErrNoSNI = errors.New("ClientHello carries no server name")
 // ErrNotClientHello is a connection that does not open with a TLS ClientHello.
 var ErrNotClientHello = errors.New("not a TLS ClientHello")
 
+// ErrECH is a ClientHello with Encrypted Client Hello: the server name that
+// counts is inside it, out of the link's sight, so it is refused.
+var ErrECH = errors.New("ClientHello uses Encrypted Client Hello")
+
+// extECH is the encrypted_client_hello extension (RFC 9849).
+const extECH = 0xfe0d
+
 // ReadClientHello reads the TLS records that carry a connection's ClientHello
 // and returns them as read — to be written on unchanged — and the server name
 // it asks for, lower-cased. It reads nothing past the ClientHello's last
@@ -103,6 +110,11 @@ func parseClientHelloSNI(body []byte) (string, error) {
 		var data cryptobyte.String
 		if !extensions.ReadUint16(&typ) || !extensions.ReadUint16LengthPrefixed(&data) {
 			return "", fmt.Errorf("%w: malformed extension", ErrNotClientHello)
+		}
+		if typ == extECH {
+			// The visible name would be the front end's public name; the
+			// one the server acts on is encrypted.
+			return "", ErrECH
 		}
 		if typ != 0 { // server_name
 			continue

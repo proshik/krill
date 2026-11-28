@@ -91,3 +91,21 @@ FROM applications a
 JOIN environments e ON e.id = a.environment_id
 JOIN projects p ON p.id = e.project_id
 WHERE a.id = $1;
+
+-- name: ListLatestLinkApplied :many
+-- client: for each listed app, the newest successful deployment that recorded
+-- its link selection (a link section in applied_config). A deployment by a
+-- release without egress records none and is skipped: after a rollback onto
+-- it and back, the selection the egress release last applied still counts.
+SELECT DISTINCT ON (d.application_id) d.application_id, d.applied_config
+FROM deployments d
+WHERE d.application_id = ANY(sqlc.arg(ids)::bigint[]) AND d.status = 'done'
+  AND d.applied_config -> 'sections' -> 'link' IS NOT NULL
+ORDER BY d.application_id, d.started_at DESC, d.id DESC;
+
+-- name: LockLinkEgressApp :one
+-- client: serializes replacing one app's selection.
+SELECT id FROM applications WHERE id = $1 FOR UPDATE;
+
+-- name: CountLinkDestinations :one
+SELECT count(*) FROM link_destinations;

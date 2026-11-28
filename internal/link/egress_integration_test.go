@@ -85,7 +85,7 @@ func roundTrip(t *testing.T, client install, d Destination, sni string, roots *x
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	st, err := client.svc.client.OpenEgress(ctx, d, 7)
+	st, _, err := client.svc.client.OpenEgress(ctx, d, 7)
 	if err != nil {
 		return err
 	}
@@ -193,5 +193,25 @@ func TestRelayDialRefusesPrivate(t *testing.T) {
 		if !errors.Is(err, netguard.ErrBlocked) || dialCategory(err) != "blocked" {
 			t.Fatalf("dial %s: %v", addr, err)
 		}
+	}
+}
+
+// A client that did not say it speaks egress (the link core release) gets no
+// destination list in the relay's hello, nor lists later: its control line
+// stays what that release reads.
+func TestRelayHelloWithoutEgress(t *testing.T) {
+	relay, client, _ := pairedPair(t)
+	ctx := context.Background()
+	if err := relay.svc.AddDestination(ctx, Destination{testDest, 443}); err != nil {
+		t.Fatal(err)
+	}
+	// The client's own session holds the peer: forget it so the raw one is
+	// admitted.
+	client.svc.Close()
+	eventually(t, "the session to end", 10*time.Second, func() bool { return connectedPeers(t, relay) == 0 })
+	mux := clientMux(t, client)
+	m, err := hello(t, mux)
+	if err != nil || m.Type != "hello" || len(m.Destinations) != 0 {
+		t.Fatalf("hello %+v %v, want no destinations", m, err)
 	}
 }

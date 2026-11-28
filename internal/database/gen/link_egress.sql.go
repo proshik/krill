@@ -43,6 +43,17 @@ func (q *Queries) AddLinkDestination(ctx context.Context, arg AddLinkDestination
 	return result.RowsAffected(), nil
 }
 
+const countLinkDestinations = `-- name: CountLinkDestinations :one
+SELECT count(*) FROM link_destinations
+`
+
+func (q *Queries) CountLinkDestinations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countLinkDestinations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteAppLinkDestinations = `-- name: DeleteAppLinkDestinations :exec
 DELETE FROM app_link_destinations WHERE application_id = $1
 `
@@ -240,6 +251,43 @@ func (q *Queries) ListAppLinkEgress(ctx context.Context, applicationID int64) ([
 	return items, nil
 }
 
+const listLatestLinkApplied = `-- name: ListLatestLinkApplied :many
+SELECT DISTINCT ON (d.application_id) d.application_id, d.applied_config
+FROM deployments d
+WHERE d.application_id = ANY($1::bigint[]) AND d.status = 'done'
+  AND d.applied_config -> 'sections' -> 'link' IS NOT NULL
+ORDER BY d.application_id, d.started_at DESC, d.id DESC
+`
+
+type ListLatestLinkAppliedRow struct {
+	ApplicationID int64  `json:"application_id"`
+	AppliedConfig []byte `json:"applied_config"`
+}
+
+// client: for each listed app, the newest successful deployment that recorded
+// its link selection (a link section in applied_config). A deployment by a
+// release without egress records none and is skipped: after a rollback onto
+// it and back, the selection the egress release last applied still counts.
+func (q *Queries) ListLatestLinkApplied(ctx context.Context, ids []int64) ([]ListLatestLinkAppliedRow, error) {
+	rows, err := q.db.Query(ctx, listLatestLinkApplied, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestLinkAppliedRow
+	for rows.Next() {
+		var i ListLatestLinkAppliedRow
+		if err := rows.Scan(&i.ApplicationID, &i.AppliedConfig); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLinkDestinations = `-- name: ListLinkDestinations :many
 
 SELECT host, port FROM link_destinations ORDER BY host, port
@@ -350,6 +398,17 @@ func (q *Queries) ListLinkOrgGrants(ctx context.Context) ([]int64, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockLinkEgressApp = `-- name: LockLinkEgressApp :one
+SELECT id FROM applications WHERE id = $1 FOR UPDATE
+`
+
+// client: serializes replacing one app's selection.
+func (q *Queries) LockLinkEgressApp(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockLinkEgressApp, id)
+	err := row.Scan(&id)
+	return id, err
 }
 
 const revokeLinkOrg = `-- name: RevokeLinkOrg :execrows

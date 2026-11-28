@@ -60,13 +60,49 @@ type Egress struct {
 	kick  chan struct{}
 
 	mu        sync.Mutex
-	preparing map[int64]time.Time
+	preparing map[int64]prepared
 	idx       egressIndex
 	idxAt     time.Time
 	refreshMu sync.Mutex
 
 	traffic *traffic
+	streams map[int64]int // open egress streams per app, under mu
+	total   int
 }
+
+// Egress stream bounds on a client: the relay closes the whole session past
+// MaxStreamsPerPeer, so one app must not take the others' streams with it.
+var (
+	maxAppStreams   = 256
+	streamsReserved = 64 // the control stream and streams still closing
+)
+
+// takeStream reserves an egress stream for an app, false when the app or
+// the session is at its bound.
+func (e *Egress) takeStream(appID int64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.streams[appID] >= maxAppStreams || e.total >= MaxStreamsPerPeer-streamsReserved {
+		return false
+	}
+	e.streams[appID]++
+	e.total++
+	return true
+}
+
+func (e *Egress) dropStream(appID int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.streams[appID]--
+	e.total--
+	if e.streams[appID] <= 0 {
+		delete(e.streams, appID)
+	}
+}
+
+// ErrEgressBusy refuses a connection over the app's or the session's
+// stream bound.
+var ErrEgressBusy = errors.New("too many open egress connections")
 
 // NewEgress wires egress into the link service. eng must manage networks,
 // services and Swarm secrets (the real engine); gatewaySecret is the
@@ -77,7 +113,7 @@ func NewEgress(svc *Service, eng docker.Engine, gatewaySecret string) (*Egress, 
 		return nil, ErrEgressUnsupported
 	}
 	e := &Egress{svc: svc, store: svc.store, eng: ee, nets: ee, ctx: svc.ctx, names: defaultNames, token: EgressToken(gatewaySecret),
-		kick: make(chan struct{}, 1), preparing: map[int64]time.Time{}, traffic: newTraffic()}
+		kick: make(chan struct{}, 1), preparing: map[int64]prepared{}, traffic: newTraffic(), streams: map[int64]int{}}
 	ui, err := panel.Upstream(svc.cfg.AdvertiseAddr, svc.cfg.ListenAddr)
 	if err == nil {
 		e.providerURL = ui + EgressConfigPath
@@ -139,9 +175,16 @@ func (e *Egress) Prepare(ctx context.Context, appID int64, dests []string) error
 		req.dests = append(req.dests, d)
 	}
 	e.mu.Lock()
-	e.preparing[appID] = time.Now()
+	e.preparing[appID] = prepared{at: time.Now(), dests: req.dests}
 	e.mu.Unlock()
 	return e.reconcile(ctx, req)
+}
+
+// prepared is a Prepare whose deploy has not reported back: its names stay
+// on the sidecar until the app's service carries them (or the deploy ends).
+type prepared struct {
+	at    time.Time
+	dests []Destination
 }
 
 // Changed implements deploy.EgressHook: a deploy of the app finished.
@@ -152,16 +195,16 @@ func (e *Egress) Changed(appID int64) {
 	e.Kick()
 }
 
-func (e *Egress) preparingSet() map[int64]bool {
+func (e *Egress) preparingSet() map[int64][]Destination {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := map[int64]bool{}
-	for id, at := range e.preparing {
-		if time.Since(at) > prepareRemembers {
+	out := map[int64][]Destination{}
+	for id, p := range e.preparing {
+		if time.Since(p.at) > prepareRemembers {
 			delete(e.preparing, id)
 			continue
 		}
-		out[id] = true
+		out[id] = p.dests
 	}
 	return out
 }
@@ -243,7 +286,12 @@ func (e *Egress) deploySidecar(ctx context.Context, spec docker.ServiceSpec) (bo
 	if err != nil {
 		return false, fmt.Errorf("read the sidecar's tasks: %w", err)
 	}
-	if before.Found && docker.UpdateSettled(before.UpdateState) && before.Running > 0 {
+	if before.Found && before.Running < int(spec.Replicas) && docker.UpdateSettled(before.UpdateState) {
+		// Fewer tasks than it should have — scaled down by hand, or tasks
+		// failing. With none, the names resolve to the real addresses
+		// (Docker's DNS falls back), so this is redeployed now.
+		slog.Error("link: the egress sidecar runs fewer tasks than it should; redeploying it", "running", before.Running, "want", int(spec.Replicas))
+	} else if before.Found && docker.UpdateSettled(before.UpdateState) {
 		if cur, found, err := e.eng.ServiceLabels(ctx, e.names.sidecar); err == nil && found {
 			if h := spec.Labels[sidecarHashLabel]; h != "" && cur[sidecarHashLabel] == h {
 				return false, nil
@@ -409,8 +457,15 @@ func (e *Egress) serveConn(conn net.Conn, hdr ProxyHeader, release func()) {
 		resetConn(conn)
 		return
 	}
+	if !e.takeStream(appID) {
+		cell.refused.Add(1)
+		slog.Warn("link: egress refused", "app", appID, "dest", d.String(), "reason", ErrEgressBusy.Error())
+		resetConn(conn)
+		return
+	}
+	defer e.dropStream(appID)
 	octx, cancel := context.WithTimeout(e.ctx, HeaderTimeout)
-	st, err := client.OpenEgress(octx, d, appID)
+	st, closed, err := client.OpenEgress(octx, d, appID)
 	cancel()
 	if err != nil {
 		cell.refused.Add(1)
@@ -426,7 +481,7 @@ func (e *Egress) serveConn(conn net.Conn, hdr ProxyHeader, release func()) {
 	}
 	cell.up.Add(int64(len(hello)))
 	cell.conns.Add(1)
-	splice(conn, st, &cell.up, &cell.down)
+	splice(conn, st, &cell.up, &cell.down, closed)
 }
 
 // resetConn closes c with a TCP reset where it can: a refused connection

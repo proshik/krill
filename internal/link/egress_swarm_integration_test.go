@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,10 +36,16 @@ func swarmHostAddr() string {
 	return "192.168.5.2"
 }
 
-// krl002 names keep this test's Swarm objects apart from anything else on a
-// shared Swarm.
-var krl002Names = egressNames{sidecar: "krl002-sidecar", netPrefix: "krl002-egress-",
-	appService: func(id int64) string { return "krl002-app-" + strconv.FormatInt(id, 10) }, objects: "krl002-egress-config"}
+// krl002Names keep this run's Swarm objects apart from anything else on a
+// shared Swarm, another test or another run of this one included.
+var krl002Names = func() egressNames {
+	run := "krl002-l" + strconv.FormatInt(time.Now().UnixNano()%1e8, 36) + "-"
+	return egressNames{sidecar: run + "sidecar", netPrefix: run + "egress-",
+		appService: func(id int64) string { return run + "app-" + strconv.FormatInt(id, 10) }, objects: run + "egress-config"}
+}()
+
+// krl002Run is the prefix every object of this run carries.
+var krl002Run = strings.TrimSuffix(krl002Names.sidecar, "sidecar")
 
 const swarmDest = "api.example.test"
 
@@ -153,7 +161,7 @@ func newEgressFixture(t *testing.T) *egressFixture {
 	go func() { _ = ui.Serve(uiLn) }()
 	t.Cleanup(func() { _ = ui.Close() })
 
-	f.orgNet = "krl002-org-" + strconv.FormatInt(time.Now().UnixNano()%1e6, 10)
+	f.orgNet = krl002Run + "org"
 	if _, err := eng.NetworkEnsure(ctx, f.orgNet); err != nil {
 		t.Fatal(err)
 	}
@@ -165,10 +173,10 @@ func newEgressFixture(t *testing.T) *egressFixture {
 func (f *egressFixture) cleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	nets, _ := f.eng.(docker.PrefixNetworks).PrefixNetworks(ctx, "krl002-")
+	nets, _ := f.eng.(docker.PrefixNetworks).PrefixNetworks(ctx, krl002Run)
 	for _, n := range nets {
 		for _, s := range n.Services {
-			if strings.HasPrefix(s, "krl002-") {
+			if strings.HasPrefix(s, krl002Run) {
 				_ = f.eng.ServiceRemove(ctx, s)
 			}
 		}
@@ -176,7 +184,7 @@ func (f *egressFixture) cleanup(t *testing.T) {
 	_ = f.eng.ServiceRemove(ctx, krl002Names.sidecar)
 	_ = f.eng.(docker.SwarmObjects).PruneObjects(ctx, sidecarObjectLabel, krl002Names.objects, nil)
 	for ctx.Err() == nil {
-		nets, err := f.eng.(docker.PrefixNetworks).PrefixNetworks(ctx, "krl002-")
+		nets, err := f.eng.(docker.PrefixNetworks).PrefixNetworks(ctx, krl002Run)
 		if err != nil || len(nets) == 0 {
 			return
 		}
@@ -227,7 +235,8 @@ func (f *egressFixture) app(t *testing.T, name string, granted bool, dests ...De
 // applied records a successful deployment of the app that applied dests.
 func (f *egressFixture) applied(t *testing.T, appID int64, dests ...string) {
 	t.Helper()
-	cfg, _ := json.Marshal(map[string]any{"v": 2, "key": "", "sections": map[string]string{}, "egress": dests})
+	// As the egress release records it: a link section beside the plain list.
+	cfg, _ := json.Marshal(map[string]any{"v": 2, "key": "", "sections": map[string]string{"link": "digest"}, "egress": dests})
 	if _, err := f.pool.Exec(context.Background(), `INSERT INTO deployments (application_id, status, trigger, image_tag, applied_config, started_at)
 		VALUES ($1, 'done', 'manual', 'alpine:3', $2, now())`, appID, cfg); err != nil {
 		t.Fatal(err)
@@ -269,26 +278,40 @@ func (f *egressFixture) in(t *testing.T, service, cmd string) (string, error) {
 const fetch = `wget -qO- -T 8 --no-check-certificate https://` + swarmDest + `/ 2>&1; echo "exit=$?"`
 
 // resolve prints the addresses the app resolves the destination to.
-const resolve = `getent hosts ` + swarmDest + ` | cut -d' ' -f1; true`
+const resolve = `getent ahostsv4 ` + swarmDest + ` | cut -d' ' -f1 | sort -u; true`
 
-func (f *egressFixture) sidecarIP(t *testing.T, appID int64) string {
+// sidecarIPs are the sidecar's running task addresses on the app's network.
+func (f *egressFixture) sidecarIPs(t *testing.T, appID int64) []string {
 	t.Helper()
 	nets, err := f.eng.(docker.PrefixNetworks).PrefixNetworks(context.Background(), krl002Names.netPrefix)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var out []string
 	for _, n := range nets {
 		if n.Name != krl002Names.network(appID) {
 			continue
 		}
 		for _, tk := range n.Tasks {
 			if tk.Service == krl002Names.sidecar && tk.State == "running" {
-				return tk.IP
+				out = append(out, tk.IP)
 			}
 		}
 	}
-	return ""
+	sort.Strings(out)
+	return out
 }
+
+// resolved is what the app resolves the destination to, sorted.
+func (f *egressFixture) resolved(t *testing.T, svc string) []string {
+	t.Helper()
+	got, _ := f.in(t, svc, resolve)
+	out := strings.Fields(got)
+	sort.Strings(out)
+	return out
+}
+
+func sameSet(a, b []string) bool { return len(a) > 0 && strings.Join(a, ",") == strings.Join(b, ",") }
 
 // TestEgressOnSwarm runs the egress path on a real Swarm with the pinned
 // Traefik as the sidecar and the Krill listener on this host: an app on its
@@ -323,10 +346,11 @@ func TestEgressOnSwarm(t *testing.T) {
 			out, _ = f.in(t, svc, fetch)
 			return strings.Contains(out, "egress ok")
 		})
-		got, _ := f.in(t, svc, resolve)
-		if ip := f.sidecarIP(t, appID); ip == "" || strings.TrimSpace(got) != ip {
-			t.Fatalf("the app resolves %s to %q, want the sidecar's task address %q (DNSRR)", swarmDest, got, ip)
-		}
+		var got, ips []string
+		eventually(t, "the name to resolve to both sidecar tasks", 30*time.Second, func() bool {
+			got, ips = f.resolved(t, svc), f.sidecarIPs(t, appID)
+			return len(ips) == sidecarReplicas && sameSet(got, ips)
+		})
 		var cell Traffic
 		for _, c := range f.e.traffic.of(0) {
 			if c.Service == appID {
@@ -339,9 +363,11 @@ func TestEgressOnSwarm(t *testing.T) {
 	})
 
 	t.Run("an app outside the egress network does not resolve the alias", func(t *testing.T) {
-		got, _ := f.in(t, otherSvc, resolve)
-		if ip := f.sidecarIP(t, appID); strings.Contains(got, ip) {
-			t.Fatalf("the other app resolves %s to the sidecar (%q)", swarmDest, got)
+		got := f.resolved(t, otherSvc)
+		for _, ip := range f.sidecarIPs(t, appID) {
+			if slices.Contains(got, ip) {
+				t.Fatalf("the other app resolves %s to the sidecar (%v)", swarmDest, got)
+			}
 		}
 	})
 
@@ -354,10 +380,10 @@ func TestEgressOnSwarm(t *testing.T) {
 		if err := f.e.reconcile(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		ip := f.sidecarIP(t, appID)
-		if got, _ := f.in(t, svc, resolve); strings.TrimSpace(got) != ip {
-			t.Fatalf("while still applied the app resolves %q, want the sidecar %q", got, ip)
-		}
+		ips := f.sidecarIPs(t, appID)
+		eventually(t, "the sidecar's names while still applied", 30*time.Second, func() bool {
+			return sameSet(f.resolved(t, svc), f.sidecarIPs(t, appID))
+		})
 		if out, _ := f.in(t, svc, fetch); strings.Contains(out, "egress ok") {
 			t.Fatal("a destination no longer selected went through")
 		}
@@ -367,12 +393,20 @@ func TestEgressOnSwarm(t *testing.T) {
 			t.Fatal(err)
 		}
 		eventually(t, "the alias to go", 30*time.Second, func() bool {
-			got, _ := f.in(t, svc, resolve)
-			return !strings.Contains(got, ip) && !strings.Contains(got, f.sidecarIP(t, appID)+"\n")
+			got := f.resolved(t, svc)
+			for _, ip := range append(ips, f.sidecarIPs(t, appID)...) {
+				if slices.Contains(got, ip) {
+					return false
+				}
+			}
+			return true
 		})
 	})
 
-	t.Run("the sidecar at zero replicas refuses", func(t *testing.T) {
+	// With no sidecar task Docker's DNS falls back to the real address
+	// (checked on Docker 29.5.2), so the sidecar runs two tasks and Krill
+	// restores them when someone scales it down.
+	t.Run("a sidecar scaled to zero is restored by the next reconcile", func(t *testing.T) {
 		orgID := orgOf(t, f, appID)
 		if err := f.client.svc.SetAppDestinations(ctx, orgID, appID, []Destination{d}); err != nil {
 			t.Fatal(err)
@@ -380,11 +414,6 @@ func TestEgressOnSwarm(t *testing.T) {
 		if err := f.e.reconcile(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		eventually(t, "egress again", 60*time.Second, func() bool {
-			out, _ := f.in(t, svc, fetch)
-			return strings.Contains(out, "egress ok")
-		})
-		ip := f.sidecarIP(t, appID)
 		if err := f.eng.ServiceScale(ctx, krl002Names.sidecar, 0); err != nil {
 			t.Fatal(err)
 		}
@@ -392,20 +421,17 @@ func TestEgressOnSwarm(t *testing.T) {
 			st, err := f.eng.ServiceState(ctx, krl002Names.sidecar)
 			return err == nil && st.Running == 0
 		})
-		// The stopping task keeps its name for a moment after Swarm reports
-		// it stopped (a request may still go through the link then — never
-		// directly); then the name does not resolve at all (DNSRR at zero),
-		// never to the real address.
-		eventually(t, "the name to stop resolving", 30*time.Second, func() bool {
-			got := strings.TrimSpace(func() string { s, _ := f.in(t, svc, resolve); return s }())
-			if got != "" && got != ip {
-				t.Fatalf("with the sidecar stopping the app resolves %q", got)
-			}
-			return got == ""
-		})
-		if out, _ := f.in(t, svc, fetch); strings.Contains(out, "egress ok") {
-			t.Fatal("egress with the sidecar at zero")
+		if err := f.e.reconcile(ctx, nil); err != nil {
+			t.Fatal(err)
 		}
+		st, err := f.eng.ServiceState(ctx, krl002Names.sidecar)
+		if err != nil || st.Running != sidecarReplicas {
+			t.Fatalf("after reconcile: %+v %v, want %d running", st, err, sidecarReplicas)
+		}
+		eventually(t, "egress again", 60*time.Second, func() bool {
+			out, _ := f.in(t, svc, fetch)
+			return strings.Contains(out, "egress ok")
+		})
 	})
 
 	t.Run("the sidecar and the network go once no app uses them", func(t *testing.T) {

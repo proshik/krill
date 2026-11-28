@@ -130,6 +130,7 @@ type relaySession struct {
 	// lists. ctl is the control stream; ctlMu orders writes to it.
 	egress   bool
 	ctlMu    sync.Mutex
+	ready    bool // the hello is sent (under ctlMu)
 	ctl      *yamux.Stream
 	services atomic.Pointer[[]ManifestService]
 }
@@ -365,13 +366,7 @@ func (r *Relay) session(mux *yamux.Session, ctl *yamux.Stream, body []byte, fp s
 		return
 	}
 	admitted()
-	dests, err := r.store.Destinations(r.ctx)
-	if err != nil {
-		// The client then refuses every egress connection until the next
-		// lists; the session itself is fine.
-		slog.Error("link: read the destination list failed", "peer", peer.Name, "err", err)
-	}
-	if err := s.send(message{Type: "hello", Proto: ProtoVersion, KrillVersion: r.version, Egress: true, Destinations: dests}); err != nil {
+	if err := s.sendHello(r.ctx, r.store, r.version); err != nil {
 		return
 	}
 	slog.Info("link: session connected", "peer", peer.Name, "from", src.Addr(), "version", hello.KrillVersion)

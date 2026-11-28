@@ -207,6 +207,22 @@ func (d *Deployer) configFingerprint(a App) AppliedConfig {
 	return out
 }
 
+// withLinkDefault fills in the link section of a fingerprint recorded before
+// the section existed: a release without egress never applied a selection,
+// so its deploys applied none, and a first selection saved after the update
+// shows as not applied (and Apply settings can apply it).
+func (d *Deployer) withLinkDefault(c AppliedConfig, a App) AppliedConfig {
+	if _, ok := c.Sections[SectionLink]; ok {
+		return c
+	}
+	a.LinkEgress = nil
+	empty := d.configFingerprint(a).Sections[SectionLink]
+	out := c
+	out.Sections = maps.Clone(c.Sections)
+	out.Sections[SectionLink] = empty
+	return out
+}
+
 // configStore is the optional store capability behind applied-configuration
 // tracking (the database store has it; small test stores need not).
 type configStore interface {
@@ -365,9 +381,10 @@ func (d *Deployer) pendingFor(ctx context.Context, appID int64, l LatestApplied)
 	if !l.Config.comparable(now) {
 		return Pending{}, false
 	}
+	stored := d.withLinkDefault(*l.Config, a)
 	var p Pending
 	for _, s := range Sections {
-		stored, known := l.Config.Sections[s]
+		stored, known := stored.Sections[s]
 		if known && stored != now.Sections[s] {
 			p.Changed = append(p.Changed, s)
 		}
@@ -450,8 +467,9 @@ func (d *Deployer) checkApplyFresh(ctx context.Context, j job, app App) error {
 	if l.Config != nil {
 		now := d.configFingerprint(app)
 		if l.Config.comparable(now) {
+			stored := d.withLinkDefault(*l.Config, app)
 			for _, s := range Sections {
-				if v, known := l.Config.Sections[s]; known && v != now.Sections[s] {
+				if v, known := stored.Sections[s]; known && v != now.Sections[s] {
 					return nil
 				}
 			}

@@ -178,6 +178,9 @@ func (s *Server) addLinkDestination(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch err := s.link.AddDestination(r.Context(), d); {
+	case errors.Is(err, link.ErrTooManyDestinations):
+		s.flashErr(w, r, i18n.Tf(r.Context(), "link.err.too_many_dests", link.MaxDestinations))
+		return
 	case errors.Is(err, link.ErrWrongRole):
 		s.flashErrT(w, r, "link.err.not_relay_dests")
 		return

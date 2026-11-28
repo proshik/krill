@@ -48,6 +48,7 @@ type Querier interface {
 	// A redirecting domain never serves the app, whatever its exposed flag says.
 	CountExposedDomainsByApplication(ctx context.Context, applicationID int64) (int64, error)
 	CountGitCredentialsByName(ctx context.Context, arg CountGitCredentialsByNameParams) (int64, error)
+	CountLinkDestinations(ctx context.Context) (int64, error)
 	// Domain rows on a host, whatever their letter case: a link host is compared
 	// with app domains as DNS compares names.
 	CountLinkHostDomains(ctx context.Context, host string) (int64, error)
@@ -339,6 +340,11 @@ type Querier interface {
 	// done row) and the partial running index, so the cost does not grow with the
 	// history the deployments poll keeps asking about.
 	ListLatestAppliedDeployments(ctx context.Context, ids []int64) ([]ListLatestAppliedDeploymentsRow, error)
+	// client: for each listed app, the newest successful deployment that recorded
+	// its link selection (a link section in applied_config). A deployment by a
+	// release without egress records none and is skipped: after a rollback onto
+	// it and back, the selection the egress release last applied still counts.
+	ListLatestLinkApplied(ctx context.Context, ids []int64) ([]ListLatestLinkAppliedRow, error)
 	// The latest successful run of each backup configuration of an organization
 	// that has one on record (rows are kept 30 days).
 	ListLatestOkBackupRuns(ctx context.Context, orgID int64) ([]ListLatestOkBackupRunsRow, error)
@@ -421,6 +427,8 @@ type Querier interface {
 	// then its domains (ON DELETE CASCADE), so the opposite order could deadlock.
 	LockApplicationRow(ctx context.Context, id int64) (int64, error)
 	LockEnvironmentClone(ctx context.Context, requestKey string) (EnvironmentClone, error)
+	// client: serializes replacing one app's selection.
+	LockLinkEgressApp(ctx context.Context, id int64) (int64, error)
 	LockLinkPairingCode(ctx context.Context, secretSha256 string) (LockLinkPairingCodeRow, error)
 	LockLinkSettings(ctx context.Context) (LinkSetting, error)
 	MarkEnvironmentCloneFencesPruned(ctx context.Context, requestKey string) (int64, error)

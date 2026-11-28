@@ -59,7 +59,7 @@ func TestPlanSidecarNetworks(t *testing.T) {
 		appNet(4, nil),
 		{Name: "krill-egress-x"}, // not Krill's
 	}
-	p := planSidecar(defaultNames, nets, nil, nil, map[int64]bool{3: true}, &prepareReq{app: 4, dests: []Destination{tg}})
+	p := planSidecar(defaultNames, nets, nil, nil, map[int64][]Destination{3: nil}, &prepareReq{app: 4, dests: []Destination{tg}})
 	if !reflect.DeepEqual(p.Unused, []string{"krill-egress-1"}) {
 		t.Fatalf("unused %v", p.Unused)
 	}
@@ -94,7 +94,7 @@ func (f *fakeNets) PrefixNetworks(context.Context, string) ([]docker.PrefixNetwo
 
 // egressWithNets is an Egress whose engine answers PrefixNetworks only.
 func egressWithNets(f *fakeNets) *Egress {
-	return &Egress{ctx: context.Background(), nets: f, names: defaultNames, preparing: map[int64]time.Time{}, traffic: newTraffic()}
+	return &Egress{ctx: context.Background(), nets: f, names: defaultNames, preparing: map[int64]prepared{}, traffic: newTraffic()}
 }
 
 // The app is the one whose egress network carries the sidecar address the
@@ -143,5 +143,47 @@ func TestIdentify(t *testing.T) {
 	f.mu.Unlock()
 	if id, err := e.identify(context.Background(), addr("10.0.7.6"), addr("10.0.7.2")); err != nil || id != 7 {
 		t.Fatalf("new task: %d, %v", id, err)
+	}
+}
+
+// The app service's own label (the selection its current spec was built
+// with) and a prepare in flight keep their names too: a deploy not recorded
+// yet — or interrupted by a restart of Krill — still has its hosts answered.
+func TestPlanSidecarLabelAndPrepared(t *testing.T) {
+	n := appNet(1, []string{"krill-1", SidecarService})
+	n.Labels = map[string]map[string]string{"krill-1": {egressLabel: "api.openai.com:443,api.telegram.org:443"}, SidecarService: {egressLabel: "x.example.com:443"}}
+	p := planSidecar(defaultNames, []docker.PrefixNetwork{n, appNet(2, nil)}, nil, nil, map[int64][]Destination{2: {alt}}, nil)
+	if !reflect.DeepEqual(p.Keep["krill-egress-1"], []Destination{oai, tg}) {
+		t.Fatalf("keep 1 = %v", p.Keep["krill-egress-1"])
+	}
+	if !reflect.DeepEqual(p.Keep["krill-egress-2"], []Destination{alt}) {
+		t.Fatalf("keep 2 = %v", p.Keep["krill-egress-2"])
+	}
+}
+
+// One app cannot take the session's whole stream budget: past its own bound,
+// or the session's, new connections are refused locally.
+func TestEgressStreamBounds(t *testing.T) {
+	e := &Egress{streams: map[int64]int{}}
+	for i := 0; i < maxAppStreams; i++ {
+		if !e.takeStream(1) {
+			t.Fatalf("stream %d refused", i)
+		}
+	}
+	if e.takeStream(1) {
+		t.Fatal("past the per-app bound")
+	}
+	if !e.takeStream(2) {
+		t.Fatal("another app refused")
+	}
+	e.dropStream(1)
+	if !e.takeStream(1) {
+		t.Fatal("a freed stream not reusable")
+	}
+	e2 := &Egress{streams: map[int64]int{}}
+	for i := 0; e2.takeStream(int64(i)); i++ {
+	}
+	if e2.total != MaxStreamsPerPeer-streamsReserved {
+		t.Fatalf("session bound %d, want %d", e2.total, MaxStreamsPerPeer-streamsReserved)
 	}
 }

@@ -90,7 +90,7 @@ func (r *Relay) serveEgress(st *yamux.Stream, body []byte, s *relaySession) {
 	}
 	cell.up.Add(int64(len(hello)))
 	cell.conns.Add(1)
-	splice(st, up, &cell.up, &cell.down)
+	splice(st, up, &cell.up, &cell.down, s.mux.CloseChan())
 }
 
 // dialCategory classifies a failed dial for the log, without the resolver's
@@ -133,22 +133,56 @@ func boundManifest(in []ManifestService) []ManifestService {
 	return out
 }
 
-// pushLists sends the destination list to every live session whose client
-// speaks egress.
+// pushLists sends the destination list to every session whose client speaks
+// egress and has had its hello. The list is read under the session's write
+// lock, so of two pushes the later one sends the newer list, and a session
+// still before its hello reads the list itself when it sends the hello.
 func (r *Relay) pushLists(ctx context.Context) {
-	dests, err := r.store.Destinations(ctx)
-	if err != nil {
-		slog.Error("link: read the destination list failed", "err", err)
-		return
-	}
 	for _, sc := range r.reg.all() {
 		s, ok := sc.(*relaySession)
 		if !ok || !s.egress {
 			continue
 		}
-		if err := s.send(message{Type: "lists", Destinations: dests}); err != nil {
-			slog.Info("link: lists not delivered; the session ends", "peer", s.peer)
+		if err := s.sendLists(ctx, r.store); err != nil {
+			slog.Info("link: lists not delivered; the session ends", "peer", s.peer, "err", err)
 			_ = s.mux.Close()
 		}
 	}
+}
+
+// sendLists writes the current list to a session that has had its hello.
+func (s *relaySession) sendLists(ctx context.Context, store *Store) error {
+	s.ctlMu.Lock()
+	defer s.ctlMu.Unlock()
+	if !s.ready {
+		return nil
+	}
+	dests, err := store.Destinations(ctx)
+	if err != nil {
+		return err
+	}
+	return writeMessage(s.ctl, message{Type: "lists", Destinations: dests})
+}
+
+// sendHello answers the client's hello: first on the control stream, with
+// the destination list for a client that speaks egress, read under the
+// session's write lock so no lists can precede or outdate it.
+func (s *relaySession) sendHello(ctx context.Context, store *Store, version string) error {
+	s.ctlMu.Lock()
+	defer s.ctlMu.Unlock()
+	m := message{Type: "hello", Proto: ProtoVersion, KrillVersion: version, Egress: true}
+	if s.egress {
+		dests, err := store.Destinations(ctx)
+		if err != nil {
+			// The client then refuses every egress connection until the
+			// next lists; the session itself is fine.
+			slog.Error("link: read the destination list failed", "peer", s.peer, "err", err)
+		}
+		m.Destinations = dests
+	}
+	if err := writeMessage(s.ctl, m); err != nil {
+		return err
+	}
+	s.ready = true
+	return nil
 }

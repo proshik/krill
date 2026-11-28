@@ -17,9 +17,13 @@ type PrefixNetwork struct {
 	Name string
 	// Services are the services whose current spec attaches the network.
 	Services []string
-	// Tasks are the tasks attached to it that Swarm wants running, with
-	// their address on it: running, and starting or preparing ones too (a
-	// task waiting for its healthcheck already makes connections).
+	// Labels are those services' service-level labels, by service name.
+	Labels map[string]map[string]string
+	// Tasks are the tasks attached to it whose container is (or is about
+	// to be) alive, with their address on it: running, starting and
+	// preparing ones (a task waiting for its healthcheck already makes
+	// connections), and also tasks Swarm is stopping but that still run —
+	// an old task draining after a rolling update still uses the network.
 	Tasks []NetworkTask
 }
 
@@ -49,7 +53,8 @@ func (e *dockerEngine) PrefixNetworks(ctx context.Context, prefix string) ([]Pre
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{Filters: filters.NewArgs(filters.Arg("desired-state", "running"))})
+	tasks, err := e.cli.TaskList(ctx, swarm.TaskListOptions{Filters: filters.NewArgs(
+		filters.Arg("desired-state", "running"), filters.Arg("desired-state", "shutdown"))})
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +72,7 @@ func prefixNetworks(prefix string, nets []network.Summary, svcs []swarm.Service,
 		if !strings.HasPrefix(n.Name, prefix) || n.Scope != "swarm" {
 			continue
 		}
-		p := &PrefixNetwork{Name: n.Name}
+		p := &PrefixNetwork{Name: n.Name, Labels: map[string]map[string]string{}}
 		byID[n.ID], byName[n.Name] = p, p
 		order = append(order, p)
 	}
@@ -82,6 +87,7 @@ func prefixNetworks(prefix string, nets []network.Summary, svcs []swarm.Service,
 			}
 			if p != nil {
 				p.Services = append(p.Services, s.Spec.Name)
+				p.Labels[s.Spec.Name] = s.Spec.Labels
 			}
 		}
 	}

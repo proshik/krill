@@ -23,10 +23,38 @@ func (s *Store) Destinations(ctx context.Context) ([]Destination, error) {
 	return out, nil
 }
 
-// addDestination adds d to the relay's list; false when it was there.
+// MaxDestinations bounds the relay's list: the whole list travels in one
+// control line (maxMessage) to every client, in its hello and in lists. Fifty
+// names of the longest DNS length still fit.
+const MaxDestinations = 50
+
+// ErrTooManyDestinations refuses a destination past MaxDestinations.
+var ErrTooManyDestinations = errors.New("the relay's destination list is full")
+
+// addDestination adds d to the relay's list; false when it was there. The
+// settings row lock serializes additions, so the bound holds.
 func (s *Store) addDestination(ctx context.Context, d Destination) (bool, error) {
-	n, err := s.q.AddLinkDestination(ctx, db.AddLinkDestinationParams{Host: d.Host, Port: int32(d.Port)})
-	return n == 1, err
+	added := false
+	err := s.inTx(ctx, func(q *db.Queries) error {
+		if _, err := q.LockLinkSettings(ctx); err != nil {
+			return err
+		}
+		n, err := q.CountLinkDestinations(ctx)
+		if err != nil {
+			return err
+		}
+		if n >= MaxDestinations {
+			ok, err := q.LinkDestinationAllowed(ctx, db.LinkDestinationAllowedParams{Host: d.Host, Port: int32(d.Port)})
+			if err != nil || ok {
+				return err
+			}
+			return ErrTooManyDestinations
+		}
+		rows, err := q.AddLinkDestination(ctx, db.AddLinkDestinationParams{Host: d.Host, Port: int32(d.Port)})
+		added = rows == 1
+		return err
+	})
+	return added, err
 }
 
 // removeDestination removes d from the relay's list; false when it was not
@@ -84,6 +112,11 @@ func (s *Store) AppDestinations(ctx context.Context, appID int64) ([]Destination
 // setAppDestinations replaces an app's saved selection.
 func (s *Store) setAppDestinations(ctx context.Context, appID int64, ds []Destination) error {
 	return s.inTx(ctx, func(q *db.Queries) error {
+		// Two replacements of one selection must not merge: the row lock
+		// orders them (an empty selection has no rows of its own to lock).
+		if _, err := q.LockLinkEgressApp(ctx, appID); err != nil {
+			return err
+		}
 		if err := q.DeleteAppLinkDestinations(ctx, appID); err != nil {
 			return err
 		}
@@ -138,22 +171,20 @@ type appliedEgress struct {
 	Egress []string `json:"egress"`
 }
 
-// appliedSelections returns, for each listed app with a successful
-// deployment, the selection that deployment applied. An app without one, or
-// whose deployment recorded none, has no entry.
+// appliedSelections returns, for each listed app, the selection its newest
+// successful deployment that recorded one applied — a deployment by a release
+// without egress (a rollback) records none and does not count as "nothing".
+// An app without such a deployment has no entry.
 func (s *Store) appliedSelections(ctx context.Context, appIDs []int64) (map[int64][]Destination, error) {
 	out := map[int64][]Destination{}
 	if len(appIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.q.ListLatestAppliedDeployments(ctx, appIDs)
+	rows, err := s.q.ListLatestLinkApplied(ctx, appIDs)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range rows {
-		if len(r.AppliedConfig) == 0 {
-			continue
-		}
 		var a appliedEgress
 		if json.Unmarshal(r.AppliedConfig, &a) != nil {
 			continue
